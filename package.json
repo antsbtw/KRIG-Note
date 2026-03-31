@@ -1,0 +1,29 @@
+{
+  "name": "krig-note",
+  "productName": "KRIG Note",
+  "version": "0.1.0",
+  "description": "Knowledge Research & Integration Guide",
+  "main": ".vite/build/app.js",
+  "scripts": {
+    "start": "electron-forge start",
+    "package": "electron-forge package",
+    "make": "electron-forge make",
+    "postinstall": "bash scripts/patch-electron-dev.sh"
+  },
+  "dependencies": {
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
+  },
+  "devDependencies": {
+    "@electron-forge/cli": "^7.11.1",
+    "@electron-forge/maker-squirrel": "^7.11.1",
+    "@electron-forge/maker-zip": "^7.11.1",
+    "@electron-forge/plugin-vite": "^7.11.1",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.2.0",
+    "electron": "^40.6.0",
+    "typescript": "^5.7.0",
+    "vite": "^5.4.21"
+  }
+}

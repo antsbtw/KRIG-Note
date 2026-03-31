@@ -42,15 +42,21 @@ macOS Application（Application Menu）
 关键决策：
 - **Window = Shell**，1:1 关系，不再区分
 - **Workspace 是逻辑实体**，不是 UI 区域。WorkspaceBar 只是管理 Workspace 的 Tab 栏控件
-- **NavSide 是共享容器**，内容由当前活跃 Workspace 驱动
+- **NavSide 是共享容器**，内容由当前活跃 Workspace 的 WorkMode 驱动
 - **Overlay 属于子视图**，不是独立的层。NavSide、Slot、View、Toolbar 各自管理自己的浮窗
-- **Slot 间通信**是贯穿各层的机制，不是独立的层
+- **View 间通信**经过 main 进程路由，不直接通信
 
 ### 3. 完成了组件定义文档
 
 - **Application Menu**（`application-menu/定义.md`）：三类 Menu（通用操作、工作空间、Help），零硬编码，全部注册机制
-- **NavSide**（`navside/定义.md`）：6 个区域（Layout Toggle、Brand Bar、Workspace Tabs、Action Bar、Search、Content List），框架硬编码 1 个 + 插件硬编码 1 个 + 注册机制 4 个
+- **NavSide**（`navside/定义.md`）：6 个区域（Layout Toggle、Brand Bar、ModeBar、Action Bar、Search、Content List），框架硬编码 1 个 + 插件硬编码 1 个 + 注册机制 4 个。注册接口以 workModeId 为键
+- **WorkMode**（`ui-framework/workmode.md`）：注册制定义，ViewType + variant 组合，驱动 NavSide + Left Slot
+- **Workspace**（`ui-framework/workspace.md`）：状态模型、生命周期、切换机制、持久化策略
 - **UI Framework**（`ui-framework/定义.md`）：4 层结构总览，各层职责，Overlay 归属原则
+- **视图层级定义**（`ui-framework/视图层级定义.md`）：完整的 L0-L3 层级定义
+- **View**（`ui-framework/view.md`）：View 接口定义（结构、生命周期、Type + Variant、注册机制）
+- **View 协同协议**（`ui-framework/view-protocol.md`）：View 间协同协议（translate/anchor/page-sync，匹配表，注册制）
+- **技术栈**（`ui-framework/tech-stack.md`）：Electron + React + TypeScript + Vite，选型理由和约束
 
 ### 4. 生成了 principles-draft.md（原则提炼草稿）
 
@@ -69,18 +75,22 @@ macOS Application（Application Menu）
 7. **命名即设计**——解释不清楚代表不可实施；用产品自身来描述产品是终极验证
 8. **目录结构从简**——需要时再拆分
 9. **Overlay 属于子视图**——谁的浮窗谁管理，不需要全局 Overlay 层
-10. **参考 mirro-desktop 已有文档**——`docs/视图层级定义.md` 的 L0-L5 层级定义是重要参考
+10. **WorkMode 注册制**——WorkMode 不是硬编码枚举，而是 ViewType + variant 的注册组合。LayoutMode 废弃，Slot 布局由 WorkMode + 用户操作共同决定
+11. **ViewType 4 种**：note、pdf、web、graph。ThoughtView 是 NoteView 的 variant（thought），AI 是 WebView 的 variant（ai）
+12. **Slot 是纯布局位置**——只有 left/right + 装载的 View，不感知 View 类型，不参与通信
+13. **View = Toolbar + Content + Overlays**——内部结构由框架统一约束，Toolbar 固定顶部，Content 占据剩余空间
+14. **View 默认孤立**——任意 View 组合默认无协同。协同行为由协同协议层查表匹配注入，View 自身不知道对面是谁
+15. **协同协议注册制**——translate（翻译同步）、anchor（锚点关联）、page-sync（页码关联）三种协议，通过注册声明匹配规则
+16. **Companion 概念废弃**——Toolbar 上触发 Right Slot 操作的按钮就是普通 Toolbar action，不需要特殊概念
+17. **translate 不是 variant**——翻译同步是两个 WebView 之间的协同协议，不是单个 View 的属性
 
 ---
 
 ## 下一步可以讨论的方向
 
-- **Slot 的详细定义**：布局方式、尺寸策略、View 的装载机制
-- **View 接口定义**：生命周期、Toolbar 管理、Slot 通信的接口契约
-- **Workspace 的详细定义**：状态管理、模式切换、布局模式
-- **通信协议设计**：Slot 间、View 间的消息格式和路由机制
 - **principles-draft.md 中 ❓ 标记的原则**：逐条讨论是否值得保留
 - **待沉淀领域**：存储层设计、多视图同步、AI 集成层
+- **ui-framework/定义.md 同步更新**：当前内容与新决策有部分不一致，需要同步
 
 ---
 
@@ -90,10 +100,17 @@ macOS Application（Application Menu）
 |------|------|------|
 | `principles.md` | ✅ 已确认 | 重构原则（8 章节） |
 | `principles-draft.md` | 📝 待讨论 | 从 mirro-desktop 提炼的全部原则草稿 |
-| `ui-framework/定义.md` | ✅ 已确认 | UI 框架 4 层结构总览 |
-| `ui-framework/视图层级定义.md` | ✅ 已确认 | 视图层级完整定义（参照 mirro-desktop 格式） |
+| `ui-framework/定义.md` | ✅ 已确认 | UI 框架 4 层结构总览（已同步 WorkMode + View 接口引用） |
+| `ui-framework/视图层级定义.md` | ✅ 已确认 | 视图层级完整定义（已更新为 WorkMode 注册制） |
+| `ui-framework/workmode.md` | ✅ 已确认 | WorkMode 注册制定义 |
+| `ui-framework/workspace.md` | ✅ 已确认 | Workspace 状态模型、生命周期、持久化 |
+| `ui-framework/view.md` | ✅ 已确认 | View 接口定义（结构、生命周期、Type+Variant、注册） |
+| `ui-framework/view-protocol.md` | ✅ 已确认 | View 间协同协议（匹配表、行为明细、注册制） |
+| `ui-framework/tech-stack.md` | ✅ 已确认 | 技术栈选型（Electron + React + TS + Vite） |
+| `ui-framework/license.md` | ✅ 已确认 | 授权管理（订阅制三档，框架预留，待功能完成后实施） |
+| `ui-framework/storage.md` | 📝 初稿 | 存储层设计（核心存储 + 知识图谱三元组模型） |
 | `application-menu/定义.md` | ✅ 已确认 | Application Menu 定义 |
-| `navside/定义.md` | ✅ 已确认 | NavSide 定义 |
+| `navside/定义.md` | ✅ 已确认 | NavSide 定义（已更新为 WorkMode + 注册接口） |
 | `SESSION-CONTEXT.md` | 📌 上下文 | 本文件，供新对话接手 |
 
 ### 双轨验证
