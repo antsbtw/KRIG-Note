@@ -1,0 +1,110 @@
+/* ── ProseMirror 基础样式（暗色主题） ── */
+
+.ProseMirror {
+  outline: none;
+  color: #e8eaed;
+  font-size: 15px;
+  line-height: 1.7;
+  caret-color: #e8eaed;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  min-height: 200px;
+}
+
+.ProseMirror > * + * {
+  margin-top: 0.5em;
+}
+
+/* Paragraph */
+.ProseMirror p {
+  margin: 0;
+}
+
+/* Heading */
+.ProseMirror h1 { font-size: 2em; font-weight: 700; margin-top: 1em; margin-bottom: 0.3em; }
+.ProseMirror h2 { font-size: 1.5em; font-weight: 600; margin-top: 0.8em; margin-bottom: 0.3em; }
+.ProseMirror h3 { font-size: 1.25em; font-weight: 600; margin-top: 0.6em; margin-bottom: 0.2em; }
+.ProseMirror h4 { font-size: 1.1em; font-weight: 600; margin-top: 0.5em; }
+.ProseMirror h5 { font-size: 1em; font-weight: 600; margin-top: 0.4em; }
+.ProseMirror h6 { font-size: 0.9em; font-weight: 600; margin-top: 0.4em; color: #999; }
+
+/* Code Block */
+.ProseMirror pre {
+  background: #111;
+  border: 1px solid #333;
+  border-radius: 6px;
+  padding: 12px 16px;
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-x: auto;
+  color: #d4d4d4;
+}
+
+.ProseMirror pre code {
+  background: none;
+  padding: 0;
+  border: none;
+  font-size: inherit;
+}
+
+/* Blockquote */
+.ProseMirror blockquote {
+  border-left: 3px solid #555;
+  padding-left: 16px;
+  margin-left: 0;
+  color: #aaa;
+}
+
+/* Horizontal Rule */
+.ProseMirror hr {
+  border: none;
+  border-top: 1px solid #444;
+  margin: 1em 0;
+}
+
+/* Inline Code */
+.ProseMirror code {
+  background: #2a2a2a;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 0.9em;
+  color: #f08080;
+}
+
+/* Link */
+.ProseMirror a {
+  color: #8ab4f8;
+  text-decoration: none;
+}
+.ProseMirror a:hover {
+  text-decoration: underline;
+}
+
+/* Bold / Italic */
+.ProseMirror strong { font-weight: 600; }
+.ProseMirror em { font-style: italic; }
+.ProseMirror del { text-decoration: line-through; color: #888; }
+.ProseMirror u { text-decoration: underline; }
+
+/* Selection */
+.ProseMirror ::selection {
+  background: #264f78;
+}
+
+/* Placeholder — 空文档 */
+.ProseMirror p.is-empty:first-child::before {
+  content: 'Type / for commands...';
+  color: #555;
+  pointer-events: none;
+  position: absolute;
+}
+
+/* Gap Cursor */
+.ProseMirror .ProseMirror-gapcursor {
+  position: relative;
+}
+.ProseMirror .ProseMirror-gapcursor:after {
+  border-top: 1px solid #e8eaed;
+}

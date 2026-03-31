@@ -56,6 +56,10 @@ const config: ForgeConfig = {
           name: 'demo_view',
           config: 'vite.demo-view.config.mts',
         },
+        {
+          name: 'note_view',
+          config: 'vite.note.config.mts',
+        },
       ],
     }),
   ],

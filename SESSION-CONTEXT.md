@@ -109,6 +109,7 @@ macOS Application（Application Menu）
 | `ui-framework/tech-stack.md` | ✅ 已确认 | 技术栈选型（Electron + React + TS + Vite） |
 | `ui-framework/license.md` | ✅ 已确认 | 授权管理（订阅制三档，框架预留，待功能完成后实施） |
 | `ui-framework/storage.md` | 📝 初稿 | 存储层设计（核心存储 + 知识图谱三元组模型） |
+| `ui-framework/block-system.md` | ✅ 已确认 | Block 注册制（BlockDef + capabilities + Tab Container 升级） |
 | `application-menu/定义.md` | ✅ 已确认 | Application Menu 定义 |
 | `navside/定义.md` | ✅ 已确认 | NavSide 定义（已更新为 WorkMode + 注册接口） |
 | `SESSION-CONTEXT.md` | 📌 上下文 | 本文件，供新对话接手 |

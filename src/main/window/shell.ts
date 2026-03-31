@@ -46,8 +46,8 @@ function getViewPool(workspaceId: WorkspaceId): WorkspaceViewPool {
   return pool;
 }
 
-/** 懒创建 View 实例 */
-function createDemoView(workModeId: string): WebContentsView {
+/** 懒创建 View 实例 — 根据 WorkMode 的 viewType 选择 renderer */
+function createViewForWorkMode(workModeId: string): WebContentsView {
   const view = new WebContentsView({
     webPreferences: {
       preload: path.join(__dirname, 'view.js'),
@@ -57,15 +57,32 @@ function createDemoView(workModeId: string): WebContentsView {
   });
   view.setBackgroundColor('#1e1e1e');
 
-  if (DEMO_VIEW_VITE_DEV_SERVER_URL) {
-    view.webContents.loadURL(
-      `${DEMO_VIEW_VITE_DEV_SERVER_URL}/demo-view.html?workModeId=${workModeId}`,
-    );
+  // 根据 WorkMode 的 viewType 选择对应的 renderer
+  const mode = workModeRegistry.get(workModeId);
+  const viewType = mode?.viewType ?? 'note';
+
+  if (viewType === 'note') {
+    // NoteView — ProseMirror 编辑器
+    if (NOTE_VIEW_VITE_DEV_SERVER_URL) {
+      view.webContents.loadURL(`${NOTE_VIEW_VITE_DEV_SERVER_URL}/note.html?workModeId=${workModeId}`);
+    } else {
+      view.webContents.loadFile(
+        path.join(__dirname, `../renderer/note_view/note.html`),
+        { query: { workModeId } },
+      );
+    }
   } else {
-    view.webContents.loadFile(
-      path.join(__dirname, `../renderer/demo_view/demo-view.html`),
-      { query: { workModeId } },
-    );
+    // 其他类型用 DemoView
+    if (DEMO_VIEW_VITE_DEV_SERVER_URL) {
+      view.webContents.loadURL(
+        `${DEMO_VIEW_VITE_DEV_SERVER_URL}/demo-view.html?workModeId=${workModeId}`,
+      );
+    } else {
+      view.webContents.loadFile(
+        path.join(__dirname, `../renderer/demo_view/demo-view.html`),
+        { query: { workModeId } },
+      );
+    }
   }
 
   mainWindow?.contentView.addChildView(view);
@@ -96,7 +113,7 @@ export function switchLeftSlotView(workModeId: string): void {
   // 显示/创建新 Left View
   let newView = pool.leftViews.get(workModeId);
   if (!newView) {
-    newView = createDemoView(workModeId);
+    newView = createViewForWorkMode(workModeId);
     pool.leftViews.set(workModeId, newView);
   }
   newView.setVisible(true);
@@ -127,7 +144,7 @@ export function openRightSlot(workModeId: string): void {
   }
 
   // 创建新的 Right View
-  pool.rightView = createDemoView(workModeId);
+  pool.rightView = createViewForWorkMode(workModeId);
   pool.rightWorkModeId = workModeId;
   pool.rightView.setVisible(true);
 
@@ -501,3 +518,4 @@ const NAV_RESIZE_HTML = `<!DOCTYPE html>
 declare const SHELL_VITE_DEV_SERVER_URL: string | undefined;
 declare const NAVSIDE_VITE_DEV_SERVER_URL: string | undefined;
 declare const DEMO_VIEW_VITE_DEV_SERVER_URL: string | undefined;
+declare const NOTE_VIEW_VITE_DEV_SERVER_URL: string | undefined;
