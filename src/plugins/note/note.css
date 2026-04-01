@@ -150,6 +150,22 @@
   background: #264f78;
 }
 
+/* ── Block Selection ── */
+.block-selected {
+  background: rgba(74, 158, 255, 0.08);
+  outline: 1px solid rgba(74, 158, 255, 0.3);
+  outline-offset: 1px;
+  border-radius: 3px;
+}
+
+/* 选中模式下隐藏文本光标和选区 */
+.ProseMirror.block-selection-active {
+  caret-color: transparent;
+}
+.ProseMirror.block-selection-active ::selection {
+  background: transparent;
+}
+
 /* Gap Cursor */
 .ProseMirror .ProseMirror-gapcursor {
   position: relative;

@@ -11,6 +11,7 @@ import { blockRegistry } from '../registry';
 import { slashCommandPlugin } from '../plugins/slash-command';
 import { enterHandlerPlugin } from '../plugins/enter-handler';
 import { blockHandlePlugin } from '../plugins/block-handle';
+import { blockSelectionPlugin } from '../block-ops/block-selection';
 import { SlashMenu } from './SlashMenu';
 import { HandleMenu } from './HandleMenu';
 import { FloatingToolbar } from './FloatingToolbar';
@@ -60,7 +61,8 @@ export function NoteEditor() {
     const state = EditorState.create({
       doc,
       plugins: [
-        enterHandlerPlugin(),           // Enter 行为（最高优先级，在 baseKeymap 之前）
+        blockSelectionPlugin(),          // Block 选中（Decorations 方式，不操作 DOM）
+        enterHandlerPlugin(),           // Enter 行为
         keymap({ 'Mod-z': undo, 'Mod-Shift-z': redo, 'Mod-y': redo }),
         keymap(markKeymap),
         keymap(listKeymap),

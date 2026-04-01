@@ -73,11 +73,14 @@ NoteView 的菜单系统由框架统一提供 UI，从 BlockRegistry 读取 Bloc
 
 | 术语 | 英文 | 定义 |
 |------|------|------|
-| **Block 转换** | turnInto | 将一个 Block 转换为另一种类型（如 paragraph → heading） |
+| **Block Action** | Block Action | NoteView 框架级操作层。统一管理所有 Block 级操作（select / delete / duplicate / cut / copy / paste / move / turnInto）。菜单组件只调用 blockAction.xxx()，不直接操作 ProseMirror |
+| **Block 选中** | Block Selection | 选中整个 Block（蓝色边框高亮），由框架级 Plugin 管理。与文字编辑互斥——选中模式下不可编辑，开始编辑时选中取消 |
+| **Block 剪贴板** | Block Clipboard | Block 级的内部剪贴板，独立于系统剪贴板。存储 ProseMirror Node 的 JSON，用于 Block 级 cut/copy/paste |
+| **Block 转换** | turnInto | 将一个 Block 转换为另一种类型（如 paragraph → heading），保留文本内容 |
 | **容器规则** | ContainerRule | Container 的约束（必填首子类型、不兼容时的转换策略） |
 | **Block 目标** | BlockTarget | Block 操作的目标：位置 + 节点 + 父容器上下文 |
-| **Enter 行为** | EnterBehavior | Block 声明的回车键行为。action: split（分裂）/ newline（换行）/ exit（退出）。exitCondition: empty-enter / double-enter / always。框架统一处理，Block 只做声明 |
-| **能力声明** | Capabilities | Block 声明自己支持的操作。框架的所有菜单系统（SlashMenu / Handle / FloatingToolbar / ContextMenu）从中派生显示内容 |
+| **Enter 行为** | EnterBehavior | Block 声明的回车键行为。action: split / newline / exit。exitCondition: empty-enter / double-enter / always。框架统一处理，Block 只做声明 |
+| **能力声明** | Capabilities | Block 声明自己支持的操作。菜单系统和 Block Action 从中派生显示内容和前置检查 |
 
 ---
 

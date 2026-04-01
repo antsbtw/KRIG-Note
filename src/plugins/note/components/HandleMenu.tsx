@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { EditorView } from 'prosemirror-view';
 import { blockRegistry } from '../registry';
+import { blockAction } from '../block-ops/block-action';
 
 /**
  * HandleMenu — Block 操作菜单
@@ -66,8 +67,7 @@ export function HandleMenu({ view }: HandleMenuProps) {
         label: `Turn into ${targetDef?.slashMenu?.label ?? target}`,
         icon: targetDef?.slashMenu?.icon ?? '↺',
         action: () => {
-          // TODO: 实现 turnInto
-          console.log(`turnInto ${target} at pos ${menu.pos}`);
+          blockAction.turnInto(view, menu.pos, target);
           setMenu(null);
         },
       });
@@ -75,32 +75,13 @@ export function HandleMenu({ view }: HandleMenuProps) {
   }
 
   // 通用操作
-  if (capabilities?.canDuplicate) {
-    items.push({
-      id: 'duplicate',
-      label: 'Duplicate',
-      icon: '⊕',
-      action: () => {
-        // TODO: 实现复制
-        console.log(`duplicate at pos ${menu.pos}`);
-        setMenu(null);
-      },
-    });
-  }
-
   if (capabilities?.canDelete) {
     items.push({
       id: 'delete',
       label: 'Delete',
       icon: '🗑',
       action: () => {
-        const { state } = view;
-        const $pos = state.doc.resolve(menu.pos);
-        const node = $pos.nodeAfter;
-        if (node) {
-          const tr = state.tr.delete(menu.pos, menu.pos + node.nodeSize);
-          view.dispatch(tr);
-        }
+        blockAction.delete(view, menu.pos);
         setMenu(null);
       },
     });
