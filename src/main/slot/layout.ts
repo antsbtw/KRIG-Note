@@ -35,27 +35,37 @@ export function setNavSideWidth(width: number): void {
   navSideWidth = Math.max(NAVSIDE_MIN_WIDTH, Math.min(NAVSIDE_MAX_WIDTH, width));
 }
 
+/** macOS 红绿灯占用的宽度（非全屏时） */
+const TRAFFIC_LIGHT_WIDTH = 72;
+
 export function calculateLayout(
   windowWidth: number,
   windowHeight: number,
   navSideVisible: boolean,
   hasRightSlot: boolean,
   dividerRatio: number,
+  isFullScreen: boolean = false,
 ): LayoutResult {
+  // 非全屏时，Toggle 在红绿灯右边；全屏时在左上角
+  const toggleX = (!isFullScreen && process.platform === 'darwin') ? TRAFFIC_LIGHT_WIDTH : 0;
+
   const toggle: Bounds = {
-    x: 0,
+    x: toggleX,
     y: 0,
     width: TOGGLE_WIDTH,
     height: TOP_BAR_HEIGHT,
   };
 
   const navSideColumnWidth = navSideVisible ? navSideWidth : 0;
-  const contentLeft = Math.max(navSideColumnWidth, TOGGLE_WIDTH);
+  const toggleRight = toggleX + TOGGLE_WIDTH;
+
+  // WorkspaceBar 始终从 Toggle 右边开始
+  const workspaceBarX = Math.max(navSideColumnWidth, toggleRight);
 
   const workspaceBar: Bounds = {
-    x: contentLeft,
+    x: workspaceBarX,
     y: 0,
-    width: windowWidth - contentLeft,
+    width: windowWidth - workspaceBarX,
     height: TOP_BAR_HEIGHT,
   };
 
@@ -66,8 +76,9 @@ export function calculateLayout(
     ? { x: 0, y: contentTop, width: navSideWidth, height: contentHeight }
     : null;
 
-  const slotAreaX = contentLeft;
-  const slotAreaWidth = windowWidth - contentLeft;
+  // Slot Area：NavSide 展开时从 NavSide 右边开始，收起时从 0 开始（全宽）
+  const slotAreaX = navSideVisible ? navSideColumnWidth : 0;
+  const slotAreaWidth = windowWidth - slotAreaX;
 
   if (!hasRightSlot) {
     return {

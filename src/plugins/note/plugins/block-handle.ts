@@ -70,10 +70,10 @@ export function blockHandlePlugin(): Plugin {
     const tooltip = document.createElement('div');
     tooltip.style.cssText = `
       position: absolute;
-      left: 50%;
-      top: 100%;
-      transform: translateX(-50%);
-      margin-top: 6px;
+      left: 100%;
+      top: 50%;
+      transform: translateY(-50%);
+      margin-left: 6px;
       padding: 6px 10px;
       background: #333;
       border: 1px solid #555;

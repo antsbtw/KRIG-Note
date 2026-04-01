@@ -29,8 +29,8 @@ export const APP_CONFIG = {
   // ── 布局默认值 ──
   layout: {
     navSideWidth: 240,
-    topBarHeight: 44,
-    toggleWidth: 48,
+    topBarHeight: 36,
+    toggleWidth: 40,
     dividerWidth: 6,
   },
 

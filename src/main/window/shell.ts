@@ -378,6 +378,8 @@ export function createShell(): BaseWindow {
   }
 
   mainWindow.on('resize', () => updateLayout());
+  mainWindow.on('enter-full-screen', () => updateLayout());
+  mainWindow.on('leave-full-screen', () => updateLayout());
 
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -403,7 +405,8 @@ export function updateLayout(): void {
   const rightSlotOpen = hasRightSlot();
   const dividerRatio = active?.dividerRatio ?? 0.5;
 
-  const layout = calculateLayout(windowWidth, windowHeight, navSideVisible, rightSlotOpen, dividerRatio);
+  const isFullScreen = mainWindow.isFullScreen();
+  const layout = calculateLayout(windowWidth, windowHeight, navSideVisible, rightSlotOpen, dividerRatio, isFullScreen);
 
   toggleView.setBounds(layout.toggle);
   shellView.setBounds(layout.workspaceBar);
