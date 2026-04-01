@@ -83,11 +83,49 @@ export function buildTestDocument(schema: Schema): PMNode {
     p(schema, '8.2 在下方用 SlashMenu 创建 Code Block，测试 Enter 换行 + 双 Enter 退出：'),
     p(schema, ''),
 
-    // ── 九、Undo/Redo 测试 ──
-    heading(schema, 2, '九、Undo/Redo 测试'),
-    p(schema, '9.1 编辑文字后 Cmd+Z → 撤销'),
-    p(schema, '9.2 Cmd+Shift+Z → 重做'),
-    p(schema, '9.3 删除 Block 后 Cmd+Z → Block 恢复'),
+    // ── 九、Heading Fold 测试（Handle 菜单操作） ──
+    heading(schema, 2, '九、Heading Fold 测试'),
+    p(schema, '9.1 鼠标悬停 heading → Handle 出现 → 点击 Handle → 菜单中有 Fold'),
+    p(schema, '9.2 点击 Fold → heading 下方内容隐藏，标题后显示 ···'),
+    p(schema, '9.3 再次点击 Handle → 菜单中显示 Unfold → 点击展开'),
+    heading(schema, 3, '9.4 子标题 H3 测试'),
+    p(schema, '这段属于 H3 管辖。Fold H3 只隐藏到下一个 H3/H2 之前'),
+    p(schema, '这段也属于 H3'),
+    heading(schema, 3, '9.5 另一个 H3'),
+    p(schema, '这段属于新 H3，不受前面 H3 折叠影响'),
+    heading(schema, 2, '9.6 另一个 H2'),
+    p(schema, '这段属于新 H2。Fold 上方 H2 不影响这里'),
+
+    // ── 十、toggleList 测试 ──
+    heading(schema, 2, '十、toggleList 测试'),
+    p(schema, '10.1 SlashMenu 选择 Toggle List → 创建折叠列表（▾ + paragraph）'),
+    p(schema, '10.2 在折叠列表内输入子内容'),
+    p(schema, '10.3 折叠/展开 → 和 toggleHeading 一致'),
+    p(schema, '10.4 在下方创建 Toggle List 测试：'),
+    p(schema, ''),
+
+    // ── 十一、Block 级快捷键测试 ──
+    heading(schema, 2, '十一、Block 级快捷键测试'),
+    p(schema, '11.1 ESC 选中 Block → Cmd+C → 复制（无视觉变化）'),
+    p(schema, '11.2 ← 取消选中 → 光标到某位置 → Cmd+V → Block 被粘贴'),
+    p(schema, '11.3 ESC 选中 Block → Cmd+X → Block 被剪切'),
+    p(schema, '11.4 Cmd+V → Block 被粘贴回来'),
+    p(schema, '11.5 ESC 选中 → Shift+↓ 多选 → Cmd+X → 多个 Block 被剪切'),
+    p(schema, '11.6 Cmd+V → 多个 Block 被粘贴回来'),
+
+    // ── 十二、turnInto 测试 ──
+    heading(schema, 2, '十二、turnInto 测试'),
+    p(schema, '12.1 Handle 菜单 Turn into Heading → paragraph 变为 heading'),
+    p(schema, '12.2 Handle 菜单 Turn into Code Block → paragraph 变为 codeBlock'),
+    p(schema, '12.3 Handle 菜单 Turn into Quote → paragraph 被包裹进 blockquote'),
+    p(schema, '12.4 在下方测试 turnInto：'),
+    p(schema, '这是一个待转换的段落'),
+
+    // ── 十三、Undo/Redo 测试 ──
+    heading(schema, 2, '十三、Undo/Redo 测试'),
+    p(schema, '13.1 编辑文字后 Cmd+Z → 撤销'),
+    p(schema, '13.2 Cmd+Shift+Z → 重做'),
+    p(schema, '13.3 删除 Block 后 Cmd+Z → Block 恢复'),
 
     // 底部空行
     p(schema, ''),

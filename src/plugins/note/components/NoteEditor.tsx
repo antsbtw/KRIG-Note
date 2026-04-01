@@ -12,6 +12,7 @@ import { buildTestDocument } from '../test-content';
 import { slashCommandPlugin } from '../plugins/slash-command';
 import { enterHandlerPlugin } from '../plugins/enter-handler';
 import { blockHandlePlugin } from '../plugins/block-handle';
+import { headingFoldPlugin } from '../plugins/heading-fold';
 import { blockSelectionPlugin } from '../block-ops/block-selection';
 import { SlashMenu } from './SlashMenu';
 import { HandleMenu } from './HandleMenu';
@@ -47,6 +48,36 @@ export function NoteEditor() {
     if (schema.marks.strike) markKeymap['Mod-Shift-s'] = toggleMark(schema.marks.strike);
     if (schema.marks.code) markKeymap['Mod-e'] = toggleMark(schema.marks.code);
 
+    // Heading 折叠快捷键：Cmd+.
+    markKeymap['Mod-.'] = (state, dispatch) => {
+      const { $from } = state.selection;
+      // 向上查找最近的 heading
+      for (let d = $from.depth; d >= 1; d--) {
+        const node = $from.node(d);
+        if (node.type.name === 'heading') {
+          const pos = $from.before(d);
+          const currentOpen = node.attrs.open !== false;
+          if (dispatch) {
+            dispatch(state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, open: !currentOpen }));
+          }
+          return true;
+        }
+      }
+      // 光标在顶层 block 中，检查该 block 是否就是 heading
+      if ($from.depth >= 1) {
+        const blockNode = $from.node(1);
+        if (blockNode.type.name === 'heading') {
+          const pos = $from.before(1);
+          const currentOpen = blockNode.attrs.open !== false;
+          if (dispatch) {
+            dispatch(state.tr.setNodeMarkup(pos, undefined, { ...blockNode.attrs, open: !currentOpen }));
+          }
+          return true;
+        }
+      }
+      return false;
+    };
+
     // 列表快捷键（Tab/Shift+Tab 缩进，Enter 分裂列表项）
     const listKeymap: Record<string, Command> = {};
     const listItemType = schema.nodes.listItem;
@@ -70,6 +101,7 @@ export function NoteEditor() {
         dropCursor(),
         gapCursor(),
         blockHandlePlugin(),
+        headingFoldPlugin(),
         ...blockPlugins,
       ],
     });

@@ -3,7 +3,9 @@ import type { BlockDef } from '../types';
 /**
  * heading — 标题（H1-H3）
  *
- * 只支持三级标题。更深层级用 toggleHeading 或缩进。
+ * 自带 toggle 能力（open attr），但无 NodeView——纯文本渲染。
+ * 折叠通过 Handle 菜单 "Fold/Unfold" 操作。
+ * 折叠范围由 headingFoldPlugin 自动推导。
  */
 
 export const headingBlock: BlockDef = {
@@ -13,7 +15,10 @@ export const headingBlock: BlockDef = {
   nodeSpec: {
     content: 'inline*',
     group: 'block',
-    attrs: { level: { default: 1 } },
+    attrs: {
+      level: { default: 1 },
+      open: { default: true },
+    },
     defining: true,
     parseDOM: [
       { tag: 'h1', attrs: { level: 1 } },
@@ -27,11 +32,9 @@ export const headingBlock: BlockDef = {
     turnInto: ['paragraph', 'codeBlock', 'blockquote'],
     marks: ['bold', 'italic', 'strike', 'underline', 'code', 'link'],
     canIndent: true,
-    canDuplicate: true,
     canDelete: true,
     canDrag: true,
   },
 
-  // heading 按级别单独注册 SlashMenu（见 blocks/index.ts）
   slashMenu: null,
 };

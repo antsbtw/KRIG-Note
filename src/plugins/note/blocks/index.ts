@@ -15,12 +15,13 @@ import { horizontalRuleBlock } from './horizontal-rule';
 import { bulletListBlock } from './bullet-list';
 import { orderedListBlock } from './ordered-list';
 import { listItemBlock } from './list-item';
+import { toggleListBlock } from './toggle-list';
 
 export function registerAllBlocks(): void {
   // 文档级
   blockRegistry.register(noteTitleBlock);
 
-  // 基础 Block
+  // 基础 Block（heading 自带 toggle 能力）
   blockRegistry.register(paragraphBlock);
   blockRegistry.register(headingBlock);
   blockRegistry.register(codeBlockBlock);
@@ -31,4 +32,7 @@ export function registerAllBlocks(): void {
   blockRegistry.register(bulletListBlock);
   blockRegistry.register(orderedListBlock);
   blockRegistry.register(listItemBlock);
+
+  // Toggle Container
+  blockRegistry.register(toggleListBlock);
 }

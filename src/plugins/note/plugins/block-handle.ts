@@ -103,8 +103,8 @@ export function blockHandlePlugin(): Plugin {
       const containerRect = view.dom.parentElement?.getBoundingClientRect();
       if (!containerRect) return;
 
-      handleDOM.style.left = `${coords.left - containerRect.left - 32}px`;
-      handleDOM.style.top = `${coords.top - containerRect.top - 2}px`;
+      handleDOM.style.left = `${coords.left - containerRect.left - 34}px`;
+      handleDOM.style.top = `${coords.top - containerRect.top + 1}px`;
       handleDOM.style.opacity = '1';
     } catch {
       handleDOM.style.opacity = '0';

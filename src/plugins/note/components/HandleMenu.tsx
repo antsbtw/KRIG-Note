@@ -56,7 +56,31 @@ export function HandleMenu({ view }: HandleMenuProps) {
   const customActions = blockDef?.customActions ?? [];
 
   // 构建菜单项
-  const items: { id: string; label: string; icon: string; action: () => void }[] = [];
+  const items: { id: string; label: string; icon: string; shortcut?: string; action: () => void }[] = [];
+
+  // Fold/Unfold（heading 专属）
+  if (menu.blockType === 'heading') {
+    const node = view.state.doc.nodeAt(menu.pos);
+    const isOpen = node?.attrs.open !== false;
+    items.push({
+      id: 'fold-toggle',
+      label: isOpen ? 'Fold' : 'Unfold',
+      icon: isOpen ? '▸' : '▾',
+      shortcut: '⌘.',
+      action: () => {
+        const currentNode = view.state.doc.nodeAt(menu.pos);
+        if (currentNode) {
+          view.dispatch(
+            view.state.tr.setNodeMarkup(menu.pos, undefined, {
+              ...currentNode.attrs,
+              open: !isOpen,
+            }),
+          );
+        }
+        setMenu(null);
+      },
+    });
+  }
 
   // turnInto 选项
   if (capabilities?.turnInto && capabilities.turnInto.length > 0) {
@@ -125,7 +149,8 @@ export function HandleMenu({ view }: HandleMenuProps) {
           onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
         >
           <span style={styles.icon}>{item.icon}</span>
-          <span>{item.label}</span>
+          <span style={styles.label}>{item.label}</span>
+          {item.shortcut && <span style={styles.shortcut}>{item.shortcut}</span>}
         </div>
       ))}
     </div>
@@ -160,5 +185,12 @@ const styles: Record<string, React.CSSProperties> = {
     width: '20px',
     textAlign: 'center',
     color: '#999',
+  },
+  label: {
+    flex: 1,
+  },
+  shortcut: {
+    fontSize: '11px',
+    color: '#666',
   },
 };

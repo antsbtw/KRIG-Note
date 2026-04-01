@@ -58,6 +58,17 @@
 .ProseMirror h5 { font-size: 1em; font-weight: 600; margin-top: 0.4em; }
 .ProseMirror h6 { font-size: 0.9em; font-weight: 600; margin-top: 0.4em; color: #999; }
 
+/* ── Heading Folded 视觉提示 ── */
+.heading--folded {
+  position: relative;
+}
+.heading--folded::after {
+  content: ' ···';
+  color: #555;
+  font-size: 0.7em;
+  font-weight: normal;
+}
+
 /* Code Block */
 .ProseMirror pre {
   background: #111;
@@ -104,6 +115,56 @@
 .ProseMirror ol ol { list-style-type: lower-alpha; }
 .ProseMirror ol ol ol { list-style-type: lower-roman; }
 .ProseMirror ol ol ol ol { list-style-type: decimal; }
+
+/* ── Toggle Heading ── */
+.toggle-heading {
+  position: relative;
+  padding-left: 24px;
+  margin: 0.5em 0;
+}
+.toggle-heading__toggle {
+  position: absolute;
+  left: 0;
+  top: 6px;
+  cursor: pointer;
+  color: #666;
+  font-size: 14px;
+  user-select: none;
+  width: 20px;
+  text-align: center;
+}
+.toggle-heading__toggle:hover {
+  color: #e8eaed;
+}
+/* 折叠时：首子 heading 之后的内容隐藏 */
+.toggle-heading--closed .toggle-heading__content > *:not(:first-child) {
+  display: none;
+}
+
+/* ── Toggle List ── */
+.toggle-list {
+  position: relative;
+  padding-left: 24px;
+  margin: 0.3em 0;
+}
+.toggle-list__toggle {
+  position: absolute;
+  left: 0;
+  top: 3px;
+  cursor: pointer;
+  color: #666;
+  font-size: 14px;
+  user-select: none;
+  width: 20px;
+  text-align: center;
+}
+.toggle-list__toggle:hover {
+  color: #e8eaed;
+}
+/* 折叠时：首行之后的内容隐藏 */
+.toggle-list--closed .toggle-list__content > *:not(:first-child) {
+  display: none;
+}
 
 /* Blockquote */
 .ProseMirror blockquote {

@@ -167,8 +167,48 @@
 
 ---
 
-## 十五、Undo/Redo
+## 十五、toggleHeading（折叠标题）
 
-- [ ] 15.1 Cmd+Z → 撤销上一步操作
-- [ ] 15.2 Cmd+Shift+Z → 重做
-- [ ] 15.3 删除 Block 后 Cmd+Z → Block 恢复
+- [ ] 15.1 SlashMenu 输入 /toggle → 显示 Toggle Heading 和 Toggle List
+- [ ] 15.2 选择 Toggle Heading → 创建折叠标题（▾ + heading）
+- [ ] 15.3 在折叠标题内输入子内容（Enter 创建 paragraph）
+- [ ] 15.4 点击 ▾ → 折叠（子内容隐藏，图标变 ▸）
+- [ ] 15.5 点击 ▸ → 展开（子内容恢复显示）
+- [ ] 15.6 折叠状态下 Handle Delete → 删除整个 toggleHeading（含子内容）
+- [ ] 15.7 嵌套 toggle（在 toggle 内再创建 toggle）
+
+---
+
+## 十六、toggleList（折叠列表）
+
+- [ ] 16.1 SlashMenu 选择 Toggle List → 创建折叠列表（▾ + paragraph）
+- [ ] 16.2 在折叠列表内输入子内容
+- [ ] 16.3 折叠/展开
+- [ ] 16.4 空行退出 toggleList
+
+---
+
+## 十七、Block 级快捷键
+
+- [ ] 17.1 ESC 选中 Block → Cmd+C → 复制
+- [ ] 17.2 ← 取消选中 → Cmd+V → Block 被粘贴
+- [ ] 17.3 ESC 选中 Block → Cmd+X → Block 被剪切
+- [ ] 17.4 Cmd+V → Block 被粘贴回来
+- [ ] 17.5 ESC 选中 → Shift+↓ 多选 → Cmd+X → 多个 Block 剪切
+- [ ] 17.6 Cmd+V → 多个 Block 粘贴回来
+
+---
+
+## 十八、turnInto
+
+- [ ] 18.1 Handle 菜单 Turn into Heading → paragraph 变为 heading
+- [ ] 18.2 Handle 菜单 Turn into Code Block → paragraph 变为 codeBlock
+- [ ] 18.3 Handle 菜单 Turn into Quote → paragraph 包裹进 blockquote
+
+---
+
+## 十九、Undo/Redo
+
+- [ ] 19.1 Cmd+Z → 撤销上一步操作
+- [ ] 19.2 Cmd+Shift+Z → 重做
+- [ ] 19.3 删除 Block 后 Cmd+Z → Block 恢复

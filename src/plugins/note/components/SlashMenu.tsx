@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import type { EditorView } from 'prosemirror-view';
 import { setBlockType } from 'prosemirror-commands';
+import { TextSelection } from 'prosemirror-state';
 import { blockRegistry } from '../registry';
 import { slashCommandKey, type SlashCommandState } from '../plugins/slash-command';
 
@@ -18,7 +19,8 @@ interface SlashMenuProps {
 export function SlashMenu({ view }: SlashMenuProps) {
   const [pluginState, setPluginState] = useState<SlashCommandState | null>(null);
 
-  const allItems = useMemo(() => blockRegistry.buildSlashItems(), []);
+  // 不缓存——每次都从 registry 读取（确保动态注册的 Block 能被发现）
+  const allItems = blockRegistry.buildSlashItems();
 
   const filteredItems = useMemo(() => {
     if (!pluginState?.query) return allItems;
@@ -68,17 +70,78 @@ export function SlashMenu({ view }: SlashMenuProps) {
       if (!view || !pluginState) return;
 
       const { from, to } = pluginState;
+      const schema = view.state.schema;
+      const blockDef = blockRegistry.get(itemId);
+      const nodeType = schema.nodes[itemId];
+      if (!nodeType) return;
 
       // 关闭菜单 + 删除 /query 文本
-      const tr = view.state.tr;
+      let tr = view.state.tr;
       tr.setMeta(slashCommandKey, { close: true });
       tr.delete(from, to);
       view.dispatch(tr);
 
-      // 创建对应 Block
-      const schema = view.state.schema;
-      const nodeType = schema.nodes[itemId];
-      if (nodeType) {
+      // 根据 Block 类型创建节点
+      if (blockDef?.containerRule !== undefined || blockDef?.nodeSpec.content?.includes('block')) {
+        // Container 类型（toggleHeading, toggleList, blockquote 等）
+        // 需要创建完整的容器结构替换当前 paragraph
+        const { $from } = view.state.selection;
+        const blockStart = $from.before(1);
+        const blockEnd = $from.after(1);
+
+        let containerNode;
+        if (itemId === 'toggleHeading') {
+          // toggleHeading: heading(空) + paragraph(空)
+          containerNode = nodeType.create(
+            { open: true },
+            [schema.nodes.heading.create({ level: 2 }), schema.nodes.paragraph.create()],
+          );
+        } else if (itemId === 'toggleList') {
+          // toggleList: paragraph(空)
+          containerNode = nodeType.create(
+            { open: true },
+            [schema.nodes.paragraph.create()],
+          );
+        } else if (itemId === 'blockquote') {
+          // blockquote: paragraph(空)
+          containerNode = nodeType.create(null, [schema.nodes.paragraph.create()]);
+        } else if (itemId === 'bulletList' || itemId === 'orderedList') {
+          // 列表: listItem(paragraph)
+          const listItem = schema.nodes.listItem.create(null, [schema.nodes.paragraph.create()]);
+          containerNode = nodeType.create(null, [listItem]);
+        } else {
+          // 通用 Container
+          containerNode = nodeType.create(null, [schema.nodes.paragraph.create()]);
+        }
+
+        const replaceTr = view.state.tr.replaceWith(blockStart, blockEnd, containerNode);
+        // 光标放到容器内第一个可编辑位置
+        const resolvedPos = replaceTr.doc.resolve(blockStart + 2);
+        replaceTr.setSelection(TextSelection.near(resolvedPos));
+        view.dispatch(replaceTr);
+      } else if (nodeType.spec.content === 'text*' || itemId === 'codeBlock') {
+        // 纯文本 Block（codeBlock）
+        const { $from } = view.state.selection;
+        const blockStart = $from.before(1);
+        const blockEnd = $from.after(1);
+        const newNode = nodeType.create();
+        const replaceTr = view.state.tr.replaceWith(blockStart, blockEnd, newNode);
+        const resolvedPos = replaceTr.doc.resolve(blockStart + 1);
+        replaceTr.setSelection(TextSelection.near(resolvedPos));
+        view.dispatch(replaceTr);
+      } else if (itemId === 'horizontalRule') {
+        // 分割线：插入 hr + 新 paragraph
+        const { $from } = view.state.selection;
+        const blockStart = $from.before(1);
+        const blockEnd = $from.after(1);
+        const hr = nodeType.create();
+        const newParagraph = schema.nodes.paragraph.create();
+        const replaceTr = view.state.tr.replaceWith(blockStart, blockEnd, [hr, newParagraph]);
+        const resolvedPos = replaceTr.doc.resolve(blockStart + hr.nodeSize + 1);
+        replaceTr.setSelection(TextSelection.near(resolvedPos));
+        view.dispatch(replaceTr);
+      } else {
+        // 简单 Block（paragraph, heading 等）— setBlockType
         setBlockType(nodeType)(view.state, view.dispatch);
       }
 
