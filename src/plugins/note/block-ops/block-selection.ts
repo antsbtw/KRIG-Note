@@ -171,8 +171,9 @@ export function blockSelectionPlugin(): Plugin {
         return false;
       },
 
-      // 单击取消选中
-      handleClick(view) {
+      // 左键单击取消选中（右键不取消，保留 Block 选中状态给 ContextMenu）
+      handleClick(view, pos, event) {
+        if (event.button !== 0) return false; // 只处理左键
         const state = blockSelectionKey.getState(view.state);
         if (state?.active) {
           view.dispatch(view.state.tr.setMeta(blockSelectionKey, { clear: true }));

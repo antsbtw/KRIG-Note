@@ -1,5 +1,5 @@
 import type { EditorView } from 'prosemirror-view';
-import type { Node as PMNode } from 'prosemirror-model';
+import { Node as PMNode } from 'prosemirror-model';
 import { blockRegistry } from '../registry';
 import { blockSelectionKey } from './block-selection';
 
@@ -138,10 +138,35 @@ export const blockAction = {
     const blockDef = blockRegistry.get(node.type.name);
     if (!blockDef?.capabilities.turnInto?.includes(targetType)) return false;
 
-    const targetNodeType = view.state.schema.nodes[targetType];
+    const schema = view.state.schema;
+    const targetNodeType = schema.nodes[targetType];
     if (!targetNodeType) return false;
 
-    const tr = view.state.tr.setNodeMarkup(pos, targetNodeType, { ...attrs });
+    const targetDef = blockRegistry.get(targetType);
+    let tr = view.state.tr;
+
+    // 判断转换方式
+    if (targetDef?.containerRule !== undefined) {
+      // 目标是 Container（如 blockquote）→ 包裹当前 Block
+      const wrapper = targetNodeType.create(attrs || null, node);
+      tr = tr.replaceWith(pos, pos + node.nodeSize, wrapper);
+    } else if (targetType === 'codeBlock') {
+      // paragraph → codeBlock：提取纯文本
+      const textContent = node.textContent;
+      const codeNode = targetNodeType.create(attrs || null, textContent ? [schema.text(textContent)] : []);
+      tr = tr.replaceWith(pos, pos + node.nodeSize, codeNode);
+    } else {
+      // 同 content 类型之间切换（如 paragraph ↔ heading）→ setNodeMarkup
+      try {
+        tr = tr.setNodeMarkup(pos, targetNodeType, { ...attrs });
+      } catch {
+        // content 不兼容时，提取文本重建
+        const textContent = node.textContent;
+        const newNode = targetNodeType.create(attrs || null, textContent ? [schema.text(textContent)] : []);
+        tr = tr.replaceWith(pos, pos + node.nodeSize, newNode);
+      }
+    }
+
     view.dispatch(tr);
     view.focus();
     return true;

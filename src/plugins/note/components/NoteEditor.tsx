@@ -8,6 +8,7 @@ import { dropCursor } from 'prosemirror-dropcursor';
 import { gapCursor } from 'prosemirror-gapcursor';
 import { splitListItem, liftListItem, sinkListItem } from 'prosemirror-schema-list';
 import { blockRegistry } from '../registry';
+import { buildTestDocument } from '../test-content';
 import { slashCommandPlugin } from '../plugins/slash-command';
 import { enterHandlerPlugin } from '../plugins/enter-handler';
 import { blockHandlePlugin } from '../plugins/block-handle';
@@ -35,11 +36,8 @@ export function NoteEditor() {
     const nodeViews = blockRegistry.buildNodeViews();
     const blockPlugins = blockRegistry.buildBlockPlugins();
 
-    // 初始文档：标题 + 空段落
-    const doc = schema.node('doc', null, [
-      schema.node('noteTitle'),
-      schema.node('paragraph'),
-    ]);
+    // 初始文档：测试文档
+    const doc = buildTestDocument(schema);
 
     // Mark 快捷键
     const markKeymap: Record<string, Command> = {};
