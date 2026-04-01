@@ -179,10 +179,15 @@ export const blockAction = {
     if (!node) return false;
 
     const blockDef = blockRegistry.get(node.type.name);
-    if (!blockDef?.capabilities.canIndent) return false;
 
-    // TODO: 通用缩进（indent attr）+ 列表缩进（sinkListItem）
-    return false;
+    // 第一层：Block 有自定义 onIndent？
+    if (blockDef?.onIndent) {
+      const handled = blockDef.onIndent(view, pos);
+      if (handled) return true;
+    }
+
+    // 第二层：通用缩进（indent attr +1，最大 8）
+    return defaultIndent(view, pos, node);
   },
 
   // ── 减少缩进 ──
@@ -192,10 +197,15 @@ export const blockAction = {
     if (!node) return false;
 
     const blockDef = blockRegistry.get(node.type.name);
-    if (!blockDef?.capabilities.canIndent) return false;
 
-    // TODO: 通用减少缩进 + 列表提升（liftListItem）
-    return false;
+    // 第一层：Block 有自定义 onOutdent？
+    if (blockDef?.onOutdent) {
+      const handled = blockDef.onOutdent(view, pos);
+      if (handled) return true;
+    }
+
+    // 第二层：通用减少缩进（indent attr -1，最小 0）
+    return defaultOutdent(view, pos, node);
   },
 
   // ── 选中 ──
@@ -221,3 +231,33 @@ export const blockAction = {
     view.dispatch(tr);
   },
 };
+
+// ── 通用缩进函数（indent attr 方式） ──
+
+const MAX_INDENT = 8;
+
+function defaultIndent(view: EditorView, pos: number, node: import('prosemirror-model').Node): boolean {
+  const currentIndent = (node.attrs.indent as number) || 0;
+  if (currentIndent >= MAX_INDENT) return false;
+  if (node.type.spec.attrs && !('indent' in node.type.spec.attrs)) return false;
+
+  const tr = view.state.tr.setNodeMarkup(pos, undefined, {
+    ...node.attrs,
+    indent: currentIndent + 1,
+  });
+  view.dispatch(tr);
+  return true;
+}
+
+function defaultOutdent(view: EditorView, pos: number, node: import('prosemirror-model').Node): boolean {
+  const currentIndent = (node.attrs.indent as number) || 0;
+  if (currentIndent <= 0) return false;
+  if (node.type.spec.attrs && !('indent' in node.type.spec.attrs)) return false;
+
+  const tr = view.state.tr.setNodeMarkup(pos, undefined, {
+    ...node.attrs,
+    indent: currentIndent - 1,
+  });
+  view.dispatch(tr);
+  return true;
+}

@@ -18,6 +18,7 @@ export const headingBlock: BlockDef = {
     attrs: {
       level: { default: 1 },
       open: { default: true },
+      indent: { default: 0 },
     },
     defining: true,
     parseDOM: [
@@ -25,13 +26,18 @@ export const headingBlock: BlockDef = {
       { tag: 'h2', attrs: { level: 2 } },
       { tag: 'h3', attrs: { level: 3 } },
     ],
-    toDOM(node) { return [`h${node.attrs.level}`, 0]; },
+    toDOM(node) {
+      const indent = node.attrs.indent || 0;
+      const tag = `h${node.attrs.level}`;
+      return indent > 0
+        ? [tag, { 'data-indent': indent, style: `padding-left: ${indent * 24}px` }, 0]
+        : [tag, 0];
+    },
   },
 
   capabilities: {
     turnInto: ['paragraph', 'codeBlock', 'blockquote'],
     marks: ['bold', 'italic', 'strike', 'underline', 'code', 'link'],
-    canIndent: true,
     canDelete: true,
     canDrag: true,
   },

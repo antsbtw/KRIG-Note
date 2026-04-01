@@ -14,6 +14,7 @@ import { enterHandlerPlugin } from '../plugins/enter-handler';
 import { blockHandlePlugin } from '../plugins/block-handle';
 import { headingFoldPlugin } from '../plugins/heading-fold';
 import { blockSelectionPlugin } from '../block-ops/block-selection';
+import { blockAction } from '../block-ops/block-action';
 import { SlashMenu } from './SlashMenu';
 import { HandleMenu } from './HandleMenu';
 import { FloatingToolbar } from './FloatingToolbar';
@@ -78,14 +79,34 @@ export function NoteEditor() {
       return false;
     };
 
-    // 列表快捷键（Tab/Shift+Tab 缩进，Enter 分裂列表项）
+    // 列表 Enter 分裂
     const listKeymap: Record<string, Command> = {};
     const listItemType = schema.nodes.listItem;
     if (listItemType) {
       listKeymap['Enter'] = splitListItem(listItemType);
-      listKeymap['Tab'] = sinkListItem(listItemType);
-      listKeymap['Shift-Tab'] = liftListItem(listItemType);
     }
+
+    // Tab/Shift+Tab 通用缩进（先尝试列表缩进，再 blockAction 通用缩进）
+    listKeymap['Tab'] = (state, dispatch, view) => {
+      // 先尝试列表缩进
+      if (listItemType && sinkListItem(listItemType)(state, dispatch)) return true;
+      // 通用缩进
+      if (view) {
+        const { $from } = state.selection;
+        const pos = $from.depth >= 1 ? $from.before(1) : $from.pos;
+        return blockAction.indent(view, pos);
+      }
+      return false;
+    };
+    listKeymap['Shift-Tab'] = (state, dispatch, view) => {
+      if (listItemType && liftListItem(listItemType)(state, dispatch)) return true;
+      if (view) {
+        const { $from } = state.selection;
+        const pos = $from.depth >= 1 ? $from.before(1) : $from.pos;
+        return blockAction.outdent(view, pos);
+      }
+      return false;
+    };
 
     const state = EditorState.create({
       doc,

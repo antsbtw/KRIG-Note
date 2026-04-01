@@ -7,14 +7,19 @@ export const paragraphBlock: BlockDef = {
   nodeSpec: {
     content: 'inline*',
     group: 'block',
+    attrs: { indent: { default: 0 } },
     parseDOM: [{ tag: 'p' }],
-    toDOM() { return ['p', 0]; },
+    toDOM(node) {
+      const indent = node.attrs.indent || 0;
+      return indent > 0
+        ? ['p', { 'data-indent': indent, style: `padding-left: ${indent * 24}px` }, 0]
+        : ['p', 0];
+    },
   },
 
   capabilities: {
     turnInto: ['heading', 'codeBlock', 'blockquote'],
     marks: ['bold', 'italic', 'strike', 'underline', 'code', 'link'],
-    canIndent: true,
     canDuplicate: true,
     canDelete: true,
     canColor: true,

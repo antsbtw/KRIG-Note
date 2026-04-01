@@ -19,11 +19,11 @@ export type NodeViewFactory = (
 export interface BlockCapabilities {
   turnInto?: string[];
   marks?: string[];
-  canIndent?: boolean;
   canDuplicate?: boolean;
   canDelete?: boolean;
   canColor?: boolean;
   canDrag?: boolean;
+  // canIndent 已移除——所有 Block 默认支持缩进
 }
 
 // ── SlashMenu 定义 ──
@@ -118,6 +118,8 @@ export interface BlockDef {
   slashMenu?: SlashMenuDef | null;
   shortcuts?: Record<string, Command>;
   enterBehavior?: EnterBehavior;      // Enter 键行为声明（无声明 = 框架默认：split 为 paragraph）
+  onIndent?: (view: import('prosemirror-view').EditorView, pos: number) => boolean;   // 缩进附加能力（返回 true = 已处理）
+  onOutdent?: (view: import('prosemirror-view').EditorView, pos: number) => boolean;  // 减少缩进附加能力
   plugin?: () => Plugin;              // 仅用于 Enter 之外的特殊键盘处理
   containerRule?: ContainerRule;
 }

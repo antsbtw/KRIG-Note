@@ -29,7 +29,6 @@ export const toggleListBlock: BlockDef = {
 
   capabilities: {
     turnInto: ['paragraph', 'toggleHeading'],
-    canIndent: true,
     canDelete: true,
     canDrag: true,
   },

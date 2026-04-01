@@ -20,7 +20,6 @@ export const listItemBlock: BlockDef = {
   },
 
   capabilities: {
-    canIndent: true,
     canDuplicate: true,
     canDelete: true,
     canDrag: true,
