@@ -1,5 +1,11 @@
 import type { BlockDef } from '../types';
 
+/**
+ * heading — 标题（H1-H3）
+ *
+ * 只支持三级标题。更深层级用 toggleHeading 或缩进。
+ */
+
 export const headingBlock: BlockDef = {
   name: 'heading',
   group: 'block',
@@ -8,13 +14,11 @@ export const headingBlock: BlockDef = {
     content: 'inline*',
     group: 'block',
     attrs: { level: { default: 1 } },
+    defining: true,
     parseDOM: [
       { tag: 'h1', attrs: { level: 1 } },
       { tag: 'h2', attrs: { level: 2 } },
       { tag: 'h3', attrs: { level: 3 } },
-      { tag: 'h4', attrs: { level: 4 } },
-      { tag: 'h5', attrs: { level: 5 } },
-      { tag: 'h6', attrs: { level: 6 } },
     ],
     toDOM(node) { return [`h${node.attrs.level}`, 0]; },
   },
@@ -28,17 +32,6 @@ export const headingBlock: BlockDef = {
     canDrag: true,
   },
 
-  slashMenu: null, // heading 通过独立的 H1-H6 项注册，不作为单独一项
+  // heading 按级别单独注册 SlashMenu（见 blocks/index.ts）
+  slashMenu: null,
 };
-
-// Heading 的 SlashMenu 项按级别分开注册
-export const headingSlashItems = [1, 2, 3, 4, 5, 6].map((level) => ({
-  id: `heading${level}`,
-  label: `Heading ${level}`,
-  icon: `H${level}`,
-  group: 'basic',
-  keywords: [`h${level}`, `heading${level}`],
-  order: level,
-  blockName: 'heading',
-  attrs: { level },
-}));

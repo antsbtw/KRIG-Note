@@ -88,11 +88,27 @@ export interface PMNodeJSON {
   text?: string;
 }
 
+// ── Enter 行为声明 ──
+
+export interface EnterBehavior {
+  /** Enter 按下时的动作 */
+  action: 'split' | 'newline' | 'exit';
+  // split:    分裂为两个同类型 Block（默认行为）
+  // newline:  在 Block 内部换行（如 codeBlock）
+  // exit:     直接退出到下方 paragraph（如 noteTitle）
+
+  /** 退出条件（action 为 split 或 newline 时，如何退出回到 paragraph） */
+  exitCondition?: 'empty-enter' | 'double-enter' | 'always';
+  // empty-enter:   空内容时按 Enter 退出（如 listItem、blockquote）
+  // double-enter:  连按两次 Enter 退出（如 codeBlock）
+  // always:        每次 Enter 都退出（如 noteTitle）
+}
+
 // ── BlockDef — 一站式注册 ──
 
 export interface BlockDef {
   name: string;
-  group: 'block' | 'inline';
+  group: 'block' | 'inline' | '';   // 空字符串 = 不属于任何组（如 noteTitle、listItem）
   nodeSpec: NodeSpec;
   nodeView?: NodeViewFactory;
   tabs?: TabDefinition[];
@@ -101,6 +117,7 @@ export interface BlockDef {
   customActions?: ActionDef[];
   slashMenu?: SlashMenuDef | null;
   shortcuts?: Record<string, Command>;
-  plugin?: () => Plugin;
+  enterBehavior?: EnterBehavior;      // Enter 键行为声明（无声明 = 框架默认：split 为 paragraph）
+  plugin?: () => Plugin;              // 仅用于 Enter 之外的特殊键盘处理
   containerRule?: ContainerRule;
 }

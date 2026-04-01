@@ -15,6 +15,36 @@
   margin-top: 0.5em;
 }
 
+/* ── noteTitle ── */
+.note-title {
+  position: relative;
+  margin-bottom: 0.5em;
+}
+.note-title__content {
+  font-size: 2.2em;
+  font-weight: 700;
+  color: #e8eaed;
+  line-height: 1.3;
+  outline: none;
+}
+/* placeholder：当 noteTitle 内容为空时显示 */
+.note-title.is-empty .note-title__content::before {
+  content: 'Untitled';
+  color: #555;
+  pointer-events: none;
+  position: absolute;
+}
+
+/* paragraph placeholder（暂不实现，需要 Plugin 添加 is-empty class） */
+/*
+.ProseMirror > p.is-empty::before {
+  content: 'Type / for commands...';
+  color: #555;
+  pointer-events: none;
+  position: absolute;
+}
+*/
+
 /* Paragraph */
 .ProseMirror p {
   margin: 0;
@@ -47,6 +77,33 @@
   border: none;
   font-size: inherit;
 }
+
+/* ── Lists ── */
+.ProseMirror ul,
+.ProseMirror ol {
+  padding-left: 24px;
+  margin: 0.25em 0;
+}
+
+.ProseMirror li {
+  margin: 0.15em 0;
+}
+
+.ProseMirror li > p {
+  margin: 0;
+}
+
+/* 无序列表标记层级 */
+.ProseMirror ul { list-style-type: disc; }
+.ProseMirror ul ul { list-style-type: circle; }
+.ProseMirror ul ul ul { list-style-type: square; }
+.ProseMirror ul ul ul ul { list-style-type: disc; }
+
+/* 有序列表标记层级 */
+.ProseMirror ol { list-style-type: decimal; }
+.ProseMirror ol ol { list-style-type: lower-alpha; }
+.ProseMirror ol ol ol { list-style-type: lower-roman; }
+.ProseMirror ol ol ol ol { list-style-type: decimal; }
 
 /* Blockquote */
 .ProseMirror blockquote {
@@ -93,12 +150,12 @@
   background: #264f78;
 }
 
-/* Placeholder — 空文档 */
-.ProseMirror p.is-empty:first-child::before {
-  content: 'Type / for commands...';
-  color: #555;
-  pointer-events: none;
-  position: absolute;
+/* Gap Cursor */
+.ProseMirror .ProseMirror-gapcursor {
+  position: relative;
+}
+.ProseMirror .ProseMirror-gapcursor:after {
+  border-top: 1px solid #e8eaed;
 }
 
 /* Gap Cursor */

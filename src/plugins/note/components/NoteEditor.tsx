@@ -1,62 +1,79 @@
-import { useEffect, useRef, useState } from 'react';
-import { EditorState } from 'prosemirror-state';
+import { useEffect, useRef, useState, useCallback } from 'react';
+import { EditorState, type Command } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
 import { keymap } from 'prosemirror-keymap';
-import { baseKeymap } from 'prosemirror-commands';
+import { baseKeymap, toggleMark } from 'prosemirror-commands';
 import { history, undo, redo } from 'prosemirror-history';
 import { dropCursor } from 'prosemirror-dropcursor';
 import { gapCursor } from 'prosemirror-gapcursor';
+import { splitListItem, liftListItem, sinkListItem } from 'prosemirror-schema-list';
 import { blockRegistry } from '../registry';
+import { slashCommandPlugin } from '../plugins/slash-command';
+import { enterHandlerPlugin } from '../plugins/enter-handler';
+import { blockHandlePlugin } from '../plugins/block-handle';
+import { SlashMenu } from './SlashMenu';
+import { HandleMenu } from './HandleMenu';
+import { FloatingToolbar } from './FloatingToolbar';
+import { ContextMenu } from './ContextMenu';
 
 /**
  * NoteEditor — ProseMirror 编辑器 React 组件
  *
  * 从 BlockRegistry 自动构建 Schema、NodeView、Plugin。
- * 这是 NoteView 的核心渲染组件。
  */
 
 export function NoteEditor() {
   const editorRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const [editorView, setEditorView] = useState<EditorView | null>(null);
 
   useEffect(() => {
     if (!editorRef.current || viewRef.current) return;
 
-    // 从 BlockRegistry 构建 Schema
     const schema = blockRegistry.buildSchema();
-
-    // 从 BlockRegistry 收集 NodeView
     const nodeViews = blockRegistry.buildNodeViews();
-
-    // 从 BlockRegistry 收集 Block Plugin
     const blockPlugins = blockRegistry.buildBlockPlugins();
 
-    // 初始文档：一个空段落
+    // 初始文档：标题 + 空段落
     const doc = schema.node('doc', null, [
+      schema.node('noteTitle'),
       schema.node('paragraph'),
     ]);
 
-    // 构建编辑器状态
+    // Mark 快捷键
+    const markKeymap: Record<string, Command> = {};
+    if (schema.marks.bold) markKeymap['Mod-b'] = toggleMark(schema.marks.bold);
+    if (schema.marks.italic) markKeymap['Mod-i'] = toggleMark(schema.marks.italic);
+    if (schema.marks.underline) markKeymap['Mod-u'] = toggleMark(schema.marks.underline);
+    if (schema.marks.strike) markKeymap['Mod-Shift-s'] = toggleMark(schema.marks.strike);
+    if (schema.marks.code) markKeymap['Mod-e'] = toggleMark(schema.marks.code);
+
+    // 列表快捷键（Tab/Shift+Tab 缩进，Enter 分裂列表项）
+    const listKeymap: Record<string, Command> = {};
+    const listItemType = schema.nodes.listItem;
+    if (listItemType) {
+      listKeymap['Enter'] = splitListItem(listItemType);
+      listKeymap['Tab'] = sinkListItem(listItemType);
+      listKeymap['Shift-Tab'] = liftListItem(listItemType);
+    }
+
     const state = EditorState.create({
       doc,
       plugins: [
-        // 框架插件（优先级从高到低）
-        keymap({
-          'Mod-z': undo,
-          'Mod-Shift-z': redo,
-          'Mod-y': redo,
-        }),
+        enterHandlerPlugin(),           // Enter 行为（最高优先级，在 baseKeymap 之前）
+        keymap({ 'Mod-z': undo, 'Mod-Shift-z': redo, 'Mod-y': redo }),
+        keymap(markKeymap),
+        keymap(listKeymap),
         keymap(baseKeymap),
         history(),
         dropCursor(),
         gapCursor(),
-
-        // Block 插件（从注册表收集）
+        slashCommandPlugin(),
+        blockHandlePlugin(),
         ...blockPlugins,
       ],
     });
 
-    // 创建编辑器视图
     const view = new EditorView(editorRef.current, {
       state,
       nodeViews,
@@ -67,16 +84,27 @@ export function NoteEditor() {
     });
 
     viewRef.current = view;
+    setEditorView(view);
 
     return () => {
       view.destroy();
       viewRef.current = null;
+      setEditorView(null);
     };
   }, []);
+
+  // 菜单互斥：右键菜单打开时隐藏 FloatingToolbar
+  const [contextMenuOpen, setContextMenuOpen] = useState(false);
+  const handleContextOpen = useCallback(() => setContextMenuOpen(true), []);
+  const handleContextClose = useCallback(() => setContextMenuOpen(false), []);
 
   return (
     <div style={styles.container}>
       <div ref={editorRef} style={styles.editor} />
+      <SlashMenu view={editorView} />
+      <HandleMenu view={editorView} />
+      {!contextMenuOpen && <FloatingToolbar view={editorView} />}
+      <ContextMenu view={editorView} onOpen={handleContextOpen} onClose={handleContextClose} />
     </div>
   );
 }
@@ -86,11 +114,11 @@ const styles: Record<string, React.CSSProperties> = {
     flex: 1,
     overflow: 'auto',
     background: '#1e1e1e',
+    position: 'relative',
   },
   editor: {
-    maxWidth: '800px',
-    margin: '0 auto',
-    padding: '24px 32px',
+    width: '100%',
+    padding: '24px calc(max(32px, (100% - 800px) / 2))',
     minHeight: '100%',
     outline: 'none',
   },

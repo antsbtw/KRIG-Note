@@ -33,16 +33,19 @@ class BlockRegistry {
   /** 从所有 BlockDef 构建 ProseMirror Schema */
   buildSchema(): Schema {
     const nodes: Record<string, NodeSpec> = {
-      // doc 和 text 是 ProseMirror 必需的基础节点
-      doc: { content: 'block+' },
+      // doc: noteTitle 可选首子 + 正文 block
+      doc: { content: 'noteTitle? block+' },
       text: { group: 'inline' },
     };
 
     for (const block of this.blocks.values()) {
-      nodes[block.name] = {
-        ...block.nodeSpec,
-        group: block.nodeSpec.group || block.group,
-      };
+      const spec = { ...block.nodeSpec };
+      // group: 优先用 nodeSpec 中声明的，否则用 BlockDef.group
+      // 空字符串 '' 表示不属于任何组（如 listItem）
+      if (spec.group === undefined && block.group) {
+        spec.group = block.group;
+      }
+      nodes[block.name] = spec;
     }
 
     // 基础 Mark（后续可扩展为 MarkDef 注册制）

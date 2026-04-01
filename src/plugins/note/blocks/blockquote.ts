@@ -20,6 +20,11 @@ export const blockquoteBlock: BlockDef = {
     canDrag: true,
   },
 
+  enterBehavior: {
+    action: 'split',
+    exitCondition: 'empty-enter',
+  },
+
   containerRule: {
     requiredFirstChildType: undefined,
   },

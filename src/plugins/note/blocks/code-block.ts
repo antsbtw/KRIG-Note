@@ -27,6 +27,11 @@ export const codeBlockBlock: BlockDef = {
     canDrag: true,
   },
 
+  enterBehavior: {
+    action: 'newline',
+    exitCondition: 'double-enter',
+  },
+
   slashMenu: {
     label: 'Code Block',
     icon: '< >',
