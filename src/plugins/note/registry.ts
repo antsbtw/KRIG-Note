@@ -9,8 +9,21 @@ import type { BlockDef, NodeViewFactory, BlockCapabilities, ActionDef, Container
  * 框架自动完成：Schema 构建、NodeView 收集、Plugin 收集、SlashMenu 生成
  */
 
+/** 额外的 SlashMenu 项（一个 Block 多个菜单项，如 heading H1/H2/H3） */
+interface ExtraSlashItem {
+  id: string;
+  blockName: string;
+  label: string;
+  icon?: string;
+  group: string;
+  keywords?: string[];
+  order?: number;
+  attrs?: Record<string, unknown>;
+}
+
 class BlockRegistry {
   private blocks: Map<string, BlockDef> = new Map();
+  private extraSlashItems: ExtraSlashItem[] = [];
 
   /** 注册一个 Block */
   register(block: BlockDef): void {
@@ -28,6 +41,11 @@ class BlockRegistry {
   /** 获取指定 Block */
   get(name: string): BlockDef | undefined {
     return this.blocks.get(name);
+  }
+
+  /** 注册额外的 SlashMenu 项（一个 Block 多个菜单项） */
+  registerSlashItem(item: ExtraSlashItem): void {
+    this.extraSlashItems.push(item);
   }
 
   /** 从所有 BlockDef 构建 ProseMirror Schema */
@@ -107,15 +125,19 @@ class BlockRegistry {
     return plugins;
   }
 
-  /** 生成 SlashMenu 项（从注册表自动生成） */
+  /** 生成 SlashMenu 项（从注册表 + 额外项自动生成） */
   buildSlashItems(): Array<{
     id: string;
+    blockName?: string;
     label: string;
     icon?: string;
     group: string;
     keywords?: string[];
+    attrs?: Record<string, unknown>;
+    order?: number;
   }> {
-    return this.getAll()
+    // Block 注册的 SlashMenu 项
+    const items = this.getAll()
       .filter((b) => b.slashMenu != null)
       .map((b) => ({
         id: b.name,
@@ -123,12 +145,27 @@ class BlockRegistry {
         icon: b.slashMenu!.icon,
         group: b.slashMenu!.group,
         keywords: b.slashMenu!.keywords,
-      }))
-      .sort((a, b) => {
-        const blockA = this.blocks.get(a.id);
-        const blockB = this.blocks.get(b.id);
-        return (blockA?.slashMenu?.order ?? 0) - (blockB?.slashMenu?.order ?? 0);
+        order: b.slashMenu!.order,
+      }));
+
+    // 额外注册的 SlashMenu 项（如 heading H1/H2/H3）
+    for (const extra of this.extraSlashItems) {
+      items.push({
+        id: extra.id,
+        label: extra.label,
+        icon: extra.icon,
+        group: extra.group,
+        keywords: extra.keywords,
+        order: extra.order,
       });
+    }
+
+    return items.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  }
+
+  /** 获取额外 SlashMenu 项的信息（blockName + attrs） */
+  getExtraSlashItem(id: string): ExtraSlashItem | undefined {
+    return this.extraSlashItems.find((item) => item.id === id);
   }
 
   /** 获取指定 Block 的 capabilities */

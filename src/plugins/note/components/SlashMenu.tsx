@@ -71,8 +71,14 @@ export function SlashMenu({ view }: SlashMenuProps) {
 
       const { from, to } = pluginState;
       const schema = view.state.schema;
-      const blockDef = blockRegistry.get(itemId);
-      const nodeType = schema.nodes[itemId];
+
+      // 检查是否为额外注册的 SlashMenu 项（如 heading1 → heading + {level:1}）
+      const extraItem = blockRegistry.getExtraSlashItem(itemId);
+      const actualBlockName = extraItem?.blockName ?? itemId;
+      const extraAttrs = extraItem?.attrs;
+
+      const blockDef = blockRegistry.get(actualBlockName);
+      const nodeType = schema.nodes[actualBlockName];
       if (!nodeType) return;
 
       // 关闭菜单 + 删除 /query 文本
@@ -90,22 +96,22 @@ export function SlashMenu({ view }: SlashMenuProps) {
         const blockEnd = $from.after(1);
 
         let containerNode;
-        if (itemId === 'toggleHeading') {
+        if (actualBlockName === 'toggleHeading') {
           // toggleHeading: heading(空) + paragraph(空)
           containerNode = nodeType.create(
             { open: true },
             [schema.nodes.heading.create({ level: 2 }), schema.nodes.paragraph.create()],
           );
-        } else if (itemId === 'toggleList') {
+        } else if (actualBlockName === 'toggleList') {
           // toggleList: paragraph(空)
           containerNode = nodeType.create(
             { open: true },
             [schema.nodes.paragraph.create()],
           );
-        } else if (itemId === 'blockquote') {
+        } else if (actualBlockName === 'blockquote') {
           // blockquote: paragraph(空)
           containerNode = nodeType.create(null, [schema.nodes.paragraph.create()]);
-        } else if (itemId === 'bulletList' || itemId === 'orderedList') {
+        } else if (actualBlockName === 'bulletList' || actualBlockName === 'orderedList') {
           // 列表: listItem(paragraph)
           const listItem = schema.nodes.listItem.create(null, [schema.nodes.paragraph.create()]);
           containerNode = nodeType.create(null, [listItem]);
@@ -119,7 +125,7 @@ export function SlashMenu({ view }: SlashMenuProps) {
         const resolvedPos = replaceTr.doc.resolve(blockStart + 2);
         replaceTr.setSelection(TextSelection.near(resolvedPos));
         view.dispatch(replaceTr);
-      } else if (nodeType.spec.content === 'text*' || itemId === 'codeBlock') {
+      } else if (nodeType.spec.content === 'text*' || actualBlockName === 'codeBlock') {
         // 纯文本 Block（codeBlock）
         const { $from } = view.state.selection;
         const blockStart = $from.before(1);
@@ -129,7 +135,7 @@ export function SlashMenu({ view }: SlashMenuProps) {
         const resolvedPos = replaceTr.doc.resolve(blockStart + 1);
         replaceTr.setSelection(TextSelection.near(resolvedPos));
         view.dispatch(replaceTr);
-      } else if (itemId === 'horizontalRule') {
+      } else if (actualBlockName === 'horizontalRule') {
         // 分割线：插入 hr + 新 paragraph
         const { $from } = view.state.selection;
         const blockStart = $from.before(1);
@@ -141,8 +147,8 @@ export function SlashMenu({ view }: SlashMenuProps) {
         replaceTr.setSelection(TextSelection.near(resolvedPos));
         view.dispatch(replaceTr);
       } else {
-        // 简单 Block（paragraph, heading 等）— setBlockType
-        setBlockType(nodeType)(view.state, view.dispatch);
+        // 简单 Block（paragraph, heading 等）— setBlockType + 额外 attrs
+        setBlockType(nodeType, extraAttrs || undefined)(view.state, view.dispatch);
       }
 
       view.focus();

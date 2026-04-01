@@ -24,6 +24,23 @@ export function registerAllBlocks(): void {
   // 基础 Block（heading 自带 toggle 能力）
   blockRegistry.register(paragraphBlock);
   blockRegistry.register(headingBlock);
+
+  // Heading H1/H2/H3 SlashMenu 单独注册
+  blockRegistry.registerSlashItem({
+    id: 'heading1', blockName: 'heading', label: 'Heading 1', icon: 'H1',
+    group: 'basic', keywords: ['h1', 'heading1', 'title'], order: 1,
+    attrs: { level: 1 },
+  });
+  blockRegistry.registerSlashItem({
+    id: 'heading2', blockName: 'heading', label: 'Heading 2', icon: 'H2',
+    group: 'basic', keywords: ['h2', 'heading2'], order: 2,
+    attrs: { level: 2 },
+  });
+  blockRegistry.registerSlashItem({
+    id: 'heading3', blockName: 'heading', label: 'Heading 3', icon: 'H3',
+    group: 'basic', keywords: ['h3', 'heading3'], order: 3,
+    attrs: { level: 3 },
+  });
   blockRegistry.register(codeBlockBlock);
   blockRegistry.register(blockquoteBlock);
   blockRegistry.register(horizontalRuleBlock);

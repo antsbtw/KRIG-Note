@@ -51,14 +51,14 @@ export function blockHandlePlugin(): Plugin {
     dom.innerHTML = '⠿';
     dom.style.cssText = `
       position: absolute;
-      width: 28px;
-      height: 28px;
+      width: 24px;
+      height: 24px;
       display: flex;
       align-items: center;
       justify-content: center;
       cursor: grab;
       color: #555;
-      font-size: 16px;
+      font-size: 18px;
       border-radius: 4px;
       user-select: none;
       opacity: 0;
@@ -66,16 +66,48 @@ export function blockHandlePlugin(): Plugin {
       z-index: 10;
     `;
 
+    // 自定义 Tooltip
+    const tooltip = document.createElement('div');
+    tooltip.style.cssText = `
+      position: absolute;
+      left: 50%;
+      top: 100%;
+      transform: translateX(-50%);
+      margin-top: 6px;
+      padding: 6px 10px;
+      background: #333;
+      border: 1px solid #555;
+      border-radius: 6px;
+      font-size: 12px;
+      color: #ccc;
+      white-space: nowrap;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.15s;
+      z-index: 20;
+      line-height: 1.4;
+      text-align: center;
+    `;
+    tooltip.innerHTML = '拖动以移动<br>点击 或 ⌘/ 打开菜单';
+    dom.appendChild(tooltip);
+
+    let tooltipTimer: ReturnType<typeof setTimeout> | null = null;
+
     dom.addEventListener('mouseenter', () => {
       isHandleHovered = true;
       if (hideTimeout) { clearTimeout(hideTimeout); hideTimeout = null; }
       dom.style.background = '#333';
+      // 延迟显示 tooltip
+      tooltipTimer = setTimeout(() => { tooltip.style.opacity = '1'; }, 500);
       dom.style.color = '#e8eaed';
       dom.style.opacity = '1';
     });
 
     dom.addEventListener('mouseleave', () => {
       isHandleHovered = false;
+      // 隐藏 tooltip
+      if (tooltipTimer) { clearTimeout(tooltipTimer); tooltipTimer = null; }
+      tooltip.style.opacity = '0';
       if (!currentState.menuOpen && !isDragging) {
         dom.style.background = 'transparent';
         dom.style.color = '#555';
@@ -91,6 +123,9 @@ export function blockHandlePlugin(): Plugin {
     dom.addEventListener('mousedown', (e) => {
       e.preventDefault();
       e.stopPropagation();
+      // 隐藏 tooltip
+      if (tooltipTimer) { clearTimeout(tooltipTimer); tooltipTimer = null; }
+      tooltip.style.opacity = '0';
       dragStartY = e.clientY;
       dragFromPos = currentState.pos;
       isDragging = false;
@@ -217,8 +252,15 @@ export function blockHandlePlugin(): Plugin {
       const coords = view.coordsAtPos(pos);
       const containerRect = view.dom.parentElement?.getBoundingClientRect();
       if (!containerRect) return;
-      handleDOM.style.left = `${coords.left - containerRect.left - 34}px`;
-      handleDOM.style.top = `${coords.top - containerRect.top + 1}px`;
+
+      // 获取 Block DOM 的第一行行高，居中 Handle
+      const blockDOM = view.nodeDOM(pos) as HTMLElement | null;
+      const lineHeight = blockDOM ? parseInt(getComputedStyle(blockDOM).lineHeight) || (coords.bottom - coords.top) : 24;
+      const handleSize = 24;
+      const topOffset = (lineHeight - handleSize) / 2;
+
+      handleDOM.style.left = `${coords.left - containerRect.left - 30}px`;
+      handleDOM.style.top = `${coords.top - containerRect.top + topOffset}px`;
       handleDOM.style.opacity = '1';
     } catch {
       handleDOM.style.opacity = '0';
