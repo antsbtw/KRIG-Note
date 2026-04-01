@@ -50,6 +50,15 @@ export function enterHandlerPlugin(): Plugin {
 
         const isEmpty = blockNode.textContent.length === 0;
 
+        // 对 codeBlock (newline + double-enter)：检查光标是否在末尾空行
+        const isAtEmptyLine = (() => {
+          if (behavior.action !== 'newline') return isEmpty;
+          const text = blockNode.textContent;
+          const cursorOffset = $from.parentOffset;
+          // 光标在末尾，且末尾是换行符（上一次 Enter 产生的）
+          return cursorOffset === text.length && text.endsWith('\n');
+        })();
+
         // ── 退出条件检查 ──
 
         if (behavior.exitCondition === 'always') {
@@ -69,17 +78,12 @@ export function enterHandlerPlugin(): Plugin {
         }
 
         if (behavior.exitCondition === 'double-enter') {
-          if (isEmpty) {
-            consecutiveEmptyEnters++;
-            if (consecutiveEmptyEnters >= 2) {
-              // 连按两次 Enter 退出（如 codeBlock）
-              event.preventDefault();
-              exitFromBlock(view, blockNode, blockDepth);
-              consecutiveEmptyEnters = 0;
-              return true;
-            }
-          } else {
+          if (isAtEmptyLine) {
+            // 光标在末尾空行 → 退出 codeBlock
+            event.preventDefault();
+            exitFromBlock(view, blockNode, blockDepth);
             consecutiveEmptyEnters = 0;
+            return true;
           }
         }
 

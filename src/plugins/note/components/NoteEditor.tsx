@@ -59,7 +59,8 @@ export function NoteEditor() {
     const state = EditorState.create({
       doc,
       plugins: [
-        blockSelectionPlugin(),          // Block 选中（Decorations 方式，不操作 DOM）
+        slashCommandPlugin(),            // SlashMenu（最高优先级，拦截 Enter/Escape）
+        blockSelectionPlugin(),          // Block 选中
         enterHandlerPlugin(),           // Enter 行为
         keymap({ 'Mod-z': undo, 'Mod-Shift-z': redo, 'Mod-y': redo }),
         keymap(markKeymap),
@@ -68,7 +69,6 @@ export function NoteEditor() {
         history(),
         dropCursor(),
         gapCursor(),
-        slashCommandPlugin(),
         blockHandlePlugin(),
         ...blockPlugins,
       ],

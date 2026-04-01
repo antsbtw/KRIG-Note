@@ -61,20 +61,8 @@ function registerPlugins(): void {
 
   // Application Menu 注册（全局稳定，始终显示所有菜单）
 
-  menuRegistry.register({
-    id: 'edit',
-    label: 'Edit',
-    order: 1,
-    items: [
-      { id: 'undo', label: 'Undo', accelerator: 'CmdOrCtrl+Z', handler: () => {} },
-      { id: 'redo', label: 'Redo', accelerator: 'CmdOrCtrl+Shift+Z', handler: () => {} },
-      { id: 'sep1', label: '', separator: true, handler: () => {} },
-      { id: 'cut', label: 'Cut', accelerator: 'CmdOrCtrl+X', handler: () => {} },
-      { id: 'copy', label: 'Copy', accelerator: 'CmdOrCtrl+C', handler: () => {} },
-      { id: 'paste', label: 'Paste', accelerator: 'CmdOrCtrl+V', handler: () => {} },
-      { id: 'select-all', label: 'Select All', accelerator: 'CmdOrCtrl+A', handler: () => {} },
-    ],
-  });
+  // Edit 菜单：使用 Electron role（系统自动处理 Cmd+C/X/V/Z）
+  menuRegistry.registerRoleMenu('edit', 'Edit', 1);
 
   menuRegistry.register({
     id: 'view',

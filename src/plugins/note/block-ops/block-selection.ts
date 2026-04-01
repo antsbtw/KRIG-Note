@@ -1,5 +1,6 @@
-import { Plugin, PluginKey } from 'prosemirror-state';
+import { Plugin, PluginKey, TextSelection } from 'prosemirror-state';
 import { Decoration, DecorationSet } from 'prosemirror-view';
+import { Node as PMNode } from 'prosemirror-model';
 import type { EditorView } from 'prosemirror-view';
 
 /**
@@ -127,6 +128,28 @@ export function blockSelectionPlugin(): Plugin {
           return true;
         }
 
+        // Cmd+V：粘贴 Block（无论是否选中，只要内部剪贴板有内容）
+        if ((event.metaKey || event.ctrlKey) && event.key === 'v') {
+          const clipboard = (globalThis as any).__blockClipboard as { json: unknown }[] | undefined;
+          if (clipboard && clipboard.length > 0) {
+            event.preventDefault();
+            const { $from } = view.state.selection;
+            const blockPos = $from.depth >= 1 ? $from.after(1) : $from.pos;
+
+            let tr = view.state.tr;
+            let currentPos = blockPos;
+            for (const item of clipboard) {
+              const node = PMNode.fromJSON(view.state.schema, item.json as Record<string, unknown>);
+              tr = tr.insert(currentPos, node);
+              currentPos += node.nodeSize;
+            }
+            if (isActive) tr.setMeta(blockSelectionKey, { clear: true });
+            view.dispatch(tr);
+            return true;
+          }
+          return false;
+        }
+
         if (!isActive) return false;
 
         // Shift+↑/↓ 多选
@@ -156,10 +179,81 @@ export function blockSelectionPlugin(): Plugin {
           return true;
         }
 
-        // 方向键（无 Shift）退出
-        if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key) && !event.shiftKey) {
-          view.dispatch(view.state.tr.setMeta(blockSelectionKey, { clear: true }));
-          return false;
+        // Cmd+C：复制选中的 Block
+        if ((event.metaKey || event.ctrlKey) && event.key === 'c') {
+          event.preventDefault();
+          // 收集选中 Block 的 JSON 到内部剪贴板
+          const sorted = [...state!.positions].sort((a, b) => a - b);
+          const items: { json: unknown }[] = [];
+          for (const pos of sorted) {
+            const node = view.state.doc.nodeAt(pos);
+            if (node) items.push({ json: node.toJSON() });
+          }
+          if (items.length > 0) {
+            (globalThis as any).__blockClipboard = items;
+          }
+          return true;
+        }
+
+        // Cmd+X：剪切选中的 Block
+        if ((event.metaKey || event.ctrlKey) && event.key === 'x') {
+          event.preventDefault();
+          // 先复制
+          const sorted = [...state!.positions].sort((a, b) => a - b);
+          const items: { json: unknown }[] = [];
+          for (const pos of sorted) {
+            const node = view.state.doc.nodeAt(pos);
+            if (node) items.push({ json: node.toJSON() });
+          }
+          if (items.length > 0) {
+            (globalThis as any).__blockClipboard = items;
+          }
+          // 再删除（从后往前）
+          const reverseSorted = [...state!.positions].sort((a, b) => b - a);
+          let tr = view.state.tr;
+          for (const pos of reverseSorted) {
+            const node = tr.doc.nodeAt(pos);
+            if (node) tr = tr.delete(pos, pos + node.nodeSize);
+          }
+          tr.setMeta(blockSelectionKey, { clear: true });
+          view.dispatch(tr);
+          return true;
+        }
+
+        // ↑/↓（无 Shift）：切换选中的 Block
+        if ((event.key === 'ArrowUp' || event.key === 'ArrowDown') && !event.shiftKey) {
+          event.preventDefault();
+          const currentPos = state!.positions[state!.positions.length - 1];
+          const adj = getAdjacentBlockPos(view, currentPos, event.key === 'ArrowUp' ? 'up' : 'down');
+          if (adj !== null) {
+            view.dispatch(view.state.tr.setMeta(blockSelectionKey, {
+              action: 'select', positions: [adj],
+            }));
+          }
+          return true;
+        }
+
+        // ←：取消选中，光标到第一个选中 Block 开头
+        // →：取消选中，光标到最后一个选中 Block 末尾
+        if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+          event.preventDefault();
+          const sorted = [...state!.positions].sort((a, b) => a - b);
+          const tr = view.state.tr;
+          tr.setMeta(blockSelectionKey, { clear: true });
+
+          if (event.key === 'ArrowLeft') {
+            const firstPos = sorted[0];
+            tr.setSelection(TextSelection.near(tr.doc.resolve(firstPos + 1)));
+          } else {
+            const lastPos = sorted[sorted.length - 1];
+            const lastNode = view.state.doc.nodeAt(lastPos);
+            if (lastNode) {
+              tr.setSelection(TextSelection.near(tr.doc.resolve(lastPos + lastNode.nodeSize - 1)));
+            }
+          }
+
+          view.dispatch(tr);
+          return true;
         }
 
         // 字符输入退出
