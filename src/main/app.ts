@@ -8,6 +8,10 @@ import { workModeRegistry } from './workmode/registry';
 import { protocolRegistry } from './protocol/registry';
 import { menuRegistry } from './menu/registry';
 import { loadSession, saveSession, buildSession } from './storage/session-store';
+import { initSurrealDB, shutdownSurrealDB, isDBReady } from './storage/client';
+import { initSchema } from './storage/schema';
+import { surrealSessionStore } from './storage/surreal-session-store';
+import { activityStore } from './storage/activity-store';
 
 /**
  * KRIG Note — 应用入口
@@ -193,6 +197,28 @@ app.whenReady().then(() => {
 
   // 5. 构建 Application Menu
   menuRegistry.rebuild();
+
+  // 6. 异步启动 SurrealDB（不阻塞窗口）
+  initSurrealDB()
+    .then(() => initSchema())
+    .then(() => {
+      console.log('[KRIG] SurrealDB ready');
+      activityStore.log('app.start');
+
+      // 未来：从 SurrealDB 恢复 Session、加载 NoteFile 列表
+      // 通知 renderer SurrealDB 就绪
+      const win = getMainWindow();
+      if (win) {
+        for (const child of win.contentView.children) {
+          if ('webContents' in child) {
+            (child as any).webContents.send('db:ready');
+          }
+        }
+      }
+    })
+    .catch((err) => {
+      console.error('[KRIG] SurrealDB init failed:', err);
+    });
 });
 
 // ── 保存 Session ──
@@ -208,9 +234,11 @@ function persistSession(): void {
 // 定时自动保存（每 30 秒）
 setInterval(persistSession, 30_000);
 
-// 退出前保存
+// 退出前保存 + 关闭 SurrealDB
 app.on('before-quit', () => {
   persistSession();
+  activityStore.log('app.quit').catch(() => {});
+  shutdownSurrealDB();
 });
 
 app.on('window-all-closed', () => {
