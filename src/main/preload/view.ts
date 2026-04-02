@@ -54,6 +54,15 @@ contextBridge.exposeInMainWorld('viewAPI', {
     return () => ipcRenderer.removeListener(IPC.DB_READY, listener);
   },
 
+  // Workspace 状态同步
+  setActiveNote: (noteId: string | null, noteTitle?: string) => ipcRenderer.invoke(IPC.SET_ACTIVE_NOTE, noteId, noteTitle),
+
+  onRestoreWorkspaceState: (callback: (state: { activeNoteId: string | null }) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, state: any) => callback(state);
+    ipcRenderer.on(IPC.RESTORE_WORKSPACE_STATE, listener);
+    return () => ipcRenderer.removeListener(IPC.RESTORE_WORKSPACE_STATE, listener);
+  },
+
   // 加载测试文档
   onLoadTestDoc: (callback: () => void) => {
     const listener = () => callback();

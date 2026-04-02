@@ -49,6 +49,8 @@ declare const viewAPI: {
   closeRightSlot: () => Promise<void>;
   onStateChanged: (callback: (state: unknown) => void) => () => void;
   onLoadTestDoc: (callback: () => void) => () => void;
+  setActiveNote: (noteId: string | null, noteTitle?: string) => Promise<void>;
+  onRestoreWorkspaceState: (callback: (state: { activeNoteId: string | null }) => void) => () => void;
 };
 
 // Schema（延迟构建，确保 registerAllBlocks 已调用）
@@ -172,6 +174,9 @@ export function NoteEditor() {
         if (node.type.name === 'noteTitle' && node.textContent) title = node.textContent;
       });
       setCurrentTitle(title || 'Untitled');
+
+      // 报告给 Workspace（含标题，用于自动更新 tab label）
+      viewAPI.setActiveNote(noteId, title || 'Untitled');
     } catch (err) {
       console.error('[NoteEditor] Failed to load doc:', err);
     }
@@ -370,12 +375,22 @@ export function NoteEditor() {
       isDirtyRef.current = false;
     });
 
+    // Workspace 切换 → 恢复该 Workspace 的 activeNoteId
+    const unsubRestore = viewAPI.onRestoreWorkspaceState((state: { activeNoteId: string | null }) => {
+      if (state.activeNoteId) {
+        viewAPI.noteLoad(state.activeNoteId).then((note: any) => {
+          if (note) loadNote(note.id, note.doc_content);
+        });
+      }
+    });
+
     return () => {
       // 退出前保存
       saveCurrentNote();
       unsubOpenNote();
       unsubDB();
       unsubTestDoc();
+      unsubRestore();
       view.destroy();
       viewRef.current = null;
       setEditorView(null);

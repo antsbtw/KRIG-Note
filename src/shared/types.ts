@@ -21,9 +21,12 @@ export type WorkspaceId = string;
 export interface WorkspaceState {
   id: WorkspaceId;
   label: string;
+  customLabel: boolean;              // true = 用户手动命名，不自动跟随笔记标题
   workModeId: string;
   navSideVisible: boolean;
   dividerRatio: number;
+  activeNoteId: string | null;        // NoteView 当前打开的笔记 ID
+  expandedFolders: string[];          // NavSide 展开的文件夹 ID 列表
   slotBinding: {
     left: ViewInstanceId | null;
     right: ViewInstanceId | null;
@@ -122,6 +125,7 @@ export const IPC = {
   WORKSPACE_SWITCH: 'workspace:switch',
   WORKSPACE_CLOSE: 'workspace:close',
   WORKSPACE_RENAME: 'workspace:rename',
+  WORKSPACE_REORDER: 'workspace:reorder',
   WORKSPACE_LIST: 'workspace:list',
   WORKSPACE_STATE_CHANGED: 'workspace:state-changed',
 
@@ -170,6 +174,11 @@ export const IPC = {
   FOLDER_DELETE: 'folder:delete',
   FOLDER_MOVE: 'folder:move',
   FOLDER_LIST: 'folder:list',
+
+  // Workspace ↔ View 状态同步
+  SET_ACTIVE_NOTE: 'workspace:set-active-note',            // NoteView → main: 报告当前打开的笔记
+  SET_EXPANDED_FOLDERS: 'workspace:set-expanded-folders',  // NavSide → main: 保存展开的文件夹
+  RESTORE_WORKSPACE_STATE: 'workspace:restore-state',      // main → NavSide/NoteView: 切换 Workspace 时恢复状态
 
   // 测试文档
   LOAD_TEST_DOC: 'note:load-test-doc',

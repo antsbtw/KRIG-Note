@@ -20,9 +20,12 @@ class WorkspaceManager {
     const workspace: WorkspaceState = {
       id,
       label: label ?? `Workspace ${this.counter}`,
+      customLabel: !!label,
       workModeId: defaultMode?.id ?? '',
       navSideVisible: true,
       dividerRatio: 0.5,
+      activeNoteId: null,
+      expandedFolders: [],
       slotBinding: {
         left: null,
         right: null,
@@ -96,6 +99,20 @@ class WorkspaceManager {
   /** 重命名 Workspace */
   rename(id: WorkspaceId, label: string): void {
     this.update(id, { label });
+  }
+
+  /** 按指定 ID 顺序重排 Workspace */
+  reorder(ids: WorkspaceId[]): void {
+    const newMap = new Map<WorkspaceId, WorkspaceState>();
+    for (const id of ids) {
+      const ws = this.workspaces.get(id);
+      if (ws) newMap.set(id, ws);
+    }
+    // 保留未在列表中的（理论上不应该有）
+    for (const [id, ws] of this.workspaces) {
+      if (!newMap.has(id)) newMap.set(id, ws);
+    }
+    this.workspaces = newMap;
   }
 
   /** Workspace 数量 */

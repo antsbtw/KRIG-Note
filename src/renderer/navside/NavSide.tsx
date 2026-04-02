@@ -40,7 +40,9 @@ declare const navSideAPI: {
   folderList: () => Promise<FolderRecord[]>;
   isDBReady: () => Promise<boolean>;
   onDBReady: (callback: () => void) => () => void;
-  getActiveState: () => Promise<{ workspaces: unknown[]; activeId: string | null; active?: { workModeId: string } }>;
+  getActiveState: () => Promise<{ workspaces: unknown[]; activeId: string | null; active?: { workModeId: string; activeNoteId?: string | null; expandedFolders?: string[] } }>;
+  setExpandedFolders: (folderIds: string[]) => Promise<void>;
+  onRestoreWorkspaceState: (callback: (state: { activeNoteId: string | null; expandedFolders: string[] }) => void) => () => void;
   onStateChanged: (callback: (state: unknown) => void) => () => void;
   resizeStart: (screenX: number) => void;
   resizeMove: (screenX: number) => void;
@@ -109,12 +111,20 @@ export function NavSide() {
     navSideAPI.listWorkModes().then(setModes);
 
     navSideAPI.getActiveState().then((data) => {
-      if (data.active) setActiveWorkModeId((data.active as any).workModeId);
+      if (data.active) {
+        setActiveWorkModeId((data.active as any).workModeId);
+        // 恢复 Workspace 的 NavSide 状态
+        if ((data.active as any).activeNoteId) setActiveNoteId((data.active as any).activeNoteId);
+        if ((data.active as any).expandedFolders) setExpandedFolders(new Set((data.active as any).expandedFolders));
+      }
     });
 
     const unsubState = navSideAPI.onStateChanged((data: unknown) => {
-      const d = data as { active?: { workModeId: string } };
-      if (d.active) setActiveWorkModeId(d.active.workModeId);
+      const d = data as { active?: { workModeId: string; activeNoteId?: string | null } };
+      if (d.active) {
+        setActiveWorkModeId(d.active.workModeId);
+        if (d.active.activeNoteId !== undefined) setActiveNoteId(d.active.activeNoteId);
+      }
     });
 
     // noteList 变更时重新加载全部（folder 可能也变了）
@@ -131,8 +141,19 @@ export function NavSide() {
       if (ready) { setDbReady(true); fetchAll(); }
     });
 
-    return () => { unsubState(); unsubNoteList(); unsubDB(); };
+    // Workspace 切换 → 恢复 NavSide 状态
+    const unsubRestore = navSideAPI.onRestoreWorkspaceState((state) => {
+      if (state.activeNoteId !== undefined) setActiveNoteId(state.activeNoteId);
+      if (state.expandedFolders) setExpandedFolders(new Set(state.expandedFolders));
+    });
+
+    return () => { unsubState(); unsubNoteList(); unsubDB(); unsubRestore(); };
   }, [fetchAll]);
+
+  // 同步 expandedFolders 到 Workspace
+  useEffect(() => {
+    navSideAPI.setExpandedFolders(Array.from(expandedFolders));
+  }, [expandedFolders]);
 
   // 右键菜单：点击空白关闭
   useEffect(() => {

@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('shellAPI', {
   switchWorkspace: (id: string) => ipcRenderer.invoke(IPC.WORKSPACE_SWITCH, id),
   closeWorkspace: (id: string) => ipcRenderer.invoke(IPC.WORKSPACE_CLOSE, id),
   renameWorkspace: (id: string, label: string) => ipcRenderer.invoke(IPC.WORKSPACE_RENAME, id, label),
+  reorderWorkspaces: (ids: string[]) => ipcRenderer.invoke(IPC.WORKSPACE_REORDER, ids),
 
   // NavSide
   toggleNavSide: () => ipcRenderer.invoke(IPC.NAVSIDE_TOGGLE),

@@ -50,6 +50,14 @@ contextBridge.exposeInMainWorld('navSideAPI', {
     return () => ipcRenderer.removeListener(IPC.DB_READY, listener);
   },
 
+  // Workspace 状态同步
+  setExpandedFolders: (folderIds: string[]) => ipcRenderer.invoke(IPC.SET_EXPANDED_FOLDERS, folderIds),
+  onRestoreWorkspaceState: (callback: (state: { activeNoteId: string | null; expandedFolders: string[] }) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, state: any) => callback(state);
+    ipcRenderer.on(IPC.RESTORE_WORKSPACE_STATE, listener);
+    return () => ipcRenderer.removeListener(IPC.RESTORE_WORKSPACE_STATE, listener);
+  },
+
   // 获取当前 Workspace 状态（初始化用）
   getActiveState: () => ipcRenderer.invoke(IPC.WORKSPACE_LIST),
 

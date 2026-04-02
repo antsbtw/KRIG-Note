@@ -41,10 +41,25 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
   ipcMain.handle(IPC.WORKSPACE_SWITCH, (_event, id: string) => {
     const oldActiveId = workspaceManager.getActiveId();
     if (oldActiveId === id) return;
+
+    // 保存当前 NavSide 展开状态到旧 Workspace（由 NavSide 通过 broadcastWorkspaceState 间接保存）
     const workspace = workspaceManager.setActive(id);
     if (workspace) {
       switchWorkspace(oldActiveId, id);
       broadcastWorkspaceState(getMainWindow());
+
+      // 通知所有 View 恢复新 Workspace 的状态
+      const mainWindow = getMainWindow();
+      if (mainWindow) {
+        for (const child of mainWindow.contentView.children) {
+          if ('webContents' in child) {
+            (child as any).webContents.send(IPC.RESTORE_WORKSPACE_STATE, {
+              activeNoteId: workspace.activeNoteId,
+              expandedFolders: workspace.expandedFolders,
+            });
+          }
+        }
+      }
     }
     return workspace;
   });
@@ -60,8 +75,15 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
     return newActiveId;
   });
 
+  ipcMain.handle(IPC.WORKSPACE_REORDER, (_event, ids: string[]) => {
+    workspaceManager.reorder(ids);
+    broadcastWorkspaceState(getMainWindow());
+  });
+
   ipcMain.handle(IPC.WORKSPACE_RENAME, (_event, id: string, label: string) => {
     workspaceManager.rename(id, label);
+    // 标记为用户自定义名称（不再自动跟随笔记标题）
+    workspaceManager.update(id, { customLabel: true });
     broadcastWorkspaceState(getMainWindow());
   });
 
@@ -200,6 +222,28 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
   // DB 就绪状态查询（防止 renderer 在 db:ready 事件之后加载时错过事件）
   ipcMain.handle(IPC.IS_DB_READY, () => {
     return isDBReady();
+  });
+
+  // NoteView 报告当前打开的笔记 → 更新 Workspace 状态 + 自动更新 label
+  ipcMain.handle(IPC.SET_ACTIVE_NOTE, (_event, noteId: string | null, noteTitle?: string) => {
+    const active = workspaceManager.getActive();
+    if (active) {
+      const updates: Partial<import('../../shared/types').WorkspaceState> = { activeNoteId: noteId };
+      // 自动更新 label（如果不是用户自定义的）
+      if (!active.customLabel && noteTitle) {
+        updates.label = noteTitle;
+      }
+      workspaceManager.update(active.id, updates);
+      broadcastWorkspaceState(getMainWindow());
+    }
+  });
+
+  // NavSide 报告展开的文件夹 → 更新 Workspace 状态
+  ipcMain.handle(IPC.SET_EXPANDED_FOLDERS, (_event, folderIds: string[]) => {
+    const active = workspaceManager.getActive();
+    if (active) {
+      workspaceManager.update(active.id, { expandedFolders: folderIds });
+    }
   });
 
   // 笔记移动到文件夹

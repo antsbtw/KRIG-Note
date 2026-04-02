@@ -232,6 +232,9 @@ app.whenReady().then(() => {
         workModeId: ws.workModeId,
         navSideVisible: ws.navSideVisible,
         dividerRatio: ws.dividerRatio,
+        activeNoteId: ws.activeNoteId ?? null,
+        expandedFolders: ws.expandedFolders ?? [],
+        customLabel: ws.customLabel ?? false,
       });
     }
     // 恢复活跃 Workspace（用索引，因为 ID 会重新生成）
