@@ -133,6 +133,138 @@ export async function initKrigNoteDocs(): Promise<{ created: number }> {
     console.log(`[InitDocs] ${entry.folderName}: ${mdFiles.length} files`);
   }
 
+  // ── 创建 Task 文件夹 + Block 测试任务文档 ──
+  const taskFolder = await folderStore.create('Task', rootFolder.id);
+
+  // 查找 Block 设计文件夹中的笔记，构建 noteLink 引用
+  const allNotes = await noteStore.list();
+  const blockNames = [
+    'noteTitle', 'paragraph', 'heading', 'codeBlock', 'blockquote', 'horizontalRule',
+    'hardBreak', 'bulletList', 'orderedList', 'listItem', 'taskList', 'taskItem',
+    'toggleList', 'callout', 'image', 'table', 'noteLink', 'mathBlock', 'mathInline',
+    'columnList', 'frameBlock', 'audioBlock', 'videoBlock', 'tweetBlock',
+    'marks', 'block-action', 'toggle-heading', 'math-visual', 'translation-block',
+  ];
+
+  // 文件名到 noteId 的映射
+  const nameToNote: Record<string, { id: string; title: string }> = {};
+  for (const n of allNotes) {
+    // 匹配文件名（去掉连字符转换）
+    const normalized = n.title.toLowerCase().replace(/[- ]/g, '');
+    nameToNote[normalized] = { id: n.id, title: n.title };
+  }
+
+  // 构建 taskItem 列表（每个 Block 一个 task + noteLink）
+  const taskItems: unknown[] = [];
+  for (const name of blockNames) {
+    const normalized = name.toLowerCase().replace(/[- ]/g, '');
+    const match = nameToNote[normalized];
+
+    const content: unknown[] = [];
+    if (match) {
+      // 有对应文档 → 带 noteLink
+      content.push({
+        type: 'paragraph',
+        content: [
+          { type: 'text', text: `${name} 优化`, marks: [{ type: 'link', attrs: { href: `krig://note/${match.id}`, title: match.title } }] },
+        ],
+      });
+    } else {
+      // 没有对应文档 → 纯文字
+      content.push({
+        type: 'paragraph',
+        content: [{ type: 'text', text: `${name} 优化` }],
+      });
+    }
+
+    taskItems.push({
+      type: 'taskItem',
+      attrs: { checked: false },
+      content,
+    });
+  }
+
+  const taskDocContent = [
+    { type: 'noteTitle', content: [{ type: 'text', text: 'Block 测试工作任务' }] },
+    { type: 'taskList', content: taskItems },
+    { type: 'paragraph' },
+  ];
+
+  const taskNote = await noteStore.create('Block 测试工作任务', taskFolder.id);
+  await noteStore.save(taskNote.id, taskDocContent, 'Block 测试工作任务');
+  created++;
+  console.log('[InitDocs] Task folder created with Block test tasks.');
+
   console.log(`[InitDocs] Done. Created ${created} documents.`);
   return { created };
+}
+
+/** 单独创建 Block 测试任务文档（可在已有 KRIG-Note 文件夹中追加） */
+export async function createBlockTaskDoc(): Promise<boolean> {
+  if (!isDBReady()) return false;
+
+  const folders = await folderStore.list();
+  const root = folders.find((f) => f.title === 'KRIG-Note');
+  if (!root) {
+    console.log('[InitDocs] KRIG-Note folder not found. Run Import first.');
+    return false;
+  }
+
+  // 检查是否已有 Task 文件夹
+  let taskFolder = folders.find((f) => f.title === 'Task' && f.parent_id === root.id);
+  if (!taskFolder) {
+    taskFolder = await folderStore.create('Task', root.id);
+  }
+
+  // 查找所有笔记
+  const allNotes = await noteStore.list();
+
+  // 已有任务文档则跳过
+  if (allNotes.some((n) => n.title === 'Block 测试工作任务' && n.folder_id === taskFolder!.id)) {
+    console.log('[InitDocs] Block test task doc already exists.');
+    return false;
+  }
+
+  const blockNames = [
+    'note-title', 'paragraph', 'heading', 'code-block', 'blockquote', 'horizontal-rule',
+    'hard-break', 'bullet-list', 'ordered-list', 'list-item', 'task-list', 'task-item',
+    'toggle-list', 'toggle-heading', 'callout', 'image', 'table', 'note-link',
+    'math-block', 'math-inline', 'math-visual', 'column-list', 'frame-block',
+    'audio-block', 'video-block', 'tweet-block', 'translation-block',
+    'marks', 'block-action',
+  ];
+
+  // 构建 taskItem 列表
+  const taskItems: unknown[] = [];
+  for (const name of blockNames) {
+    const match = allNotes.find((n) => n.title === name);
+
+    const paraContent: unknown[] = [];
+    if (match) {
+      paraContent.push({
+        type: 'text',
+        text: `${name} 优化`,
+        marks: [{ type: 'link', attrs: { href: `krig://note/${match.id}`, title: match.title } }],
+      });
+    } else {
+      paraContent.push({ type: 'text', text: `${name} 优化` });
+    }
+
+    taskItems.push({
+      type: 'taskItem',
+      attrs: { checked: false },
+      content: [{ type: 'paragraph', content: paraContent }],
+    });
+  }
+
+  const docContent = [
+    { type: 'noteTitle', content: [{ type: 'text', text: 'Block 测试工作任务' }] },
+    { type: 'taskList', content: taskItems },
+    { type: 'paragraph' },
+  ];
+
+  const note = await noteStore.create('Block 测试工作任务', taskFolder.id);
+  await noteStore.save(note.id, docContent, 'Block 测试工作任务');
+  console.log('[InitDocs] Block test task doc created.');
+  return true;
 }

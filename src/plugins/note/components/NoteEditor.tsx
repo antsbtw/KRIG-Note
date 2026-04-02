@@ -205,6 +205,28 @@ export function NoteEditor() {
     if (s.marks.strike) markKeymap['Mod-Shift-s'] = toggleMark(s.marks.strike);
     if (s.marks.code) markKeymap['Mod-e'] = toggleMark(s.marks.code);
 
+    // Cmd+Alt+1/2/3 → 标题转换
+    for (const level of [1, 2, 3]) {
+      markKeymap[`Mod-Alt-${level}`] = (state, dispatch) => {
+        const { $from } = state.selection;
+        if ($from.depth < 1) return false;
+        const pos = $from.before(1);
+        const node = state.doc.nodeAt(pos);
+        if (!node) return false;
+
+        if (node.type.name === 'heading' && node.attrs.level === level) {
+          // 已经是该级标题 → 转回 paragraph
+          if (dispatch) dispatch(state.tr.setNodeMarkup(pos, s.nodes.paragraph, { indent: node.attrs.indent || 0 }));
+        } else if (node.type.name === 'paragraph' || node.type.name === 'heading') {
+          // paragraph 或其他级标题 → 转为目标级
+          if (dispatch) dispatch(state.tr.setNodeMarkup(pos, s.nodes.heading, { level, indent: node.attrs.indent || 0 }));
+        } else {
+          return false;
+        }
+        return true;
+      };
+    }
+
     // Shift+Enter → hardBreak（软换行）
     if (s.nodes.hardBreak) {
       markKeymap['Shift-Enter'] = (state, dispatch) => {

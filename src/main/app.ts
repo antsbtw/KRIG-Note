@@ -12,7 +12,7 @@ import { initSurrealDB, shutdownSurrealDB, isDBReady } from './storage/client';
 import { initSchema } from './storage/schema';
 import { surrealSessionStore } from './storage/surreal-session-store';
 import { activityStore } from './storage/activity-store';
-import { initKrigNoteDocs } from './storage/init-docs';
+import { initKrigNoteDocs, createBlockTaskDoc } from './storage/init-docs';
 
 /**
  * KRIG Note — 应用入口
@@ -206,6 +206,19 @@ function registerPlugins(): void {
           }
         } catch (err) {
           console.error('[Help] Import failed:', err);
+        }
+      }},
+      { id: 'create-task', label: 'Create Block Task Doc', handler: async () => {
+        const ok = await createBlockTaskDoc();
+        if (ok) {
+          const win = getMainWindow();
+          if (win) {
+            for (const child of win.contentView.children) {
+              if ('webContents' in child) {
+                (child as any).webContents.send('db:ready');
+              }
+            }
+          }
         }
       }},
     ],
