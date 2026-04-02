@@ -2,12 +2,23 @@ import { useState, useEffect, useCallback } from 'react';
 import type { WorkModeRegistration } from '../../shared/types';
 
 /** NavSide API（由 preload 注入） */
+interface NoteListItem {
+  id: string;
+  title: string;
+  updated_at: number;
+}
+
 declare const navSideAPI: {
   listWorkModes: () => Promise<WorkModeRegistration[]>;
   switchWorkMode: (id: string) => Promise<void>;
   toggle: () => Promise<void>;
   openRightSlot: (workModeId: string) => Promise<void>;
   closeRightSlot: () => Promise<void>;
+  noteCreate: (title?: string) => Promise<unknown>;
+  noteList: () => Promise<NoteListItem[]>;
+  noteDelete: (id: string) => Promise<void>;
+  onNoteListChanged: (callback: (list: NoteListItem[]) => void) => () => void;
+  onDBReady: (callback: () => void) => () => void;
   onStateChanged: (callback: (state: unknown) => void) => () => void;
   resizeStart: (screenX: number) => void;
   resizeMove: (screenX: number) => void;
@@ -17,6 +28,8 @@ declare const navSideAPI: {
 export function NavSide() {
   const [modes, setModes] = useState<WorkModeRegistration[]>([]);
   const [activeWorkModeId, setActiveWorkModeId] = useState<string>('');
+  const [noteList, setNoteList] = useState<NoteListItem[]>([]);
+  const [dbReady, setDbReady] = useState(false);
 
   useEffect(() => {
     navSideAPI.listWorkModes().then(setModes);
@@ -28,11 +41,26 @@ export function NavSide() {
       }
     });
 
-    return unsubscribe;
+    // 监听 NoteFile 列表变更
+    const unsubNoteList = navSideAPI.onNoteListChanged((list: NoteListItem[]) => {
+      setNoteList(list);
+    });
+
+    // 监听 SurrealDB 就绪
+    const unsubDB = navSideAPI.onDBReady(() => {
+      setDbReady(true);
+      navSideAPI.noteList().then(setNoteList);
+    });
+
+    return () => { unsubscribe(); unsubNoteList(); unsubDB(); };
   }, []);
 
   const handleSwitchMode = useCallback((id: string) => {
     navSideAPI.switchWorkMode(id);
+  }, []);
+
+  const handleCreateNote = useCallback(() => {
+    navSideAPI.noteCreate();
   }, []);
 
   return (
@@ -89,11 +117,27 @@ export function NavSide() {
         />
       </div>
 
-      {/* Content List（占位） */}
+      {/* Content List — NoteFile 列表 */}
       <div style={styles.contentList}>
-        <div style={styles.placeholder}>
-          Content List for "{activeWorkModeId}"
-        </div>
+        {!dbReady ? (
+          <div style={styles.placeholder}>数据库启动中...</div>
+        ) : noteList.length === 0 ? (
+          <div style={styles.placeholder}>暂无笔记</div>
+        ) : (
+          noteList.map((note) => (
+            <div
+              key={note.id}
+              style={styles.noteItem}
+              onMouseEnter={(e) => (e.currentTarget.style.background = '#2a2a2a')}
+              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+            >
+              <span style={styles.noteTitle}>{note.title}</span>
+              <span style={styles.noteDate}>
+                {new Date(note.updated_at).toLocaleDateString()}
+              </span>
+            </div>
+          ))
+        )}
       </div>
 
     </div>
@@ -111,8 +155,8 @@ const ACTION_BAR_CONFIG: Record<string, {
   'demo-a': {
     title: '笔记目录',
     actions: [
+      { id: 'new-note', label: '新建笔记', text: '+ 新建', handler: () => navSideAPI.noteCreate() },
       { id: 'open-right-b', label: '打开 PDF 侧栏', text: '📕 右侧', handler: () => navSideAPI.openRightSlot('demo-b') },
-      { id: 'open-right-c', label: '打开 Web 侧栏', text: '🌐 右侧', handler: () => navSideAPI.openRightSlot('demo-c') },
       { id: 'close-right', label: '关闭右侧', text: '✕ 关闭', handler: () => navSideAPI.closeRightSlot() },
     ],
   },
@@ -244,5 +288,27 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '12px',
     padding: '16px',
     textAlign: 'center',
+  },
+  noteItem: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '6px 8px',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    fontSize: '13px',
+    color: '#e8eaed',
+  },
+  noteTitle: {
+    flex: 1,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
+  noteDate: {
+    fontSize: '11px',
+    color: '#666',
+    flexShrink: 0,
+    marginLeft: '8px',
   },
 };

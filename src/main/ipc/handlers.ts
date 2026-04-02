@@ -13,6 +13,9 @@ import {
   getActiveProtocol,
 } from '../window/shell';
 import { getNavSideWidth, setNavSideWidth } from '../slot/layout';
+import { noteStore } from '../storage/note-store';
+import { activityStore } from '../storage/activity-store';
+import { isDBReady } from '../storage/client';
 
 export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): void {
   // ── Workspace 操作 ──
@@ -150,6 +153,53 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
   ipcMain.on(IPC.NAVSIDE_RESIZE_END, () => {
     navResizeDragging = false;
   });
+
+  // ── NoteFile 操作 ──
+
+  ipcMain.handle(IPC.NOTE_CREATE, async (_event, title?: string) => {
+    if (!isDBReady()) return null;
+    const note = await noteStore.create(title);
+    activityStore.log('note.create', note.id);
+    broadcastNoteList(getMainWindow());
+    return note;
+  });
+
+  ipcMain.handle(IPC.NOTE_SAVE, async (_event, id: string, docContent: unknown[], title: string) => {
+    if (!isDBReady()) return;
+    await noteStore.save(id, docContent, title);
+    activityStore.log('note.save', id);
+    broadcastNoteList(getMainWindow());
+  });
+
+  ipcMain.handle(IPC.NOTE_LOAD, async (_event, id: string) => {
+    if (!isDBReady()) return null;
+    activityStore.log('note.open', id);
+    return noteStore.get(id);
+  });
+
+  ipcMain.handle(IPC.NOTE_DELETE, async (_event, id: string) => {
+    if (!isDBReady()) return;
+    await noteStore.delete(id);
+    activityStore.log('note.delete', id);
+    broadcastNoteList(getMainWindow());
+  });
+
+  ipcMain.handle(IPC.NOTE_LIST, async () => {
+    if (!isDBReady()) return [];
+    return noteStore.list();
+  });
+}
+
+/** 广播 NoteFile 列表变更 */
+function broadcastNoteList(mainWindow: BaseWindow | null): void {
+  if (!mainWindow) return;
+  noteStore.list().then((list) => {
+    for (const view of mainWindow.contentView.children) {
+      if ('webContents' in view) {
+        (view as any).webContents.send(IPC.NOTE_LIST_CHANGED, list);
+      }
+    }
+  }).catch(() => {});
 }
 
 function broadcastWorkspaceState(mainWindow: BaseWindow | null): void {

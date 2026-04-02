@@ -21,6 +21,23 @@ contextBridge.exposeInMainWorld('navSideAPI', {
   resizeMove: (screenX: number) => ipcRenderer.send(IPC.NAVSIDE_RESIZE_MOVE, screenX),
   resizeEnd: () => ipcRenderer.send(IPC.NAVSIDE_RESIZE_END),
 
+  // NoteFile 操作
+  noteCreate: (title?: string) => ipcRenderer.invoke(IPC.NOTE_CREATE, title),
+  noteList: () => ipcRenderer.invoke(IPC.NOTE_LIST),
+  noteDelete: (id: string) => ipcRenderer.invoke(IPC.NOTE_DELETE, id),
+
+  onNoteListChanged: (callback: (list: unknown[]) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, list: unknown[]) => callback(list);
+    ipcRenderer.on(IPC.NOTE_LIST_CHANGED, listener);
+    return () => ipcRenderer.removeListener(IPC.NOTE_LIST_CHANGED, listener);
+  },
+
+  onDBReady: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on(IPC.DB_READY, listener);
+    return () => ipcRenderer.removeListener(IPC.DB_READY, listener);
+  },
+
   // 状态监听
   onStateChanged: (callback: (state: unknown) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, state: unknown) => callback(state);

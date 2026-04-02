@@ -149,4 +149,15 @@ export const IPC = {
   NAVSIDE_RESIZE_START: 'navside:resize-start',
   NAVSIDE_RESIZE_MOVE: 'navside:resize-move',
   NAVSIDE_RESIZE_END: 'navside:resize-end',
+
+  // NoteFile 操作
+  NOTE_CREATE: 'note:create',
+  NOTE_SAVE: 'note:save',
+  NOTE_LOAD: 'note:load',
+  NOTE_DELETE: 'note:delete',
+  NOTE_LIST: 'note:list',
+  NOTE_LIST_CHANGED: 'note:list-changed',
+
+  // SurrealDB 状态
+  DB_READY: 'db:ready',
 } as const;

@@ -13,7 +13,7 @@ import { Surreal } from 'surrealdb';
 
 const DEFAULT_PORT = 8532;
 const NAMESPACE = 'krig';
-const DATABASE = 'main';
+const DATABASE = 'krig_note';  // 独立数据库，不和 mirro-desktop 的 'main' 共享
 const USERNAME = 'root';
 const PASSWORD = 'root';
 const READY_TIMEOUT = 15000;
