@@ -24,6 +24,7 @@ import { SlashMenu } from './SlashMenu';
 import { HandleMenu } from './HandleMenu';
 import { FloatingToolbar } from './FloatingToolbar';
 import { NotePicker } from './NotePicker';
+import { OutlinePanel } from './OutlinePanel';
 import { ContextMenu } from './ContextMenu';
 
 /**
@@ -443,6 +444,8 @@ export function NoteEditor() {
           }
         }}
       />
+      {/* 大纲（左侧 padding 区域） */}
+      <OutlinePanel view={editorView} />
       <SlashMenu view={editorView} />
       <HandleMenu view={editorView} />
       {!contextMenuOpen && <FloatingToolbar view={editorView} />}
@@ -488,6 +491,10 @@ const styles: Record<string, React.CSSProperties> = {
   navBtnDisabled: {
     color: '#555',
     cursor: 'default',
+  },
+  navBtnActive: {
+    background: '#3a3a3a',
+    color: '#4a9eff',
   },
   toolbarDot: {
     width: '8px',

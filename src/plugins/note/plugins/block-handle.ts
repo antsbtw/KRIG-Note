@@ -257,9 +257,11 @@ export function blockHandlePlugin(): Plugin {
 
   // 当前追踪的 Block DOM（用于 RAF 持续定位）
   let trackedBlockDOM: HTMLElement | null = null;
+  let trackedView: EditorView | null = null;
   let rafId: number | null = null;
 
   function startTracking(view: EditorView, pos: number): void {
+    trackedView = view;
     try {
       const dom = view.nodeDOM(pos);
       trackedBlockDOM = dom instanceof HTMLElement ? dom : (dom as Node)?.parentElement ?? null;
@@ -280,15 +282,23 @@ export function blockHandlePlugin(): Plugin {
 
     if (trackedBlockDOM && currentState.visible) {
       const containerRect = handleDOM.parentElement?.getBoundingClientRect();
-      if (containerRect) {
+      if (containerRect && trackedView) {
         const blockRect = trackedBlockDOM.getBoundingClientRect();
-        // 取第一行行高来垂直居中
-        const lineHeight = parseFloat(getComputedStyle(trackedBlockDOM).lineHeight) || 27;
+        // 用 coordsAtPos 获取第一行文字的实际 Y 位置
+        let textTop = blockRect.top;
+        let textBottom = blockRect.top + 27;
+        try {
+          const coords = trackedView.coordsAtPos(currentState.pos + 1);
+          textTop = coords.top;
+          textBottom = coords.bottom;
+        } catch { /* fallback to blockRect */ }
+
+        const lineHeight = textBottom - textTop;
         const handleHeight = 24;
         const topOffset = (lineHeight - handleHeight) / 2;
         // 两个按钮（+ 和 ⠿）共 48px 宽
         handleDOM.style.left = `${blockRect.left - containerRect.left - 48 - 2}px`;
-        handleDOM.style.top = `${blockRect.top - containerRect.top + topOffset}px`;
+        handleDOM.style.top = `${textTop - containerRect.top + topOffset}px`;
         handleDOM.style.opacity = '1';
       }
     }
