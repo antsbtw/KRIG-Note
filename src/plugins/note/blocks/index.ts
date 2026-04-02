@@ -16,6 +16,20 @@ import { bulletListBlock } from './bullet-list';
 import { orderedListBlock } from './ordered-list';
 import { listItemBlock } from './list-item';
 import { toggleListBlock } from './toggle-list';
+import { hardBreakBlock } from './hard-break';
+import { taskListBlock } from './task-list';
+import { taskItemBlock } from './task-item';
+import { calloutBlock } from './callout';
+import { imageBlock } from './image';
+import { tableBlock, tableRowBlock, tableCellBlock, tableHeaderBlock } from './table';
+import { noteLinkBlock } from './note-link';
+import { mathBlockBlock } from './math-block';
+import { mathInlineBlock } from './math-inline';
+import { columnListBlock, columnBlock } from './column-list';
+import { frameBlockBlock } from './frame-block';
+import { audioBlockBlock } from './audio-block';
+import { videoBlockBlock } from './video-block';
+import { tweetBlockBlock } from './tweet-block';
 
 export function registerAllBlocks(): void {
   // 文档级
@@ -45,11 +59,56 @@ export function registerAllBlocks(): void {
   blockRegistry.register(blockquoteBlock);
   blockRegistry.register(horizontalRuleBlock);
 
+  // Inline
+  blockRegistry.register(hardBreakBlock);
+
   // 列表 Container
   blockRegistry.register(bulletListBlock);
   blockRegistry.register(orderedListBlock);
   blockRegistry.register(listItemBlock);
 
+  // Task List Container
+  blockRegistry.register(taskListBlock);
+  blockRegistry.register(taskItemBlock);
+
   // Toggle Container
   blockRegistry.register(toggleListBlock);
+
+  // Callout Container
+  blockRegistry.register(calloutBlock);
+
+  // Media
+  blockRegistry.register(imageBlock);
+
+  // Table
+  blockRegistry.register(tableBlock);
+  blockRegistry.register(tableRowBlock);
+  blockRegistry.register(tableCellBlock);
+  blockRegistry.register(tableHeaderBlock);
+
+  // Inline — noteLink + mathInline
+  blockRegistry.register(noteLinkBlock);
+  blockRegistry.register(mathInlineBlock);
+
+  // Math
+  blockRegistry.register(mathBlockBlock);
+
+  // Column Layout
+  blockRegistry.register(columnListBlock);
+  blockRegistry.register(columnBlock);
+
+  // Frame Block
+  blockRegistry.register(frameBlockBlock);
+
+  // Media — Audio / Video / Tweet
+  blockRegistry.register(audioBlockBlock);
+  blockRegistry.register(videoBlockBlock);
+  blockRegistry.register(tweetBlockBlock);
+
+  // 3 列的额外 SlashMenu 项
+  blockRegistry.registerSlashItem({
+    id: 'column3', blockName: 'columnList', label: '3 Columns', icon: '▥',
+    group: 'layout', keywords: ['column', 'three', '三列'], order: 1,
+    attrs: { columns: 3 },
+  });
 }

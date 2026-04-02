@@ -64,7 +64,8 @@ function createViewForWorkMode(workModeId: string): WebContentsView {
   if (viewType === 'note') {
     // NoteView — ProseMirror 编辑器
     if (NOTE_VIEW_VITE_DEV_SERVER_URL) {
-      view.webContents.loadURL(`${NOTE_VIEW_VITE_DEV_SERVER_URL}/note.html?workModeId=${workModeId}`);
+      const url = `${NOTE_VIEW_VITE_DEV_SERVER_URL}/note.html?workModeId=${workModeId}`;
+      view.webContents.loadURL(url);
     } else {
       view.webContents.loadFile(
         path.join(__dirname, `../renderer/note_view/note.html`),
@@ -372,9 +373,16 @@ export function createShell(): BaseWindow {
 
   updateLayout();
 
+  // 初始化 Left Slot View
   const active = workspaceManager.getActive();
-  if (active?.workModeId) {
-    switchLeftSlotView(active.workModeId);
+  const workModeId = active?.workModeId || workModeRegistry.getDefault()?.id;
+  console.log('[Shell] Active workspace:', active?.id, 'workModeId:', workModeId);
+  if (workModeId) {
+    // 确保 workspace 有 workModeId（Session 恢复时可能丢失）
+    if (active && !active.workModeId) {
+      workspaceManager.update(active.id, { workModeId });
+    }
+    switchLeftSlotView(workModeId);
   }
 
   mainWindow.on('resize', () => updateLayout());
@@ -434,7 +442,9 @@ export function updateLayout(): void {
     const pool = workspaceViewPools.get(active.id);
     if (pool?.activeLeftId) {
       const leftView = pool.leftViews.get(pool.activeLeftId);
-      if (leftView) leftView.setBounds(layout.leftSlot);
+      if (leftView) {
+        leftView.setBounds(layout.leftSlot);
+      }
     }
 
     // Right Slot + Divider

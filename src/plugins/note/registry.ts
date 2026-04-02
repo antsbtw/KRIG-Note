@@ -98,6 +98,33 @@ class BlockRegistry {
           return ['a', { href: node.attrs.href, title: node.attrs.title }, 0] as const;
         },
       },
+      textStyle: {
+        attrs: { color: { default: null } },
+        parseDOM: [{ tag: 'span[style*="color"]', getAttrs(dom: HTMLElement) {
+          return { color: dom.style.color || null };
+        }}],
+        toDOM(node: { attrs: { color: string | null } }) {
+          if (!node.attrs.color) return ['span', 0] as const;
+          return ['span', { style: `color: ${node.attrs.color}` }, 0] as const;
+        },
+      },
+      highlight: {
+        attrs: { color: { default: 'yellow' } },
+        parseDOM: [{ tag: 'mark', getAttrs(dom: HTMLElement) {
+          return { color: dom.getAttribute('data-color') || dom.style.backgroundColor || 'yellow' };
+        }}],
+        toDOM(node: { attrs: { color: string } }) {
+          const bgColors: Record<string, string> = {
+            yellow: 'rgba(255, 212, 0, 0.25)',
+            green: 'rgba(0, 200, 83, 0.25)',
+            blue: 'rgba(74, 158, 255, 0.25)',
+            red: 'rgba(255, 82, 82, 0.25)',
+            purple: 'rgba(171, 71, 188, 0.25)',
+          };
+          const bg = bgColors[node.attrs.color] || bgColors.yellow;
+          return ['mark', { 'data-color': node.attrs.color, style: `background: ${bg}; padding: 2px 0;` }, 0] as const;
+        },
+      },
     };
 
     return new Schema({ nodes, marks });

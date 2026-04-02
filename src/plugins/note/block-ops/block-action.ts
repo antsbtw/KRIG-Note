@@ -158,7 +158,15 @@ export const blockAction = {
     } else {
       // 同 content 类型之间切换（如 paragraph ↔ heading）→ setNodeMarkup
       try {
-        tr = tr.setNodeMarkup(pos, targetNodeType, { ...attrs });
+        // 保留目标类型有的 attrs（如 indent），覆盖传入的 attrs
+        const targetDefaults: Record<string, unknown> = {};
+        if (targetNodeType.spec.attrs) {
+          for (const key of Object.keys(targetNodeType.spec.attrs)) {
+            // 继承源节点的同名 attr（如 indent）
+            if (key in node.attrs) targetDefaults[key] = node.attrs[key];
+          }
+        }
+        tr = tr.setNodeMarkup(pos, targetNodeType, { ...targetDefaults, ...attrs });
       } catch {
         // content 不兼容时，提取文本重建
         const textContent = node.textContent;

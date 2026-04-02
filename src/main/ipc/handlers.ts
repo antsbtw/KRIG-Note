@@ -14,6 +14,7 @@ import {
 } from '../window/shell';
 import { getNavSideWidth, setNavSideWidth } from '../slot/layout';
 import { noteStore } from '../storage/note-store';
+import { folderStore } from '../storage/folder-store';
 import { activityStore } from '../storage/activity-store';
 import { isDBReady } from '../storage/client';
 
@@ -24,6 +25,7 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
     return {
       workspaces: workspaceManager.getAll(),
       activeId: workspaceManager.getActiveId(),
+      active: workspaceManager.getActive(),
     };
   });
 
@@ -184,9 +186,71 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
     broadcastNoteList(getMainWindow());
   });
 
+  ipcMain.handle(IPC.NOTE_RENAME, async (_event, id: string, title: string) => {
+    if (!isDBReady()) return;
+    await noteStore.rename(id, title);
+    broadcastNoteList(getMainWindow());
+  });
+
   ipcMain.handle(IPC.NOTE_LIST, async () => {
     if (!isDBReady()) return [];
     return noteStore.list();
+  });
+
+  // DB 就绪状态查询（防止 renderer 在 db:ready 事件之后加载时错过事件）
+  ipcMain.handle(IPC.IS_DB_READY, () => {
+    return isDBReady();
+  });
+
+  // 笔记移动到文件夹
+  ipcMain.handle(IPC.NOTE_MOVE_TO_FOLDER, async (_event, noteId: string, folderId: string | null) => {
+    if (!isDBReady()) return;
+    await noteStore.moveToFolder(noteId, folderId);
+    broadcastNoteList(getMainWindow());
+  });
+
+  // ── Folder 操作 ──
+
+  ipcMain.handle(IPC.FOLDER_CREATE, async (_event, title: string, parentId?: string | null) => {
+    if (!isDBReady()) return null;
+    const folder = await folderStore.create(title, parentId);
+    broadcastContentTree(getMainWindow());
+    return folder;
+  });
+
+  ipcMain.handle(IPC.FOLDER_RENAME, async (_event, id: string, title: string) => {
+    if (!isDBReady()) return;
+    await folderStore.rename(id, title);
+    broadcastContentTree(getMainWindow());
+  });
+
+  ipcMain.handle(IPC.FOLDER_DELETE, async (_event, id: string) => {
+    if (!isDBReady()) return;
+    await folderStore.delete(id);
+    broadcastContentTree(getMainWindow());
+  });
+
+  ipcMain.handle(IPC.FOLDER_MOVE, async (_event, id: string, parentId: string | null) => {
+    if (!isDBReady()) return;
+    await folderStore.move(id, parentId);
+    broadcastContentTree(getMainWindow());
+  });
+
+  ipcMain.handle(IPC.FOLDER_LIST, async () => {
+    if (!isDBReady()) return [];
+    return folderStore.list();
+  });
+
+  // NavSide 请求打开笔记 → 广播给所有 View（NoteView 会响应）
+  ipcMain.handle(IPC.NOTE_OPEN_IN_EDITOR, async (_event, noteId: string) => {
+    const mainWindow = getMainWindow();
+    if (!mainWindow) return;
+    // 广播给所有 WebContentsView
+    for (const view of mainWindow.contentView.children) {
+      if ('webContents' in view) {
+        (view as any).webContents.send(IPC.NOTE_OPEN_IN_EDITOR, noteId);
+      }
+    }
   });
 }
 
@@ -200,6 +264,13 @@ function broadcastNoteList(mainWindow: BaseWindow | null): void {
       }
     }
   }).catch(() => {});
+}
+
+/** 广播完整内容树（folder + note 列表同时刷新） */
+function broadcastContentTree(mainWindow: BaseWindow | null): void {
+  broadcastNoteList(mainWindow);
+  // folder 列表也通过 NOTE_LIST_CHANGED 触发 NavSide 刷新
+  // NavSide 收到后会重新 fetch folderList
 }
 
 function broadcastWorkspaceState(mainWindow: BaseWindow | null): void {

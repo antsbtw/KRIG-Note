@@ -3,6 +3,7 @@ import type { EditorView } from 'prosemirror-view';
 import { setBlockType } from 'prosemirror-commands';
 import { TextSelection } from 'prosemirror-state';
 import { blockRegistry } from '../registry';
+import { triggerNotePicker } from './NotePicker';
 import { slashCommandKey, type SlashCommandState } from '../plugins/slash-command';
 
 /**
@@ -87,13 +88,43 @@ export function SlashMenu({ view }: SlashMenuProps) {
       tr.delete(from, to);
       view.dispatch(tr);
 
+      // noteLink → 打开 NotePicker 面板（不直接插入节点）
+      if (actualBlockName === 'noteLink') {
+        triggerNotePicker(view);
+        view.focus();
+        return;
+      }
+
       // 根据 Block 类型创建节点
-      if (blockDef?.containerRule !== undefined || blockDef?.nodeSpec.content?.includes('block')) {
+      // mathInline → 插入 inline atom 节点
+      if (actualBlockName === 'mathInline') {
+        const mathNode = nodeType.create({ latex: '' });
+        view.dispatch(view.state.tr.replaceSelectionWith(mathNode));
+        view.focus();
+        // 触发点击编辑
+        setTimeout(() => {
+          const dom = view.dom.querySelector('.math-inline:last-of-type') as HTMLElement;
+          dom?.click();
+        }, 50);
+        return;
+      }
+
+      const needsStructure = blockDef?.containerRule !== undefined
+        || blockDef?.nodeSpec.content?.includes('block')
+        || actualBlockName === 'image'
+        || actualBlockName === 'table'
+        || actualBlockName === 'mathBlock'
+        || actualBlockName === 'audioBlock'
+        || actualBlockName === 'videoBlock'
+        || actualBlockName === 'tweetBlock';
+      if (needsStructure) {
         // Container 类型（toggleHeading, toggleList, blockquote 等）
-        // 需要创建完整的容器结构替换当前 paragraph
+        // 替换光标所在的 paragraph（可能在嵌套容器内部）
         const { $from } = view.state.selection;
-        const blockStart = $from.before(1);
-        const blockEnd = $from.after(1);
+        // 找到最内层的 block 节点（通常是 paragraph）
+        const depth = $from.depth;
+        const blockStart = $from.before(depth);
+        const blockEnd = $from.after(depth);
 
         let containerNode;
         if (actualBlockName === 'toggleHeading') {
@@ -115,21 +146,54 @@ export function SlashMenu({ view }: SlashMenuProps) {
           // 列表: listItem(paragraph)
           const listItem = schema.nodes.listItem.create(null, [schema.nodes.paragraph.create()]);
           containerNode = nodeType.create(null, [listItem]);
+        } else if (actualBlockName === 'taskList') {
+          // 待办清单: taskItem(paragraph)
+          const taskItem = schema.nodes.taskItem.create({ checked: false }, [schema.nodes.paragraph.create()]);
+          containerNode = nodeType.create(null, [taskItem]);
+        } else if (actualBlockName === 'callout') {
+          // 提示框: paragraph
+          containerNode = nodeType.create({ emoji: '💡' }, [schema.nodes.paragraph.create()]);
+        } else if (actualBlockName === 'image') {
+          // 图片: paragraph (caption)
+          containerNode = nodeType.create({ src: null }, [schema.nodes.paragraph.create()]);
+        } else if (actualBlockName === 'table') {
+          // 表格 3×3: 1 header row + 2 data rows
+          const cell = () => schema.nodes.tableCell.create(null, [schema.nodes.paragraph.create()]);
+          const headerCell = () => schema.nodes.tableHeader.create(null, [schema.nodes.paragraph.create()]);
+          const headerRow = schema.nodes.tableRow.create(null, [headerCell(), headerCell(), headerCell()]);
+          const dataRow = () => schema.nodes.tableRow.create(null, [cell(), cell(), cell()]);
+          containerNode = nodeType.create(null, [headerRow, dataRow(), dataRow()]);
+        } else if (actualBlockName === 'mathBlock') {
+          // 数学公式块
+          containerNode = nodeType.create({ latex: '' });
+        } else if (actualBlockName === 'columnList') {
+          // 多列布局
+          const col = () => schema.nodes.column.create(null, [schema.nodes.paragraph.create()]);
+          const colCount = (extraAttrs?.columns as number) || 2;
+          const cols = Array.from({ length: colCount }, () => col());
+          containerNode = nodeType.create({ columns: colCount }, cols);
+        } else if (actualBlockName === 'audioBlock') {
+          containerNode = nodeType.create({ src: null }, [schema.nodes.paragraph.create()]);
+        } else if (actualBlockName === 'videoBlock') {
+          containerNode = nodeType.create({ src: null }, [schema.nodes.paragraph.create()]);
+        } else if (actualBlockName === 'tweetBlock') {
+          containerNode = nodeType.create({ tweetUrl: null }, [schema.nodes.paragraph.create()]);
         } else {
           // 通用 Container
           containerNode = nodeType.create(null, [schema.nodes.paragraph.create()]);
         }
 
         const replaceTr = view.state.tr.replaceWith(blockStart, blockEnd, containerNode);
-        // 光标放到容器内第一个可编辑位置
-        const resolvedPos = replaceTr.doc.resolve(blockStart + 2);
-        replaceTr.setSelection(TextSelection.near(resolvedPos));
+        // 光标放到容器内第一个可编辑位置（用 near 自动查找）
+        const $pos = replaceTr.doc.resolve(blockStart + 1);
+        replaceTr.setSelection(TextSelection.near($pos));
         view.dispatch(replaceTr);
       } else if (nodeType.spec.content === 'text*' || actualBlockName === 'codeBlock') {
         // 纯文本 Block（codeBlock）
         const { $from } = view.state.selection;
-        const blockStart = $from.before(1);
-        const blockEnd = $from.after(1);
+        const depth = $from.depth;
+        const blockStart = $from.before(depth);
+        const blockEnd = $from.after(depth);
         const newNode = nodeType.create();
         const replaceTr = view.state.tr.replaceWith(blockStart, blockEnd, newNode);
         const resolvedPos = replaceTr.doc.resolve(blockStart + 1);
@@ -138,8 +202,9 @@ export function SlashMenu({ view }: SlashMenuProps) {
       } else if (actualBlockName === 'horizontalRule') {
         // 分割线：插入 hr + 新 paragraph
         const { $from } = view.state.selection;
-        const blockStart = $from.before(1);
-        const blockEnd = $from.after(1);
+        const depth = $from.depth;
+        const blockStart = $from.before(depth);
+        const blockEnd = $from.after(depth);
         const hr = nodeType.create();
         const newParagraph = schema.nodes.paragraph.create();
         const replaceTr = view.state.tr.replaceWith(blockStart, blockEnd, [hr, newParagraph]);

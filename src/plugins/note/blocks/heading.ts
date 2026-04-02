@@ -19,6 +19,7 @@ export const headingBlock: BlockDef = {
       level: { default: 1 },
       open: { default: true },
       indent: { default: 0 },
+      align: { default: 'left' },
     },
     defining: true,
     parseDOM: [
@@ -28,10 +29,14 @@ export const headingBlock: BlockDef = {
     ],
     toDOM(node) {
       const indent = node.attrs.indent || 0;
+      const align = node.attrs.align || 'left';
       const tag = `h${node.attrs.level}`;
-      return indent > 0
-        ? [tag, { 'data-indent': indent, style: `padding-left: ${indent * 24}px` }, 0]
-        : [tag, 0];
+      const styles: string[] = [];
+      if (indent > 0) styles.push(`padding-left: ${indent * 24}px`);
+      if (align !== 'left') styles.push(`text-align: ${align}`);
+      const attrs: Record<string, string> = {};
+      if (styles.length > 0) attrs.style = styles.join('; ');
+      return [tag, attrs, 0];
     },
   },
 

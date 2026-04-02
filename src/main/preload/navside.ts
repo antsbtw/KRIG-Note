@@ -25,6 +25,16 @@ contextBridge.exposeInMainWorld('navSideAPI', {
   noteCreate: (title?: string) => ipcRenderer.invoke(IPC.NOTE_CREATE, title),
   noteList: () => ipcRenderer.invoke(IPC.NOTE_LIST),
   noteDelete: (id: string) => ipcRenderer.invoke(IPC.NOTE_DELETE, id),
+  noteRename: (id: string, title: string) => ipcRenderer.invoke(IPC.NOTE_RENAME, id, title),
+  noteMoveToFolder: (noteId: string, folderId: string | null) => ipcRenderer.invoke(IPC.NOTE_MOVE_TO_FOLDER, noteId, folderId),
+  noteOpenInEditor: (id: string) => ipcRenderer.invoke(IPC.NOTE_OPEN_IN_EDITOR, id),
+
+  // Folder 操作
+  folderCreate: (title: string, parentId?: string | null) => ipcRenderer.invoke(IPC.FOLDER_CREATE, title, parentId),
+  folderRename: (id: string, title: string) => ipcRenderer.invoke(IPC.FOLDER_RENAME, id, title),
+  folderDelete: (id: string) => ipcRenderer.invoke(IPC.FOLDER_DELETE, id),
+  folderMove: (id: string, parentId: string | null) => ipcRenderer.invoke(IPC.FOLDER_MOVE, id, parentId),
+  folderList: () => ipcRenderer.invoke(IPC.FOLDER_LIST),
 
   onNoteListChanged: (callback: (list: unknown[]) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, list: unknown[]) => callback(list);
@@ -32,11 +42,16 @@ contextBridge.exposeInMainWorld('navSideAPI', {
     return () => ipcRenderer.removeListener(IPC.NOTE_LIST_CHANGED, listener);
   },
 
+  isDBReady: () => ipcRenderer.invoke(IPC.IS_DB_READY),
+
   onDBReady: (callback: () => void) => {
     const listener = () => callback();
     ipcRenderer.on(IPC.DB_READY, listener);
     return () => ipcRenderer.removeListener(IPC.DB_READY, listener);
   },
+
+  // 获取当前 Workspace 状态（初始化用）
+  getActiveState: () => ipcRenderer.invoke(IPC.WORKSPACE_LIST),
 
   // 状态监听
   onStateChanged: (callback: (state: unknown) => void) => {

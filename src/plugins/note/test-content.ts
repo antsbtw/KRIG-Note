@@ -127,6 +127,230 @@ export function buildTestDocument(schema: Schema): PMNode {
     p(schema, '13.2 Cmd+Shift+Z → 重做'),
     p(schema, '13.3 删除 Block 后 Cmd+Z → Block 恢复'),
 
+    // ── 十四、hardBreak 软换行测试 ──
+    heading(schema, 2, '十四、hardBreak 软换行测试'),
+    p(schema, '14.1 在本段落中间按 Shift+Enter → 插入换行（不创建新段落）'),
+    p(schema, '14.2 验证：光标应在同一个 paragraph 内换到下一行'),
+    // 预置一个带 hardBreak 的段落
+    schema.node('paragraph', null, [
+      text(schema, '14.3 这是第一行'),
+      schema.nodes.hardBreak.create(),
+      text(schema, '这是第二行（同一个 paragraph）'),
+    ]),
+    p(schema, '14.4 Backspace 可以删除 hardBreak（两行合为一行）'),
+
+    // ── 十五、Task List 测试 ──
+    heading(schema, 2, '十五、Task List 测试'),
+    p(schema, '15.1 下方是预置的 Task List，点击 checkbox 测试切换：'),
+    schema.node('taskList', null, [
+      schema.node('taskItem', { checked: false }, [
+        p(schema, '未完成的任务'),
+      ]),
+      schema.node('taskItem', { checked: true }, [
+        p(schema, '已完成的任务（应显示删除线 + 淡色）'),
+      ]),
+      schema.node('taskItem', { checked: false }, [
+        p(schema, '再点一次 checkbox → 切换状态'),
+      ]),
+    ]),
+    p(schema, '15.2 在 Task List 内按 Enter → 新建 taskItem（checkbox 未勾选）'),
+    p(schema, '15.3 空 taskItem 按 Enter → 退出 Task List'),
+    p(schema, '15.4 Tab → 缩进（嵌套 taskItem），Shift+Tab → 提升'),
+    p(schema, '15.5 SlashMenu 输入 /task → 创建新的 Task List'),
+    p(schema, ''),
+
+    // ── 十六、Callout 测试 ──
+    heading(schema, 2, '十六、Callout 测试'),
+    p(schema, '16.1 下方是预置的 Callout：'),
+    schema.node('callout', { emoji: '💡' }, [
+      p(schema, '这是一个提示框，可以在里面输入任何内容。'),
+      p(schema, '支持多个段落。'),
+    ]),
+    p(schema, '16.2 点击左侧 emoji → 循环切换图标（💡→⚠️→❌→✅→...）'),
+    p(schema, '16.3 在 Callout 内按 Enter → 新段落（仍在 Callout 内）'),
+    p(schema, '16.4 空段落按 Enter → 退出 Callout'),
+    p(schema, '16.5 SlashMenu 输入 /callout → 创建新的 Callout'),
+    schema.node('callout', { emoji: '⚠️' }, [
+      p(schema, '16.6 不同 emoji 的 Callout'),
+    ]),
+    schema.node('callout', { emoji: '✅' }, [
+      p(schema, '16.7 嵌套测试：Callout 内可以包含其他 Block'),
+      schema.node('bulletList', null, [
+        schema.node('listItem', null, [p(schema, '列表项 A')]),
+        schema.node('listItem', null, [p(schema, '列表项 B')]),
+      ]),
+    ]),
+
+    // ── 十七、Image 测试 ──
+    heading(schema, 2, '十七、Image 测试'),
+    p(schema, '17.1 下方是空图片占位符 → 点击"🖼 点击添加图片"上传：'),
+    schema.node('image', { src: null, alt: '' }, [
+      p(schema, ''),
+    ]),
+    p(schema, '17.2 上传后图片应居中显示'),
+    p(schema, '17.3 图片下方 caption 可以编辑（支持格式化）'),
+    p(schema, '17.4 SlashMenu 输入 /image → 创建新的 Image Block'),
+    p(schema, ''),
+
+    // ── 十八、Markdown 输入规则测试 ──
+    heading(schema, 2, '十八、Markdown 输入规则测试'),
+    p(schema, '在下方空行行首输入以下内容（含末尾空格），验证自动转换：'),
+    p(schema, ''),
+    p(schema, '18.1  # + 空格 → Heading 1'),
+    p(schema, '18.2  ## + 空格 → Heading 2'),
+    p(schema, '18.3  ### + 空格 → Heading 3'),
+    p(schema, '18.4  - + 空格 → Bullet List（* + 空格 同效）'),
+    p(schema, '18.5  1. + 空格 → Ordered List'),
+    p(schema, '18.6  [] + 空格 → Task List（未勾选）'),
+    p(schema, '18.7  [ ] + 空格 → Task List（未勾选，带空格）'),
+    p(schema, '18.8  [x] + 空格 → Task List（已勾选）'),
+    p(schema, '18.9  > + 空格 → Blockquote'),
+    p(schema, '18.10  ``` → Code Block（输入三个反引号，无需空格）'),
+    p(schema, '18.11  --- → Horizontal Rule（输入三个减号，无需空格）'),
+    p(schema, ''),
+    p(schema, '验证要点：'),
+    p(schema, '• 转换后光标应在新 Block 内，可以立即输入'),
+    p(schema, '• Cmd+Z 可以撤销转换，恢复为原始文本'),
+    p(schema, '• 在非空行输入不触发（只有行首触发）'),
+
+    // ── 十九、Table 测试 ──
+    heading(schema, 2, '十九、Table 测试'),
+    p(schema, '19.1 下方是预置的 3×3 表格：'),
+    schema.node('table', null, [
+      schema.node('tableRow', null, [
+        schema.node('tableHeader', null, [p(schema, '列 A')]),
+        schema.node('tableHeader', null, [p(schema, '列 B')]),
+        schema.node('tableHeader', null, [p(schema, '列 C')]),
+      ]),
+      schema.node('tableRow', null, [
+        schema.node('tableCell', null, [p(schema, '数据 1')]),
+        schema.node('tableCell', null, [p(schema, '数据 2')]),
+        schema.node('tableCell', null, [p(schema, '数据 3')]),
+      ]),
+      schema.node('tableRow', null, [
+        schema.node('tableCell', null, [p(schema, '数据 4')]),
+        schema.node('tableCell', null, [p(schema, '数据 5')]),
+        schema.node('tableCell', null, [p(schema, '数据 6')]),
+      ]),
+    ]),
+    p(schema, '19.2 Tab → 跳到下一个单元格，Shift+Tab → 上一个'),
+    p(schema, '19.3 在单元格内可以输入多行内容（Enter 换行）'),
+    p(schema, '19.4 SlashMenu 输入 /table → 创建新表格'),
+    p(schema, ''),
+
+    // ── 二十、Marks 扩展测试 ──
+    heading(schema, 2, '二十、Marks 扩展测试'),
+    p(schema, '20.1 textStyle（文字颜色）— 待 FloatingToolbar 颜色选择器'),
+    p(schema, '20.2 highlight（背景高亮）— 待 FloatingToolbar 高亮选择器'),
+    p(schema, '20.3 已注册到 Schema，可通过代码设置：'),
+    // 预置带 highlight 的文字
+    schema.node('paragraph', null, [
+      text(schema, '20.4 这段文字有 '),
+      schema.text('黄色高亮', [schema.marks.highlight.create({ color: 'yellow' })]),
+      text(schema, ' 和 '),
+      schema.text('蓝色高亮', [schema.marks.highlight.create({ color: 'blue' })]),
+      text(schema, ' 和 '),
+      schema.text('红色文字', [schema.marks.textStyle.create({ color: '#ff5252' })]),
+      text(schema, '。'),
+    ]),
+
+    // ── 二十一、NoteLink 测试 ──
+    heading(schema, 2, '二十一、NoteLink 测试'),
+    p(schema, '21.1 SlashMenu 输入 /link 或 /note → 选择 "Link to Note"'),
+    p(schema, '21.2 弹出搜索面板 → 输入关键词过滤 → 方向键选择 → Enter 插入'),
+    p(schema, '21.3 插入后显示 📄 链接标签'),
+    p(schema, '21.4 点击链接 → 打开目标笔记'),
+    p(schema, '21.5 在下方用 /link 测试：'),
+    p(schema, ''),
+
+    // ── 二十二、Math Block 测试 ──
+    heading(schema, 2, '二十二、Math Block 测试'),
+    p(schema, '22.1 下方是预置的数学公式（点击可编辑）：'),
+    schema.node('mathBlock', { latex: 'E = mc^2' }),
+    schema.node('mathBlock', { latex: '\\int_{0}^{\\infty} e^{-x^2} dx = \\frac{\\sqrt{\\pi}}{2}' }),
+    p(schema, '22.2 点击公式 → 进入编辑模式（LaTeX 输入）'),
+    p(schema, '22.3 点击外部 → 返回预览模式（KaTeX 渲染）'),
+    p(schema, '22.4 Escape → 退出编辑'),
+    p(schema, '22.5 SlashMenu 输入 /math → 创建新公式'),
+    p(schema, ''),
+
+    // ── 二十三、Math Inline 测试 ──
+    heading(schema, 2, '二十三、Math Inline 测试'),
+    schema.node('paragraph', null, [
+      text(schema, '23.1 行内公式示例：'),
+      schema.nodes.mathInline.create({ latex: 'a^2 + b^2 = c^2' }),
+      text(schema, ' 嵌入在文字中'),
+    ]),
+    schema.node('paragraph', null, [
+      text(schema, '23.2 另一个：'),
+      schema.nodes.mathInline.create({ latex: '\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}' }),
+    ]),
+    p(schema, '23.3 点击公式 → 弹出编辑框'),
+    p(schema, '23.4 SlashMenu 输入 /inline → 创建行内公式'),
+    p(schema, ''),
+
+    // ── 二十四、Column List 测试 ──
+    heading(schema, 2, '二十四、Column List 测试'),
+    p(schema, '24.1 下方是预置的两列布局：'),
+    schema.node('columnList', { columns: 2 }, [
+      schema.node('column', null, [
+        p(schema, '左列内容'),
+        p(schema, '可以包含多个段落'),
+      ]),
+      schema.node('column', null, [
+        p(schema, '右列内容'),
+        p(schema, '也可以嵌套其他 Block'),
+      ]),
+    ]),
+    p(schema, '24.2 下方是三列布局：'),
+    schema.node('columnList', { columns: 3 }, [
+      schema.node('column', null, [p(schema, '第一列')]),
+      schema.node('column', null, [p(schema, '第二列')]),
+      schema.node('column', null, [p(schema, '第三列')]),
+    ]),
+    p(schema, '24.3 SlashMenu 输入 /column → 创建分栏'),
+    p(schema, ''),
+
+    // ── 二十五、Frame Block 测试 ──
+    heading(schema, 2, '二十五、Frame Block 测试'),
+    p(schema, '25.1 下方是预置的彩框（点击左侧边框切换颜色）：'),
+    schema.node('frameBlock', { color: 'blue' }, [
+      p(schema, '蓝色边框内容'),
+      p(schema, '可以包含多个段落和其他 Block'),
+    ]),
+    schema.node('frameBlock', { color: 'red' }, [
+      p(schema, '红色边框内容'),
+    ]),
+    schema.node('frameBlock', { color: 'green' }, [
+      p(schema, '绿色边框内容'),
+    ]),
+    p(schema, '25.2 SlashMenu 输入 /frame → 创建新彩框'),
+    p(schema, ''),
+
+    // ── 二十六、Audio Block 测试 ──
+    heading(schema, 2, '二十六、Audio Block 测试'),
+    p(schema, '26.1 下方是空音频占位符 → 点击上传音频文件：'),
+    schema.node('audioBlock', { src: null }, [p(schema, '')]),
+    p(schema, '26.2 上传后显示播放器控件'),
+    p(schema, '26.3 SlashMenu 输入 /audio → 创建新音频'),
+    p(schema, ''),
+
+    // ── 二十七、Video Block 测试 ──
+    heading(schema, 2, '二十七、Video Block 测试'),
+    p(schema, '27.1 下方是空视频占位符 → 点击输入 URL：'),
+    schema.node('videoBlock', { src: null }, [p(schema, '')]),
+    p(schema, '27.2 支持 YouTube、Vimeo URL 和直链 mp4'),
+    p(schema, '27.3 SlashMenu 输入 /video → 创建新视频'),
+    p(schema, ''),
+
+    // ── 二十八、Tweet Block 测试 ──
+    heading(schema, 2, '二十八、Tweet Block 测试'),
+    p(schema, '28.1 下方是空推文占位符 → 点击输入 URL：'),
+    schema.node('tweetBlock', { tweetUrl: null }, [p(schema, '')]),
+    p(schema, '28.2 输入 Twitter/X URL 后显示预览'),
+    p(schema, '28.3 SlashMenu 输入 /tweet → 创建新推文'),
+    p(schema, ''),
+
     // 底部空行
     p(schema, ''),
   ]);

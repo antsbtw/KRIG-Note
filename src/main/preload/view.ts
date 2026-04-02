@@ -37,11 +37,28 @@ contextBridge.exposeInMainWorld('viewAPI', {
     return () => ipcRenderer.removeListener(IPC.NOTE_LIST_CHANGED, listener);
   },
 
+  // NoteFile 打开事件（从 NavSide 路由过来）
+  onNoteOpenInEditor: (callback: (noteId: string) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, noteId: string) => callback(noteId);
+    ipcRenderer.on(IPC.NOTE_OPEN_IN_EDITOR, listener);
+    return () => ipcRenderer.removeListener(IPC.NOTE_OPEN_IN_EDITOR, listener);
+  },
+
+  // SurrealDB 就绪查询（防止错过 db:ready 事件）
+  isDBReady: () => ipcRenderer.invoke(IPC.IS_DB_READY),
+
   // SurrealDB 就绪监听
   onDBReady: (callback: () => void) => {
     const listener = () => callback();
     ipcRenderer.on(IPC.DB_READY, listener);
     return () => ipcRenderer.removeListener(IPC.DB_READY, listener);
+  },
+
+  // 加载测试文档
+  onLoadTestDoc: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on(IPC.LOAD_TEST_DOC, listener);
+    return () => ipcRenderer.removeListener(IPC.LOAD_TEST_DOC, listener);
   },
 
   // 状态监听

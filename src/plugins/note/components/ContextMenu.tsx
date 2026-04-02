@@ -20,6 +20,8 @@ interface ContextMenuProps {
 interface MenuState {
   coords: { left: number; top: number };
   blockSelected: boolean;
+  hasLink: boolean;
+  linkPos: { from: number; to: number } | null;
 }
 
 export function ContextMenu({ view, onOpen, onClose }: ContextMenuProps) {
@@ -31,9 +33,39 @@ export function ContextMenu({ view, onOpen, onClose }: ContextMenuProps) {
     const handler = (e: MouseEvent) => {
       e.preventDefault();
       const selState = blockSelectionKey.getState(view.state);
+
+      // 检测右键位置是否有 link mark
+      let hasLink = false;
+      let linkPos: { from: number; to: number } | null = null;
+      const pos = view.posAtCoords({ left: e.clientX, top: e.clientY });
+      if (pos) {
+        const $pos = view.state.doc.resolve(pos.pos);
+        const linkMark = $pos.marks().find((m) => m.type.name === 'link');
+        if (linkMark) {
+          hasLink = true;
+          // 找 link mark 覆盖的范围
+          const from = pos.pos;
+          let start = from;
+          let end = from;
+          const parent = $pos.parent;
+          const parentStart = $pos.start();
+          parent.forEach((node, offset) => {
+            const nodeFrom = parentStart + offset;
+            const nodeTo = nodeFrom + node.nodeSize;
+            if (nodeFrom <= from && from < nodeTo && node.marks.some((m) => m.type.name === 'link')) {
+              start = nodeFrom;
+              end = nodeTo;
+            }
+          });
+          linkPos = { from: start, to: end };
+        }
+      }
+
       setMenu({
         coords: { left: e.clientX, top: e.clientY },
         blockSelected: (selState?.active && selState.positions.length > 0) || false,
+        hasLink,
+        linkPos,
       });
       onOpen?.();
     };
@@ -89,6 +121,21 @@ export function ContextMenu({ view, onOpen, onClose }: ContextMenuProps) {
       close();
     },
   });
+
+  // 链接操作
+  if (menu.hasLink && menu.linkPos) {
+    items.push({ id: 'sep-link', label: '', icon: '', shortcut: '', separator: true, action: () => {} });
+    items.push({
+      id: 'remove-link', label: '移除链接', icon: '🔗', shortcut: '',
+      action: () => {
+        const linkMark = view.state.schema.marks.link;
+        if (linkMark && menu.linkPos) {
+          view.dispatch(view.state.tr.removeMark(menu.linkPos.from, menu.linkPos.to, linkMark));
+        }
+        close();
+      },
+    });
+  }
 
   // Block 选中时的额外操作
   if (menu.blockSelected) {

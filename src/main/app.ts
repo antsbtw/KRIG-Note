@@ -12,6 +12,7 @@ import { initSurrealDB, shutdownSurrealDB, isDBReady } from './storage/client';
 import { initSchema } from './storage/schema';
 import { surrealSessionStore } from './storage/surreal-session-store';
 import { activityStore } from './storage/activity-store';
+import { initKrigNoteDocs } from './storage/init-docs';
 
 /**
  * KRIG Note — 应用入口
@@ -32,7 +33,7 @@ function registerPlugins(): void {
     id: 'demo-a',
     viewType: 'note',
     icon: '📝',
-    label: 'Demo A',
+    label: 'Note',
     order: 1,
   });
 
@@ -40,7 +41,7 @@ function registerPlugins(): void {
     id: 'demo-b',
     viewType: 'pdf',
     icon: '📕',
-    label: 'Demo B',
+    label: 'PDF',
     order: 2,
   });
 
@@ -48,7 +49,7 @@ function registerPlugins(): void {
     id: 'demo-c',
     viewType: 'web',
     icon: '🌐',
-    label: 'Demo C',
+    label: 'Web',
     order: 3,
   });
 
@@ -62,6 +63,21 @@ function registerPlugins(): void {
     id: 'demo-sync-reverse',
     match: { left: { type: 'pdf' }, right: { type: 'note' } },
   });
+
+  // ── DevTools 辅助函数 ──
+  function openDevToolsByName(name: string): void {
+    const win = getMainWindow();
+    if (!win) return;
+    for (const child of win.contentView.children) {
+      if ('webContents' in child) {
+        const url = (child as any).webContents.getURL() as string;
+        if (url.includes(name)) {
+          (child as any).webContents.toggleDevTools();
+          return;
+        }
+      }
+    }
+  }
 
   // Application Menu 注册（全局稳定，始终显示所有菜单）
 
@@ -80,12 +96,21 @@ function registerPlugins(): void {
         }
       }},
       { id: 'sep1', label: '', separator: true, handler: () => {} },
-      { id: 'devtools', label: 'Developer Tools', accelerator: 'CmdOrCtrl+Alt+I', handler: () => {
+      { id: 'devtools-note', label: 'DevTools (Note)', accelerator: 'CmdOrCtrl+Alt+N', handler: () => {
+        openDevToolsByName('note');
+      }},
+      { id: 'devtools-navside', label: 'DevTools (NavSide)', accelerator: 'CmdOrCtrl+Alt+S', handler: () => {
+        openDevToolsByName('navside');
+      }},
+      { id: 'devtools-shell', label: 'DevTools (Shell)', accelerator: 'CmdOrCtrl+Alt+W', handler: () => {
+        openDevToolsByName('shell');
+      }},
+      { id: 'devtools-focused', label: 'DevTools (Focused)', accelerator: 'CmdOrCtrl+Alt+I', handler: () => {
         const win = getMainWindow();
         if (win) {
           for (const child of win.contentView.children) {
-            if ('webContents' in child && child.webContents.isFocused()) {
-              child.webContents.toggleDevTools();
+            if ('webContents' in child && (child as any).webContents.isFocused()) {
+              (child as any).webContents.toggleDevTools();
               break;
             }
           }
@@ -150,6 +175,39 @@ function registerPlugins(): void {
     items: [
       { id: 'about', label: 'About KRIG Note', handler: () => console.log('About') },
       { id: 'shortcuts', label: 'Keyboard Shortcuts', handler: () => console.log('Shortcuts') },
+      { id: 'sep1', label: '', separator: true, handler: () => {} },
+      { id: 'test-doc', label: 'Load Test Document', handler: () => {
+        const win = getMainWindow();
+        if (win) {
+          for (const child of win.contentView.children) {
+            if ('webContents' in child) {
+              (child as any).webContents.send('note:load-test-doc');
+            }
+          }
+        }
+      }},
+      { id: 'sep2', label: '', separator: true, handler: () => {} },
+      { id: 'import-docs', label: 'Import KRIG-Note Docs', handler: async () => {
+        try {
+          const { created } = await initKrigNoteDocs();
+          if (created > 0) {
+            console.log(`[Help] Imported ${created} documents`);
+            // 通知所有 renderer 刷新（通过 db:ready 触发全量刷新）
+            const win = getMainWindow();
+            if (win) {
+              for (const child of win.contentView.children) {
+                if ('webContents' in child) {
+                  (child as any).webContents.send('db:ready');
+                }
+              }
+            }
+          } else {
+            console.log('[Help] KRIG-Note docs already exist, skipping.');
+          }
+        } catch (err) {
+          console.error('[Help] Import failed:', err);
+        }
+      }},
     ],
   });
 }

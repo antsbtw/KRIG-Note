@@ -155,9 +155,26 @@ export const IPC = {
   NOTE_SAVE: 'note:save',
   NOTE_LOAD: 'note:load',
   NOTE_DELETE: 'note:delete',
+  NOTE_RENAME: 'note:rename',
   NOTE_LIST: 'note:list',
   NOTE_LIST_CHANGED: 'note:list-changed',
 
+  NOTE_MOVE_TO_FOLDER: 'note:move-to-folder',
+
+  // NoteFile 编辑器操作
+  NOTE_OPEN_IN_EDITOR: 'note:open-in-editor',
+
+  // Folder 操作
+  FOLDER_CREATE: 'folder:create',
+  FOLDER_RENAME: 'folder:rename',
+  FOLDER_DELETE: 'folder:delete',
+  FOLDER_MOVE: 'folder:move',
+  FOLDER_LIST: 'folder:list',
+
+  // 测试文档
+  LOAD_TEST_DOC: 'note:load-test-doc',
+
   // SurrealDB 状态
   DB_READY: 'db:ready',
+  IS_DB_READY: 'db:is-ready',
 } as const;

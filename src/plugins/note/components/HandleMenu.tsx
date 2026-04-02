@@ -24,6 +24,7 @@ interface MenuState {
 export function HandleMenu({ view }: HandleMenuProps) {
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [subMenuOpen, setSubMenuOpen] = useState(false);
+  const [formatMenuOpen, setFormatMenuOpen] = useState(false);
 
   useEffect(() => {
     if (!view) return;
@@ -37,10 +38,11 @@ export function HandleMenu({ view }: HandleMenuProps) {
         coords: detail.coords,
       });
       setSubMenuOpen(false);
+      setFormatMenuOpen(false);
     };
 
     view.dom.addEventListener('block-handle-click', handler);
-    const closeHandler = () => { setMenu(null); setSubMenuOpen(false); };
+    const closeHandler = () => { setMenu(null); setSubMenuOpen(false); setFormatMenuOpen(false); };
     document.addEventListener('click', closeHandler);
 
     return () => {
@@ -118,33 +120,102 @@ export function HandleMenu({ view }: HandleMenuProps) {
       style={{ ...styles.container, left: menu.coords.left, top: menu.coords.top + 4 }}
       onClick={(e) => e.stopPropagation()}
     >
-      {/* 转换成 → 子菜单 */}
+      {/* 转换成 → 子菜单（外层容器统一管理 hover） */}
       {hasTurnInto && (
         <div
-          style={styles.item}
-          onMouseEnter={() => setSubMenuOpen(true)}
+          style={styles.turnIntoWrapper}
+          onMouseEnter={() => { setSubMenuOpen(true); setFormatMenuOpen(false); }}
           onMouseLeave={() => setSubMenuOpen(false)}
         >
-          <span style={styles.icon}>↺</span>
-          <span style={styles.label}>转换成</span>
-          <span style={styles.arrow}>›</span>
+          <div style={styles.item}>
+            <span style={styles.icon}>↺</span>
+            <span style={styles.label}>转换成</span>
+            <span style={styles.arrow}>›</span>
+          </div>
 
           {/* 子菜单 */}
           {subMenuOpen && (
             <div style={styles.subMenu}>
-              {turnIntoItems.map((item) => (
-                <div
-                  key={item.id}
-                  style={styles.item}
-                  onMouseDown={(e) => { e.preventDefault(); item.action(); }}
-                  onMouseEnter={(e) => (e.currentTarget.style.background = '#3a3a3a')}
-                  onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                >
-                  <span style={styles.icon}>{item.icon}</span>
-                  <span style={styles.label}>{item.label}</span>
-                  {item.active && <span style={styles.check}>✓</span>}
-                </div>
-              ))}
+              <div style={styles.subMenuPanel}>
+                {turnIntoItems.map((item) => (
+                  <div
+                    key={item.id}
+                    style={styles.item}
+                    onMouseDown={(e) => { e.preventDefault(); item.action(); }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = '#3a3a3a')}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                  >
+                    <span style={styles.icon}>{item.icon}</span>
+                    <span style={styles.label}>{item.label}</span>
+                    {item.active && <span style={styles.check}>✓</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 格式 → 子菜单（paragraph / heading） */}
+      {(menu.blockType === 'paragraph' || menu.blockType === 'heading') && currentNode && (
+        <div
+          style={styles.turnIntoWrapper}
+          onMouseEnter={() => { setFormatMenuOpen(true); setSubMenuOpen(false); }}
+          onMouseLeave={() => setFormatMenuOpen(false)}
+        >
+          <div style={styles.item}>
+            <span style={styles.icon}>¶</span>
+            <span style={styles.label}>格式</span>
+            <span style={styles.arrow}>›</span>
+          </div>
+
+          {formatMenuOpen && (
+            <div style={styles.subMenu}>
+              <div style={styles.subMenuPanel}>
+                {/* 首行缩进 */}
+                {menu.blockType === 'paragraph' && (
+                  <div
+                    style={styles.item}
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      const newVal = !currentNode.attrs.textIndent;
+                      view.dispatch(view.state.tr.setNodeMarkup(menu.pos, undefined, { ...currentNode.attrs, textIndent: newVal }));
+                      setMenu(null);
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = '#3a3a3a')}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                  >
+                    <span style={styles.icon}>⇥</span>
+                    <span style={styles.label}>首行缩进</span>
+                    {currentNode.attrs.textIndent && <span style={styles.check}>✓</span>}
+                  </div>
+                )}
+                {/* 分隔线 */}
+                {menu.blockType === 'paragraph' && <div style={styles.separator} />}
+                {/* 对齐方式 */}
+                {[
+                  { id: 'left', label: '左对齐', icon: '⫷' },
+                  { id: 'center', label: '居中', icon: '⫿' },
+                  { id: 'right', label: '右对齐', icon: '⫸' },
+                  { id: 'justify', label: '两端对齐', icon: '☰' },
+                ].map((a) => (
+                  <div
+                    key={a.id}
+                    style={styles.item}
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      view.dispatch(view.state.tr.setNodeMarkup(menu.pos, undefined, { ...currentNode.attrs, align: a.id }));
+                      setMenu(null);
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = '#3a3a3a')}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                  >
+                    <span style={styles.icon}>{a.icon}</span>
+                    <span style={styles.label}>{a.label}</span>
+                    {(currentNode.attrs.align || 'left') === a.id && <span style={styles.check}>✓</span>}
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>
@@ -259,11 +330,17 @@ const styles: Record<string, React.CSSProperties> = {
     background: '#444',
     margin: '4px 8px',
   },
+  turnIntoWrapper: {
+    position: 'relative',
+  },
   subMenu: {
     position: 'absolute',
     left: '100%',
-    top: 0,
-    marginLeft: '4px',
+    top: '-4px',
+    paddingLeft: '6px',  // 透明间隔保持 hover 连续
+    zIndex: 10,
+  },
+  subMenuPanel: {
     background: '#2a2a2a',
     border: '1px solid #444',
     borderRadius: '8px',

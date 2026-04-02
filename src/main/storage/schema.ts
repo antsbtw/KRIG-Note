@@ -1,9 +1,10 @@
 import { getDB } from './client';
 
 /**
- * Schema 初始化 — 3 个表（Phase 1）
+ * Schema 初始化 — 4 个表
  *
  * note:     NoteFile 存储
+ * folder:   文件夹（组织视图，不影响笔记存储）
  * activity: 操作记录
  * session:  状态记录
  */
@@ -13,6 +14,12 @@ const SCHEMA_QUERIES = [
   `DEFINE TABLE IF NOT EXISTS note SCHEMALESS;`,
   `DEFINE INDEX IF NOT EXISTS note_title ON note FIELDS title;`,
   `DEFINE INDEX IF NOT EXISTS note_updated ON note FIELDS updated_at;`,
+  `DEFINE INDEX IF NOT EXISTS note_folder ON note FIELDS folder_id;`,
+
+  // folder 表（组织视图）
+  `DEFINE TABLE IF NOT EXISTS folder SCHEMALESS;`,
+  `DEFINE INDEX IF NOT EXISTS folder_parent ON folder FIELDS parent_id;`,
+  `DEFINE INDEX IF NOT EXISTS folder_sort ON folder FIELDS sort_order;`,
 
   // activity 表（操作记录）
   `DEFINE TABLE IF NOT EXISTS activity SCHEMALESS;`,
