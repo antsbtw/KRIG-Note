@@ -508,8 +508,9 @@ const styles: Record<string, React.CSSProperties> = {
     flex: 1,
     overflow: 'auto',
     width: '100%',
-    padding: '24px calc(max(32px, (100% - 800px) / 2))',
+    padding: '24px calc(max(48px, (100% - 800px) / 2))',
     minHeight: '100%',
     outline: 'none',
+    position: 'relative',
   },
 };

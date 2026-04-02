@@ -48,9 +48,56 @@ export function blockHandlePlugin(): Plugin {
   function createHandleDOM(view: EditorView): HTMLDivElement {
     const dom = document.createElement('div');
     dom.className = 'block-handle';
-    dom.innerHTML = '⠿';
     dom.style.cssText = `
       position: absolute;
+      display: flex;
+      align-items: center;
+      gap: 0;
+      opacity: 0;
+      transition: opacity 0.15s;
+      z-index: 10;
+      user-select: none;
+    `;
+
+    // + 按钮（添加新段落）
+    const addBtn = document.createElement('div');
+    addBtn.className = 'block-handle__add';
+    addBtn.innerHTML = '+';
+    addBtn.style.cssText = `
+      width: 24px;
+      height: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      color: #555;
+      font-size: 20px;
+      border-radius: 3px;
+    `;
+    addBtn.addEventListener('mouseenter', () => { addBtn.style.background = '#333'; addBtn.style.color = '#e8eaed'; });
+    addBtn.addEventListener('mouseleave', () => { addBtn.style.background = 'transparent'; addBtn.style.color = '#555'; });
+    addBtn.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      // 在当前 Block 之后插入新 paragraph
+      const pos = currentState.pos;
+      const node = view.state.doc.nodeAt(pos);
+      if (node) {
+        const insertPos = pos + node.nodeSize;
+        const schema = view.state.schema;
+        const tr = view.state.tr.insert(insertPos, schema.nodes.paragraph.create());
+        const { TextSelection } = require('prosemirror-state');
+        tr.setSelection(TextSelection.create(tr.doc, insertPos + 1));
+        view.dispatch(tr);
+        view.focus();
+      }
+    });
+
+    // ⠿ 拖拽手柄
+    const dragBtn = document.createElement('div');
+    dragBtn.className = 'block-handle__drag';
+    dragBtn.innerHTML = '⠿';
+    dragBtn.style.cssText = `
       width: 24px;
       height: 24px;
       display: flex;
@@ -59,58 +106,23 @@ export function blockHandlePlugin(): Plugin {
       cursor: grab;
       color: #555;
       font-size: 18px;
-      border-radius: 4px;
-      user-select: none;
-      opacity: 0;
-      transition: opacity 0.15s;
-      z-index: 10;
+      border-radius: 3px;
     `;
+    dragBtn.addEventListener('mouseenter', () => { dragBtn.style.background = '#333'; dragBtn.style.color = '#e8eaed'; });
+    dragBtn.addEventListener('mouseleave', () => { dragBtn.style.background = 'transparent'; dragBtn.style.color = '#555'; });
 
-    // 自定义 Tooltip
-    const tooltip = document.createElement('div');
-    tooltip.style.cssText = `
-      position: absolute;
-      left: 100%;
-      top: 50%;
-      transform: translateY(-50%);
-      margin-left: 6px;
-      padding: 6px 10px;
-      background: #333;
-      border: 1px solid #555;
-      border-radius: 6px;
-      font-size: 12px;
-      color: #ccc;
-      white-space: nowrap;
-      pointer-events: none;
-      opacity: 0;
-      transition: opacity 0.15s;
-      z-index: 20;
-      line-height: 1.4;
-      text-align: center;
-    `;
-    tooltip.innerHTML = '拖动以移动<br>点击 或 ⌘/ 打开菜单';
-    dom.appendChild(tooltip);
-
-    let tooltipTimer: ReturnType<typeof setTimeout> | null = null;
+    dom.appendChild(addBtn);
+    dom.appendChild(dragBtn);
 
     dom.addEventListener('mouseenter', () => {
       isHandleHovered = true;
       if (hideTimeout) { clearTimeout(hideTimeout); hideTimeout = null; }
-      dom.style.background = '#333';
-      // 延迟显示 tooltip
-      tooltipTimer = setTimeout(() => { tooltip.style.opacity = '1'; }, 500);
-      dom.style.color = '#e8eaed';
       dom.style.opacity = '1';
     });
 
     dom.addEventListener('mouseleave', () => {
       isHandleHovered = false;
-      // 隐藏 tooltip
-      if (tooltipTimer) { clearTimeout(tooltipTimer); tooltipTimer = null; }
-      tooltip.style.opacity = '0';
       if (!currentState.menuOpen && !isDragging) {
-        dom.style.background = 'transparent';
-        dom.style.color = '#555';
         hideTimeout = setTimeout(() => {
           if (!isHandleHovered && !currentState.menuOpen && !isDragging) {
             dom.style.opacity = '0';
@@ -119,13 +131,10 @@ export function blockHandlePlugin(): Plugin {
       }
     });
 
-    // mousedown → 可能是单击或拖拽
-    dom.addEventListener('mousedown', (e) => {
+    // dragBtn mousedown → 可能是单击（弹菜单）或拖拽
+    dragBtn.addEventListener('mousedown', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      // 隐藏 tooltip
-      if (tooltipTimer) { clearTimeout(tooltipTimer); tooltipTimer = null; }
-      tooltip.style.opacity = '0';
       dragStartY = e.clientY;
       dragFromPos = currentState.pos;
       isDragging = false;
@@ -246,25 +255,50 @@ export function blockHandlePlugin(): Plugin {
 
   // ── Handle 位置管理 ──
 
-  function updateHandlePosition(view: EditorView, pos: number): void {
-    if (!handleDOM) return;
+  // 当前追踪的 Block DOM（用于 RAF 持续定位）
+  let trackedBlockDOM: HTMLElement | null = null;
+  let rafId: number | null = null;
+
+  function startTracking(view: EditorView, pos: number): void {
     try {
-      const coords = view.coordsAtPos(pos);
-      const containerRect = view.dom.parentElement?.getBoundingClientRect();
-      if (!containerRect) return;
-
-      // 获取 Block DOM 的第一行行高，居中 Handle
-      const blockDOM = view.nodeDOM(pos) as HTMLElement | null;
-      const lineHeight = blockDOM ? parseInt(getComputedStyle(blockDOM).lineHeight) || (coords.bottom - coords.top) : 24;
-      const handleSize = 24;
-      const topOffset = (lineHeight - handleSize) / 2;
-
-      handleDOM.style.left = `${coords.left - containerRect.left - 30}px`;
-      handleDOM.style.top = `${coords.top - containerRect.top + topOffset}px`;
-      handleDOM.style.opacity = '1';
+      const dom = view.nodeDOM(pos);
+      trackedBlockDOM = dom instanceof HTMLElement ? dom : (dom as Node)?.parentElement ?? null;
     } catch {
-      handleDOM.style.opacity = '0';
+      trackedBlockDOM = null;
     }
+    if (!rafId) rafLoop();
+  }
+
+  function rafLoop(): void {
+    if (!handleDOM) return;
+
+    if (isHandleHovered || currentState.menuOpen) {
+      // Handle 被 hover 或菜单打开时，保持当前位置不变
+      rafId = requestAnimationFrame(rafLoop);
+      return;
+    }
+
+    if (trackedBlockDOM && currentState.visible) {
+      const containerRect = handleDOM.parentElement?.getBoundingClientRect();
+      if (containerRect) {
+        const blockRect = trackedBlockDOM.getBoundingClientRect();
+        // 取第一行行高来垂直居中
+        const lineHeight = parseFloat(getComputedStyle(trackedBlockDOM).lineHeight) || 27;
+        const handleHeight = 24;
+        const topOffset = (lineHeight - handleHeight) / 2;
+        // 两个按钮（+ 和 ⠿）共 48px 宽
+        handleDOM.style.left = `${blockRect.left - containerRect.left - 48 - 2}px`;
+        handleDOM.style.top = `${blockRect.top - containerRect.top + topOffset}px`;
+        handleDOM.style.opacity = '1';
+      }
+    }
+
+    rafId = requestAnimationFrame(rafLoop);
+  }
+
+  function stopTracking(): void {
+    if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+    trackedBlockDOM = null;
   }
 
   function hideHandle(): void {
@@ -285,6 +319,7 @@ export function blockHandlePlugin(): Plugin {
       return {
         update() {},
         destroy() {
+          stopTracking();
           handleDOM?.remove();
           handleDOM = null;
           removeDropIndicator();
@@ -325,7 +360,7 @@ export function blockHandlePlugin(): Plugin {
             menuOpen: currentState.menuOpen,
           };
 
-          updateHandlePosition(view, blockStart);
+          startTracking(view, blockStart);
           return false;
         },
 
