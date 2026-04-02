@@ -1,13 +1,13 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import type { EditorView } from 'prosemirror-view';
 import { blockRegistry } from '../registry';
 import { blockAction } from '../block-ops/block-action';
 
 /**
- * HandleMenu — Block 操作菜单
+ * HandleMenu — Block 操作菜单（两级结构）
  *
- * 点击 Block 左侧手柄后弹出。
- * 菜单项从当前 Block 的 capabilities + customActions 派生。
+ * 第一级：转换成 →（子菜单）/ Fold / 删除
+ * 第二级（转换成）：文本 / 标题1 / 标题2 / 标题3 / 代码 / 引用 / ...
  */
 
 interface HandleMenuProps {
@@ -23,6 +23,7 @@ interface MenuState {
 
 export function HandleMenu({ view }: HandleMenuProps) {
   const [menu, setMenu] = useState<MenuState | null>(null);
+  const [subMenuOpen, setSubMenuOpen] = useState(false);
 
   useEffect(() => {
     if (!view) return;
@@ -35,12 +36,11 @@ export function HandleMenu({ view }: HandleMenuProps) {
         blockType: detail.blockType,
         coords: detail.coords,
       });
+      setSubMenuOpen(false);
     };
 
     view.dom.addEventListener('block-handle-click', handler);
-
-    // 点击其他地方关闭
-    const closeHandler = () => setMenu(null);
+    const closeHandler = () => { setMenu(null); setSubMenuOpen(false); };
     document.addEventListener('click', closeHandler);
 
     return () => {
@@ -54,105 +54,157 @@ export function HandleMenu({ view }: HandleMenuProps) {
   const blockDef = blockRegistry.get(menu.blockType);
   const capabilities = blockDef?.capabilities;
   const customActions = blockDef?.customActions ?? [];
+  const currentNode = view.state.doc.nodeAt(menu.pos);
 
-  // 构建菜单项
-  const items: { id: string; label: string; icon: string; shortcut?: string; action: () => void }[] = [];
+  // ── 构建转换成子菜单项 ──
+  const turnIntoItems: { id: string; label: string; icon: string; active: boolean; action: () => void }[] = [];
 
-  // Fold/Unfold（heading 专属）
-  if (menu.blockType === 'heading') {
-    const node = view.state.doc.nodeAt(menu.pos);
-    const isOpen = node?.attrs.open !== false;
-    items.push({
-      id: 'fold-toggle',
-      label: isOpen ? 'Fold' : 'Unfold',
-      icon: isOpen ? '▸' : '▾',
-      shortcut: '⌘.',
-      action: () => {
-        const currentNode = view.state.doc.nodeAt(menu.pos);
-        if (currentNode) {
-          view.dispatch(
-            view.state.tr.setNodeMarkup(menu.pos, undefined, {
-              ...currentNode.attrs,
-              open: !isOpen,
-            }),
-          );
-        }
-        setMenu(null);
-      },
+  // 文本（paragraph）
+  turnIntoItems.push({
+    id: 'paragraph', label: '文本', icon: 'T',
+    active: menu.blockType === 'paragraph',
+    action: () => { blockAction.turnInto(view, menu.pos, 'paragraph'); setMenu(null); },
+  });
+
+  // 标题 1-3
+  for (let level = 1; level <= 3; level++) {
+    turnIntoItems.push({
+      id: `heading${level}`, label: `标题 ${level}`, icon: `H${level}`,
+      active: menu.blockType === 'heading' && currentNode?.attrs.level === level,
+      action: () => { blockAction.turnInto(view, menu.pos, 'heading', { level }); setMenu(null); },
     });
   }
 
-  // turnInto 选项
-  if (capabilities?.turnInto && capabilities.turnInto.length > 0) {
-    for (const target of capabilities.turnInto) {
-      const targetDef = blockRegistry.get(target);
-      items.push({
-        id: `turn-${target}`,
-        label: `Turn into ${targetDef?.slashMenu?.label ?? target}`,
-        icon: targetDef?.slashMenu?.icon ?? '↺',
-        action: () => {
-          blockAction.turnInto(view, menu.pos, target);
-          setMenu(null);
-        },
-      });
-    }
-  }
+  // 代码
+  turnIntoItems.push({
+    id: 'codeBlock', label: '代码', icon: '</>',
+    active: menu.blockType === 'codeBlock',
+    action: () => { blockAction.turnInto(view, menu.pos, 'codeBlock'); setMenu(null); },
+  });
 
-  // 通用操作
-  if (capabilities?.canDelete) {
-    items.push({
-      id: 'delete',
-      label: 'Delete',
-      icon: '🗑',
-      action: () => {
-        blockAction.delete(view, menu.pos);
-        setMenu(null);
-      },
-    });
-  }
+  // 引用
+  turnIntoItems.push({
+    id: 'blockquote', label: '引用', icon: '66',
+    active: menu.blockType === 'blockquote',
+    action: () => { blockAction.turnInto(view, menu.pos, 'blockquote'); setMenu(null); },
+  });
 
-  // Block 专有操作
-  for (const action of customActions) {
-    if (!action.showIn || action.showIn.includes('handleMenu')) {
-      items.push({
-        id: action.id,
-        label: action.label,
-        icon: action.icon ?? '•',
-        action: () => {
-          action.handler(view, menu.pos);
-          setMenu(null);
-        },
-      });
-    }
-  }
+  // 折叠列表
+  turnIntoItems.push({
+    id: 'toggleList', label: '折叠列表', icon: '▸',
+    active: menu.blockType === 'toggleList',
+    action: () => { blockAction.turnInto(view, menu.pos, 'toggleList'); setMenu(null); },
+  });
 
-  if (items.length === 0) return null;
+  // 项目符号列表
+  turnIntoItems.push({
+    id: 'bulletList', label: '项目符号列表', icon: '•',
+    active: menu.blockType === 'bulletList',
+    action: () => { blockAction.turnInto(view, menu.pos, 'bulletList'); setMenu(null); },
+  });
+
+  // 有序列表
+  turnIntoItems.push({
+    id: 'orderedList', label: '有序列表', icon: '1.',
+    active: menu.blockType === 'orderedList',
+    action: () => { blockAction.turnInto(view, menu.pos, 'orderedList'); setMenu(null); },
+  });
+
+  // ── 构建第一级菜单 ──
+  const hasTurnInto = capabilities?.turnInto && capabilities.turnInto.length > 0;
 
   return (
     <div
-      style={{
-        ...styles.container,
-        left: menu.coords.left,
-        top: menu.coords.top + 4,
-      }}
+      style={{ ...styles.container, left: menu.coords.left, top: menu.coords.top + 4 }}
       onClick={(e) => e.stopPropagation()}
     >
-      {items.map((item) => (
+      {/* 转换成 → 子菜单 */}
+      {hasTurnInto && (
         <div
-          key={item.id}
+          style={styles.item}
+          onMouseEnter={() => setSubMenuOpen(true)}
+          onMouseLeave={() => setSubMenuOpen(false)}
+        >
+          <span style={styles.icon}>↺</span>
+          <span style={styles.label}>转换成</span>
+          <span style={styles.arrow}>›</span>
+
+          {/* 子菜单 */}
+          {subMenuOpen && (
+            <div style={styles.subMenu}>
+              {turnIntoItems.map((item) => (
+                <div
+                  key={item.id}
+                  style={styles.item}
+                  onMouseDown={(e) => { e.preventDefault(); item.action(); }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = '#3a3a3a')}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                >
+                  <span style={styles.icon}>{item.icon}</span>
+                  <span style={styles.label}>{item.label}</span>
+                  {item.active && <span style={styles.check}>✓</span>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Fold/Unfold（heading 专属） */}
+      {menu.blockType === 'heading' && currentNode && (
+        <div
           style={styles.item}
           onMouseDown={(e) => {
             e.preventDefault();
-            item.action();
+            const isOpen = currentNode.attrs.open !== false;
+            view.dispatch(
+              view.state.tr.setNodeMarkup(menu.pos, undefined, {
+                ...currentNode.attrs, open: !isOpen,
+              }),
+            );
+            setMenu(null);
           }}
-          onMouseEnter={(e) => (e.currentTarget.style.background = '#3a3a3a')}
+          onMouseEnter={(e) => { e.currentTarget.style.background = '#3a3a3a'; setSubMenuOpen(false); }}
           onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
         >
-          <span style={styles.icon}>{item.icon}</span>
-          <span style={styles.label}>{item.label}</span>
-          {item.shortcut && <span style={styles.shortcut}>{item.shortcut}</span>}
+          <span style={styles.icon}>{currentNode.attrs.open !== false ? '▸' : '▾'}</span>
+          <span style={styles.label}>{currentNode.attrs.open !== false ? 'Fold' : 'Unfold'}</span>
+          <span style={styles.shortcut}>⌘.</span>
+        </div>
+      )}
+
+      {/* Block 专有操作 */}
+      {customActions.filter(a => !a.showIn || a.showIn.includes('handleMenu')).map((action) => (
+        <div
+          key={action.id}
+          style={styles.item}
+          onMouseDown={(e) => { e.preventDefault(); action.handler(view, menu.pos); setMenu(null); }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = '#3a3a3a'; setSubMenuOpen(false); }}
+          onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+        >
+          <span style={styles.icon}>{action.icon ?? '•'}</span>
+          <span style={styles.label}>{action.label}</span>
         </div>
       ))}
+
+      {/* 分隔线 */}
+      {(hasTurnInto || menu.blockType === 'heading') && capabilities?.canDelete && (
+        <div style={styles.separator} />
+      )}
+
+      {/* 删除 */}
+      {capabilities?.canDelete && (
+        <div
+          style={styles.item}
+          onMouseDown={(e) => { e.preventDefault(); blockAction.delete(view, menu.pos); setMenu(null); }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = '#3a3a3a'; setSubMenuOpen(false); }}
+          onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+        >
+          <span style={styles.icon}>🗑</span>
+          <span style={styles.label}>删除</span>
+          <span style={styles.shortcut}>Del</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -166,11 +218,12 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '8px',
     padding: '4px',
     minWidth: '180px',
-    maxHeight: '300px',
-    overflow: 'auto',
+    maxHeight: '400px',
+    overflow: 'visible',
     boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
   },
   item: {
+    position: 'relative',
     display: 'flex',
     alignItems: 'center',
     gap: '8px',
@@ -181,7 +234,7 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#e8eaed',
   },
   icon: {
-    fontSize: '14px',
+    fontSize: '13px',
     width: '20px',
     textAlign: 'center',
     color: '#999',
@@ -189,8 +242,33 @@ const styles: Record<string, React.CSSProperties> = {
   label: {
     flex: 1,
   },
+  arrow: {
+    color: '#666',
+    fontSize: '14px',
+  },
   shortcut: {
     fontSize: '11px',
     color: '#666',
+  },
+  check: {
+    color: '#4a9eff',
+    fontSize: '13px',
+  },
+  separator: {
+    height: '1px',
+    background: '#444',
+    margin: '4px 8px',
+  },
+  subMenu: {
+    position: 'absolute',
+    left: '100%',
+    top: 0,
+    marginLeft: '4px',
+    background: '#2a2a2a',
+    border: '1px solid #444',
+    borderRadius: '8px',
+    padding: '4px',
+    minWidth: '160px',
+    boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
   },
 };
