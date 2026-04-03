@@ -529,7 +529,6 @@
 
 /* ── Image Block ── */
 .image-block {
-  margin: 0.5em 0;
 }
 
 .image-block__wrapper {
@@ -676,9 +675,7 @@
 
 /* ── Math Block ── */
 .math-block {
-  margin: 0.5em 0;
   padding: 12px 16px;
-  background: #1a1a1a;
   border: 1px solid #333;
   border-radius: 6px;
 }
@@ -833,9 +830,6 @@
 
 /* ── Audio Block ── */
 .audio-block {
-  margin: 0.5em 0;
-  background: #1a1a1a;
-  border: 1px solid #333;
   border-radius: 6px;
   padding: 12px;
 }
@@ -871,9 +865,7 @@
 
 /* ── Video Block ── */
 .video-block {
-  margin: 0.5em 0;
   background: #111;
-  border: 1px solid #333;
   border-radius: 6px;
   overflow: hidden;
 }
@@ -942,9 +934,6 @@
 
 /* ── Tweet Block ── */
 .tweet-block {
-  margin: 0.5em 0;
-  background: #1a1a1a;
-  border: 1px solid #333;
   border-radius: 6px;
   padding: 12px;
 }
@@ -1005,3 +994,112 @@
   margin-top: 6px;
 }
 .tweet-block__caption > p { margin: 0; }
+
+/* ═══════════════════════════════════════════════════════════
+   RenderBlock 基类样式
+   ═══════════════════════════════════════════════════════════ */
+
+.render-block {
+  position: relative;
+  background: #1e1e1e;
+  border: 1px solid #333;
+  border-radius: 6px;
+  margin: 0.5em 0;
+}
+
+/* Toolbar（hover 时展开，不 hover 时收起不占空间） */
+.render-block__toolbar {
+  display: none;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-bottom: 1px solid #333;
+  min-height: 32px;
+}
+.render-block:hover .render-block__toolbar { display: flex; }
+
+.render-block__label {
+  font-size: 11px;
+  color: #888;
+  padding: 2px 6px;
+  user-select: none;
+}
+
+.render-block__btn-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.render-block__toolbar-btn {
+  width: 26px;
+  height: 26px;
+  border: none;
+  background: transparent;
+  color: #888;
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.render-block__toolbar-btn:hover { background: #3a3a3a; color: #e8eaed; }
+.render-block__toolbar-btn--active { background: #3a3a3a; color: #e8eaed; }
+
+.render-block__toolbar-sep {
+  width: 1px;
+  height: 16px;
+  background: #444;
+  margin: 0 2px;
+}
+
+/* Content */
+.render-block__content {
+  min-height: 40px;
+}
+
+/* Fullscreen overlay */
+.render-block__fullscreen-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0, 0, 0, 0.85);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.render-block__fullscreen-container {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  cursor: grab;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.render-block__fullscreen-wrapper {
+  transform-origin: center center;
+  transition: none;
+}
+
+.render-block__fullscreen-close {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  font-size: 24px;
+  cursor: pointer;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.render-block__fullscreen-close:hover { background: rgba(255, 255, 255, 0.2); }

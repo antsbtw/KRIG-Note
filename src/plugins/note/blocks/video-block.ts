@@ -1,168 +1,112 @@
-import type { BlockDef, NodeViewFactory } from '../types';
+import type { BlockDef } from '../types';
+import { createRenderBlockView, type RenderBlockRenderer } from './render-block-base';
+import type { Node as PMNode } from 'prosemirror-model';
+import type { EditorView } from 'prosemirror-view';
 
 /**
- * videoBlock — 视频播放器（简化版骨架）
- *
- * 支持本地视频文件和 URL（YouTube/Vimeo 等通过 iframe）。
- * contentDOM 包含 paragraph（caption）。
- * 未来升级为 Tab Container（Video / Meta / Subtitle）。
+ * videoBlock — 视频播放器（RenderBlock）
  */
 
-function detectEmbedType(src: string): 'video' | 'iframe' {
-  if (/\.(mp4|webm|ogg|m3u8)(\?|$)/i.test(src)) return 'video';
-  return 'iframe';
+function isYouTubeUrl(url: string): boolean {
+  return /youtube\.com|youtu\.be/i.test(url);
 }
 
-function getEmbedUrl(src: string): string {
-  // YouTube
-  const ytMatch = src.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([\w-]+)/);
-  if (ytMatch) return `https://www.youtube.com/embed/${ytMatch[1]}`;
-  // Vimeo
-  const vimeoMatch = src.match(/vimeo\.com\/(\d+)/);
-  if (vimeoMatch) return `https://player.vimeo.com/video/${vimeoMatch[1]}`;
-  return src;
+function getYouTubeEmbedUrl(url: string): string {
+  const match = url.match(/(?:v=|youtu\.be\/)([^&?]+)/);
+  return match ? `https://www.youtube.com/embed/${match[1]}` : url;
 }
 
-const videoBlockNodeView: NodeViewFactory = (node, view, getPos) => {
-  const dom = document.createElement('div');
-  dom.classList.add('video-block');
+const videoRenderer: RenderBlockRenderer = {
+  label(node) { return node.attrs.title || 'Video'; },
 
-  const playerWrapper = document.createElement('div');
-  playerWrapper.classList.add('video-block__player');
+  createContent(node: PMNode, view: EditorView, getPos: () => number | undefined): HTMLElement {
+    const content = document.createElement('div');
+    content.classList.add('video-block');
+    let currentNode = node;
 
-  function renderPlayer(src: string | null) {
-    playerWrapper.innerHTML = '';
+    const playerWrapper = document.createElement('div');
+    playerWrapper.classList.add('video-block__player');
 
-    if (!src) {
-      const placeholder = document.createElement('div');
-      placeholder.classList.add('video-block__placeholder');
-      placeholder.textContent = '🎬 点击添加视频';
-      placeholder.addEventListener('click', showUrlInput);
-      playerWrapper.appendChild(placeholder);
-      return;
-    }
-
-    const type = detectEmbedType(src);
-    if (type === 'video') {
-      const video = document.createElement('video');
-      video.classList.add('video-block__video');
-      video.src = src;
-      video.controls = true;
-      if (node.attrs.poster) video.poster = node.attrs.poster;
-      playerWrapper.appendChild(video);
-    } else {
-      const iframe = document.createElement('iframe');
-      iframe.classList.add('video-block__iframe');
-      iframe.src = getEmbedUrl(src);
-      iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture';
-      iframe.allowFullscreen = true;
-      playerWrapper.appendChild(iframe);
-    }
-  }
-
-  function showUrlInput() {
-    playerWrapper.innerHTML = '';
-    const inputWrapper = document.createElement('div');
-    inputWrapper.classList.add('video-block__url-input');
-
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.placeholder = '输入视频 URL（YouTube、Vimeo 或直链）...';
-    input.classList.add('video-block__url-field');
-
-    const btn = document.createElement('button');
-    btn.textContent = '确定';
-    btn.classList.add('video-block__url-btn');
-
-    function commit() {
-      const url = input.value.trim();
-      if (!url) return;
-      const pos = typeof getPos === 'function' ? getPos() : undefined;
-      if (pos == null) return;
-      const tr = view.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, src: url });
-      view.dispatch(tr);
-    }
-
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); commit(); }
-      if (e.key === 'Escape') { e.preventDefault(); renderPlayer(node.attrs.src); }
-    });
-    btn.addEventListener('click', commit);
-
-    inputWrapper.appendChild(input);
-    inputWrapper.appendChild(btn);
-    playerWrapper.appendChild(inputWrapper);
-    input.focus();
-  }
-
-  renderPlayer(node.attrs.src);
-
-  const titleBar = document.createElement('div');
-  titleBar.classList.add('video-block__title');
-  titleBar.textContent = node.attrs.title || '';
-  titleBar.style.display = node.attrs.title ? 'block' : 'none';
-
-  const contentDOM = document.createElement('div');
-  contentDOM.classList.add('video-block__caption');
-
-  dom.appendChild(playerWrapper);
-  dom.appendChild(titleBar);
-  dom.appendChild(contentDOM);
-
-  return {
-    dom,
-    contentDOM,
-    update(updatedNode) {
-      if (updatedNode.type.name !== 'videoBlock') return false;
-      if (updatedNode.attrs.src !== node.attrs.src) {
-        renderPlayer(updatedNode.attrs.src);
+    function buildPlayer() {
+      playerWrapper.innerHTML = '';
+      if (!currentNode.attrs.src) {
+        const placeholder = document.createElement('div');
+        placeholder.classList.add('video-block__placeholder');
+        placeholder.innerHTML = '🎬 输入视频 URL<br><input class="video-block__url-input" placeholder="https://youtube.com/..." />';
+        playerWrapper.appendChild(placeholder);
+        setTimeout(() => {
+          const input = placeholder.querySelector('input');
+          input?.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+              const url = (e.target as HTMLInputElement).value.trim();
+              if (!url) return;
+              const pos = typeof getPos === 'function' ? getPos() : undefined;
+              if (pos == null) return;
+              view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, { ...currentNode.attrs, src: url }));
+            }
+          });
+        }, 0);
+        return;
       }
-      titleBar.textContent = updatedNode.attrs.title || '';
-      titleBar.style.display = updatedNode.attrs.title ? 'block' : 'none';
-      node = updatedNode;
-      return true;
-    },
-    ignoreMutation(mutation) {
-      return mutation.target === playerWrapper || playerWrapper.contains(mutation.target as Node)
-        || mutation.target === titleBar;
-    },
-    stopEvent(event) {
-      // 让 iframe 和 input 正常接收事件
-      if (playerWrapper.contains(event.target as Node)) return true;
-      return false;
-    },
-  };
+      const src = currentNode.attrs.src;
+      if (isYouTubeUrl(src)) {
+        const iframe = document.createElement('iframe');
+        iframe.src = getYouTubeEmbedUrl(src);
+        iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture';
+        iframe.allowFullscreen = true;
+        iframe.classList.add('video-block__iframe');
+        playerWrapper.appendChild(iframe);
+      } else {
+        const video = document.createElement('video');
+        video.src = src;
+        video.controls = true;
+        video.classList.add('video-block__video');
+        if (currentNode.attrs.poster) video.poster = currentNode.attrs.poster;
+        playerWrapper.appendChild(video);
+      }
+    }
+    buildPlayer();
+
+    const captionDOM = document.createElement('div');
+    captionDOM.classList.add('video-block__caption');
+    content.appendChild(playerWrapper);
+    content.appendChild(captionDOM);
+
+    (content as any)._refs = { playerWrapper, buildPlayer, setNode: (n: PMNode) => { currentNode = n; } };
+    (content as any)._captionDOM = captionDOM;
+    return content;
+  },
+
+  update(node: PMNode, contentEl: HTMLElement): boolean {
+    const refs = (contentEl as any)._refs;
+    if (!refs) return true;
+    refs.setNode(node);
+    refs.buildPlayer();
+    return true;
+  },
+
+  getContentDOM(contentEl: HTMLElement) {
+    return (contentEl as any)._captionDOM as HTMLElement;
+  },
 };
 
 export const videoBlockBlock: BlockDef = {
   name: 'videoBlock',
   group: 'block',
-
   nodeSpec: {
     content: 'textBlock',
     group: 'block',
-    attrs: {
-      src: { default: null },
-      title: { default: '' },
-      poster: { default: null },
-      embedType: { default: 'auto' },
-    },
+    attrs: { src: { default: null }, title: { default: '' }, poster: { default: null } },
     parseDOM: [{ tag: 'div.video-block' }],
     toDOM() { return ['div', { class: 'video-block' }, 0]; },
   },
-
-  nodeView: videoBlockNodeView,
-
-  capabilities: {
-    canDelete: true,
-    canDrag: true,
-  },
-
+  nodeView: createRenderBlockView(videoRenderer, 'video'),
+  capabilities: { canDelete: true, canDrag: true },
   slashMenu: {
     label: 'Video',
     icon: '🎬',
     group: 'media',
-    keywords: ['video', 'youtube', 'vimeo', 'movie', '视频'],
+    keywords: ['video', 'youtube', 'movie', '视频'],
     order: 1,
   },
 };

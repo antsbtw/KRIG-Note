@@ -1,155 +1,110 @@
-import type { BlockDef, NodeViewFactory } from '../types';
+import type { BlockDef } from '../types';
+import { createRenderBlockView, type RenderBlockRenderer } from './render-block-base';
+import type { Node as PMNode } from 'prosemirror-model';
+import type { EditorView } from 'prosemirror-view';
 
 /**
- * tweetBlock — 推文/社交媒体嵌入
- *
- * 输入 URL → 渲染嵌入预览。
- * contentDOM 包含 paragraph（caption）。
+ * tweetBlock — 推文/社交媒体嵌入（RenderBlock）
  */
 
-const tweetBlockNodeView: NodeViewFactory = (node, view, getPos) => {
-  const dom = document.createElement('div');
-  dom.classList.add('tweet-block');
+const tweetRenderer: RenderBlockRenderer = {
+  label() { return 'Tweet'; },
 
-  const embedWrapper = document.createElement('div');
-  embedWrapper.classList.add('tweet-block__embed');
+  createContent(node: PMNode, view: EditorView, getPos: () => number | undefined): HTMLElement {
+    const content = document.createElement('div');
+    content.classList.add('tweet-block');
+    let currentNode = node;
 
-  function renderEmbed(url: string | null) {
-    embedWrapper.innerHTML = '';
+    const previewWrapper = document.createElement('div');
+    previewWrapper.classList.add('tweet-block__preview');
 
-    if (!url) {
-      const placeholder = document.createElement('div');
-      placeholder.classList.add('tweet-block__placeholder');
-      placeholder.textContent = '🐦 点击添加推文 URL';
-      placeholder.addEventListener('click', showUrlInput);
-      embedWrapper.appendChild(placeholder);
-      return;
-    }
-
-    // 简化预览：显示 URL + iframe（如果支持）
-    const preview = document.createElement('div');
-    preview.classList.add('tweet-block__preview');
-
-    const icon = document.createElement('span');
-    icon.textContent = '🐦 ';
-
-    const link = document.createElement('a');
-    link.href = url;
-    link.textContent = url;
-    link.target = '_blank';
-    link.style.color = '#8ab4f8';
-    link.style.wordBreak = 'break-all';
-
-    const meta = document.createElement('div');
-    meta.classList.add('tweet-block__meta');
-    if (node.attrs.author) meta.textContent = `@${node.attrs.author}`;
-    if (node.attrs.text) {
-      const textEl = document.createElement('div');
-      textEl.classList.add('tweet-block__text');
-      textEl.textContent = node.attrs.text;
-      preview.appendChild(textEl);
-    }
-
-    preview.appendChild(icon);
-    preview.appendChild(link);
-    if (node.attrs.author) preview.appendChild(meta);
-
-    embedWrapper.appendChild(preview);
-  }
-
-  function showUrlInput() {
-    embedWrapper.innerHTML = '';
-    const inputWrapper = document.createElement('div');
-    inputWrapper.classList.add('tweet-block__url-input');
-
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.placeholder = '输入推文 URL (Twitter/X)...';
-    input.classList.add('tweet-block__url-field');
-
-    const btn = document.createElement('button');
-    btn.textContent = '确定';
-    btn.classList.add('tweet-block__url-btn');
-
-    function commit() {
-      const url = input.value.trim();
-      if (!url) return;
-      const pos = typeof getPos === 'function' ? getPos() : undefined;
-      if (pos == null) return;
-      const tr = view.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, tweetUrl: url });
-      view.dispatch(tr);
-    }
-
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); commit(); }
-      if (e.key === 'Escape') { e.preventDefault(); renderEmbed(node.attrs.tweetUrl); }
-    });
-    btn.addEventListener('click', commit);
-
-    inputWrapper.appendChild(input);
-    inputWrapper.appendChild(btn);
-    embedWrapper.appendChild(inputWrapper);
-    input.focus();
-  }
-
-  renderEmbed(node.attrs.tweetUrl);
-
-  const contentDOM = document.createElement('div');
-  contentDOM.classList.add('tweet-block__caption');
-
-  dom.appendChild(embedWrapper);
-  dom.appendChild(contentDOM);
-
-  return {
-    dom,
-    contentDOM,
-    update(updatedNode) {
-      if (updatedNode.type.name !== 'tweetBlock') return false;
-      if (updatedNode.attrs.tweetUrl !== node.attrs.tweetUrl) {
-        node = updatedNode;
-        renderEmbed(updatedNode.attrs.tweetUrl);
+    function buildPreview() {
+      previewWrapper.innerHTML = '';
+      if (!currentNode.attrs.tweetUrl) {
+        const placeholder = document.createElement('div');
+        placeholder.classList.add('tweet-block__placeholder');
+        placeholder.innerHTML = '🐦 输入推文 URL<br><input class="tweet-block__url-input" placeholder="https://twitter.com/..." />';
+        previewWrapper.appendChild(placeholder);
+        setTimeout(() => {
+          const input = placeholder.querySelector('input');
+          input?.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+              const url = (e.target as HTMLInputElement).value.trim();
+              if (!url) return;
+              const pos = typeof getPos === 'function' ? getPos() : undefined;
+              if (pos == null) return;
+              view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, { ...currentNode.attrs, tweetUrl: url }));
+            }
+          });
+        }, 0);
+        return;
       }
-      node = updatedNode;
-      return true;
-    },
-    ignoreMutation(mutation) {
-      return mutation.target === embedWrapper || embedWrapper.contains(mutation.target as Node);
-    },
-    stopEvent(event) {
-      if (embedWrapper.contains(event.target as Node)) return true;
-      return false;
-    },
-  };
+
+      // 简单预览
+      const info = document.createElement('div');
+      info.classList.add('tweet-block__info');
+      if (currentNode.attrs.author) {
+        const author = document.createElement('div');
+        author.classList.add('tweet-block__author');
+        author.textContent = `@${currentNode.attrs.author}`;
+        info.appendChild(author);
+      }
+      if (currentNode.attrs.text) {
+        const text = document.createElement('div');
+        text.classList.add('tweet-block__text');
+        text.textContent = currentNode.attrs.text;
+        info.appendChild(text);
+      }
+      const link = document.createElement('a');
+      link.href = currentNode.attrs.tweetUrl;
+      link.textContent = currentNode.attrs.tweetUrl;
+      link.classList.add('tweet-block__link');
+      link.addEventListener('click', (e) => { e.preventDefault(); window.open(currentNode.attrs.tweetUrl, '_blank'); });
+      info.appendChild(link);
+      previewWrapper.appendChild(info);
+    }
+    buildPreview();
+
+    const captionDOM = document.createElement('div');
+    captionDOM.classList.add('tweet-block__caption');
+    content.appendChild(previewWrapper);
+    content.appendChild(captionDOM);
+
+    (content as any)._refs = { buildPreview, setNode: (n: PMNode) => { currentNode = n; } };
+    (content as any)._captionDOM = captionDOM;
+    return content;
+  },
+
+  update(node: PMNode, contentEl: HTMLElement): boolean {
+    const refs = (contentEl as any)._refs;
+    if (!refs) return true;
+    refs.setNode(node);
+    refs.buildPreview();
+    return true;
+  },
+
+  getContentDOM(contentEl: HTMLElement) {
+    return (contentEl as any)._captionDOM as HTMLElement;
+  },
 };
 
 export const tweetBlockBlock: BlockDef = {
   name: 'tweetBlock',
   group: 'block',
-
   nodeSpec: {
     content: 'textBlock',
     group: 'block',
-    attrs: {
-      tweetUrl: { default: null },
-      author: { default: '' },
-      text: { default: '' },
-    },
+    attrs: { tweetUrl: { default: null }, author: { default: '' }, text: { default: '' } },
     parseDOM: [{ tag: 'div.tweet-block' }],
     toDOM() { return ['div', { class: 'tweet-block' }, 0]; },
   },
-
-  nodeView: tweetBlockNodeView,
-
-  capabilities: {
-    canDelete: true,
-    canDrag: true,
-  },
-
+  nodeView: createRenderBlockView(tweetRenderer, 'tweet'),
+  capabilities: { canDelete: true, canDrag: true },
   slashMenu: {
     label: 'Tweet',
     icon: '🐦',
     group: 'media',
-    keywords: ['tweet', 'twitter', 'social', 'embed', 'x', '推文'],
+    keywords: ['tweet', 'twitter', 'social', 'embed'],
     order: 3,
   },
 };

@@ -1,95 +1,83 @@
-import type { BlockDef, NodeViewFactory } from '../types';
+import type { BlockDef } from '../types';
+import { createRenderBlockView, type RenderBlockRenderer } from './render-block-base';
+import type { Node as PMNode } from 'prosemirror-model';
+import type { EditorView } from 'prosemirror-view';
 
 /**
- * audioBlock — 音频播放器
- *
- * NodeView 渲染 <audio> 播放器 + 元数据。
- * contentDOM 包含 paragraph（caption）。
- * src 为空时显示上传占位符。
+ * audioBlock — 音频播放器（RenderBlock）
  */
 
-const audioBlockNodeView: NodeViewFactory = (node, view, getPos) => {
-  const dom = document.createElement('div');
-  dom.classList.add('audio-block');
+const audioRenderer: RenderBlockRenderer = {
+  label(node) {
+    return node.attrs.title || 'Audio';
+  },
 
-  const playerWrapper = document.createElement('div');
-  playerWrapper.classList.add('audio-block__player');
+  createContent(node: PMNode, view: EditorView, getPos: () => number | undefined): HTMLElement {
+    const content = document.createElement('div');
+    content.classList.add('audio-block');
+    let currentNode = node;
 
-  const audio = document.createElement('audio');
-  audio.classList.add('audio-block__audio');
-  audio.controls = true;
-  if (node.attrs.src) audio.src = node.attrs.src;
-  audio.style.display = node.attrs.src ? 'block' : 'none';
+    const audio = document.createElement('audio');
+    audio.classList.add('audio-block__audio');
+    audio.controls = true;
+    if (node.attrs.src) audio.src = node.attrs.src;
+    audio.style.display = node.attrs.src ? 'block' : 'none';
 
-  const meta = document.createElement('div');
-  meta.classList.add('audio-block__meta');
-  meta.style.display = node.attrs.title ? 'block' : 'none';
+    const placeholder = document.createElement('div');
+    placeholder.classList.add('audio-block__placeholder');
+    placeholder.textContent = '🎵 点击添加音频';
+    placeholder.style.display = node.attrs.src ? 'none' : 'flex';
 
-  function updateMeta() {
-    const parts: string[] = [];
-    if (node.attrs.title) parts.push(node.attrs.title);
-    if (node.attrs.artist) parts.push(node.attrs.artist);
-    meta.textContent = parts.join(' — ');
-    meta.style.display = parts.length > 0 ? 'block' : 'none';
-  }
-  updateMeta();
+    placeholder.addEventListener('click', () => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'audio/*';
+      input.onchange = () => {
+        const file = input.files?.[0];
+        if (!file) return;
+        const url = URL.createObjectURL(file);
+        const pos = typeof getPos === 'function' ? getPos() : undefined;
+        if (pos == null) return;
+        view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, {
+          ...currentNode.attrs,
+          src: url,
+          title: file.name.replace(/\.[^.]+$/, ''),
+        }));
+      };
+      input.click();
+    });
 
-  const placeholder = document.createElement('div');
-  placeholder.classList.add('audio-block__placeholder');
-  placeholder.textContent = '🎵 点击添加音频';
-  placeholder.style.display = node.attrs.src ? 'none' : 'flex';
+    const captionDOM = document.createElement('div');
+    captionDOM.classList.add('audio-block__caption');
 
-  placeholder.addEventListener('click', () => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = 'audio/*';
-    input.onchange = () => {
-      const file = input.files?.[0];
-      if (!file) return;
-      const url = URL.createObjectURL(file);
-      const pos = typeof getPos === 'function' ? getPos() : undefined;
-      if (pos == null) return;
-      const tr = view.state.tr.setNodeMarkup(pos, undefined, {
-        ...node.attrs,
-        src: url,
-        title: file.name.replace(/\.[^.]+$/, ''),
-      });
-      view.dispatch(tr);
-    };
-    input.click();
-  });
+    content.appendChild(audio);
+    content.appendChild(placeholder);
+    content.appendChild(captionDOM);
 
-  playerWrapper.appendChild(meta);
-  playerWrapper.appendChild(audio);
-  playerWrapper.appendChild(placeholder);
+    (content as any)._refs = { audio, placeholder, setNode: (n: PMNode) => { currentNode = n; } };
+    (content as any)._captionDOM = captionDOM;
 
-  const contentDOM = document.createElement('div');
-  contentDOM.classList.add('audio-block__caption');
+    return content;
+  },
 
-  dom.appendChild(playerWrapper);
-  dom.appendChild(contentDOM);
+  update(node: PMNode, contentEl: HTMLElement): boolean {
+    const refs = (contentEl as any)._refs;
+    if (!refs) return true;
+    refs.setNode(node);
+    if (node.attrs.src) {
+      refs.audio.src = node.attrs.src;
+      refs.audio.style.display = 'block';
+      refs.placeholder.style.display = 'none';
+    } else {
+      refs.audio.style.display = 'none';
+      refs.placeholder.style.display = 'flex';
+    }
+    return true;
+  },
 
-  return {
-    dom,
-    contentDOM,
-    update(updatedNode) {
-      if (updatedNode.type.name !== 'audioBlock') return false;
-      if (updatedNode.attrs.src) {
-        audio.src = updatedNode.attrs.src;
-        audio.style.display = 'block';
-        placeholder.style.display = 'none';
-      } else {
-        audio.style.display = 'none';
-        placeholder.style.display = 'flex';
-      }
-      node = updatedNode;
-      updateMeta();
-      return true;
-    },
-    ignoreMutation(mutation) {
-      return mutation.target === playerWrapper || playerWrapper.contains(mutation.target as Node);
-    },
-  };
+  getContentDOM(contentEl: HTMLElement) {
+    return (contentEl as any)._captionDOM as HTMLElement;
+  },
 };
 
 export const audioBlockBlock: BlockDef = {
@@ -109,7 +97,7 @@ export const audioBlockBlock: BlockDef = {
     toDOM() { return ['div', { class: 'audio-block' }, 0]; },
   },
 
-  nodeView: audioBlockNodeView,
+  nodeView: createRenderBlockView(audioRenderer, 'audio'),
 
   capabilities: {
     canDelete: true,

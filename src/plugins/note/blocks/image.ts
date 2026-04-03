@@ -1,150 +1,168 @@
-import type { BlockDef, NodeViewFactory } from '../types';
+import type { BlockDef } from '../types';
+import { createRenderBlockView, type RenderBlockRenderer } from './render-block-base';
+import type { Node as PMNode } from 'prosemirror-model';
+import type { EditorView } from 'prosemirror-view';
 
 /**
- * image — 图片 Block
+ * image — 图片 Block（RenderBlock）
  *
- * 图片由 NodeView 渲染（不在 PM model 中）。
- * contentDOM 包含 paragraph（图片标题/caption）。
- * src 为空时显示上传占位符。
- * 右下角拖拽手柄可缩放图片宽度。
+ * NodeView 渲染图片 + 缩放手柄。
+ * contentDOM 包含 textBlock（caption）。
  */
 
-const imageNodeView: NodeViewFactory = (node, view, getPos) => {
-  const dom = document.createElement('div');
-  dom.classList.add('image-block');
+const imageRenderer: RenderBlockRenderer = {
+  label() { return 'Image'; },
 
-  const imgWrapper = document.createElement('div');
-  imgWrapper.classList.add('image-block__wrapper');
+  createContent(node: PMNode, view: EditorView, getPos: () => number | undefined): HTMLElement {
+    const content = document.createElement('div');
+    content.classList.add('image-block');
 
-  const imgContainer = document.createElement('div');
-  imgContainer.classList.add('image-block__container');
-  imgContainer.style.position = 'relative';
-  imgContainer.style.display = 'inline-block';
+    const imgWrapper = document.createElement('div');
+    imgWrapper.classList.add('image-block__wrapper');
 
-  const img = document.createElement('img');
-  img.classList.add('image-block__img');
-  if (node.attrs.src) {
-    img.src = node.attrs.src;
-    img.alt = node.attrs.alt || '';
-    if (node.attrs.width) img.style.width = `${node.attrs.width}px`;
-  }
-  img.style.display = node.attrs.src ? 'block' : 'none';
+    const imgContainer = document.createElement('div');
+    imgContainer.classList.add('image-block__container');
+    imgContainer.style.position = 'relative';
+    imgContainer.style.display = 'inline-block';
 
-  // 缩放手柄
-  const resizeHandle = document.createElement('div');
-  resizeHandle.classList.add('image-block__resize');
-  resizeHandle.style.display = node.attrs.src ? 'block' : 'none';
+    const img = document.createElement('img');
+    img.classList.add('image-block__img');
+    if (node.attrs.src) {
+      img.src = node.attrs.src;
+      img.alt = node.attrs.alt || '';
+      if (node.attrs.width) img.style.width = `${node.attrs.width}px`;
+    }
+    img.style.display = node.attrs.src ? 'block' : 'none';
 
-  let resizing = false;
-  let startX = 0;
-  let startWidth = 0;
+    // 缩放手柄
+    const resizeHandle = document.createElement('div');
+    resizeHandle.classList.add('image-block__resize');
+    resizeHandle.style.display = node.attrs.src ? 'block' : 'none';
 
-  resizeHandle.addEventListener('mousedown', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    resizing = true;
-    startX = e.clientX;
-    startWidth = img.offsetWidth;
-    document.body.style.cursor = 'ew-resize';
-    document.body.style.userSelect = 'none';
+    let resizing = false;
+    let startX = 0;
+    let startWidth = 0;
+    let currentNode = node;
 
-    const onMouseMove = (me: MouseEvent) => {
-      if (!resizing) return;
-      const newWidth = Math.max(100, startWidth + (me.clientX - startX));
-      img.style.width = `${newWidth}px`;
-    };
+    resizeHandle.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      resizing = true;
+      startX = e.clientX;
+      startWidth = img.offsetWidth;
+      document.body.style.cursor = 'ew-resize';
+      document.body.style.userSelect = 'none';
 
-    const onMouseUp = () => {
-      if (!resizing) return;
-      resizing = false;
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-      document.removeEventListener('mousemove', onMouseMove);
-      document.removeEventListener('mouseup', onMouseUp);
+      const onMouseMove = (me: MouseEvent) => {
+        if (!resizing) return;
+        const newWidth = Math.max(100, startWidth + (me.clientX - startX));
+        img.style.width = `${newWidth}px`;
+      };
 
-      // 保存宽度到 attrs
-      const pos = typeof getPos === 'function' ? getPos() : undefined;
-      if (pos == null) return;
-      const newWidth = img.offsetWidth;
-      const tr = view.state.tr.setNodeMarkup(pos, undefined, {
-        ...node.attrs,
-        width: newWidth,
-      });
-      view.dispatch(tr);
-    };
+      const onMouseUp = () => {
+        if (!resizing) return;
+        resizing = false;
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
 
-    document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mouseup', onMouseUp);
-  });
-
-  imgContainer.appendChild(img);
-  imgContainer.appendChild(resizeHandle);
-
-  const placeholder = document.createElement('div');
-  placeholder.classList.add('image-block__placeholder');
-  placeholder.textContent = '🖼 点击添加图片';
-  placeholder.style.display = node.attrs.src ? 'none' : 'flex';
-
-  // 点击占位符触发文件选择
-  placeholder.addEventListener('click', () => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = 'image/*';
-    input.onchange = () => {
-      const file = input.files?.[0];
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = () => {
         const pos = typeof getPos === 'function' ? getPos() : undefined;
         if (pos == null) return;
-        const tr = view.state.tr.setNodeMarkup(pos, undefined, {
-          ...node.attrs,
-          src: reader.result as string,
-          alt: file.name,
-        });
-        view.dispatch(tr);
+        const newWidth = img.offsetWidth;
+        view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, {
+          ...currentNode.attrs,
+          width: newWidth,
+        }));
       };
-      reader.readAsDataURL(file);
-    };
-    input.click();
-  });
 
-  imgWrapper.appendChild(imgContainer);
-  imgWrapper.appendChild(placeholder);
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+    });
 
-  const contentDOM = document.createElement('div');
-  contentDOM.classList.add('image-block__caption');
+    imgContainer.appendChild(img);
+    imgContainer.appendChild(resizeHandle);
 
-  dom.appendChild(imgWrapper);
-  dom.appendChild(contentDOM);
+    const placeholder = document.createElement('div');
+    placeholder.classList.add('image-block__placeholder');
+    placeholder.textContent = '🖼 点击添加图片';
+    placeholder.style.display = node.attrs.src ? 'none' : 'flex';
 
-  return {
-    dom,
-    contentDOM,
-    update(updatedNode) {
-      if (updatedNode.type.name !== 'image') return false;
-      if (updatedNode.attrs.src) {
-        img.src = updatedNode.attrs.src;
-        img.alt = updatedNode.attrs.alt || '';
-        if (updatedNode.attrs.width) img.style.width = `${updatedNode.attrs.width}px`;
-        else img.style.width = '';
-        img.style.display = 'block';
-        imgContainer.style.display = 'inline-block';
-        resizeHandle.style.display = 'block';
-        placeholder.style.display = 'none';
-      } else {
-        img.style.display = 'none';
-        imgContainer.style.display = 'none';
-        resizeHandle.style.display = 'none';
-        placeholder.style.display = 'flex';
-      }
-      node = updatedNode;
-      return true;
-    },
-    ignoreMutation(mutation) {
-      return mutation.target === imgWrapper || imgWrapper.contains(mutation.target as Node);
-    },
-  };
+    placeholder.addEventListener('click', () => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/*';
+      input.onchange = () => {
+        const file = input.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+          const pos = typeof getPos === 'function' ? getPos() : undefined;
+          if (pos == null) return;
+          view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, {
+            ...currentNode.attrs,
+            src: reader.result as string,
+            alt: file.name,
+          }));
+        };
+        reader.readAsDataURL(file);
+      };
+      input.click();
+    });
+
+    imgWrapper.appendChild(imgContainer);
+    imgWrapper.appendChild(placeholder);
+
+    const captionDOM = document.createElement('div');
+    captionDOM.classList.add('image-block__caption');
+
+    content.appendChild(imgWrapper);
+    content.appendChild(captionDOM);
+
+    // 存储引用
+    (content as any)._refs = { img, imgContainer, resizeHandle, placeholder, setNode: (n: PMNode) => { currentNode = n; } };
+    (content as any)._captionDOM = captionDOM;
+
+    return content;
+  },
+
+  update(node: PMNode, contentEl: HTMLElement): boolean {
+    const refs = (contentEl as any)._refs;
+    if (!refs) return true;
+    refs.setNode(node);
+
+    if (node.attrs.src) {
+      refs.img.src = node.attrs.src;
+      refs.img.alt = node.attrs.alt || '';
+      if (node.attrs.width) refs.img.style.width = `${node.attrs.width}px`;
+      else refs.img.style.width = '';
+      refs.img.style.display = 'block';
+      refs.imgContainer.style.display = 'inline-block';
+      refs.resizeHandle.style.display = 'block';
+      refs.placeholder.style.display = 'none';
+    } else {
+      refs.img.style.display = 'none';
+      refs.imgContainer.style.display = 'none';
+      refs.resizeHandle.style.display = 'none';
+      refs.placeholder.style.display = 'flex';
+    }
+    return true;
+  },
+
+  getContentDOM(contentEl: HTMLElement) {
+    return (contentEl as any)._captionDOM as HTMLElement;
+  },
+
+  createFullscreenContent(node: PMNode): HTMLElement | null {
+    if (!node.attrs.src) return null;
+    const img = document.createElement('img');
+    img.src = node.attrs.src;
+    img.alt = node.attrs.alt || '';
+    img.style.maxWidth = '100%';
+    img.style.maxHeight = '100%';
+    img.style.objectFit = 'contain';
+    return img;
+  },
 };
 
 export const imageBlock: BlockDef = {
@@ -164,7 +182,7 @@ export const imageBlock: BlockDef = {
     toDOM() { return ['div', { class: 'image-block' }, 0]; },
   },
 
-  nodeView: imageNodeView,
+  nodeView: createRenderBlockView(imageRenderer, 'image'),
 
   capabilities: {
     turnInto: [],
