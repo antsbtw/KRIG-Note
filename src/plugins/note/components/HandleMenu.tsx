@@ -112,6 +112,13 @@ export function HandleMenu({ view }: HandleMenuProps) {
     action: () => { blockAction.turnInto(view, menu.pos, 'orderedList'); setMenu(null); },
   });
 
+  // 待办清单
+  turnIntoItems.push({
+    id: 'taskList', label: '待办清单', icon: '☐',
+    active: menu.blockType === 'taskList',
+    action: () => { blockAction.turnInto(view, menu.pos, 'taskList'); setMenu(null); },
+  });
+
   // ── 构建第一级菜单 ──
   const hasTurnInto = capabilities?.turnInto && capabilities.turnInto.length > 0;
 

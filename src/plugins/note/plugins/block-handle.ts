@@ -299,8 +299,8 @@ export function blockHandlePlugin(): Plugin {
 
         const handleHeight = 24;
         const topOffset = (lineHeight - handleHeight) / 2;
-        // 两个按钮（+ 和 ⠿）共 48px 宽
-        handleDOM.style.left = `${blockRect.left - containerRect.left - 48 - 2}px`;
+        // Handle 在 Block 左侧
+        handleDOM.style.left = `${blockRect.left - containerRect.left - 62}px`;
         handleDOM.style.top = `${textTop - containerRect.top + topOffset}px`;
         handleDOM.style.opacity = '1';
       }
@@ -367,14 +367,16 @@ export function blockHandlePlugin(): Plugin {
           let handlePos = topPos;
           let handleType = topNode.type.name;
 
-          // 如果鼠标在 Container 内部（depth > 1），取最深的 block 子节点
+          // Container 内部：从鼠标深度向上找最近的可操作子节点
           if ($pos.depth > 1 && blockDef?.containerRule !== undefined) {
-            // 取 depth=2 的子节点（Container 的直接子 Block）
-            const childDepth = Math.min($pos.depth, 2);
-            const childNode = $pos.node(childDepth);
-            if (childNode) {
-              handlePos = $pos.before(childDepth);
-              handleType = childNode.type.name;
+            for (let d = $pos.depth; d > 1; d--) {
+              const n = $pos.node(d);
+              const def = blockRegistry.get(n.type.name);
+              if (def && (def.capabilities.canDrag || def.capabilities.canDelete)) {
+                handlePos = $pos.before(d);
+                handleType = n.type.name;
+                break;
+              }
             }
           }
 

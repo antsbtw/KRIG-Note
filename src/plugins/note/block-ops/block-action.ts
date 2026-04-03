@@ -145,8 +145,32 @@ export const blockAction = {
     const targetDef = blockRegistry.get(targetType);
     let tr = view.state.tr;
 
+    // 列表类型集合
+    const LIST_TYPES = new Set(['bulletList', 'orderedList', 'taskList']);
+
     // 判断转换方式
-    if (targetDef?.containerRule !== undefined) {
+    if (LIST_TYPES.has(node.type.name) && LIST_TYPES.has(targetType)) {
+      // 列表间互转：保留子项内容，只换外壳类型
+      // taskList 的子项是 taskItem，其他是 listItem——需要转换子项类型
+      const children: import('prosemirror-model').Node[] = [];
+      node.forEach((child) => {
+        if (targetType === 'taskList' && child.type.name === 'listItem') {
+          // listItem → taskItem
+          const taskItemType = schema.nodes.taskItem;
+          if (taskItemType) children.push(taskItemType.create({ checked: false }, child.content));
+          else children.push(child);
+        } else if (targetType !== 'taskList' && child.type.name === 'taskItem') {
+          // taskItem → listItem
+          const listItemType = schema.nodes.listItem;
+          if (listItemType) children.push(listItemType.create(null, child.content));
+          else children.push(child);
+        } else {
+          children.push(child);
+        }
+      });
+      const newList = targetNodeType.create(attrs || null, children);
+      tr = tr.replaceWith(pos, pos + node.nodeSize, newList);
+    } else if (targetDef?.containerRule !== undefined) {
       // 目标是 Container（如 blockquote）→ 包裹当前 Block
       const wrapper = targetNodeType.create(attrs || null, node);
       tr = tr.replaceWith(pos, pos + node.nodeSize, wrapper);

@@ -27,7 +27,7 @@ export const orderedListBlock: BlockDef = {
   },
 
   capabilities: {
-    turnInto: ['paragraph'],
+    turnInto: ['paragraph', 'bulletList', 'taskList'],
     canDuplicate: true,
     canDelete: true,
     canDrag: true,
