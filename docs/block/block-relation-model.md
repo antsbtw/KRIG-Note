@@ -1,275 +1,251 @@
-# Block 关联模型 — 统一 Block 设计
+# Block 统一模型 — 两个基类 + 组合容器
 
 > **文档类型**：架构设计
-> **状态**：草案 v2 | 创建日期：2026-04-03
-> **前置**：`CLAUDE.md` 中的 Block + Container 二元模型、`design-philosophy.md` P3 原则
+> **状态**：草案 v3 | 创建日期：2026-04-03
+> **前置**：`design-philosophy.md` P3/P5 原则
 >
-> **本文档目的**：重新定义 Block 系统——所有 Block 来自同一个基类，容器是 Block 组合的视觉呈现。
+> **本文档目的**：定义 Block 系统的最终架构——两个基类、组合容器、可注册的运行环境。
 
 ---
 
 ## 一、核心思想
 
-### Block 只有一种，属性决定一切
+### 1.1 Block 只有两种基类
 
 ```
-一个 Block + 不同 attrs = 不同视觉
-一组相邻同类 Block = 视觉容器
+Block（基类）
+  ├── TextBlock  — 内容是文字流（用户直接打字）
+  └── RenderBlock — 内容是独立运行容器（注册渲染器）
 ```
 
-**三条原则：**
+### 1.2 容器是组合，不是嵌套
+
+```
+容器 = 一组连续的 Block，通过 groupType 在视觉上形成整体
+```
+
+### 1.3 三条不变原则
 
 1. **回车 = 新 Block**，没有例外
-2. **所有 Block 来自同一个基类**，通过 attrs 变体决定视觉呈现
-3. **容器 = 一组连续的、相同 groupType 的 Block**，视觉上形成整体
+2. **所有 Block 共享基类能力**（groupType、indent、align、Handle）
+3. **RenderBlock 通过注册扩展**——注册什么就能跑什么
 
 ---
 
-## 二、Block 基类
+## 二、两个基类
+
+### 2.1 TextBlock — 文字流
+
+| 属性 | 说明 |
+|------|------|
+| 内容 | `inline*`（文字 + inline 节点） |
+| 格式化 | bold / italic / underline / strike / code / link / highlight / textStyle |
+| 用户交互 | 直接在里面打字 |
+| 例子 | paragraph, heading, noteTitle |
 
 ```typescript
-interface BlockAttrs {
-  // ── 通用排版 ──
-  indent: number;                    // 缩进级别（0-8）
-  textIndent: boolean;               // 首行缩进
-  align: 'left' | 'center' | 'right' | 'justify';
+// TextBlock 就是当前的 paragraph / heading
+// 内容：inline*（文字 + hardBreak + mathInline + noteLink）
+// 所有文字格式化能力
+```
 
-  // ── 组合（决定视觉呈现） ──
-  groupType: string | null;          // 组合类型
-  groupAttrs: Record<string, unknown> | null;  // 组合专属属性
+### 2.2 RenderBlock — 运行容器
+
+| 属性 | 说明 |
+|------|------|
+| 内容 | 由注册的 renderer 决定（代码、图片、视频等） |
+| 格式化 | 无（内容不是文字流） |
+| 用户交互 | 通过专属 UI（编辑器、上传、URL 输入等） |
+| 例子 | codeBlock, image, mathBlock, video, audio, tweet |
+
+```typescript
+// RenderBlock 是一个可注册的运行容器
+// 注册什么 renderer = 就能跑什么
+interface RenderBlockDef {
+  type: string;              // 'code' | 'image' | 'math' | 'video' | 'python' | ...
+  renderer: NodeViewFactory; // 渲染器（ProseMirror NodeView）
+  attrs: Record<string, AttributeSpec>;  // 专属属性
+  slashMenu?: SlashMenuDef;  // SlashMenu 注册
 }
 ```
 
-仅此而已。没有 `containerId`、`containerType`、`containerHead`——不需要。
+### 2.3 共享能力（基类）
+
+两个基类共享的 attrs 和行为：
+
+```typescript
+interface BlockBaseAttrs {
+  // 排版
+  indent: number;
+  textIndent: boolean;
+  align: 'left' | 'center' | 'right' | 'justify';
+
+  // 组合（决定视觉容器）
+  groupType: string | null;
+  groupAttrs: Record<string, unknown> | null;
+}
+```
+
+共享的操作：
+- Handle（+ 按钮 / ⠿ 手柄 / 菜单）
+- 拖拽移动
+- 删除
+- Block Selection（ESC 选中）
+- 参与视觉容器（groupType）
 
 ---
 
-## 三、groupType 变体
+## 三、RenderBlock 注册制
 
-### 3.1 无组合（普通 Block）
+### 3.1 注册方式
 
-```
-{ groupType: null }  → 普通段落/标题/代码块等
-```
+```typescript
+registerRenderBlock({
+  type: 'code',
+  renderer: codeBlockRenderer,
+  attrs: { language: { default: '' } },
+  slashMenu: { label: 'Code Block', icon: '</>', keywords: ['code'] },
+});
 
-### 3.2 无序列表
+registerRenderBlock({
+  type: 'image',
+  renderer: imageRenderer,
+  attrs: { src: { default: null }, alt: { default: '' }, width: { default: null } },
+  slashMenu: { label: 'Image', icon: '🖼', keywords: ['image'] },
+});
 
-```
-{ groupType: 'bullet', indent: 0 }  → •  第一项
-{ groupType: 'bullet', indent: 0 }  → •  第二项
-{ groupType: 'bullet', indent: 1 }  →   ◦ 缩进项
-{ groupType: 'bullet', indent: 0 }  → •  回到第一级
-{ groupType: null }                  → 普通段落（列表结束）
-```
-
-符号由 indent 层级决定：`• → ◦ → ▪ → •`（循环）
-
-### 3.3 有序列表
-
-```
-{ groupType: 'ordered', indent: 0 }  → 1. 第一项
-{ groupType: 'ordered', indent: 0 }  → 2. 第二项
-{ groupType: 'ordered', indent: 1 }  →   a. 缩进项
-{ groupType: 'ordered', indent: 0 }  → 3. 回到第一级
+registerRenderBlock({
+  type: 'math',
+  renderer: mathBlockRenderer,
+  attrs: { latex: { default: '' } },
+  slashMenu: { label: 'Math Block', icon: '∑', keywords: ['math'] },
+});
 ```
 
-序号由渲染层扫描连续同 indent 的 ordered Block 自动计算。
+### 3.2 当前 RenderBlock 清单
 
-### 3.4 任务列表
+| type | 渲染器 | 用途 |
+|------|--------|------|
+| code | 代码编辑器 + 语言选择 + 复制 | 代码展示 |
+| mermaid | 代码编辑器 + Mermaid 渲染 | 图表 |
+| image | 图片展示 + 上传 + 缩放 | 图片 |
+| math | LaTeX 输入 + KaTeX 渲染 | 数学公式 |
+| video | URL 输入 + 播放器 | 视频 |
+| audio | 文件上传 + 播放器 | 音频 |
+| tweet | URL 输入 + 预览 | 社交媒体 |
 
-```
-{ groupType: 'task', groupAttrs: { checked: false } }  → ☐ 待办项
-{ groupType: 'task', groupAttrs: { checked: true } }   → ☑ 已完成（淡色+删除线）
-```
+### 3.3 未来可注册的 RenderBlock
 
-### 3.5 Callout
+| type | 渲染器 | 用途 |
+|------|--------|------|
+| python | 代码编辑器 + Python 运行时 + 输出 | 可执行代码 |
+| jupyter | Jupyter cell（输入 + 输出） | 数据科学 |
+| excalidraw | 画布 + 绘图工具 | 白板 |
+| figma | Figma 嵌入 | 设计稿 |
+| map | 地图渲染器 | 地理信息 |
+| chart | 数据 + 图表渲染（ECharts/D3） | 数据可视化 |
+| slides | 幻灯片编辑器 | 演示 |
+| terminal | 终端模拟器 | 命令行 |
 
-```
-{ groupType: 'callout', groupAttrs: { emoji: '💡' } }  → 💡 ┌ 提示内容
-{ groupType: 'callout', groupAttrs: { emoji: '💡' } }  →    │ 第二行
-{ groupType: 'callout', groupAttrs: { emoji: '💡' } }  →    └ 第三行
-```
-
-首行显示 emoji，整体加背景色和圆角边框。
-
-### 3.6 Blockquote
-
-```
-{ groupType: 'quote' }  → ┃ 引用第一行
-{ groupType: 'quote' }  → ┃ 引用第二行
-```
-
-整体加左侧竖线。
-
-### 3.7 Toggle（折叠）
-
-```
-{ groupType: 'toggle', groupAttrs: { open: true } }   → ▾ 折叠标题（首行）
-{ groupType: 'toggle' }                                →   子内容（open=false 时隐藏）
-{ groupType: 'toggle' }                                →   子内容
-```
-
-首行（组内第一个 Block）显示折叠箭头，控制后续同组 Block 的显隐。
-
-### 3.8 Frame（彩框）
-
-```
-{ groupType: 'frame', groupAttrs: { color: 'blue' } }  → ┃ 第一行
-{ groupType: 'frame', groupAttrs: { color: 'blue' } }  → ┃ 第二行
-```
-
-整体加彩色左边框。
+**注册一个新的 RenderBlock = 一个新的能力。不需要修改框架。**
 
 ---
 
-## 四、组的推导规则
+## 四、视觉容器（groupType）
 
-**组的形成**：连续的、相同 `groupType` 的 Block 自动形成一组。
+### 4.1 组合规则
 
-**组的边界**：
-- `groupType` 变化 → 组断开
-- `groupType` 为 null → 不属于任何组
+相邻的、相同 `groupType` 的 Block 自动形成一组。
 
-**组内位置**：渲染层扫描上下文推导每个 Block 在组内的位置：
+```
+block { groupType: 'callout' }  ──┐
+block { groupType: 'callout' }    ├── 一个 callout 容器
+block { groupType: 'callout' }  ──┘
+block { groupType: null }       → 普通段落（不在任何容器中）
+block { groupType: 'quote' }    ──┐
+block { groupType: 'quote' }      ├── 一个 quote 容器
+block { groupType: null }       → 组断开
+```
+
+### 4.2 groupType 清单
+
+| groupType | 视觉效果 | 首行特殊 | groupAttrs |
+|-----------|----------|----------|------------|
+| bullet | 每行加 `•` / `◦` / `▪`（按 indent 循环） | 无 | 无 |
+| ordered | 每行加序号（按连续同 indent 计数） | 无 | 无 |
+| task | 每行加 `☐` / `☑` | 无 | `{ checked: boolean }` |
+| callout | 整体加背景 + 边框 + 圆角 | emoji | `{ emoji: string }` |
+| quote | 整体加左侧竖线 | 无 | 无 |
+| toggle | 首行加 `▾`/`▸`，其余可折叠 | 折叠箭头 | `{ open: boolean }` |
+| frame | 整体加彩色左边框 | 无 | `{ color: string }` |
+
+### 4.3 TextBlock 和 RenderBlock 都可以参与组合
+
+```
+{ groupType: 'callout', emoji: '💡' }  TextBlock  "提示文字"       → 💡 ┌ 提示文字
+{ groupType: 'callout' }               RenderBlock [image]        →    │ 图片
+{ groupType: 'callout' }               TextBlock  "更多说明"       →    └ 更多说明
+```
+
+---
+
+## 五、组内位置推导
+
+渲染层扫描上下文，推导每个 Block 在组内的位置：
 
 ```typescript
 type GroupPosition = 'first' | 'middle' | 'last' | 'only';
-
-function getGroupPosition(doc, pos): GroupPosition {
-  const node = doc.nodeAt(pos);
-  const prevNode = ...; // 上一个 Block
-  const nextNode = ...; // 下一个 Block
-
-  const sameAsPrev = prevNode?.attrs.groupType === node.attrs.groupType;
-  const sameAsNext = nextNode?.attrs.groupType === node.attrs.groupType;
-
-  if (!sameAsPrev && !sameAsNext) return 'only';
-  if (!sameAsPrev) return 'first';
-  if (!sameAsNext) return 'last';
-  return 'middle';
-}
 ```
 
-**渲染决策**：
+| 条件 | 位置 |
+|------|------|
+| 上方不同 + 下方不同 | only |
+| 上方不同 + 下方相同 | first |
+| 上方相同 + 下方相同 | middle |
+| 上方相同 + 下方不同 | last |
 
-| groupType | first | middle | last | only |
-|-----------|-------|--------|------|------|
-| bullet | 加 • | 加 • | 加 • | 加 • |
-| callout | emoji + 顶部圆角 | 左边框 | 底部圆角 | emoji + 完整圆角 |
-| quote | 顶部竖线 | 竖线 | 底部竖线 | 完整竖线 |
-| toggle | ▾ 箭头 | 缩进 | 缩进 | ▾ 箭头（无折叠内容） |
-| frame | 顶部边框 | 侧边框 | 底部边框 | 完整边框 |
-
----
-
-## 五、键盘行为（统一）
-
-### 5.1 Enter（回车）
-
-```
-有 groupType 时：
-  → 创建新 Block，继承 groupType + indent + groupAttrs
-  → 任务列表：新 Block 的 checked = false
-
-空行 + Enter 时：
-  → 清除 groupType（变为普通段落）
-  → 脱离组
-```
-
-### 5.2 Tab / Shift-Tab
-
-```
-Tab：indent += 1（统一，不区分类型）
-Shift-Tab：indent -= 1（最小 0）
-```
-
-### 5.3 Backspace（行首）
-
-```
-有 groupType 时：
-  → 清除 groupType + groupAttrs（变为普通段落，保留文字）
-
-普通段落时：
-  → 与上一个 Block 合并
-```
-
-### 5.4 Markdown 输入规则
-
-```
-- + 空格  → groupType = 'bullet'
-* + 空格  → groupType = 'bullet'
-1. + 空格 → groupType = 'ordered'
-[] + 空格 → groupType = 'task', checked = false
-[x] + 空格 → groupType = 'task', checked = true
-> + 空格  → groupType = 'quote'
-```
-
----
-
-## 六、渲染实现
-
-### 6.1 ProseMirror Decoration Plugin
-
-一个 Plugin 扫描文档，为每个有 groupType 的 Block 添加 Decoration：
-
-```typescript
-function buildGroupDecorations(doc: Node): DecorationSet {
-  const decorations: Decoration[] = [];
-
-  doc.forEach((node, pos) => {
-    const { groupType, groupAttrs, indent } = node.attrs;
-    if (!groupType) return;
-
-    const position = getGroupPosition(doc, pos, node);
-
-    // CSS class 标记位置
-    decorations.push(
-      Decoration.node(pos, pos + node.nodeSize, {
-        class: `group-${groupType} group-${position}`,
-      })
-    );
-
-    // 列表符号（widget decoration）
-    if (groupType === 'bullet') {
-      const symbol = ['•', '◦', '▪'][indent % 3];
-      decorations.push(Decoration.widget(pos + 1, createSymbolWidget(symbol)));
-    }
-
-    if (groupType === 'ordered') {
-      const number = countInGroup(doc, pos, indent);
-      decorations.push(Decoration.widget(pos + 1, createSymbolWidget(`${number}.`)));
-    }
-
-    if (groupType === 'task') {
-      decorations.push(Decoration.widget(pos + 1, createCheckboxWidget(groupAttrs?.checked)));
-    }
-  });
-
-  return DecorationSet.create(doc, decorations);
-}
-```
-
-### 6.2 CSS
+渲染层根据 `groupType + GroupPosition` 决定 CSS class：
 
 ```css
-/* Callout 组 */
-.group-callout {
-  background: rgba(255,255,255,0.02);
-  border-left: 3px solid #444;
-  padding-left: 16px;
-}
-.group-callout.group-first { border-top: 1px solid #444; border-top-left-radius: 6px; padding-top: 8px; }
-.group-callout.group-last { border-bottom: 1px solid #444; border-bottom-left-radius: 6px; padding-bottom: 8px; }
-.group-callout.group-only { border: 1px solid #444; border-radius: 6px; padding: 8px 16px; }
+.group-callout.group-first  { border-top-left-radius: 6px; padding-top: 8px; }
+.group-callout.group-middle { /* 只有左边框 */ }
+.group-callout.group-last   { border-bottom-left-radius: 6px; padding-bottom: 8px; }
+.group-callout.group-only   { border-radius: 6px; padding: 8px; }
+```
 
-/* Quote 组 */
-.group-quote { border-left: 3px solid #555; padding-left: 16px; color: #aaa; }
+---
 
-/* Toggle 组 */
-.group-toggle:not(.group-first) { padding-left: 24px; }
+## 六、统一键盘行为
 
-/* Frame 组 */
-.group-frame { border-left: 3px solid var(--frame-color, #8ab4f8); padding-left: 16px; }
+### 6.1 Enter
+
+```
+有 groupType → 新 Block 继承 groupType + indent + groupAttrs
+空行 + Enter → 清除 groupType（脱离组）
+```
+
+### 6.2 Tab / Shift-Tab
+
+```
+Tab → indent += 1（统一）
+Shift-Tab → indent -= 1（最小 0）
+```
+
+### 6.3 Backspace（行首）
+
+```
+有 groupType → 清除 groupType（变普通，保留文字）
+普通段落 → 与上一个 Block 合并
+```
+
+### 6.4 Markdown 输入
+
+```
+- / * + 空格   → groupType = 'bullet'
+1. + 空格      → groupType = 'ordered'
+[] / [ ] + 空格 → groupType = 'task', checked = false
+[x] + 空格     → groupType = 'task', checked = true
+> + 空格       → groupType = 'quote'
 ```
 
 ---
@@ -278,46 +254,58 @@ function buildGroupDecorations(doc: Node): DecorationSet {
 
 **每个 Block 都有 Handle**——因为每个 Block 都是独立的。
 
-Handle 操作：
-- **拖拽单个 Block** → 移动该 Block（可能脱离组）
-- **拖拽组** → 拖拽 group-first 时，自动选中整组一起移动
-- **+ 按钮** → 在该 Block 下方创建新 Block（继承 groupType）
-- **菜单** → 转换成（改 groupType）、格式、删除
+| 操作 | 行为 |
+|------|------|
+| + 按钮 | 在下方创建新 Block（继承 groupType） |
+| ⠿ 拖拽 | 移动单个 Block |
+| ⠿ 点击 | 弹出菜单（转换成 / 格式 / 删除） |
+| 拖拽组首行 | 自动选中整组一起移动 |
 
 ---
 
 ## 八、SlashMenu 行为
 
 ```
-/bullet  → 设置当前 Block 的 groupType = 'bullet'
-/ordered → 设置当前 Block 的 groupType = 'ordered'
-/task    → 设置当前 Block 的 groupType = 'task'
-/callout → 设置当前 Block 的 groupType = 'callout', groupAttrs = { emoji: '💡' }
-/quote   → 设置当前 Block 的 groupType = 'quote'
-/toggle  → 设置当前 Block 的 groupType = 'toggle', groupAttrs = { open: true }
-/frame   → 设置当前 Block 的 groupType = 'frame', groupAttrs = { color: 'blue' }
+/bullet  → 设置 groupType = 'bullet'
+/ordered → 设置 groupType = 'ordered'
+/task    → 设置 groupType = 'task'
+/callout → 设置 groupType = 'callout', groupAttrs = { emoji: '💡' }
+/quote   → 设置 groupType = 'quote'
+/toggle  → 设置 groupType = 'toggle', groupAttrs = { open: true }
+/frame   → 设置 groupType = 'frame', groupAttrs = { color: 'blue' }
+/code    → 创建 RenderBlock type='code'
+/image   → 创建 RenderBlock type='image'
+/math    → 创建 RenderBlock type='math'
+/mermaid → 创建 RenderBlock type='code', language='mermaid'
 ```
 
-不创建新节点，只修改当前 Block 的 attrs。
+TextBlock 的组合：修改当前 Block 的 attrs。
+RenderBlock 的创建：替换当前 Block 为新的 RenderBlock。
 
 ---
 
-## 九、与设计哲学的关系
+## 九、Tab Container 升级路径
 
-| 原则 | 对齐 |
-|------|------|
-| P3: Block 是数据组织单元 | ✅ 每个 Block 独立，attrs 携带完整语义 |
-| P4: 视图是数据的自然反映 | ✅ groupType 自动推导视觉呈现 |
-| 回车 = 新 Block | ✅ 统一，无例外 |
-| 基类统一 | ✅ 所有 Block 相同基类，attrs 变体 |
+RenderBlock 未来可升级为 Tab Container（多个 renderer 并存）：
+
+```
+RenderBlock type='code'
+  升级为 →
+  TabContainer
+    ├── Tab "代码"  → code renderer
+    ├── Tab "翻译"  → translation renderer
+    └── Tab "笔记"  → text editor
+```
+
+这和 P5（Tab 是阅读思考流程容器）完全一致。
 
 ---
 
 ## 十、例外
 
-**table** 保持 ProseMirror 原生嵌套结构（`table > tableRow > tableCell`）。二维网格结构不适合展平为一维 Block 序列。
+**table** 保持 ProseMirror 原生嵌套（`table > tableRow > tableCell`）。二维网格不适合展平。
 
-**columnList** 同理——多列布局需要并排关系，不是上下序列。
+**columnList** 同理——并排关系不是上下序列。
 
 ---
 
@@ -325,37 +313,47 @@ Handle 操作：
 
 ### Phase 1：基础设施
 
-1. paragraph nodeSpec 增加 `groupType` + `groupAttrs`
-2. 实现 Group Decoration Plugin（位置推导 + CSS class）
-3. 实现列表符号 Widget Decoration
+1. Block 基类 attrs：`groupType` + `groupAttrs`
+2. Group Decoration Plugin（位置推导 + CSS class + 列表符号）
+3. 统一键盘行为（Enter 继承 / 空行退出 / Backspace 清除）
 
 ### Phase 2：序列型迁移
 
-1. 实现 bullet/ordered/task 的键盘行为
-2. Markdown 输入规则适配
-3. 删除 bulletList/orderedList/taskList/listItem/taskItem 节点
-4. 迁移已有文档数据
+1. bullet / ordered / task 的渲染和交互
+2. 删除 bulletList / orderedList / taskList / listItem / taskItem
+3. 数据迁移
 
 ### Phase 3：容器型迁移
 
-1. 实现 callout/quote/toggle/frame 的渲染和键盘行为
-2. 删除 callout/blockquote/toggleList/frameBlock 节点
-3. 迁移已有文档数据
+1. callout / quote / toggle / frame 的渲染和交互
+2. 删除 callout / blockquote / toggleList / frameBlock
+3. 数据迁移
+
+### Phase 4：RenderBlock 注册制
+
+1. 统一 RenderBlock 注册 API
+2. 现有 RenderBlock（code/image/math/video/audio/tweet）迁移到注册制
+3. 新 renderer 开发模板
 
 ---
 
 ## 十二、设计意义
 
-**旧模型**：Block 有两种（叶子和容器），操作行为不同，需要分别处理。
+**旧模型**：Block 有多种类型，Container 是 DOM 嵌套，扩展需要改框架。
 
-**新模型**：Block 只有一种，属性决定一切。容器是 Block 组合的视觉呈现。
+**新模型**：
 
 ```
-单个 Block 的行为 × 组合规则 = 一切视觉效果
+TextBlock + groupType = 文字容器（列表、引用、提示框...）
+RenderBlock + renderer = 运行容器（代码、图表、视频...）
+注册 = 扩展
 ```
 
-这是真正的**抽象统一**——不是把复杂度藏起来，而是从根本上消除了复杂度。
+- **基类操作统一**：所有 Block 共享 Handle、拖拽、组合能力
+- **容器是组合结果**：不是预定义的类型，而是 Block 关联的视觉呈现
+- **RenderBlock 可无限扩展**：注册新 renderer = 新能力，不修改框架
+- **复杂度在注册侧**：框架简单稳定，复杂度由各 renderer 自己管理
 
 ---
 
-*本文档为草案 v2。每一阶段实现后回顾设计决策。*
+*本文档为草案 v3。每一阶段实现后回顾设计决策。*
