@@ -95,6 +95,7 @@ interface RenderBlockAttrs extends BlockBaseAttrs {
 | **stopEvent** | 拦截键盘/鼠标事件，不传递给 ProseMirror |
 | **selectNode / deselectNode** | Block 选中/取消选中的视觉反馈 |
 | **自定义 Toolbar** | renderer 可以在内部创建自己的操作栏 |
+| **getFullscreenContent** | 返回全屏时要显示的内容（详见 §七） |
 
 ### 5.3 Renderer 不应该做的
 
@@ -107,7 +108,77 @@ interface RenderBlockAttrs extends BlockBaseAttrs {
 
 ---
 
-## 六、键盘行为
+## 六、全屏能力（基类提供）
+
+所有 RenderBlock 都可以全屏显示——这是**基类能力**，不需要各 renderer 独立实现。
+
+### 6.1 架构分工
+
+```
+基类提供：
+  - 全屏 overlay 框架（黑色遮罩 85% + 关闭按钮 + Escape 关闭）
+  - 缩放/平移基础能力（滚轮缩放 + 拖拽平移）
+  - 全屏入口（Handle 菜单 / Toolbar 按钮 / 快捷键）
+
+Renderer 提供：
+  - getFullscreenContent(): HTMLElement | null
+  - 返回全屏时要显示的内容（SVG / 图片 / 视频 / 画布等）
+  - 返回 null 表示不支持全屏
+```
+
+### 6.2 Renderer 接口
+
+```typescript
+interface RenderBlockRenderer {
+  // ...其他必须/可选方法
+
+  /** 返回全屏内容。返回 null = 不支持全屏。 */
+  getFullscreenContent?: () => HTMLElement | null;
+}
+```
+
+### 6.3 各 renderer 的全屏内容
+
+| type | 全屏内容 | 交互 |
+|------|---------|------|
+| code (mermaid) | SVG 图表 | 缩放 + 平移 |
+| image | 原始大图 | 缩放 + 平移 |
+| video | 视频播放器 | 播放控制 |
+| math | KaTeX 大字渲染 | 缩放 |
+| excalidraw | 完整画布 | 画布交互 |
+| chart | 完整图表 | 缩放 + 平移 |
+| code (普通) | null（不全屏） | — |
+| audio | null（不全屏） | — |
+| tweet | null（不全屏） | — |
+
+### 6.4 全屏入口
+
+| 入口 | 说明 |
+|------|------|
+| Toolbar 全屏按钮（⛶） | renderer 的 Toolbar 中可选 |
+| Handle 菜单 "全屏" | 基类统一提供（如果 renderer 支持） |
+| 双击内容区域 | 可选（如点击 Mermaid 预览区） |
+
+### 6.5 全屏 overlay 规范
+
+```
+┌──────────────────────────────────┐
+│                          [×] ← 关闭按钮（右上角）
+│                                  │
+│        [全屏内容]                 │ ← 居中，可缩放/平移
+│                                  │
+│                                  │
+└──────────────────────────────────┘
+  背景：rgba(0,0,0,0.85)
+  关闭：× 按钮 / Escape / 点击遮罩
+  缩放：滚轮（朝光标方向）
+  平移：拖拽
+  缩放范围：0.2x - 5x
+```
+
+---
+
+## 七、键盘行为
 
 | 按键 | 条件 | 行为 |
 |------|------|------|
