@@ -166,9 +166,9 @@ export function blockHandlePlugin(): Plugin {
             blockAction.move(view, dragFromPos, dragTargetPos);
           }
         } else {
-          // 单击 → 弹出菜单（延迟，避免被 document click close handler 立即关闭）
+          // 单击 → 弹出菜单
           setTimeout(() => {
-            currentState = { ...currentState, menuOpen: !currentState.menuOpen };
+            currentState = { ...currentState, menuOpen: true };
             view.dom.dispatchEvent(new CustomEvent('block-handle-click', {
               detail: {
                 pos: currentState.pos,
@@ -176,6 +176,14 @@ export function blockHandlePlugin(): Plugin {
                 coords: { left: dom.getBoundingClientRect().left, top: dom.getBoundingClientRect().bottom },
               },
           }));
+            // 监听菜单关闭（document click 会关闭菜单）
+            const resetMenu = () => {
+              setTimeout(() => {
+                currentState = { ...currentState, menuOpen: false };
+              }, 100);
+              document.removeEventListener('click', resetMenu);
+            };
+            setTimeout(() => document.addEventListener('click', resetMenu), 100);
           }, 50);
         }
 
@@ -320,7 +328,7 @@ export function blockHandlePlugin(): Plugin {
         if (!isHandleHovered && !currentState.menuOpen && !isDragging && handleDOM) {
           handleDOM.style.opacity = '0';
         }
-      }, 200);
+      }, 100);
     }
   }
 
@@ -360,39 +368,21 @@ export function blockHandlePlugin(): Plugin {
             return false;
           }
 
-          const topPos = $pos.before(1);
+          const blockStart = $pos.before(1);
 
-          // 对 Container 内部：Handle 跟随鼠标所在的子 Block 定位
-          // 但操作目标（pos）仍为该子 Block 的位置
-          let handlePos = topPos;
-          let handleType = topNode.type.name;
-
-          // Container 内部：从鼠标深度向上找最近的可操作子节点
-          if ($pos.depth > 1 && blockDef?.containerRule !== undefined) {
-            for (let d = $pos.depth; d > 1; d--) {
-              const n = $pos.node(d);
-              const def = blockRegistry.get(n.type.name);
-              if (def && (def.capabilities.canDrag || def.capabilities.canDelete)) {
-                handlePos = $pos.before(d);
-                handleType = n.type.name;
-                break;
-              }
-            }
-          }
-
-          if (currentState.pos === handlePos && currentState.visible) return false;
+          if (currentState.pos === blockStart && currentState.visible) return false;
 
           if (hideTimeout) { clearTimeout(hideTimeout); hideTimeout = null; }
 
           currentState = {
             visible: true,
-            pos: handlePos,
-            blockType: handleType,
+            pos: blockStart,
+            blockType: topNode.type.name,
             coords: null,
             menuOpen: currentState.menuOpen,
           };
 
-          startTracking(view, handlePos);
+          startTracking(view, blockStart);
           return false;
         },
 
