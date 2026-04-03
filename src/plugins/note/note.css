@@ -310,9 +310,10 @@
   margin: 0;
 }
 
-/* 嵌套 block 在 li 内对齐 */
-.ProseMirror li > *:not(p):not(ul):not(ol) {
+/* 嵌套 block 在 li 内：与列表文字左对齐 */
+.ProseMirror li > *:not(p):not(ul):not(ol):not(.task-list) {
   margin-left: 0;
+  margin-top: 0.25em;
 }
 
 /* 无序列表标记层级 */
