@@ -52,6 +52,7 @@ declare const viewAPI: {
   onLoadTestDoc: (callback: () => void) => () => void;
   setActiveNote: (noteId: string | null, noteTitle?: string) => Promise<void>;
   onRestoreWorkspaceState: (callback: (state: { activeNoteId: string | null }) => void) => () => void;
+  onNoteTitleChanged: (callback: (data: { noteId: string; title: string }) => void) => () => void;
 };
 
 // Schema（延迟构建，确保 registerAllBlocks 已调用）
@@ -407,6 +408,28 @@ export function NoteEditor() {
       }
     });
 
+    // NavSide 重命名 → 同步 noteTitle 节点
+    const unsubTitleChanged = viewAPI.onNoteTitleChanged(({ noteId, title }) => {
+      if (noteId !== noteIdRef.current) return;
+      // 找到 noteTitle 节点，更新文字
+      const doc = view.state.doc;
+      let titlePos = -1;
+      doc.forEach((node, pos) => {
+        if (node.type.name === 'noteTitle' && titlePos < 0) titlePos = pos;
+      });
+      if (titlePos < 0) return;
+      const titleNode = doc.nodeAt(titlePos);
+      if (!titleNode || titleNode.textContent === title) return;
+      // 替换 noteTitle 内容
+      const s = getSchema();
+      const newTitle = title
+        ? s.node('noteTitle', null, [s.text(title)])
+        : s.node('noteTitle');
+      const tr = view.state.tr.replaceWith(titlePos, titlePos + titleNode.nodeSize, newTitle);
+      view.dispatch(tr);
+      setCurrentTitle(title || 'Untitled');
+    });
+
     return () => {
       // 退出前保存
       saveCurrentNote();
@@ -414,6 +437,7 @@ export function NoteEditor() {
       unsubDB();
       unsubTestDoc();
       unsubRestore();
+      unsubTitleChanged();
       view.destroy();
       viewRef.current = null;
       setEditorView(null);

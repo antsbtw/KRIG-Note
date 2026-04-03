@@ -284,16 +284,19 @@ export function blockHandlePlugin(): Plugin {
       const containerRect = handleDOM.parentElement?.getBoundingClientRect();
       if (containerRect && trackedView) {
         const blockRect = trackedBlockDOM.getBoundingClientRect();
-        // 用 coordsAtPos 获取第一行文字的实际 Y 位置
+
+        // 获取第一行文字位置用于垂直居中
         let textTop = blockRect.top;
-        let textBottom = blockRect.top + 27;
+        let lineHeight = 27;
         try {
           const coords = trackedView.coordsAtPos(currentState.pos + 1);
-          textTop = coords.top;
-          textBottom = coords.bottom;
-        } catch { /* fallback to blockRect */ }
+          // 验证坐标在 blockRect 范围内（防止 NodeView 内偏移不准）
+          if (coords.top >= blockRect.top && coords.top <= blockRect.bottom) {
+            textTop = coords.top;
+            lineHeight = coords.bottom - coords.top;
+          }
+        } catch { /* fallback */ }
 
-        const lineHeight = textBottom - textTop;
         const handleHeight = 24;
         const topOffset = (lineHeight - handleHeight) / 2;
         // 两个按钮（+ 和 ⠿）共 48px 宽
@@ -348,29 +351,46 @@ export function blockHandlePlugin(): Plugin {
           const $pos = view.state.doc.resolve(pos.pos);
           if ($pos.depth < 1) { hideHandle(); return false; }
 
-          const blockNode = $pos.node(1);
-          if (!blockNode) { hideHandle(); return false; }
+          const topNode = $pos.node(1);
+          if (!topNode) { hideHandle(); return false; }
 
-          const blockDef = blockRegistry.get(blockNode.type.name);
+          const blockDef = blockRegistry.get(topNode.type.name);
           if (blockDef && blockDef.capabilities.canDrag === false && blockDef.capabilities.canDelete === false) {
             hideHandle();
             return false;
           }
 
-          const blockStart = $pos.before(1);
-          if (currentState.pos === blockStart && currentState.visible) return false;
+          const topPos = $pos.before(1);
+
+          // 对 Container 内部：Handle 跟随鼠标所在的子 Block 定位
+          // 但操作目标（pos）仍为该子 Block 的位置
+          let handlePos = topPos;
+          let handleType = topNode.type.name;
+
+          // 如果鼠标在 Container 内部（depth > 1），取最深的 block 子节点
+          if ($pos.depth > 1 && blockDef?.containerRule !== undefined) {
+            // 取 depth=2 的子节点（Container 的直接子 Block）
+            const childDepth = Math.min($pos.depth, 2);
+            const childNode = $pos.node(childDepth);
+            if (childNode) {
+              handlePos = $pos.before(childDepth);
+              handleType = childNode.type.name;
+            }
+          }
+
+          if (currentState.pos === handlePos && currentState.visible) return false;
 
           if (hideTimeout) { clearTimeout(hideTimeout); hideTimeout = null; }
 
           currentState = {
             visible: true,
-            pos: blockStart,
-            blockType: blockNode.type.name,
+            pos: handlePos,
+            blockType: handleType,
             coords: null,
             menuOpen: currentState.menuOpen,
           };
 
-          startTracking(view, blockStart);
+          startTracking(view, handlePos);
           return false;
         },
 

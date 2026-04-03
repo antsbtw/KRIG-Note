@@ -212,6 +212,16 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
     if (!isDBReady()) return;
     await noteStore.rename(id, title);
     broadcastNoteList(getMainWindow());
+
+    // 通知 NoteView 同步 noteTitle（如果该笔记正在编辑器中打开）
+    const mainWindow = getMainWindow();
+    if (mainWindow) {
+      for (const child of mainWindow.contentView.children) {
+        if ('webContents' in child) {
+          (child as any).webContents.send(IPC.NOTE_TITLE_CHANGED, { noteId: id, title });
+        }
+      }
+    }
   });
 
   ipcMain.handle(IPC.NOTE_LIST, async () => {

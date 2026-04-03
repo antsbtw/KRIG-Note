@@ -111,4 +111,11 @@ export function registerAllBlocks(): void {
     group: 'layout', keywords: ['column', 'three', '三列'], order: 1,
     attrs: { columns: 3 },
   });
+
+  // Mermaid 快捷方式（创建 language=mermaid 的 codeBlock）
+  blockRegistry.registerSlashItem({
+    id: 'mermaid', blockName: 'codeBlock', label: 'Mermaid Diagram', icon: '◇',
+    group: 'code', keywords: ['mermaid', 'diagram', 'chart', 'flow', '流程图'], order: 1,
+    attrs: { language: 'mermaid' },
+  });
 }

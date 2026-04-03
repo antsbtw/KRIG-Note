@@ -189,12 +189,12 @@ export function SlashMenu({ view }: SlashMenuProps) {
         replaceTr.setSelection(TextSelection.near($pos));
         view.dispatch(replaceTr);
       } else if (nodeType.spec.content === 'text*' || actualBlockName === 'codeBlock') {
-        // 纯文本 Block（codeBlock）
+        // 纯文本 Block（codeBlock）— 传 extraAttrs（如 language: 'mermaid'）
         const { $from } = view.state.selection;
         const depth = $from.depth;
         const blockStart = $from.before(depth);
         const blockEnd = $from.after(depth);
-        const newNode = nodeType.create();
+        const newNode = nodeType.create(extraAttrs || undefined);
         const replaceTr = view.state.tr.replaceWith(blockStart, blockEnd, newNode);
         const resolvedPos = replaceTr.doc.resolve(blockStart + 1);
         replaceTr.setSelection(TextSelection.near(resolvedPos));

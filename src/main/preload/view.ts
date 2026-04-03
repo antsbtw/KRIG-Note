@@ -54,6 +54,13 @@ contextBridge.exposeInMainWorld('viewAPI', {
     return () => ipcRenderer.removeListener(IPC.DB_READY, listener);
   },
 
+  // 笔记标题变更（NavSide 重命名 → 同步到编辑器 noteTitle）
+  onNoteTitleChanged: (callback: (data: { noteId: string; title: string }) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, data: { noteId: string; title: string }) => callback(data);
+    ipcRenderer.on(IPC.NOTE_TITLE_CHANGED, listener);
+    return () => ipcRenderer.removeListener(IPC.NOTE_TITLE_CHANGED, listener);
+  },
+
   // Workspace 状态同步
   setActiveNote: (noteId: string | null, noteTitle?: string) => ipcRenderer.invoke(IPC.SET_ACTIVE_NOTE, noteId, noteTitle),
 

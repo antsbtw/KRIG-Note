@@ -167,6 +167,7 @@ export const IPC = {
 
   // NoteFile 编辑器操作
   NOTE_OPEN_IN_EDITOR: 'note:open-in-editor',
+  NOTE_TITLE_CHANGED: 'note:title-changed',  // NavSide → NoteView: 文件名变更同步到 noteTitle
 
   // Folder 操作
   FOLDER_CREATE: 'folder:create',
