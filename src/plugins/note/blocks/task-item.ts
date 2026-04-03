@@ -57,7 +57,7 @@ export const taskItemBlock: BlockDef = {
   group: '',  // 不属于 block 组，只在 taskList 中
 
   nodeSpec: {
-    content: 'paragraph block*',
+    content: 'textBlock block*',
     attrs: { checked: { default: false } },
     defining: true,
     parseDOM: [{
@@ -84,7 +84,7 @@ export const taskItemBlock: BlockDef = {
   },
 
   containerRule: {
-    requiredFirstChildType: 'paragraph',
+    requiredFirstChildType: 'textBlock',
   },
 
   slashMenu: null,

@@ -25,8 +25,8 @@ export const noteStore: INoteStore = {
     const id = generateId();
     const now = Date.now();
     const defaultContent = [
-      { type: 'noteTitle', content: title ? [{ type: 'text', text: title }] : [] },
-      { type: 'paragraph' },
+      { type: 'textBlock', attrs: { isTitle: true }, content: title ? [{ type: 'text', text: title }] : [] },
+      { type: 'textBlock' },
     ];
 
     const record: NoteRecord = {

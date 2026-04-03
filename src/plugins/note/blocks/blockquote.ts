@@ -13,7 +13,7 @@ export const blockquoteBlock: BlockDef = {
   },
 
   capabilities: {
-    turnInto: ['paragraph'],
+    turnInto: ['textBlock'],
     marks: [],
     canDuplicate: true,
     canDelete: true,

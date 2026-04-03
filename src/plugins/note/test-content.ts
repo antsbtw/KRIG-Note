@@ -12,17 +12,17 @@ function text(schema: Schema, str: string): PMNode {
 }
 
 function p(schema: Schema, content: string): PMNode {
-  return schema.node('paragraph', null, content ? [text(schema, content)] : []);
+  return schema.node('textBlock', null, content ? [text(schema, content)] : []);
 }
 
 function heading(schema: Schema, level: number, content: string): PMNode {
-  return schema.node('heading', { level }, [text(schema, content)]);
+  return schema.node('textBlock', { level }, [text(schema, content)]);
 }
 
 export function buildTestDocument(schema: Schema): PMNode {
   return schema.node('doc', null, [
     // 标题
-    schema.node('noteTitle', null, [text(schema, 'NoteView 测试文档')]),
+    schema.node('textBlock', { isTitle: true }, null, [text(schema, 'NoteView 测试文档')]),
 
     // ── 一、noteTitle 测试 ──
     heading(schema, 2, '一、noteTitle 测试'),
@@ -132,7 +132,7 @@ export function buildTestDocument(schema: Schema): PMNode {
     p(schema, '14.1 在本段落中间按 Shift+Enter → 插入换行（不创建新段落）'),
     p(schema, '14.2 验证：光标应在同一个 paragraph 内换到下一行'),
     // 预置一个带 hardBreak 的段落
-    schema.node('paragraph', null, [
+    schema.node('textBlock', null, [
       text(schema, '14.3 这是第一行'),
       schema.nodes.hardBreak.create(),
       text(schema, '这是第二行（同一个 paragraph）'),
@@ -244,7 +244,7 @@ export function buildTestDocument(schema: Schema): PMNode {
     p(schema, '20.2 highlight（背景高亮）— 待 FloatingToolbar 高亮选择器'),
     p(schema, '20.3 已注册到 Schema，可通过代码设置：'),
     // 预置带 highlight 的文字
-    schema.node('paragraph', null, [
+    schema.node('textBlock', null, [
       text(schema, '20.4 这段文字有 '),
       schema.text('黄色高亮', [schema.marks.highlight.create({ color: 'yellow' })]),
       text(schema, ' 和 '),
@@ -276,12 +276,12 @@ export function buildTestDocument(schema: Schema): PMNode {
 
     // ── 二十三、Math Inline 测试 ──
     heading(schema, 2, '二十三、Math Inline 测试'),
-    schema.node('paragraph', null, [
+    schema.node('textBlock', null, [
       text(schema, '23.1 行内公式示例：'),
       schema.nodes.mathInline.create({ latex: 'a^2 + b^2 = c^2' }),
       text(schema, ' 嵌入在文字中'),
     ]),
-    schema.node('paragraph', null, [
+    schema.node('textBlock', null, [
       text(schema, '23.2 另一个：'),
       schema.nodes.mathInline.create({ latex: '\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}' }),
     ]),

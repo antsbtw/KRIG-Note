@@ -14,7 +14,7 @@ export const toggleHeadingBlock: BlockDef = {
   group: 'block',
 
   nodeSpec: {
-    content: 'heading block*',
+    content: 'textBlock block*',
     group: 'block',
     attrs: { open: { default: true } },
     parseDOM: [{ tag: 'div.toggle-heading' }],

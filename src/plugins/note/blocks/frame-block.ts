@@ -79,7 +79,7 @@ export const frameBlockBlock: BlockDef = {
   },
 
   capabilities: {
-    turnInto: ['paragraph'],
+    turnInto: ['textBlock'],
     canDelete: true,
     canDrag: true,
   },

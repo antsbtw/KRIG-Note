@@ -19,7 +19,7 @@ export const bulletListBlock: BlockDef = {
   },
 
   capabilities: {
-    turnInto: ['paragraph', 'orderedList', 'taskList'],
+    turnInto: ['textBlock', 'orderedList', 'taskList'],
     canDuplicate: true,
     canDelete: true,
     canDrag: true,

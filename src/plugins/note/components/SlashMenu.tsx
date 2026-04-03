@@ -131,35 +131,35 @@ export function SlashMenu({ view }: SlashMenuProps) {
           // toggleHeading: heading(空) + paragraph(空)
           containerNode = nodeType.create(
             { open: true },
-            [schema.nodes.heading.create({ level: 2 }), schema.nodes.paragraph.create()],
+            [schema.nodes.textBlock.create({ level: 2 }), schema.nodes.textBlock.create()],
           );
         } else if (actualBlockName === 'toggleList') {
           // toggleList: paragraph(空)
           containerNode = nodeType.create(
             { open: true },
-            [schema.nodes.paragraph.create()],
+            [schema.nodes.textBlock.create()],
           );
         } else if (actualBlockName === 'blockquote') {
           // blockquote: paragraph(空)
-          containerNode = nodeType.create(null, [schema.nodes.paragraph.create()]);
+          containerNode = nodeType.create(null, [schema.nodes.textBlock.create()]);
         } else if (actualBlockName === 'bulletList' || actualBlockName === 'orderedList') {
           // 列表: listItem(paragraph)
-          const listItem = schema.nodes.listItem.create(null, [schema.nodes.paragraph.create()]);
+          const listItem = schema.nodes.listItem.create(null, [schema.nodes.textBlock.create()]);
           containerNode = nodeType.create(null, [listItem]);
         } else if (actualBlockName === 'taskList') {
           // 待办清单: taskItem(paragraph)
-          const taskItem = schema.nodes.taskItem.create({ checked: false }, [schema.nodes.paragraph.create()]);
+          const taskItem = schema.nodes.taskItem.create({ checked: false }, [schema.nodes.textBlock.create()]);
           containerNode = nodeType.create(null, [taskItem]);
         } else if (actualBlockName === 'callout') {
           // 提示框: paragraph
-          containerNode = nodeType.create({ emoji: '💡' }, [schema.nodes.paragraph.create()]);
+          containerNode = nodeType.create({ emoji: '💡' }, [schema.nodes.textBlock.create()]);
         } else if (actualBlockName === 'image') {
           // 图片: paragraph (caption)
-          containerNode = nodeType.create({ src: null }, [schema.nodes.paragraph.create()]);
+          containerNode = nodeType.create({ src: null }, [schema.nodes.textBlock.create()]);
         } else if (actualBlockName === 'table') {
           // 表格 3×3: 1 header row + 2 data rows
-          const cell = () => schema.nodes.tableCell.create(null, [schema.nodes.paragraph.create()]);
-          const headerCell = () => schema.nodes.tableHeader.create(null, [schema.nodes.paragraph.create()]);
+          const cell = () => schema.nodes.tableCell.create(null, [schema.nodes.textBlock.create()]);
+          const headerCell = () => schema.nodes.tableHeader.create(null, [schema.nodes.textBlock.create()]);
           const headerRow = schema.nodes.tableRow.create(null, [headerCell(), headerCell(), headerCell()]);
           const dataRow = () => schema.nodes.tableRow.create(null, [cell(), cell(), cell()]);
           containerNode = nodeType.create(null, [headerRow, dataRow(), dataRow()]);
@@ -168,19 +168,19 @@ export function SlashMenu({ view }: SlashMenuProps) {
           containerNode = nodeType.create({ latex: '' });
         } else if (actualBlockName === 'columnList') {
           // 多列布局
-          const col = () => schema.nodes.column.create(null, [schema.nodes.paragraph.create()]);
+          const col = () => schema.nodes.column.create(null, [schema.nodes.textBlock.create()]);
           const colCount = (extraAttrs?.columns as number) || 2;
           const cols = Array.from({ length: colCount }, () => col());
           containerNode = nodeType.create({ columns: colCount }, cols);
         } else if (actualBlockName === 'audioBlock') {
-          containerNode = nodeType.create({ src: null }, [schema.nodes.paragraph.create()]);
+          containerNode = nodeType.create({ src: null }, [schema.nodes.textBlock.create()]);
         } else if (actualBlockName === 'videoBlock') {
-          containerNode = nodeType.create({ src: null }, [schema.nodes.paragraph.create()]);
+          containerNode = nodeType.create({ src: null }, [schema.nodes.textBlock.create()]);
         } else if (actualBlockName === 'tweetBlock') {
-          containerNode = nodeType.create({ tweetUrl: null }, [schema.nodes.paragraph.create()]);
+          containerNode = nodeType.create({ tweetUrl: null }, [schema.nodes.textBlock.create()]);
         } else {
           // 通用 Container
-          containerNode = nodeType.create(null, [schema.nodes.paragraph.create()]);
+          containerNode = nodeType.create(null, [schema.nodes.textBlock.create()]);
         }
 
         const replaceTr = view.state.tr.replaceWith(blockStart, blockEnd, containerNode);
@@ -206,7 +206,7 @@ export function SlashMenu({ view }: SlashMenuProps) {
         const blockStart = $from.before(depth);
         const blockEnd = $from.after(depth);
         const hr = nodeType.create();
-        const newParagraph = schema.nodes.paragraph.create();
+        const newParagraph = schema.nodes.textBlock.create();
         const replaceTr = view.state.tr.replaceWith(blockStart, blockEnd, [hr, newParagraph]);
         const resolvedPos = replaceTr.doc.resolve(blockStart + hr.nodeSize + 1);
         replaceTr.setSelection(TextSelection.near(resolvedPos));

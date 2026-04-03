@@ -51,8 +51,8 @@ class BlockRegistry {
   /** 从所有 BlockDef 构建 ProseMirror Schema */
   buildSchema(): Schema {
     const nodes: Record<string, NodeSpec> = {
-      // doc: noteTitle 可选首子 + 正文 block
-      doc: { content: 'noteTitle? block+' },
+      // doc: 一个或多个 block（第一个 textBlock 的 isTitle=true 作为标题）
+      doc: { content: 'block+' },
       text: { group: 'inline' },
     };
 

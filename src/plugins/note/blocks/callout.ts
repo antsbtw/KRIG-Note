@@ -72,7 +72,7 @@ export const calloutBlock: BlockDef = {
   },
 
   capabilities: {
-    turnInto: ['paragraph'],
+    turnInto: ['textBlock'],
     canDelete: true,
     canDrag: true,
   },

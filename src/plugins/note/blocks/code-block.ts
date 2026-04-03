@@ -517,7 +517,7 @@ export const codeBlockBlock: BlockDef = {
   },
   nodeView: codeBlockNodeView,
   capabilities: {
-    turnInto: ['paragraph'],
+    turnInto: ['textBlock'],
     marks: [],
     canDuplicate: true,
     canDelete: true,

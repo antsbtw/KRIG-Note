@@ -97,7 +97,7 @@ export const audioBlockBlock: BlockDef = {
   group: 'block',
 
   nodeSpec: {
-    content: 'paragraph',
+    content: 'textBlock',
     group: 'block',
     attrs: {
       src: { default: null },

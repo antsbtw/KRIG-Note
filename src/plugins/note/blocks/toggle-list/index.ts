@@ -28,7 +28,7 @@ export const toggleListBlock: BlockDef = {
   },
 
   capabilities: {
-    turnInto: ['paragraph', 'toggleHeading'],
+    turnInto: ['textBlock'],
     canDelete: true,
     canDrag: true,
   },

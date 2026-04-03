@@ -62,6 +62,38 @@ function getSchema() {
   return schema;
 }
 
+/** 迁移旧文档数据：noteTitle/paragraph/heading → textBlock */
+function migrateDocContent(content: unknown[]): unknown[] {
+  return content.map((node: any) => {
+    const migrated = { ...node };
+
+    // noteTitle → textBlock { isTitle: true }
+    if (migrated.type === 'noteTitle') {
+      migrated.type = 'textBlock';
+      migrated.attrs = { ...(migrated.attrs || {}), isTitle: true };
+    }
+
+    // heading → textBlock { level: N }
+    if (migrated.type === 'heading') {
+      migrated.type = 'textBlock';
+      migrated.attrs = { ...(migrated.attrs || {}) };
+    }
+
+    // paragraph → textBlock
+    if (migrated.type === 'paragraph') {
+      migrated.type = 'textBlock';
+      migrated.attrs = { ...(migrated.attrs || {}) };
+    }
+
+    // 递归处理子节点
+    if (Array.isArray(migrated.content)) {
+      migrated.content = migrateDocContent(migrated.content);
+    }
+
+    return migrated;
+  });
+}
+
 export function NoteEditor() {
   const editorRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -124,7 +156,7 @@ export function NoteEditor() {
     // 提取 title（从 noteTitle 节点）
     let title = 'Untitled';
     doc.forEach((node) => {
-      if (node.type.name === 'noteTitle' && node.textContent) {
+      if (node.type.name === 'textBlock' && node.attrs.isTitle && node.textContent) {
         title = node.textContent;
       }
     });
@@ -148,19 +180,20 @@ export function NoteEditor() {
     if (!skipHistory) pushHistory(noteId);
 
     try {
-      // 从 docContent 重建 ProseMirror Doc
+      // 从 docContent 重建 ProseMirror Doc（含旧数据迁移）
       let doc: PMNode;
       try {
         if (docContent && Array.isArray(docContent) && docContent.length > 0) {
-          doc = PMNode.fromJSON(getSchema(), { type: 'doc', content: docContent });
+          const migrated = migrateDocContent(docContent);
+          doc = PMNode.fromJSON(getSchema(), { type: 'doc', content: migrated });
         } else {
           throw new Error('empty content');
         }
       } catch {
         // 解析失败或空内容 → 创建默认文档
         doc = getSchema().node('doc', null, [
-          getSchema().node('noteTitle'),
-          getSchema().node('paragraph'),
+          getSchema().node('textBlock', { isTitle: true }),
+          getSchema().node('textBlock'),
         ]);
       }
 
@@ -173,7 +206,7 @@ export function NoteEditor() {
       // 更新标题
       let title = '';
       doc.forEach((node) => {
-        if (node.type.name === 'noteTitle' && node.textContent) title = node.textContent;
+        if (node.type.name === 'textBlock' && node.attrs.isTitle && node.textContent) title = node.textContent;
       });
       setCurrentTitle(title || 'Untitled');
 
@@ -194,8 +227,8 @@ export function NoteEditor() {
     // 初始文档：空白笔记（DB 就绪后加载真实笔记，测试文档通过 Help 菜单加载）
     const s = getSchema();
     const doc = s.node('doc', null, [
-      s.node('noteTitle'),
-      s.node('paragraph'),
+      s.node('textBlock', { isTitle: true }),
+      s.node('textBlock'),
     ]);
 
     // Mark 快捷键
@@ -215,14 +248,15 @@ export function NoteEditor() {
         const node = state.doc.nodeAt(pos);
         if (!node) return false;
 
-        if (node.type.name === 'heading' && node.attrs.level === level) {
-          // 已经是该级标题 → 转回 paragraph
-          if (dispatch) dispatch(state.tr.setNodeMarkup(pos, s.nodes.paragraph, { indent: node.attrs.indent || 0 }));
-        } else if (node.type.name === 'paragraph' || node.type.name === 'heading') {
-          // paragraph 或其他级标题 → 转为目标级
-          if (dispatch) dispatch(state.tr.setNodeMarkup(pos, s.nodes.heading, { level, indent: node.attrs.indent || 0 }));
+        if (node.type.name !== 'textBlock') return false;
+        if (node.attrs.isTitle) return false; // noteTitle 不转换
+
+        if (node.attrs.level === level) {
+          // 已经是该级标题 → 转回段落
+          if (dispatch) dispatch(state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, level: null }));
         } else {
-          return false;
+          // 段落或其他级标题 → 转为目标级
+          if (dispatch) dispatch(state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, level }));
         }
         return true;
       };
@@ -241,7 +275,7 @@ export function NoteEditor() {
       const { $from } = state.selection;
       if ($from.depth >= 1) {
         const blockNode = $from.node(1);
-        if (blockNode.type.name === 'heading') {
+        if (blockNode.type.name === 'textBlock' && blockNode.attrs.level) {
           const pos = $from.before(1);
           if (dispatch) {
             dispatch(state.tr.setNodeMarkup(pos, undefined, { ...blockNode.attrs, open: !(blockNode.attrs.open !== false) }));
@@ -415,7 +449,7 @@ export function NoteEditor() {
       const doc = view.state.doc;
       let titlePos = -1;
       doc.forEach((node, pos) => {
-        if (node.type.name === 'noteTitle' && titlePos < 0) titlePos = pos;
+        if (node.type.name === 'textBlock' && node.attrs.isTitle && titlePos < 0) titlePos = pos;
       });
       if (titlePos < 0) return;
       const titleNode = doc.nodeAt(titlePos);
@@ -423,8 +457,8 @@ export function NoteEditor() {
       // 替换 noteTitle 内容
       const s = getSchema();
       const newTitle = title
-        ? s.node('noteTitle', null, [s.text(title)])
-        : s.node('noteTitle');
+        ? s.node('textBlock', { isTitle: true }, [s.text(title)])
+        : s.node('textBlock', { isTitle: true });
       const tr = view.state.tr.replaceWith(titlePos, titlePos + titleNode.nodeSize, newTitle);
       view.dispatch(tr);
       setCurrentTitle(title || 'Untitled');
@@ -481,7 +515,7 @@ export function NoteEditor() {
             if (e.clientY > lastRect.bottom) {
               const s = getSchema();
               const endPos = view.state.doc.content.size;
-              const tr = view.state.tr.insert(endPos, s.nodes.paragraph.create());
+              const tr = view.state.tr.insert(endPos, s.nodes.textBlock.create());
               const newPos = tr.doc.content.size - 1;
               tr.setSelection(TextSelection.create(tr.doc, newPos));
               view.dispatch(tr);

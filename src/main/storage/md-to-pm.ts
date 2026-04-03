@@ -53,7 +53,7 @@ export function markdownToProseMirror(md: string): PMNode[] {
     if (headingMatch) {
       const level = headingMatch[1].length;
       content.push({
-        type: 'heading',
+        type: 'textBlock',
         attrs: { level },
         content: parseInline(headingMatch[2]),
       });
@@ -78,7 +78,7 @@ export function markdownToProseMirror(md: string): PMNode[] {
       const innerContent = markdownToProseMirror(quoteLines.join('\n'));
       content.push({
         type: 'blockquote',
-        content: innerContent.length > 0 ? innerContent : [{ type: 'paragraph' }],
+        content: innerContent.length > 0 ? innerContent : [{ type: 'textBlock' }],
       });
       continue;
     }
@@ -91,7 +91,7 @@ export function markdownToProseMirror(md: string): PMNode[] {
         items.push({
           type: 'taskItem',
           attrs: { checked: match[1] === 'x' },
-          content: [{ type: 'paragraph', content: parseInline(match[2]) }],
+          content: [{ type: 'textBlock', content: parseInline(match[2]) }],
         });
         i++;
       }
@@ -106,7 +106,7 @@ export function markdownToProseMirror(md: string): PMNode[] {
         const text = lines[i].replace(/^\s*[-*]\s+/, '');
         items.push({
           type: 'listItem',
-          content: [{ type: 'paragraph', content: parseInline(text) }],
+          content: [{ type: 'textBlock', content: parseInline(text) }],
         });
         i++;
       }
@@ -121,7 +121,7 @@ export function markdownToProseMirror(md: string): PMNode[] {
         const text = lines[i].replace(/^\s*\d+\.\s+/, '');
         items.push({
           type: 'listItem',
-          content: [{ type: 'paragraph', content: parseInline(text) }],
+          content: [{ type: 'textBlock', content: parseInline(text) }],
         });
         i++;
       }
@@ -146,7 +146,7 @@ export function markdownToProseMirror(md: string): PMNode[] {
           type: 'tableRow',
           content: cells.map(cell => ({
             type: cellType,
-            content: [{ type: 'paragraph', content: parseInline(cell) }],
+            content: [{ type: 'textBlock', content: parseInline(cell) }],
           })),
         };
         tableRows.push(rowNode);
@@ -161,7 +161,7 @@ export function markdownToProseMirror(md: string): PMNode[] {
 
     // Paragraph (default)
     content.push({
-      type: 'paragraph',
+      type: 'textBlock',
       content: parseInline(line),
     });
     i++;
@@ -217,7 +217,7 @@ function parseInline(text: string): PMNode[] {
 export function mdToDocContent(md: string, title: string): unknown[] {
   const blocks = markdownToProseMirror(md);
   return [
-    { type: 'noteTitle', content: [{ type: 'text', text: title }] },
+    { type: 'textBlock', attrs: { isTitle: true }, content: [{ type: 'text', text: title }] },
     ...blocks,
   ];
 }

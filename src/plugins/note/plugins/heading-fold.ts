@@ -31,9 +31,9 @@ export function headingFoldPlugin(): Plugin {
           topNodes.push({
             pos,
             nodeSize: node.nodeSize,
-            isHeading: node.type.name === 'heading',
-            level: node.type.name === 'heading' ? (node.attrs.level || 1) : 0,
-            open: node.type.name === 'heading' ? (node.attrs.open !== false) : true,
+            isHeading: node.type.name === 'textBlock' && !!node.attrs.level,
+            level: (node.type.name === 'textBlock' && node.attrs.level) ? node.attrs.level : 0,
+            open: (node.type.name === 'textBlock' && node.attrs.level) ? (node.attrs.open !== false) : true,
           });
         });
 

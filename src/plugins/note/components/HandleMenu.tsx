@@ -61,19 +61,33 @@ export function HandleMenu({ view }: HandleMenuProps) {
   // ── 构建转换成子菜单项 ──
   const turnIntoItems: { id: string; label: string; icon: string; active: boolean; action: () => void }[] = [];
 
-  // 文本（paragraph）
+  // 文本（level=null）
   turnIntoItems.push({
     id: 'paragraph', label: '文本', icon: 'T',
-    active: menu.blockType === 'paragraph',
-    action: () => { blockAction.turnInto(view, menu.pos, 'paragraph'); setMenu(null); },
+    active: menu.blockType === 'textBlock' && !currentNode?.attrs.level,
+    action: () => {
+      if (currentNode?.type.name === 'textBlock') {
+        view.dispatch(view.state.tr.setNodeMarkup(menu.pos, undefined, { ...currentNode.attrs, level: null }));
+      } else {
+        blockAction.turnInto(view, menu.pos, 'textBlock');
+      }
+      setMenu(null);
+    },
   });
 
-  // 标题 1-3
+  // 标题 1-3（level=1/2/3）
   for (let level = 1; level <= 3; level++) {
     turnIntoItems.push({
       id: `heading${level}`, label: `标题 ${level}`, icon: `H${level}`,
-      active: menu.blockType === 'heading' && currentNode?.attrs.level === level,
-      action: () => { blockAction.turnInto(view, menu.pos, 'heading', { level }); setMenu(null); },
+      active: menu.blockType === 'textBlock' && currentNode?.attrs.level === level,
+      action: () => {
+        if (currentNode?.type.name === 'textBlock') {
+          view.dispatch(view.state.tr.setNodeMarkup(menu.pos, undefined, { ...currentNode.attrs, level }));
+        } else {
+          blockAction.turnInto(view, menu.pos, 'textBlock', { level });
+        }
+        setMenu(null);
+      },
     });
   }
 
@@ -164,7 +178,7 @@ export function HandleMenu({ view }: HandleMenuProps) {
       )}
 
       {/* 格式 → 子菜单（paragraph / heading） */}
-      {(menu.blockType === 'paragraph' || menu.blockType === 'heading') && currentNode && (
+      {(menu.blockType === 'textBlock') && currentNode && (
         <div
           style={styles.turnIntoWrapper}
           onMouseEnter={() => { setFormatMenuOpen(true); setSubMenuOpen(false); }}
@@ -180,7 +194,7 @@ export function HandleMenu({ view }: HandleMenuProps) {
             <div style={styles.subMenu}>
               <div style={styles.subMenuPanel}>
                 {/* 首行缩进 */}
-                {menu.blockType === 'paragraph' && (
+                {menu.blockType === 'textBlock' && !currentNode?.attrs.level && (
                   <div
                     style={styles.item}
                     onMouseDown={(e) => {
@@ -198,7 +212,7 @@ export function HandleMenu({ view }: HandleMenuProps) {
                   </div>
                 )}
                 {/* 分隔线 */}
-                {menu.blockType === 'paragraph' && <div style={styles.separator} />}
+                {menu.blockType === 'textBlock' && !currentNode?.attrs.level && <div style={styles.separator} />}
                 {/* 对齐方式 */}
                 {[
                   { id: 'left', label: '左对齐', icon: '⫷' },
@@ -229,7 +243,7 @@ export function HandleMenu({ view }: HandleMenuProps) {
       )}
 
       {/* Fold/Unfold（heading 专属） */}
-      {menu.blockType === 'heading' && currentNode && (
+      {menu.blockType === 'textBlock' && currentNode?.attrs.level && currentNode && (
         <div
           style={styles.item}
           onMouseDown={(e) => {
@@ -266,7 +280,7 @@ export function HandleMenu({ view }: HandleMenuProps) {
       ))}
 
       {/* 分隔线 */}
-      {(hasTurnInto || menu.blockType === 'heading') && capabilities?.canDelete && (
+      {(hasTurnInto || menu.blockType === 'textBlock' && currentNode?.attrs.level) && capabilities?.canDelete && (
         <div style={styles.separator} />
       )}
 

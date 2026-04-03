@@ -127,7 +127,7 @@ export const tweetBlockBlock: BlockDef = {
   group: 'block',
 
   nodeSpec: {
-    content: 'paragraph',
+    content: 'textBlock',
     group: 'block',
     attrs: {
       tweetUrl: { default: null },

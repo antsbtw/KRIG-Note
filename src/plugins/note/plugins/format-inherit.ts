@@ -15,7 +15,7 @@ export function formatInheritPlugin(): Plugin {
 
       const { $from } = newState.selection;
       // 当前光标所在节点必须是 paragraph
-      if ($from.parent.type.name !== 'paragraph') return null;
+      if ($from.parent.type.name !== 'textBlock') return null;
       // 且是空段落（刚创建的）
       if ($from.parent.content.size > 0) return null;
 
@@ -25,7 +25,7 @@ export function formatInheritPlugin(): Plugin {
       if (indexInParent <= 0) return null;
 
       const prevNode = parentNode.child(indexInParent - 1);
-      if (prevNode.type.name !== 'paragraph') return null;
+      if (prevNode.type.name !== 'textBlock') return null;
 
       // 检查是否需要继承
       const textIndent = prevNode.attrs.textIndent;

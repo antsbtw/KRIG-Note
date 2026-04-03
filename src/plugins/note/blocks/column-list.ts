@@ -62,7 +62,7 @@ export const columnListBlock: BlockDef = {
   nodeView: columnListNodeView,
 
   capabilities: {
-    turnInto: ['paragraph'],
+    turnInto: ['textBlock'],
     canDelete: true,
     canDrag: true,
   },

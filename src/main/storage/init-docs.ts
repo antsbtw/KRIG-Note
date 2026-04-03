@@ -164,7 +164,7 @@ export async function initKrigNoteDocs(): Promise<{ created: number }> {
     if (match) {
       // 有对应文档 → 带 noteLink
       content.push({
-        type: 'paragraph',
+        type: 'textBlock',
         content: [
           { type: 'text', text: `${name} 优化`, marks: [{ type: 'link', attrs: { href: `krig://note/${match.id}`, title: match.title } }] },
         ],
@@ -172,7 +172,7 @@ export async function initKrigNoteDocs(): Promise<{ created: number }> {
     } else {
       // 没有对应文档 → 纯文字
       content.push({
-        type: 'paragraph',
+        type: 'textBlock',
         content: [{ type: 'text', text: `${name} 优化` }],
       });
     }
@@ -185,9 +185,9 @@ export async function initKrigNoteDocs(): Promise<{ created: number }> {
   }
 
   const taskDocContent = [
-    { type: 'noteTitle', content: [{ type: 'text', text: 'Block 测试工作任务' }] },
+    { type: 'textBlock', attrs: { isTitle: true }, content: [{ type: 'text', text: 'Block 测试工作任务' }] },
     { type: 'taskList', content: taskItems },
-    { type: 'paragraph' },
+    { type: 'textBlock' },
   ];
 
   const taskNote = await noteStore.create('Block 测试工作任务', taskFolder.id);
@@ -253,14 +253,14 @@ export async function createBlockTaskDoc(): Promise<boolean> {
     taskItems.push({
       type: 'taskItem',
       attrs: { checked: false },
-      content: [{ type: 'paragraph', content: paraContent }],
+      content: [{ type: 'textBlock', content: paraContent }],
     });
   }
 
   const docContent = [
-    { type: 'noteTitle', content: [{ type: 'text', text: 'Block 测试工作任务' }] },
+    { type: 'textBlock', attrs: { isTitle: true }, content: [{ type: 'text', text: 'Block 测试工作任务' }] },
     { type: 'taskList', content: taskItems },
-    { type: 'paragraph' },
+    { type: 'textBlock' },
   ];
 
   const note = await noteStore.create('Block 测试工作任务', taskFolder.id);

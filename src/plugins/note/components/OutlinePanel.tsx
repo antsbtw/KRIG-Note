@@ -32,7 +32,7 @@ export function OutlinePanel({ view }: OutlinePanelProps) {
     if (!view) return;
     const items: HeadingItem[] = [];
     view.state.doc.forEach((node, pos) => {
-      if (node.type.name === 'heading') {
+      if (node.type.name === 'textBlock' && node.attrs.level) {
         items.push({
           level: node.attrs.level,
           text: node.textContent || `H${node.attrs.level}`,
@@ -64,7 +64,7 @@ export function OutlinePanel({ view }: OutlinePanelProps) {
     if (!view) return;
     let tr = view.state.tr;
     view.state.doc.forEach((node, pos) => {
-      if (node.type.name === 'heading') {
+      if (node.type.name === 'textBlock' && node.attrs.level) {
         let shouldOpen: boolean;
         switch (mode) {
           case 'expand': shouldOpen = true; break;

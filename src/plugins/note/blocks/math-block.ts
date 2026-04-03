@@ -161,7 +161,7 @@ export const mathBlockBlock: BlockDef = {
   nodeView: mathBlockNodeView,
 
   capabilities: {
-    turnInto: ['paragraph'],
+    turnInto: ['textBlock'],
     canDelete: true,
     canDrag: true,
   },

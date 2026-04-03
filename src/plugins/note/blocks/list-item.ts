@@ -13,7 +13,7 @@ export const listItemBlock: BlockDef = {
   group: '',  // 不属于 block 组，只能在列表中
 
   nodeSpec: {
-    content: 'paragraph block*',
+    content: 'textBlock block*',
     defining: true,
     parseDOM: [{ tag: 'li' }],
     toDOM() { return ['li', 0]; },
@@ -31,7 +31,7 @@ export const listItemBlock: BlockDef = {
   },
 
   containerRule: {
-    requiredFirstChildType: 'paragraph',
+    requiredFirstChildType: 'textBlock',
   },
 
   slashMenu: null,
