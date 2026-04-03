@@ -104,52 +104,7 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
   const dom = document.createElement('div');
   dom.classList.add('code-block');
 
-  // ── 语言按钮 ──
-  const langBtn = document.createElement('button');
-  langBtn.classList.add('code-block__lang-btn');
-  langBtn.setAttribute('contenteditable', 'false');
-  langBtn.textContent = getLangLabel(node.attrs.language) + ' ∨';
-  dom.appendChild(langBtn);
-
-  // ── 语言下拉 ──
-  const dropdown = document.createElement('div');
-  dropdown.classList.add('code-block__dropdown');
-  dropdown.setAttribute('contenteditable', 'false');
-  dropdown.style.display = 'none';
-  dom.appendChild(dropdown);
-
-  function buildDropdown() {
-    dropdown.innerHTML = '';
-    for (const lang of LANGUAGES) {
-      const item = document.createElement('button');
-      item.classList.add('code-block__dropdown-item');
-      item.textContent = lang.label;
-      if (lang.value === (node.attrs.language || '')) item.classList.add('code-block__dropdown-item--active');
-      item.addEventListener('mousedown', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        const pos = typeof getPos === 'function' ? getPos() : undefined;
-        if (pos == null) return;
-        view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, language: lang.value }));
-        dropdown.style.display = 'none';
-      });
-      dropdown.appendChild(item);
-    }
-  }
-  buildDropdown();
-
-  langBtn.addEventListener('mousedown', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    dropdown.style.display = dropdown.style.display === 'none' ? 'flex' : 'none';
-  });
-
-  const closeDropdown = (e: MouseEvent) => {
-    if (!dom.contains(e.target as Node)) dropdown.style.display = 'none';
-  };
-  document.addEventListener('mousedown', closeDropdown);
-
-  // ── Mermaid Toolbar ──
+  // ── 统一 Toolbar ──
   const toolbar = document.createElement('div');
   toolbar.classList.add('code-block__toolbar');
   toolbar.setAttribute('contenteditable', 'false');
@@ -164,32 +119,127 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
     return btn;
   }
 
-  // 模式切换按钮组
-  const modeGroup = document.createElement('div');
-  modeGroup.classList.add('code-block__toolbar-group');
+  // 左侧：语言选择
+  const langBtn = document.createElement('button');
+  langBtn.classList.add('code-block__lang-btn');
+  langBtn.textContent = getLangLabel(node.attrs.language) + ' ∨';
+  toolbar.appendChild(langBtn);
+
+  // 语言下拉（挂在 dom 上，absolute 定位）
+  const dropdown = document.createElement('div');
+  dropdown.classList.add('code-block__dropdown');
+  dropdown.setAttribute('contenteditable', 'false');
+  dropdown.style.display = 'none';
+  dom.appendChild(dropdown);
+
+  // 搜索框
+  const searchInput = document.createElement('input');
+  searchInput.classList.add('code-block__dropdown-search');
+  searchInput.placeholder = '搜索语言...';
+  dropdown.appendChild(searchInput);
+
+  const listContainer = document.createElement('div');
+  listContainer.classList.add('code-block__dropdown-list');
+  dropdown.appendChild(listContainer);
+
+  function buildDropdown(filter?: string) {
+    listContainer.innerHTML = '';
+    const q = (filter || '').toLowerCase();
+    for (const lang of LANGUAGES) {
+      if (q && !lang.label.toLowerCase().includes(q) && !lang.value.toLowerCase().includes(q)) continue;
+      const item = document.createElement('button');
+      item.classList.add('code-block__dropdown-item');
+      if (lang.value === (node.attrs.language || '')) item.classList.add('code-block__dropdown-item--active');
+
+      const label = document.createElement('span');
+      label.textContent = lang.label;
+      item.appendChild(label);
+
+      if (lang.value === (node.attrs.language || '')) {
+        const check = document.createElement('span');
+        check.classList.add('code-block__dropdown-check');
+        check.textContent = '✓';
+        item.appendChild(check);
+      }
+
+      item.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const pos = typeof getPos === 'function' ? getPos() : undefined;
+        if (pos == null) return;
+        view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, language: lang.value }));
+        dropdown.style.display = 'none';
+        searchInput.value = '';
+      });
+      listContainer.appendChild(item);
+    }
+  }
+  buildDropdown();
+
+  searchInput.addEventListener('input', () => {
+    buildDropdown(searchInput.value);
+  });
+  searchInput.addEventListener('keydown', (e) => {
+    e.stopPropagation(); // 阻止 ProseMirror 处理
+  });
+
+  langBtn.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const isVisible = dropdown.style.display !== 'none';
+    dropdown.style.display = isVisible ? 'none' : 'flex';
+    if (!isVisible) {
+      searchInput.value = '';
+      buildDropdown();
+      setTimeout(() => searchInput.focus(), 50);
+    }
+  });
+
+  const closeDropdown = (e: MouseEvent) => {
+    if (!dom.contains(e.target as Node)) dropdown.style.display = 'none';
+  };
+  document.addEventListener('mousedown', closeDropdown);
+
+  // 右侧：复制按钮（所有代码块通用，始终在最右）
+  const spacer = document.createElement('div');
+  spacer.style.flex = '1';
+  toolbar.appendChild(spacer);
+
+  const btnCopy = createBtn(ICON_COPY, '复制代码');
+  toolbar.appendChild(btnCopy);
+
+  // ── Mermaid 扩展按钮（动态添加/移除） ──
+  let mermaidBtnsInserted = false;
   const btnCode = createBtn(ICON_CODE, '仅代码', 'code-block__toolbar-btn--mode');
   const btnSplit = createBtn(ICON_SPLIT, '代码 + 预览', 'code-block__toolbar-btn--mode');
   const btnPreview = createBtn(ICON_PREVIEW, '仅预览', 'code-block__toolbar-btn--mode');
-  modeGroup.appendChild(btnCode);
-  modeGroup.appendChild(btnSplit);
-  modeGroup.appendChild(btnPreview);
-  toolbar.appendChild(modeGroup);
-
-  // 分隔线
-  const sep = document.createElement('div');
-  sep.classList.add('code-block__toolbar-sep');
-  toolbar.appendChild(sep);
-
-  // 操作按钮组
-  const actionGroup = document.createElement('div');
-  actionGroup.classList.add('code-block__toolbar-group');
-  const btnCopy = createBtn(ICON_COPY, '复制代码');
+  const mermaidSep = document.createElement('div');
+  mermaidSep.classList.add('code-block__toolbar-sep');
   const btnDownload = createBtn(ICON_DOWNLOAD, '下载图片');
   const btnFullscreen = createBtn(ICON_FULLSCREEN, '全屏');
-  actionGroup.appendChild(btnCopy);
-  actionGroup.appendChild(btnDownload);
-  actionGroup.appendChild(btnFullscreen);
-  toolbar.appendChild(actionGroup);
+
+  function insertMermaidBtns() {
+    if (mermaidBtnsInserted) return;
+    // 插入到 spacer 之前（语言按钮之后）
+    toolbar.insertBefore(btnCode, spacer);
+    toolbar.insertBefore(btnSplit, spacer);
+    toolbar.insertBefore(btnPreview, spacer);
+    toolbar.insertBefore(mermaidSep, spacer);
+    toolbar.insertBefore(btnDownload, spacer);
+    toolbar.insertBefore(btnFullscreen, spacer);
+    mermaidBtnsInserted = true;
+  }
+
+  function removeMermaidBtns() {
+    if (!mermaidBtnsInserted) return;
+    btnCode.remove();
+    btnSplit.remove();
+    btnPreview.remove();
+    mermaidSep.remove();
+    btnDownload.remove();
+    btnFullscreen.remove();
+    mermaidBtnsInserted = false;
+  }
 
   // ── 代码区 ──
   const pre = document.createElement('pre');
@@ -223,6 +273,11 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
   function updateToolbarVisibility() {
     const isMermaid = node.attrs.language === 'mermaid';
     dom.classList.toggle('code-block--mermaid', isMermaid);
+    if (isMermaid) {
+      insertMermaidBtns();
+    } else {
+      removeMermaidBtns();
+    }
   }
 
   btnCode.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); updateViewMode('code'); });
@@ -413,7 +468,7 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
   return {
     dom,
     contentDOM: code,
-    ignoreMutation(mutation: MutationRecord) {
+    ignoreMutation(mutation: any) {
       return !code.contains(mutation.target);
     },
     update(updatedNode) {
