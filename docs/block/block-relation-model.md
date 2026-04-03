@@ -1,382 +1,361 @@
-# Block 关联模型 — 统一容器设计
+# Block 关联模型 — 统一 Block 设计
 
 > **文档类型**：架构设计
-> **状态**：草案 | 创建日期：2026-04-03
-> **前置**：`CLAUDE.md` 中的 Block + Container 二元模型
+> **状态**：草案 v2 | 创建日期：2026-04-03
+> **前置**：`CLAUDE.md` 中的 Block + Container 二元模型、`design-philosophy.md` P3 原则
 >
-> **本文档目的**：重新定义 Container 的实现方式——从 DOM 嵌套改为 Block 关联关系。
+> **本文档目的**：重新定义 Block 系统——所有 Block 来自同一个基类，容器是 Block 组合的视觉呈现。
 
 ---
 
 ## 一、核心思想
 
-### 回车 = 新 Block，没有例外
+### Block 只有一种，属性决定一切
 
-当前系统中，有些 Block（bulletList、callout、blockquote）是 ProseMirror 的嵌套节点——回车在容器内部创建子节点，而不是新的顶层 Block。这导致：
+```
+一个 Block + 不同 attrs = 不同视觉
+一组相邻同类 Block = 视觉容器
+```
 
-1. 容器内的 Block 没有独立的 Handle
-2. 操作方式不统一（容器内 vs 容器外行为不同）
-3. DOM 嵌套复杂，样式和定位困难
+**三条原则：**
 
-**新设计**：所有 Block 都是扁平的、独立的。容器是通过 **Block 之间的关联关系** 在视觉上呈现的，不是通过 DOM 嵌套。
+1. **回车 = 新 Block**，没有例外
+2. **所有 Block 来自同一个基类**，通过 attrs 变体决定视觉呈现
+3. **容器 = 一组连续的、相同 groupType 的 Block**，视觉上形成整体
 
 ---
 
-## 二、从嵌套到关联
-
-### 2.1 当前模型（嵌套）
-
-```
-doc
-  ├── paragraph "正文"
-  ├── bulletList                    ← Container 节点
-  │     ├── listItem
-  │     │     └── paragraph "项目 1"
-  │     └── listItem
-  │           └── paragraph "项目 2"
-  ├── callout { emoji: '💡' }      ← Container 节点
-  │     ├── paragraph "提示内容"
-  │     └── paragraph "第二行"
-  └── paragraph "正文"
-```
-
-问题：
-- bulletList 内的 paragraph 不是独立 Block，没有 Handle
-- callout 内的 paragraph 也不是独立 Block
-- 不同容器需要不同的键盘处理逻辑
-
-### 2.2 新模型（关联）
-
-```
-doc
-  ├── block "正文"
-  ├── block "项目 1"    { listType: 'bullet', indent: 0 }
-  ├── block "项目 2"    { listType: 'bullet', indent: 0 }
-  ├── block "提示内容"  { containerId: 'c1', containerType: 'callout', containerHead: true, emoji: '💡' }
-  ├── block "第二行"    { containerId: 'c1', containerType: 'callout' }
-  └── block "正文"
-```
-
-每一行都是独立 Block。容器关系通过 attrs 表达。
-
----
-
-## 三、Block attrs 设计
-
-### 3.1 基础 attrs（所有 Block 共享）
+## 二、Block 基类
 
 ```typescript
 interface BlockAttrs {
-  // 已有
-  indent: number;           // 缩进级别（0-8）
-  textIndent: boolean;      // 首行缩进
+  // ── 通用排版 ──
+  indent: number;                    // 缩进级别（0-8）
+  textIndent: boolean;               // 首行缩进
   align: 'left' | 'center' | 'right' | 'justify';
 
-  // 新增：序列关系
-  listType: 'bullet' | 'ordered' | 'task' | null;
-  checked: boolean;         // taskList 专用
-
-  // 新增：容器关系
-  containerId: string | null;       // 所属容器 ID（相同 ID = 同一容器）
-  containerType: string | null;     // 容器类型（'callout' | 'quote' | 'toggle' | 'frame'）
-  containerHead: boolean;           // 是否是容器的首行
-  containerAttrs: Record<string, unknown> | null;  // 容器专属属性（emoji、color 等）
+  // ── 组合（决定视觉呈现） ──
+  groupType: string | null;          // 组合类型
+  groupAttrs: Record<string, unknown> | null;  // 组合专属属性
 }
 ```
 
-### 3.2 序列型（listType 驱动）
-
-无序列表、有序列表、任务列表不需要 `containerId`——它们通过 **相邻 Block 的 listType + indent** 推导关系。
-
-```
-block { listType: 'bullet', indent: 0 }    → • 第一项
-block { listType: 'bullet', indent: 0 }    → • 第二项
-block { listType: 'bullet', indent: 1 }    →   ◦ 缩进项
-block { listType: 'bullet', indent: 1 }    →   ◦ 缩进项
-block { listType: 'bullet', indent: 0 }    → • 回到第一级
-block { listType: null }                    → 普通段落（列表结束）
-```
-
-**有序列表自动编号**：渲染层扫描连续的 `listType: 'ordered'` + 同 indent 级别，自动计算序号。
-
-```
-block { listType: 'ordered', indent: 0 }   → 1. 第一项
-block { listType: 'ordered', indent: 0 }   → 2. 第二项
-block { listType: 'ordered', indent: 1 }   →   a. 缩进项
-block { listType: 'ordered', indent: 0 }   → 3. 回到第一级
-```
-
-**任务列表**：
-
-```
-block { listType: 'task', checked: false }  → ☐ 待办项
-block { listType: 'task', checked: true }   → ☑ 已完成
-```
-
-### 3.3 容器型（containerId 驱动）
-
-callout、blockquote、toggleList、frameBlock 通过 `containerId` 关联。
-
-**Callout**：
-
-```
-block { containerId: 'c1', containerType: 'callout', containerHead: true, containerAttrs: { emoji: '💡' } }
-  → 💡 ┌ 提示内容（首行，显示 emoji + 容器顶部边框）
-block { containerId: 'c1', containerType: 'callout' }
-  →    │ 第二行（中间行，显示左边框）
-block { containerId: 'c1', containerType: 'callout' }
-  →    └ 第三行（末行，显示底部边框——通过检测下一个 Block 是否同 containerId 推导）
-```
-
-**Blockquote**：
-
-```
-block { containerId: 'q1', containerType: 'quote', containerHead: true }
-  → ┃ 引用第一行
-block { containerId: 'q1', containerType: 'quote' }
-  → ┃ 引用第二行
-```
-
-**Toggle**：
-
-```
-block { containerId: 't1', containerType: 'toggle', containerHead: true, containerAttrs: { open: true } }
-  → ▾ 折叠标题（点击切换 open）
-block { containerId: 't1', containerType: 'toggle' }
-  →   子内容（open=false 时隐藏）
-block { containerId: 't1', containerType: 'toggle' }
-  →   子内容
-```
-
-**Frame**：
-
-```
-block { containerId: 'f1', containerType: 'frame', containerHead: true, containerAttrs: { color: 'blue' } }
-  → ┃ 第一行（蓝色左边框）
-block { containerId: 'f1', containerType: 'frame' }
-  → ┃ 第二行
-```
+仅此而已。没有 `containerId`、`containerType`、`containerHead`——不需要。
 
 ---
 
-## 四、渲染机制
+## 三、groupType 变体
 
-### 4.1 序列型渲染（ProseMirror Decoration）
+### 3.1 无组合（普通 Block）
 
-用 `DecorationSet` 在每个 `listType` Block 前面添加列表符号：
-
-```typescript
-// Plugin 的 decorations 函数
-function buildListDecorations(doc: Node): DecorationSet {
-  const decorations: Decoration[] = [];
-  let orderedCounter: Record<number, number> = {};  // indent → counter
-
-  doc.forEach((node, pos) => {
-    const { listType, indent } = node.attrs;
-
-    if (listType === 'bullet') {
-      const symbol = ['•', '◦', '▪'][indent % 3];
-      decorations.push(Decoration.widget(pos, () => createBulletWidget(symbol, indent)));
-    }
-
-    if (listType === 'ordered') {
-      orderedCounter[indent] = (orderedCounter[indent] || 0) + 1;
-      const number = orderedCounter[indent];
-      decorations.push(Decoration.widget(pos, () => createOrderedWidget(number, indent)));
-    }
-
-    if (listType === 'task') {
-      decorations.push(Decoration.widget(pos, () => createCheckboxWidget(node.attrs.checked, pos)));
-    }
-
-    // 重置：当 listType 断开时，重置有序编号
-    if (listType !== 'ordered') {
-      orderedCounter = {};
-    }
-  });
-
-  return DecorationSet.create(doc, decorations);
-}
+```
+{ groupType: null }  → 普通段落/标题/代码块等
 ```
 
-### 4.2 容器型渲染（CSS + Decoration）
+### 3.2 无序列表
 
-容器的边框通过 CSS class 实现，由 Plugin 根据上下文添加：
-
-```typescript
-function buildContainerDecorations(doc: Node): DecorationSet {
-  const decorations: Decoration[] = [];
-
-  doc.forEach((node, pos) => {
-    const { containerId, containerType, containerHead } = node.attrs;
-    if (!containerId) return;
-
-    // 判断是否是容器的最后一行
-    const nextNode = doc.nodeAt(pos + node.nodeSize);
-    const isLast = !nextNode || nextNode.attrs.containerId !== containerId;
-    const isFirst = containerHead;
-
-    // 添加 CSS class
-    const classes = [`container-${containerType}`];
-    if (isFirst) classes.push('container-first');
-    if (isLast) classes.push('container-last');
-    if (!isFirst && !isLast) classes.push('container-middle');
-
-    decorations.push(Decoration.node(pos, pos + node.nodeSize, { class: classes.join(' ') }));
-  });
-
-  return DecorationSet.create(doc, decorations);
-}
+```
+{ groupType: 'bullet', indent: 0 }  → •  第一项
+{ groupType: 'bullet', indent: 0 }  → •  第二项
+{ groupType: 'bullet', indent: 1 }  →   ◦ 缩进项
+{ groupType: 'bullet', indent: 0 }  → •  回到第一级
+{ groupType: null }                  → 普通段落（列表结束）
 ```
 
-CSS 示例：
+符号由 indent 层级决定：`• → ◦ → ▪ → •`（循环）
 
-```css
-/* Callout 容器 */
-.container-callout {
-  border-left: 3px solid #444;
-  padding-left: 16px;
-  background: rgba(255,255,255,0.02);
-}
-.container-callout.container-first {
-  border-top: 1px solid #444;
-  border-top-left-radius: 6px;
-  padding-top: 8px;
-}
-.container-callout.container-last {
-  border-bottom: 1px solid #444;
-  border-bottom-left-radius: 6px;
-  padding-bottom: 8px;
-}
+### 3.3 有序列表
+
 ```
+{ groupType: 'ordered', indent: 0 }  → 1. 第一项
+{ groupType: 'ordered', indent: 0 }  → 2. 第二项
+{ groupType: 'ordered', indent: 1 }  →   a. 缩进项
+{ groupType: 'ordered', indent: 0 }  → 3. 回到第一级
+```
+
+序号由渲染层扫描连续同 indent 的 ordered Block 自动计算。
+
+### 3.4 任务列表
+
+```
+{ groupType: 'task', groupAttrs: { checked: false } }  → ☐ 待办项
+{ groupType: 'task', groupAttrs: { checked: true } }   → ☑ 已完成（淡色+删除线）
+```
+
+### 3.5 Callout
+
+```
+{ groupType: 'callout', groupAttrs: { emoji: '💡' } }  → 💡 ┌ 提示内容
+{ groupType: 'callout', groupAttrs: { emoji: '💡' } }  →    │ 第二行
+{ groupType: 'callout', groupAttrs: { emoji: '💡' } }  →    └ 第三行
+```
+
+首行显示 emoji，整体加背景色和圆角边框。
+
+### 3.6 Blockquote
+
+```
+{ groupType: 'quote' }  → ┃ 引用第一行
+{ groupType: 'quote' }  → ┃ 引用第二行
+```
+
+整体加左侧竖线。
+
+### 3.7 Toggle（折叠）
+
+```
+{ groupType: 'toggle', groupAttrs: { open: true } }   → ▾ 折叠标题（首行）
+{ groupType: 'toggle' }                                →   子内容（open=false 时隐藏）
+{ groupType: 'toggle' }                                →   子内容
+```
+
+首行（组内第一个 Block）显示折叠箭头，控制后续同组 Block 的显隐。
+
+### 3.8 Frame（彩框）
+
+```
+{ groupType: 'frame', groupAttrs: { color: 'blue' } }  → ┃ 第一行
+{ groupType: 'frame', groupAttrs: { color: 'blue' } }  → ┃ 第二行
+```
+
+整体加彩色左边框。
 
 ---
 
-## 五、键盘行为
+## 四、组的推导规则
 
-### 5.1 统一的回车行为
+**组的形成**：连续的、相同 `groupType` 的 Block 自动形成一组。
+
+**组的边界**：
+- `groupType` 变化 → 组断开
+- `groupType` 为 null → 不属于任何组
+
+**组内位置**：渲染层扫描上下文推导每个 Block 在组内的位置：
+
+```typescript
+type GroupPosition = 'first' | 'middle' | 'last' | 'only';
+
+function getGroupPosition(doc, pos): GroupPosition {
+  const node = doc.nodeAt(pos);
+  const prevNode = ...; // 上一个 Block
+  const nextNode = ...; // 下一个 Block
+
+  const sameAsPrev = prevNode?.attrs.groupType === node.attrs.groupType;
+  const sameAsNext = nextNode?.attrs.groupType === node.attrs.groupType;
+
+  if (!sameAsPrev && !sameAsNext) return 'only';
+  if (!sameAsPrev) return 'first';
+  if (!sameAsNext) return 'last';
+  return 'middle';
+}
+```
+
+**渲染决策**：
+
+| groupType | first | middle | last | only |
+|-----------|-------|--------|------|------|
+| bullet | 加 • | 加 • | 加 • | 加 • |
+| callout | emoji + 顶部圆角 | 左边框 | 底部圆角 | emoji + 完整圆角 |
+| quote | 顶部竖线 | 竖线 | 底部竖线 | 完整竖线 |
+| toggle | ▾ 箭头 | 缩进 | 缩进 | ▾ 箭头（无折叠内容） |
+| frame | 顶部边框 | 侧边框 | 底部边框 | 完整边框 |
+
+---
+
+## 五、键盘行为（统一）
+
+### 5.1 Enter（回车）
 
 ```
-Enter：
-  1. 创建新 Block（继承 listType / containerId）
-  2. 新 Block 的 containerHead = false
+有 groupType 时：
+  → 创建新 Block，继承 groupType + indent + groupAttrs
+  → 任务列表：新 Block 的 checked = false
 
-空行 + Enter：
-  1. 清除 listType / containerId（脱离序列/容器）
-  2. 变为普通 paragraph
+空行 + Enter 时：
+  → 清除 groupType（变为普通段落）
+  → 脱离组
 ```
 
 ### 5.2 Tab / Shift-Tab
 
 ```
-Tab：
-  indent += 1（所有 Block 统一）
-  如果在列表中，视觉上变为子列表
-
-Shift-Tab：
-  indent -= 1
-  indent = 0 时不再减少
+Tab：indent += 1（统一，不区分类型）
+Shift-Tab：indent -= 1（最小 0）
 ```
 
-### 5.3 Backspace
+### 5.3 Backspace（行首）
 
 ```
-行首 Backspace：
-  如果有 listType → 清除 listType（变普通段落，保留文字）
-  如果有 containerId → 清除 containerId（脱离容器）
-  如果是普通段落 → 和上一个 Block 合并
+有 groupType 时：
+  → 清除 groupType + groupAttrs（变为普通段落，保留文字）
+
+普通段落时：
+  → 与上一个 Block 合并
+```
+
+### 5.4 Markdown 输入规则
+
+```
+- + 空格  → groupType = 'bullet'
+* + 空格  → groupType = 'bullet'
+1. + 空格 → groupType = 'ordered'
+[] + 空格 → groupType = 'task', checked = false
+[x] + 空格 → groupType = 'task', checked = true
+> + 空格  → groupType = 'quote'
 ```
 
 ---
 
-## 六、与 CLAUDE.md 不变量的关系
+## 六、渲染实现
 
-### 兼容性分析
+### 6.1 ProseMirror Decoration Plugin
 
-| 不变量 | 影响 | 说明 |
-|--------|------|------|
-| Block 能力不变量 | ✅ 兼容 | 每个 Block 保留全部能力，因为都是独立 Block |
-| Container 能力不变量 | ⚠️ 重新定义 | Container 不再是 ProseMirror 节点，而是 Block 关联关系 |
-| 整体移动不变量 | ⚠️ 需要新机制 | 移动容器 = 移动所有共享 containerId 的 Block |
-| 内容合法性不变量 | ✅ 简化 | 不再有 content 表达式限制 |
-| 位置安全不变量 | ✅ 简化 | 没有"必填首子"的概念 |
-| 格式化不变量 | ✅ 兼容 | 格式化只改 attrs |
+一个 Plugin 扫描文档，为每个有 groupType 的 Block 添加 Decoration：
 
-### 需要更新的不变量
+```typescript
+function buildGroupDecorations(doc: Node): DecorationSet {
+  const decorations: Decoration[] = [];
 
-- **整体移动**：拖拽容器首行 Block 时，自动选中所有同 containerId 的 Block 一起移动
-- **Container 定义**：Container 不再是节点类型，而是 Block attrs 的语义关系
+  doc.forEach((node, pos) => {
+    const { groupType, groupAttrs, indent } = node.attrs;
+    if (!groupType) return;
+
+    const position = getGroupPosition(doc, pos, node);
+
+    // CSS class 标记位置
+    decorations.push(
+      Decoration.node(pos, pos + node.nodeSize, {
+        class: `group-${groupType} group-${position}`,
+      })
+    );
+
+    // 列表符号（widget decoration）
+    if (groupType === 'bullet') {
+      const symbol = ['•', '◦', '▪'][indent % 3];
+      decorations.push(Decoration.widget(pos + 1, createSymbolWidget(symbol)));
+    }
+
+    if (groupType === 'ordered') {
+      const number = countInGroup(doc, pos, indent);
+      decorations.push(Decoration.widget(pos + 1, createSymbolWidget(`${number}.`)));
+    }
+
+    if (groupType === 'task') {
+      decorations.push(Decoration.widget(pos + 1, createCheckboxWidget(groupAttrs?.checked)));
+    }
+  });
+
+  return DecorationSet.create(doc, decorations);
+}
+```
+
+### 6.2 CSS
+
+```css
+/* Callout 组 */
+.group-callout {
+  background: rgba(255,255,255,0.02);
+  border-left: 3px solid #444;
+  padding-left: 16px;
+}
+.group-callout.group-first { border-top: 1px solid #444; border-top-left-radius: 6px; padding-top: 8px; }
+.group-callout.group-last { border-bottom: 1px solid #444; border-bottom-left-radius: 6px; padding-bottom: 8px; }
+.group-callout.group-only { border: 1px solid #444; border-radius: 6px; padding: 8px 16px; }
+
+/* Quote 组 */
+.group-quote { border-left: 3px solid #555; padding-left: 16px; color: #aaa; }
+
+/* Toggle 组 */
+.group-toggle:not(.group-first) { padding-left: 24px; }
+
+/* Frame 组 */
+.group-frame { border-left: 3px solid var(--frame-color, #8ab4f8); padding-left: 16px; }
+```
 
 ---
 
-## 七、迁移路径
+## 七、Handle 行为
 
-### Phase 1：序列型（bulletList → listType attr）
+**每个 Block 都有 Handle**——因为每个 Block 都是独立的。
 
-1. paragraph 增加 `listType` / `checked` attrs
-2. 实现列表符号 Decoration Plugin
-3. 实现键盘行为（Enter 继承、空行退出、Tab 缩进）
-4. Markdown 输入规则适配
-5. 删除 bulletList / orderedList / taskList / listItem / taskItem 节点
-6. 迁移已有文档数据
-
-### Phase 2：容器型（callout → containerId attr）
-
-1. paragraph/heading 增加 `containerId` / `containerType` / `containerHead` / `containerAttrs`
-2. 实现容器边框 Decoration Plugin
-3. 实现键盘行为（Enter 继承、空行退出）
-4. SlashMenu 适配（创建容器 = 设置当前 Block 的 attrs）
-5. 删除 callout / blockquote / toggleList / frameBlock 节点
-6. 迁移已有文档数据
-
-### Phase 3：Toggle 折叠
-
-1. `containerType: 'toggle'` + `containerAttrs: { open: boolean }`
-2. 折叠 = 隐藏非 containerHead 的同 containerId Block
-3. Decoration 控制 `display: none`
+Handle 操作：
+- **拖拽单个 Block** → 移动该 Block（可能脱离组）
+- **拖拽组** → 拖拽 group-first 时，自动选中整组一起移动
+- **+ 按钮** → 在该 Block 下方创建新 Block（继承 groupType）
+- **菜单** → 转换成（改 groupType）、格式、删除
 
 ---
 
-## 八、设计意义
-
-### 8.1 抽象的统一
-
-**旧模型**：Block 有两种——叶子 Block 和 Container Block，操作行为不同。
-
-**新模型**：所有 Block 行为相同，容器是 Block 关联关系的视觉呈现。
+## 八、SlashMenu 行为
 
 ```
-单个 Block 的行为 × 关联关系 = 容器行为
+/bullet  → 设置当前 Block 的 groupType = 'bullet'
+/ordered → 设置当前 Block 的 groupType = 'ordered'
+/task    → 设置当前 Block 的 groupType = 'task'
+/callout → 设置当前 Block 的 groupType = 'callout', groupAttrs = { emoji: '💡' }
+/quote   → 设置当前 Block 的 groupType = 'quote'
+/toggle  → 设置当前 Block 的 groupType = 'toggle', groupAttrs = { open: true }
+/frame   → 设置当前 Block 的 groupType = 'frame', groupAttrs = { color: 'blue' }
 ```
 
-容器不是新的概念，而是基础 Block 行为的**组合**。
-
-### 8.2 语义的丰富
-
-Block 的 `containerId` 天然成为知识图谱的关系边：
-
-```
-Block A ──belongs_to──> Container C1
-Block B ──belongs_to──> Container C1
-```
-
-这和 P3（Block 是数据组织单元）完全一致——关联关系既服务于视图渲染，也服务于数据层。
-
-### 8.3 操作的简化
-
-- 每个 Block 都有 Handle → 操作入口统一
-- 不需要区分"容器内操作"和"容器外操作" → 学习成本降低
-- 回车永远创建新 Block → 心智模型简单
+不创建新节点，只修改当前 Block 的 attrs。
 
 ---
 
-## 九、风险与约束
+## 九、与设计哲学的关系
 
-1. **数据迁移**：已有文档的 bulletList/callout 等嵌套结构需要展平为关联 Block
-2. **ProseMirror 兼容性**：ProseMirror 的 Schema 系统是基于嵌套的，关联模型需要在其上层实现
-3. **复杂容器**：table 是二维嵌套结构，不适合展平——table 保持原有 Container 方式
-4. **性能**：每次渲染需要扫描上下文推导关联关系，需要缓存优化
+| 原则 | 对齐 |
+|------|------|
+| P3: Block 是数据组织单元 | ✅ 每个 Block 独立，attrs 携带完整语义 |
+| P4: 视图是数据的自然反映 | ✅ groupType 自动推导视觉呈现 |
+| 回车 = 新 Block | ✅ 统一，无例外 |
+| 基类统一 | ✅ 所有 Block 相同基类，attrs 变体 |
 
 ---
 
-*本文档为草案，需要逐步验证和细化。每一阶段实现后回顾设计决策。*
+## 十、例外
+
+**table** 保持 ProseMirror 原生嵌套结构（`table > tableRow > tableCell`）。二维网格结构不适合展平为一维 Block 序列。
+
+**columnList** 同理——多列布局需要并排关系，不是上下序列。
+
+---
+
+## 十一、迁移路径
+
+### Phase 1：基础设施
+
+1. paragraph nodeSpec 增加 `groupType` + `groupAttrs`
+2. 实现 Group Decoration Plugin（位置推导 + CSS class）
+3. 实现列表符号 Widget Decoration
+
+### Phase 2：序列型迁移
+
+1. 实现 bullet/ordered/task 的键盘行为
+2. Markdown 输入规则适配
+3. 删除 bulletList/orderedList/taskList/listItem/taskItem 节点
+4. 迁移已有文档数据
+
+### Phase 3：容器型迁移
+
+1. 实现 callout/quote/toggle/frame 的渲染和键盘行为
+2. 删除 callout/blockquote/toggleList/frameBlock 节点
+3. 迁移已有文档数据
+
+---
+
+## 十二、设计意义
+
+**旧模型**：Block 有两种（叶子和容器），操作行为不同，需要分别处理。
+
+**新模型**：Block 只有一种，属性决定一切。容器是 Block 组合的视觉呈现。
+
+```
+单个 Block 的行为 × 组合规则 = 一切视觉效果
+```
+
+这是真正的**抽象统一**——不是把复杂度藏起来，而是从根本上消除了复杂度。
+
+---
+
+*本文档为草案 v2。每一阶段实现后回顾设计决策。*
