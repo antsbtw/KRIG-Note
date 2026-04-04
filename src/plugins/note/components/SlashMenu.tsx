@@ -168,8 +168,11 @@ export function SlashMenu({ view }: SlashMenuProps) {
         } else if (actualBlockName === 'blockquote') {
           // blockquote: paragraph(空)
           containerNode = nodeType.create(null, [schema.nodes.textBlock.create()]);
-        } else if (actualBlockName === 'bulletList' || actualBlockName === 'orderedList') {
-          // 列表: listItem(paragraph)
+        } else if (actualBlockName === 'bulletList') {
+          // 无序列表: textBlock(空)
+          containerNode = nodeType.create(null, [schema.nodes.textBlock.create()]);
+        } else if (actualBlockName === 'orderedList') {
+          // 有序列表: listItem(paragraph) — 待迁移为 block+
           const listItem = schema.nodes.listItem.create(null, [schema.nodes.textBlock.create()]);
           containerNode = nodeType.create(null, [listItem]);
         } else if (actualBlockName === 'taskList') {

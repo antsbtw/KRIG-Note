@@ -28,7 +28,9 @@ import { tableBlock, tableRowBlock, tableCellBlock, tableHeaderBlock } from './t
 import { columnListBlock, columnBlock } from './column-list';
 import { horizontalRuleBlock } from './horizontal-rule';
 
-// ── 旧容器已删除，由 groupType 替代 ──
+// ── ContainerBlock ──
+import { bulletListBlock } from './bullet-list';
+import { calloutBlock } from './callout';
 
 export function registerAllBlocks(): void {
   // ── TextBlock 基类（替代旧的 paragraph + heading + noteTitle） ──
@@ -64,7 +66,11 @@ export function registerAllBlocks(): void {
   blockRegistry.register(noteLinkBlock);
   blockRegistry.register(mathInlineBlock);
 
-  // ── 特殊结构 ──
+  // ── ContainerBlock ──
+  blockRegistry.register(bulletListBlock);
+  blockRegistry.register(calloutBlock);
+
+  // ── 特殊結構 ──
   blockRegistry.register(horizontalRuleBlock);
   blockRegistry.register(tableBlock);
   blockRegistry.register(tableRowBlock);
@@ -73,14 +79,7 @@ export function registerAllBlocks(): void {
   blockRegistry.register(columnListBlock);
   blockRegistry.register(columnBlock);
 
-  // ── 旧容器已由 groupType 替代 ──
-
-  // ── groupType SlashMenu（设置当前 textBlock 的 groupType） ──
-  blockRegistry.registerSlashItem({
-    id: 'bullet', blockName: 'textBlock', label: 'Bullet List', icon: '•',
-    group: 'basic', keywords: ['list', 'bullet', 'ul', 'unordered', '无序'], order: 5,
-    attrs: { groupType: 'bullet' },
-  });
+  // ── groupType SlashMenu（待逐步替换为 ContainerBlock） ──
   blockRegistry.registerSlashItem({
     id: 'ordered', blockName: 'textBlock', label: 'Numbered List', icon: '1.',
     group: 'basic', keywords: ['list', 'numbered', 'ol', 'ordered', '有序'], order: 6,
@@ -91,11 +90,7 @@ export function registerAllBlocks(): void {
     group: 'basic', keywords: ['task', 'todo', 'checkbox', 'checklist', '待办'], order: 7,
     attrs: { groupType: 'task', groupAttrs: { checked: false } },
   });
-  blockRegistry.registerSlashItem({
-    id: 'callout', blockName: 'textBlock', label: 'Callout', icon: '💡',
-    group: 'basic', keywords: ['callout', 'note', 'warning', 'tip', '提示'], order: 11,
-    attrs: { groupType: 'callout', groupAttrs: { emoji: '💡' } },
-  });
+  // callout: 已由 ContainerBlock 接管（calloutBlock 有自己的 slashMenu）
   blockRegistry.registerSlashItem({
     id: 'quote', blockName: 'textBlock', label: 'Quote', icon: '❝',
     group: 'basic', keywords: ['quote', 'blockquote', '引用'], order: 8,

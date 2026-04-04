@@ -1187,3 +1187,40 @@
 .group-task {
   padding-left: 8px;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   ContainerBlock 样式（新架构）
+   ═══════════════════════════════════════════════════════════ */
+
+/* ── bulletList Container ── */
+.bullet-list {
+  padding-left: 24px;
+  position: relative;
+}
+/* 每个直接子 textBlock（p/h1/h2/h3）加 bullet 标记 */
+.bullet-list > .bullet-list__content > p::before,
+.bullet-list > .bullet-list__content > h1::before,
+.bullet-list > .bullet-list__content > h2::before,
+.bullet-list > .bullet-list__content > h3::before {
+  content: '•';
+  position: absolute;
+  left: 4px;
+  color: #e8eaed;
+  font-size: 20px;
+  line-height: inherit;
+}
+/* 嵌套 2 级 → ◦ */
+.bullet-list .bullet-list > .bullet-list__content > p::before,
+.bullet-list .bullet-list > .bullet-list__content > h1::before,
+.bullet-list .bullet-list > .bullet-list__content > h2::before,
+.bullet-list .bullet-list > .bullet-list__content > h3::before {
+  content: '◦';
+}
+/* 嵌套 3 级 → ▪ */
+.bullet-list .bullet-list .bullet-list > .bullet-list__content > p::before,
+.bullet-list .bullet-list .bullet-list > .bullet-list__content > h1::before,
+.bullet-list .bullet-list .bullet-list > .bullet-list__content > h2::before,
+.bullet-list .bullet-list .bullet-list > .bullet-list__content > h3::before {
+  content: '▪';
+  font-size: 14px;
+}
