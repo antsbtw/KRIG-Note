@@ -365,7 +365,72 @@ interface BlockBaseAttrs {
 
 ---
 
-## 十、实施路径
+## 十、Tab 升级能力
+
+### 10.1 原则
+
+任何 ContainerBlock 都天然支持升级为多 Tab 形态。这是 Container 基类的**内建能力**，不需要各 Container 独立实现。
+
+```
+单一视图：                    升级为多 Tab：
+blockquote                    blockquote
+  └── textBlock "引用"          Tab栏: [原文] [翻译]
+                                ├── tabPane[原文]
+                                │     └── textBlock "引用"
+                                └── tabPane[翻译]
+                                      └── textBlock "翻译内容"
+```
+
+### 10.2 TabContainer 基础设施
+
+Tab 能力由三个共享模块提供：
+
+| 模块 | 职责 |
+|------|------|
+| **Tab 栏**（tab-bar） | Tab 按钮 + Action 按钮 + 切换回调 |
+| **内容区域**（tab-content） | 渲染型面板 + 编辑型面板 + 显示/隐藏 |
+| **tabPane NodeView** | 编辑型面板的 ProseMirror 子容器 |
+
+### 10.3 两种面板类型
+
+| 类型 | 说明 | 数据 |
+|------|------|------|
+| **渲染型**（Rendered） | 纯 DOM，不参与文档模型 | NodeView 内部管理 |
+| **编辑型**（Editable） | ProseMirror tabPane 子节点 | 存储在文档树中 |
+
+### 10.4 布局
+
+```
+┌─ Container ────────────────────────────┐
+│  [Tab A] [Tab B] [Tab C]   [按钮...]  │  ← Tab 栏
+│  ┌─────────────────────────────────┐   │
+│  │  Tab A 面板 (可见)               │   │  ← 内容区域
+│  │  Tab B 面板 (隐藏)               │   │    所有面板共享同一空间
+│  └─────────────────────────────────┘   │
+│  caption (始终可见)                     │  ← 底部 caption
+└────────────────────────────────────────┘
+```
+
+### 10.5 升级时机
+
+- 用户显式操作（不自动升级）
+- 例：blockquote 添加"翻译" Tab、callout 添加"备注" Tab
+- Container 的 content 表达式从 `block+` 扩展为 `tabPane+ block*` 或按需定义
+
+### 10.6 各 Container 的 Tab 升级示例
+
+| Container | 单一视图 | 多 Tab |
+|-----------|---------|--------|
+| blockquote | 引用内容 | [原文] [翻译] |
+| callout | 提示内容 | [提示] [详情] |
+| bulletList | 列表内容 | [列表] [大纲] |
+| codeBlock* | 代码 | [代码] [运行结果] |
+
+*codeBlock 是 RenderBlock，Tab 升级逻辑相同但通过 RenderBlock 基类提供。
+
+---
+
+## 十一、实施路径
 
 ### Phase 1：补全 Container 节点
 
@@ -396,7 +461,7 @@ interface BlockBaseAttrs {
 
 ---
 
-## 十一、开发新 ContainerBlock 的检查清单
+## 十二、开发新 ContainerBlock 的检查清单
 
 - [ ] 实现 BlockDef（name + nodeSpec + capabilities + containerRule）
 - [ ] nodeSpec `content` 包含 `block`
@@ -412,7 +477,7 @@ interface BlockBaseAttrs {
 
 ---
 
-## 十二、设计原则
+## 十三、设计原则
 
 1. **Container 只管组织**——它包裹子 Block，不产生自己的内容
 2. **渲染从内到外**——子节点先渲染，Container 再包裹，视觉装饰自然延伸
