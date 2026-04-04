@@ -265,9 +265,58 @@ export function blockSelectionPlugin(): Plugin {
         return false;
       },
 
-      // 左键单击取消选中（右键不取消，保留 Block 选中状态给 ContextMenu）
-      handleClick(view, pos, event) {
-        if (event.button !== 0) return false; // 只处理左键
+      handleDOMEvents: {
+        mousedown(view, event) {
+          if (event.button !== 0) return false;
+          const pluginState = blockSelectionKey.getState(view.state);
+          if (!pluginState?.active) return false;
+
+          // 从 DOM 查找点击的顶层 block
+          let target = event.target as HTMLElement | null;
+          const pmDOM = view.dom;
+          let blockDOM: HTMLElement | null = null;
+          while (target && target !== pmDOM) {
+            if (target.parentElement === pmDOM) { blockDOM = target; break; }
+            target = target.parentElement;
+          }
+
+          if (event.shiftKey && blockDOM) {
+            // Shift+点击 → 范围多选
+            event.preventDefault();
+            let clickBlockPos: number;
+            try {
+              const innerPos = view.posAtDOM(blockDOM, 0);
+              const $pos = view.state.doc.resolve(innerPos);
+              if ($pos.depth < 1) return true;
+              clickBlockPos = $pos.before(1);
+            } catch { return true; }
+
+            const anchorPos = pluginState.positions[0];
+            const minPos = Math.min(anchorPos, clickBlockPos);
+            const maxPos = Math.max(anchorPos, clickBlockPos);
+
+            const positions: number[] = [];
+            view.state.doc.forEach((_node, offset) => {
+              if (offset >= minPos && offset <= maxPos) positions.push(offset);
+            });
+
+            if (positions.length > 0) {
+              view.dispatch(view.state.tr.setMeta(blockSelectionKey, {
+                action: 'select', positions,
+              }));
+            }
+            return true;
+          }
+
+          // 普通点击 → 取消选中
+          view.dispatch(view.state.tr.setMeta(blockSelectionKey, { clear: true }));
+          return false;
+        },
+      },
+
+      // 右键不取消选中（保留 Block 选中状态给 ContextMenu）
+      handleClick(view, _pos, event) {
+        if (event.button !== 0) return false;
         const state = blockSelectionKey.getState(view.state);
         if (state?.active) {
           view.dispatch(view.state.tr.setMeta(blockSelectionKey, { clear: true }));
