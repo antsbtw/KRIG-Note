@@ -7,16 +7,15 @@ import { Plugin } from 'prosemirror-state';
  *
  * 行首输入模式 + 空格 → 自动转换：
  * - # / ## / ### → level 1/2/3
- * - - / * → groupType = 'bullet'
- * - 1. → groupType = 'ordered'
- * - [] / [ ] → groupType = 'task'
- * - [x] → groupType = 'task' (checked)
- * - > → groupType = 'quote'
+ * - - / * → bulletList Container
+ * - 1. → orderedList Container
+ * - [] / [ ] / [x] → taskList Container
+ * - > → blockquote Container
  * - ``` → codeBlock
  * - --- → horizontalRule
  */
 
-/** 辅助：设置当前 textBlock 的 attrs */
+/** 设置当前 textBlock 的 attrs（heading level 等） */
 function setBlockAttrs(attrsToSet: Record<string, unknown>) {
   return (state: any, match: any, start: number, end: number) => {
     const $start = state.doc.resolve(start);
@@ -25,6 +24,33 @@ function setBlockAttrs(attrsToSet: Record<string, unknown>) {
     const node = state.doc.nodeAt(blockStart);
     if (!node || node.type.name !== 'textBlock') return null;
     return state.tr.delete(start, end).setNodeMarkup(blockStart, undefined, { ...node.attrs, ...attrsToSet });
+  };
+}
+
+/** 将当前 textBlock 包裹进 Container 节点 */
+function wrapInContainer(containerName: string) {
+  return (state: any, match: any, start: number, end: number) => {
+    const schema = state.schema;
+    const containerType = schema.nodes[containerName];
+    if (!containerType) return null;
+
+    const $start = state.doc.resolve(start);
+    const depth = $start.depth;
+    const blockStart = $start.before(depth);
+    const node = state.doc.nodeAt(blockStart);
+    if (!node || node.type.name !== 'textBlock') return null;
+
+    // 删除 markdown 触发文字
+    let tr = state.tr.delete(start, end);
+
+    // 重新获取 textBlock（delete 后内容可能变了）
+    const updatedNode = tr.doc.nodeAt(blockStart);
+    if (!updatedNode) return null;
+    const updatedBlockEnd = blockStart + updatedNode.nodeSize;
+
+    // 用 Container 包裹
+    const container = containerType.create(null, [updatedNode.copy(updatedNode.content)]);
+    return tr.replaceWith(blockStart, updatedBlockEnd, container);
   };
 }
 
@@ -38,23 +64,29 @@ export function buildInputRules(schema: Schema): Plugin {
   rules.push(new InputRule(/^##\s$/, setBlockAttrs({ level: 2 })));
   rules.push(new InputRule(/^###\s$/, setBlockAttrs({ level: 3 })));
 
-  // - / * → bullet list
-  rules.push(new InputRule(/^[-*]\s$/, setBlockAttrs({ groupType: 'bullet' })));
+  // - / * → bulletList Container
+  if (schema.nodes.bulletList) {
+    rules.push(new InputRule(/^[-*]\s$/, wrapInContainer('bulletList')));
+  }
 
-  // 1. → ordered list
-  rules.push(new InputRule(/^1\.\s$/, setBlockAttrs({ groupType: 'ordered' })));
+  // 1. → orderedList Container
+  if (schema.nodes.orderedList) {
+    rules.push(new InputRule(/^1\.\s$/, wrapInContainer('orderedList')));
+  }
 
-  // [] / [ ] → task list（未勾选）
-  rules.push(new InputRule(/^\[\]\s$/, setBlockAttrs({ groupType: 'task', groupAttrs: { checked: false } })));
-  rules.push(new InputRule(/^\[ \]\s$/, setBlockAttrs({ groupType: 'task', groupAttrs: { checked: false } })));
+  // [] / [ ] / [x] → taskList Container
+  if (schema.nodes.taskList) {
+    rules.push(new InputRule(/^\[\]\s$/, wrapInContainer('taskList')));
+    rules.push(new InputRule(/^\[ \]\s$/, wrapInContainer('taskList')));
+    rules.push(new InputRule(/^\[x\]\s$/, wrapInContainer('taskList')));
+  }
 
-  // [x] → task list（已勾选）
-  rules.push(new InputRule(/^\[x\]\s$/, setBlockAttrs({ groupType: 'task', groupAttrs: { checked: true } })));
+  // > → blockquote Container
+  if (schema.nodes.blockquote) {
+    rules.push(new InputRule(/^>\s$/, wrapInContainer('blockquote')));
+  }
 
-  // > → quote
-  rules.push(new InputRule(/^>\s$/, setBlockAttrs({ groupType: 'quote' })));
-
-  // ``` → codeBlock（替换为 RenderBlock）
+  // ``` → codeBlock
   if (schema.nodes.codeBlock) {
     rules.push(new InputRule(/^```$/, (state, match, start, end) => {
       const codeBlock = schema.nodes.codeBlock.create();
