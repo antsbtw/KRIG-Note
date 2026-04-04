@@ -1198,16 +1198,26 @@
   position: relative;
 }
 /* 每个直接子 textBlock（p/h1/h2/h3）加 bullet 标记 */
+.bullet-list > .bullet-list__content > p,
+.bullet-list > .bullet-list__content > h1,
+.bullet-list > .bullet-list__content > h2,
+.bullet-list > .bullet-list__content > h3 {
+  position: relative;
+}
 .bullet-list > .bullet-list__content > p::before,
 .bullet-list > .bullet-list__content > h1::before,
 .bullet-list > .bullet-list__content > h2::before,
 .bullet-list > .bullet-list__content > h3::before {
   content: '•';
   position: absolute;
-  left: 4px;
+  left: -20px;
+  width: 16px;
+  text-align: center;
   color: #e8eaed;
   font-size: 20px;
-  line-height: inherit;
+  line-height: 1;
+  top: 50%;
+  transform: translateY(-50%);
 }
 /* 嵌套 2 级 → ◦ */
 .bullet-list .bullet-list > .bullet-list__content > p::before,
@@ -1223,4 +1233,72 @@
 .bullet-list .bullet-list .bullet-list > .bullet-list__content > h3::before {
   content: '▪';
   font-size: 14px;
+}
+
+/* ── orderedList Container ── */
+.ordered-list {
+  padding-left: 24px;
+  position: relative;
+  counter-reset: ordered-item;
+}
+.ordered-list > .ordered-list__content > p,
+.ordered-list > .ordered-list__content > h1,
+.ordered-list > .ordered-list__content > h2,
+.ordered-list > .ordered-list__content > h3 {
+  position: relative;
+  counter-increment: ordered-item;
+}
+.ordered-list > .ordered-list__content > p::before,
+.ordered-list > .ordered-list__content > h1::before,
+.ordered-list > .ordered-list__content > h2::before,
+.ordered-list > .ordered-list__content > h3::before {
+  content: counter(ordered-item) '.';
+  position: absolute;
+  left: -24px;
+  width: 20px;
+  text-align: right;
+  color: #e8eaed;
+  font-size: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── taskList Container ── */
+.task-list {
+  padding-left: 24px;
+  position: relative;
+}
+.task-list > .task-list__content > p,
+.task-list > .task-list__content > h1,
+.task-list > .task-list__content > h2,
+.task-list > .task-list__content > h3 {
+  position: relative;
+}
+.task-list > .task-list__content > p::before,
+.task-list > .task-list__content > h1::before,
+.task-list > .task-list__content > h2::before,
+.task-list > .task-list__content > h3::before {
+  content: '☐';
+  position: absolute;
+  left: -22px;
+  width: 18px;
+  text-align: center;
+  font-size: 14px;
+  cursor: pointer;
+  user-select: none;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+/* ── blockquote Container ── */
+.blockquote {
+  border-left: 3px solid #555;
+  padding-left: 16px;
+  margin: 0.5em 0;
+  color: #aaa;
+  font-style: italic;
+}
+.blockquote .blockquote {
+  border-left-color: #444;
 }

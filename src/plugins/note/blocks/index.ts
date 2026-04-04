@@ -7,7 +7,7 @@
 
 import { blockRegistry } from '../registry';
 
-// ── 基类 ──
+// ── TextBlock 基类 ──
 import { textBlockDef } from './text-block';
 
 // ── RenderBlock ──
@@ -23,17 +23,24 @@ import { hardBreakBlock } from './hard-break';
 import { noteLinkBlock } from './note-link';
 import { mathInlineBlock } from './math-inline';
 
-// ── 特殊结构（保持 ProseMirror 原生嵌套） ──
+// ── ContainerBlock ──
+import { bulletListBlock } from './bullet-list';
+import { orderedListBlock } from './ordered-list';
+import { taskListBlock } from './task-list';
+import { blockquoteBlock } from './blockquote';
+import { calloutBlock } from './callout';
+// toggleList, frameBlock — 已有 Container 实现，保持不变
+import { toggleListBlock } from './toggle-list';
+import { toggleHeadingBlock } from './toggle-heading';
+import { frameBlockBlock } from './frame-block';
+
+// ── 特殊结构 ──
 import { tableBlock, tableRowBlock, tableCellBlock, tableHeaderBlock } from './table';
 import { columnListBlock, columnBlock } from './column-list';
 import { horizontalRuleBlock } from './horizontal-rule';
 
-// ── ContainerBlock ──
-import { bulletListBlock } from './bullet-list';
-import { calloutBlock } from './callout';
-
 export function registerAllBlocks(): void {
-  // ── TextBlock 基类（替代旧的 paragraph + heading + noteTitle） ──
+  // ── TextBlock ──
   blockRegistry.register(textBlockDef);
 
   // Heading H1/H2/H3 SlashMenu（改 textBlock 的 level attr）
@@ -68,9 +75,15 @@ export function registerAllBlocks(): void {
 
   // ── ContainerBlock ──
   blockRegistry.register(bulletListBlock);
+  blockRegistry.register(orderedListBlock);
+  blockRegistry.register(taskListBlock);
+  blockRegistry.register(blockquoteBlock);
   blockRegistry.register(calloutBlock);
+  blockRegistry.register(toggleListBlock);
+  blockRegistry.register(toggleHeadingBlock);
+  blockRegistry.register(frameBlockBlock);
 
-  // ── 特殊結構 ──
+  // ── 特殊结构 ──
   blockRegistry.register(horizontalRuleBlock);
   blockRegistry.register(tableBlock);
   blockRegistry.register(tableRowBlock);
@@ -79,23 +92,7 @@ export function registerAllBlocks(): void {
   blockRegistry.register(columnListBlock);
   blockRegistry.register(columnBlock);
 
-  // ── groupType SlashMenu（待逐步替换为 ContainerBlock） ──
-  blockRegistry.registerSlashItem({
-    id: 'ordered', blockName: 'textBlock', label: 'Numbered List', icon: '1.',
-    group: 'basic', keywords: ['list', 'numbered', 'ol', 'ordered', '有序'], order: 6,
-    attrs: { groupType: 'ordered' },
-  });
-  blockRegistry.registerSlashItem({
-    id: 'task', blockName: 'textBlock', label: 'Task List', icon: '☐',
-    group: 'basic', keywords: ['task', 'todo', 'checkbox', 'checklist', '待办'], order: 7,
-    attrs: { groupType: 'task', groupAttrs: { checked: false } },
-  });
-  // callout: 已由 ContainerBlock 接管（calloutBlock 有自己的 slashMenu）
-  blockRegistry.registerSlashItem({
-    id: 'quote', blockName: 'textBlock', label: 'Quote', icon: '❝',
-    group: 'basic', keywords: ['quote', 'blockquote', '引用'], order: 8,
-    attrs: { groupType: 'quote' },
-  });
+  // ── groupType SlashMenu（toggle/frame 暂保留，待迁移到 Container 的 SlashMenu） ──
   blockRegistry.registerSlashItem({
     id: 'toggle', blockName: 'textBlock', label: 'Toggle List', icon: '▸',
     group: 'basic', keywords: ['toggle', 'fold', 'collapse', '折叠'], order: 9,

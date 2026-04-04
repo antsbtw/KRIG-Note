@@ -147,7 +147,7 @@ export function SlashMenu({ view }: SlashMenuProps) {
         // Container 类型（toggleHeading, toggleList, blockquote 等）
         // 替换光标所在的 paragraph（可能在嵌套容器内部）
         const { $from } = view.state.selection;
-        // 找到最内层的 block 节点（通常是 paragraph）
+        // 找到最内层的 block 节点（通常是 paragraph/textBlock）
         const depth = $from.depth;
         const blockStart = $from.before(depth);
         const blockEnd = $from.after(depth);
@@ -168,17 +168,9 @@ export function SlashMenu({ view }: SlashMenuProps) {
         } else if (actualBlockName === 'blockquote') {
           // blockquote: paragraph(空)
           containerNode = nodeType.create(null, [schema.nodes.textBlock.create()]);
-        } else if (actualBlockName === 'bulletList') {
-          // 无序列表: textBlock(空)
-          containerNode = nodeType.create(null, [schema.nodes.textBlock.create()]);
-        } else if (actualBlockName === 'orderedList') {
-          // 有序列表: listItem(paragraph) — 待迁移为 block+
-          const listItem = schema.nodes.listItem.create(null, [schema.nodes.textBlock.create()]);
-          containerNode = nodeType.create(null, [listItem]);
-        } else if (actualBlockName === 'taskList') {
-          // 待办清单: taskItem(paragraph)
-          const taskItem = schema.nodes.taskItem.create({ checked: false }, [schema.nodes.textBlock.create()]);
-          containerNode = nodeType.create(null, [taskItem]);
+        } else if (actualBlockName === 'bulletList' || actualBlockName === 'orderedList' || actualBlockName === 'taskList') {
+          // 列表 Container: textBlock(空)
+          containerNode = nodeType.create(extraAttrs ?? null, [schema.nodes.textBlock.create()]);
         } else if (actualBlockName === 'callout') {
           // 提示框: paragraph
           containerNode = nodeType.create({ emoji: '💡' }, [schema.nodes.textBlock.create()]);
