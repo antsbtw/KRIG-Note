@@ -11,6 +11,7 @@ import { buildTestDocument } from '../test-content';
 import { registerAllBlocks } from '../blocks/index';
 import { noteTitleNodeView } from '../blocks/text-block';
 import { buildInputRules } from '../plugins/input-rules';
+import { containerKeyboardPlugin } from '../plugins/container-keyboard';
 import '../note.css';
 
 /**
@@ -105,6 +106,7 @@ export function NoteEditor() {
     const state = EditorState.create({
       doc,
       plugins: [
+        containerKeyboardPlugin(),  // Container Enter/Backspace — 在 baseKeymap 之前
         buildInputRules(s),
         keymap({ 'Mod-z': undo, 'Mod-Shift-z': redo, 'Mod-y': redo }),
         keymap(markKeymap),

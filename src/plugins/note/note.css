@@ -49,3 +49,139 @@
   font-size: 0.9em;
   color: #f78c6c;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   ContainerBlock 样式
+   ═══════════════════════════════════════════════════════════ */
+
+/* ── bulletList ── */
+.bullet-list {
+  padding-left: 24px;
+  margin: 0.2em 0;
+}
+.bullet-list > .bullet-list__content > p,
+.bullet-list > .bullet-list__content > h1,
+.bullet-list > .bullet-list__content > h2,
+.bullet-list > .bullet-list__content > h3 {
+  position: relative;
+}
+.bullet-list > .bullet-list__content > p::before,
+.bullet-list > .bullet-list__content > h1::before,
+.bullet-list > .bullet-list__content > h2::before,
+.bullet-list > .bullet-list__content > h3::before {
+  content: '•';
+  position: absolute;
+  left: -20px;
+  width: 16px;
+  text-align: center;
+  color: #9aa0a6;
+  font-size: 1.4em;
+  line-height: 1;
+  top: 50%;
+  transform: translateY(-50%);
+}
+/* 嵌套 2 级 → ◦ */
+.bullet-list .bullet-list > .bullet-list__content > p::before,
+.bullet-list .bullet-list > .bullet-list__content > h1::before,
+.bullet-list .bullet-list > .bullet-list__content > h2::before,
+.bullet-list .bullet-list > .bullet-list__content > h3::before {
+  content: '◦';
+}
+/* 嵌套 3 级 → ▪ */
+.bullet-list .bullet-list .bullet-list > .bullet-list__content > p::before,
+.bullet-list .bullet-list .bullet-list > .bullet-list__content > h1::before,
+.bullet-list .bullet-list .bullet-list > .bullet-list__content > h2::before,
+.bullet-list .bullet-list .bullet-list > .bullet-list__content > h3::before {
+  content: '▪';
+  font-size: 0.9em;
+}
+
+/* ── orderedList ── */
+.ordered-list {
+  padding-left: 28px;
+  margin: 0.2em 0;
+}
+.ordered-list > .ordered-list__content > p,
+.ordered-list > .ordered-list__content > h1,
+.ordered-list > .ordered-list__content > h2,
+.ordered-list > .ordered-list__content > h3 {
+  position: relative;
+  counter-increment: ordered-item;
+}
+.ordered-list > .ordered-list__content > p::before,
+.ordered-list > .ordered-list__content > h1::before,
+.ordered-list > .ordered-list__content > h2::before,
+.ordered-list > .ordered-list__content > h3::before {
+  content: counter(ordered-item) '.';
+  position: absolute;
+  left: -28px;
+  width: 24px;
+  text-align: right;
+  color: #9aa0a6;
+  font-size: 0.9em;
+  top: 50%;
+  transform: translateY(-50%);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── taskList ── */
+.task-list {
+  padding-left: 24px;
+  margin: 0.2em 0;
+}
+.task-list > .task-list__content > p,
+.task-list > .task-list__content > h1,
+.task-list > .task-list__content > h2,
+.task-list > .task-list__content > h3 {
+  position: relative;
+}
+.task-list > .task-list__content > p::before,
+.task-list > .task-list__content > h1::before,
+.task-list > .task-list__content > h2::before,
+.task-list > .task-list__content > h3::before {
+  content: '☐';
+  position: absolute;
+  left: -22px;
+  width: 18px;
+  text-align: center;
+  font-size: 0.9em;
+  cursor: pointer;
+  user-select: none;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+/* ── blockquote ── */
+.blockquote {
+  border-left: 3px solid #555;
+  padding-left: 16px;
+  margin: 0.3em 0;
+  color: #aaa;
+  font-style: italic;
+}
+.blockquote .blockquote {
+  border-left-color: #444;
+}
+
+/* ── callout ── */
+.callout {
+  display: flex;
+  gap: 12px;
+  background: #252525;
+  border: 1px solid #333;
+  border-radius: 6px;
+  padding: 12px 16px;
+  margin: 0.5em 0;
+}
+.callout__emoji {
+  font-size: 20px;
+  cursor: pointer;
+  user-select: none;
+  flex-shrink: 0;
+  line-height: 1.5;
+}
+.callout__emoji:hover { opacity: 0.7; }
+.callout__content {
+  flex: 1;
+  min-width: 0;
+}
