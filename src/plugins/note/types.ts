@@ -1,0 +1,107 @@
+/**
+ * Note 编辑器类型定义
+ *
+ * 三基类架构：TextBlock / RenderBlock / ContainerBlock
+ */
+
+import type { NodeSpec, MarkSpec } from 'prosemirror-model';
+import type { Plugin } from 'prosemirror-state';
+import type { EditorView } from 'prosemirror-view';
+import type { Node as PMNode } from 'prosemirror-model';
+type Command = (state: import('prosemirror-state').EditorState, dispatch?: (tr: import('prosemirror-state').Transaction) => void, view?: import('prosemirror-view').EditorView) => boolean;
+
+// ── NodeView ──
+
+export type NodeViewFactory = (
+  node: PMNode,
+  view: EditorView,
+  getPos: () => number | undefined,
+) => {
+  dom: HTMLElement;
+  contentDOM?: HTMLElement;
+  update?: (node: PMNode) => boolean;
+  selectNode?: () => void;
+  deselectNode?: () => void;
+  stopEvent?: (event: Event) => boolean;
+  ignoreMutation?: (mutation: MutationRecord) => boolean;
+  destroy?: () => void;
+};
+
+// ── Block 能力声明 ──
+
+export interface BlockCapabilities {
+  turnInto?: string[];         // 可转换的目标类型
+  marks?: string[];            // 支持的 mark 类型
+  canDuplicate?: boolean;
+  canDelete?: boolean;
+  canDrag?: boolean;
+}
+
+// ── Container 规则 ──
+
+export interface ContainerRule {
+  requiredFirstChildType?: string;  // 必填首子节点类型
+}
+
+// ── Enter 行为声明 ──
+
+export interface EnterBehavior {
+  action: 'split' | 'newline' | 'exit';
+  exitCondition: 'empty-enter' | 'double-enter' | 'always';
+}
+
+// ── SlashMenu 定义 ──
+
+export interface SlashMenuDef {
+  label: string;
+  icon: string;
+  group: string;
+  keywords: string[];
+  order: number;
+}
+
+// ── HandleMenu 自定义操作 ──
+
+export interface ActionDef {
+  id: string;
+  label: string;
+  icon: string;
+  handler: (view: EditorView, pos: number) => boolean;
+  showIn?: ('handleMenu' | 'contextMenu')[];
+}
+
+// ── Block 定义（所有 Block 的注册接口） ──
+
+export interface BlockDef {
+  name: string;
+  group: 'block' | 'inline' | '';
+
+  nodeSpec: NodeSpec;
+  nodeView?: NodeViewFactory;
+
+  capabilities: BlockCapabilities;
+  customActions?: ActionDef[];
+
+  slashMenu?: SlashMenuDef | null;
+  shortcuts?: Record<string, Command>;
+
+  enterBehavior?: EnterBehavior;
+  onIndent?: (view: EditorView, pos: number) => boolean;
+  onOutdent?: (view: EditorView, pos: number) => boolean;
+
+  plugin?: () => Plugin;
+  containerRule?: ContainerRule;
+}
+
+// ── SlashMenu 注册项（用于 heading 等 attrs 变体） ──
+
+export interface SlashItemDef {
+  id: string;
+  blockName: string;
+  label: string;
+  icon: string;
+  group: string;
+  keywords: string[];
+  order: number;
+  attrs?: Record<string, unknown>;
+}
