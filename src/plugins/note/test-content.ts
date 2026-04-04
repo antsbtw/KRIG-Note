@@ -141,17 +141,11 @@ export function buildTestDocument(schema: Schema): PMNode {
 
     // ── 十五、Task List 测试 ──
     heading(schema, 2, '十五、Task List 测试'),
-    p(schema, '15.1 下方是预置的 Task List，点击 checkbox 测试切换：'),
+    p(schema, '15.1 下方是预置的 Task List（ContainerBlock）：'),
     schema.node('taskList', null, [
-      schema.node('taskItem', { checked: false }, [
-        p(schema, '未完成的任务'),
-      ]),
-      schema.node('taskItem', { checked: true }, [
-        p(schema, '已完成的任务（应显示删除线 + 淡色）'),
-      ]),
-      schema.node('taskItem', { checked: false }, [
-        p(schema, '再点一次 checkbox → 切换状态'),
-      ]),
+      p(schema, '未完成的任务'),
+      p(schema, '另一个任务'),
+      p(schema, '再一个任务'),
     ]),
     p(schema, '15.2 在 Task List 内按 Enter → 新建 taskItem（checkbox 未勾选）'),
     p(schema, '15.3 空 taskItem 按 Enter → 退出 Task List'),
@@ -176,9 +170,61 @@ export function buildTestDocument(schema: Schema): PMNode {
     schema.node('callout', { emoji: '✅' }, [
       p(schema, '16.7 嵌套测试：Callout 内可以包含其他 Block'),
       schema.node('bulletList', null, [
-        schema.node('listItem', null, [p(schema, '列表项 A')]),
-        schema.node('listItem', null, [p(schema, '列表项 B')]),
+        p(schema, '列表项 A'),
+        p(schema, '列表项 B'),
       ]),
+    ]),
+
+    // ── 十六B、Container 嵌套测试 ──
+    heading(schema, 2, '十六B、Container 嵌套测试'),
+    p(schema, '16B.1 bulletList（ContainerBlock）：'),
+    schema.node('bulletList', null, [
+      p(schema, '无序列表项 1'),
+      p(schema, '无序列表项 2'),
+      p(schema, '无序列表项 3'),
+    ]),
+    p(schema, '16B.2 orderedList（ContainerBlock）：'),
+    schema.node('orderedList', null, [
+      p(schema, '有序步骤一'),
+      p(schema, '有序步骤二'),
+      p(schema, '有序步骤三'),
+    ]),
+    p(schema, '16B.3 blockquote（ContainerBlock）：'),
+    schema.node('blockquote', null, [
+      p(schema, '这是一段引用'),
+      p(schema, '引用可以有多行'),
+    ]),
+    p(schema, '16B.4 嵌套：callout 内包含 bulletList + orderedList：'),
+    schema.node('callout', { emoji: '🔥' }, [
+      p(schema, '提示框内容'),
+      schema.node('bulletList', null, [
+        p(schema, '嵌套的 bullet A'),
+        p(schema, '嵌套的 bullet B'),
+      ]),
+      schema.node('orderedList', null, [
+        p(schema, '嵌套的编号 1'),
+        p(schema, '嵌套的编号 2'),
+      ]),
+    ]),
+    p(schema, '16B.5 嵌套：blockquote 内包含 bulletList：'),
+    schema.node('blockquote', null, [
+      p(schema, '引用内容'),
+      schema.node('bulletList', null, [
+        p(schema, '引用内的 bullet A'),
+        p(schema, '引用内的 bullet B'),
+      ]),
+      p(schema, '引用继续'),
+    ]),
+    p(schema, '16B.6 嵌套：bulletList 内包含 bulletList（多级）：'),
+    schema.node('bulletList', null, [
+      p(schema, '一级 bullet'),
+      schema.node('bulletList', null, [
+        p(schema, '二级 bullet（应为 ◦）'),
+        schema.node('bulletList', null, [
+          p(schema, '三级 bullet（应为 ▪）'),
+        ]),
+      ]),
+      p(schema, '回到一级'),
     ]),
 
     // ── 十七、Image 测试 ──
