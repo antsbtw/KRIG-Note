@@ -185,3 +185,114 @@
   flex: 1;
   min-width: 0;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   RenderBlock 样式
+   ═══════════════════════════════════════════════════════════ */
+
+.render-block {
+  position: relative;
+  background: #1e1e1e;
+  border: 1px solid #333;
+  border-radius: 6px;
+  margin: 0.5em 0;
+}
+.render-block__toolbar {
+  display: none;
+  align-items: center;
+  padding: 4px 8px;
+  background: #252525;
+  border-bottom: 1px solid #333;
+  border-radius: 6px 6px 0 0;
+  min-height: 32px;
+}
+.render-block:hover .render-block__toolbar { display: flex; }
+.render-block__label {
+  font-size: 11px;
+  color: #888;
+  user-select: none;
+  margin-right: 8px;
+}
+.render-block__btn-group { display: flex; align-items: center; gap: 2px; }
+.render-block__toolbar-btn {
+  width: 26px; height: 26px;
+  background: transparent; border: none; border-radius: 4px;
+  color: #888; cursor: pointer; font-size: 14px;
+  display: flex; align-items: center; justify-content: center;
+}
+.render-block__toolbar-btn:hover { background: #3a3a3a; color: #e8eaed; }
+.render-block__toolbar-sep { width: 1px; height: 16px; background: #444; margin: 0 4px; }
+.render-block__content { min-height: 40px; }
+.render-block__placeholder {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  min-height: 100px; color: #555; cursor: pointer; user-select: none;
+}
+.render-block__placeholder input {
+  margin-top: 8px; padding: 4px 8px; background: #2a2a2a; border: 1px solid #444;
+  border-radius: 4px; color: #e8eaed; font-size: 13px; width: 260px; text-align: center;
+}
+.render-block__caption {
+  padding: 4px 8px; font-size: 13px; color: #9aa0a6; border-top: 1px solid #333;
+}
+
+/* ── codeBlock ── */
+.code-block {
+  background: #1e1e1e;
+  border: 1px solid #333;
+  border-radius: 6px;
+  margin: 0.5em 0;
+  overflow: hidden;
+}
+.code-block__toolbar {
+  display: none;
+  align-items: center;
+  padding: 4px 8px;
+  background: #252525;
+  border-bottom: 1px solid #333;
+  min-height: 28px;
+}
+.code-block:hover .code-block__toolbar { display: flex; }
+.code-block__lang { font-size: 11px; color: #888; user-select: none; }
+.code-block__toolbar-btn {
+  width: 26px; height: 26px;
+  background: transparent; border: none; border-radius: 4px;
+  color: #888; cursor: pointer; font-size: 14px;
+  display: flex; align-items: center; justify-content: center;
+}
+.code-block__toolbar-btn:hover { background: #3a3a3a; color: #e8eaed; }
+.code-block__pre {
+  padding: 12px 16px;
+  margin: 0;
+  overflow-x: auto;
+}
+.code-block__pre code {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #e8eaed;
+  background: transparent;
+  padding: 0;
+}
+
+/* ── mathBlock ── */
+.math-block { text-align: center; padding: 16px; }
+.math-block__preview { min-height: 40px; cursor: pointer; }
+.math-block__editor {
+  width: 100%; min-height: 60px; padding: 8px;
+  background: #2a2a2a; border: 1px solid #444; border-radius: 4px;
+  color: #e8eaed; font-family: 'SF Mono', monospace; font-size: 14px;
+  resize: vertical;
+}
+
+/* ── image ── */
+.image-block__wrapper { text-align: center; min-height: 60px; }
+.image-block__placeholder {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 100px; color: #555; cursor: pointer; border: 2px dashed #333; border-radius: 6px;
+}
+.image-block__caption { padding: 4px 8px; font-size: 13px; color: #9aa0a6; text-align: center; }
+
+/* ── horizontalRule ── */
+.ProseMirror hr {
+  border: none; border-top: 1px solid #444; margin: 1.5em 0;
+}

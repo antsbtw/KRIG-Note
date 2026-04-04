@@ -61,5 +61,28 @@ export function buildInputRules(schema: Schema): Plugin {
   }
   if (schema.nodes.blockquote) rules.push(new InputRule(/^>\s$/, wrapInContainer('blockquote')));
 
+  // ``` → codeBlock
+  if (schema.nodes.codeBlock) {
+    rules.push(new InputRule(/^```$/, (state: any, match: any, start: number, end: number) => {
+      const $start = state.doc.resolve(start);
+      const blockStart = $start.before($start.depth);
+      const blockEnd = $start.after($start.depth);
+      return state.tr.replaceWith(blockStart, blockEnd, schema.nodes.codeBlock.create());
+    }));
+  }
+
+  // --- → horizontalRule
+  if (schema.nodes.horizontalRule) {
+    rules.push(new InputRule(/^---$/, (state: any, match: any, start: number, end: number) => {
+      const $start = state.doc.resolve(start);
+      const blockStart = $start.before($start.depth);
+      const blockEnd = $start.after($start.depth);
+      return state.tr.replaceWith(blockStart, blockEnd, [
+        schema.nodes.horizontalRule.create(),
+        schema.nodes.textBlock.create(),
+      ]);
+    }));
+  }
+
   return inputRules({ rules });
 }
