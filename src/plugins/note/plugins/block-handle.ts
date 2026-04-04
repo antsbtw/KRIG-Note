@@ -2,6 +2,7 @@ import { Plugin, PluginKey } from 'prosemirror-state';
 import type { EditorView } from 'prosemirror-view';
 import { blockRegistry } from '../registry';
 import { blockAction } from '../block-ops/block-action';
+import { blockSelectionKey } from '../block-ops/block-selection';
 
 /**
  * Block Handle Plugin（框架级）
@@ -139,10 +140,14 @@ export function blockHandlePlugin(): Plugin {
       dragFromPos = currentState.pos;
       isDragging = false;
 
+      // 检查是否在 block-selection 中 → 整体拖动
+      const selState = blockSelectionKey.getState(view.state);
+      const isMultiDrag = selState?.active && selState.positions.includes(dragFromPos);
+      const dragPositions = isMultiDrag ? [...selState!.positions].sort((a, b) => a - b) : null;
+
       const onMouseMove = (me: MouseEvent) => {
         const dy = Math.abs(me.clientY - dragStartY);
         if (dy > DRAG_THRESHOLD && !isDragging) {
-          // 开始拖拽
           isDragging = true;
           dom.style.cursor = 'grabbing';
           createDropIndicator(view);
@@ -157,13 +162,19 @@ export function blockHandlePlugin(): Plugin {
         document.removeEventListener('mouseup', onMouseUp);
 
         if (isDragging) {
-          // 执行移动
           isDragging = false;
           dom.style.cursor = 'grab';
           removeDropIndicator();
 
           if (dragTargetPos >= 0 && dragFromPos >= 0 && dragTargetPos !== dragFromPos) {
-            blockAction.move(view, dragFromPos, dragTargetPos);
+            if (dragPositions) {
+              // 多 block 整体移动
+              blockAction.moveMultiple(view, dragPositions, dragTargetPos);
+              // 清除 block-selection
+              view.dispatch(view.state.tr.setMeta(blockSelectionKey, { clear: true }));
+            } else {
+              blockAction.move(view, dragFromPos, dragTargetPos);
+            }
           }
         } else {
           // 单击 → 弹出菜单
@@ -176,7 +187,6 @@ export function blockHandlePlugin(): Plugin {
                 coords: { left: dom.getBoundingClientRect().left, top: dom.getBoundingClientRect().bottom },
               },
           }));
-            // 监听菜单关闭（document click 会关闭菜单）
             const resetMenu = () => {
               setTimeout(() => {
                 currentState = { ...currentState, menuOpen: false };
@@ -203,11 +213,15 @@ export function blockHandlePlugin(): Plugin {
 
   function createDropIndicator(view: EditorView): void {
     if (dropIndicator) return;
+    const containerRect = view.dom.parentElement?.getBoundingClientRect();
+    const editorRect = view.dom.getBoundingClientRect();
+    const offsetLeft = containerRect ? editorRect.left - containerRect.left : 0;
+    const width = editorRect.width;
     dropIndicator = document.createElement('div');
     dropIndicator.style.cssText = `
       position: absolute;
-      left: 0;
-      right: 0;
+      left: ${offsetLeft}px;
+      width: ${width}px;
       height: 2px;
       background: #4a9eff;
       pointer-events: none;

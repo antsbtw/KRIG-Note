@@ -20,6 +20,7 @@ interface ContextMenuProps {
 interface MenuState {
   coords: { left: number; top: number };
   blockSelected: boolean;
+  blockPositions: number[];
   hasLink: boolean;
   linkPos: { from: number; to: number } | null;
 }
@@ -32,7 +33,33 @@ export function ContextMenu({ view, onOpen, onClose }: ContextMenuProps) {
 
     const handler = (e: MouseEvent) => {
       e.preventDefault();
-      const selState = blockSelectionKey.getState(view.state);
+      let selState = blockSelectionKey.getState(view.state);
+
+      // 如果没有 block-selection 激活，检测右键位置的顶层 block
+      // 对 render block 等非文字区域，自动选中该 block
+      if (!selState?.active) {
+        let target = e.target as HTMLElement | null;
+        const pmDOM = view.dom;
+        let blockDOM: HTMLElement | null = null;
+        while (target && target !== pmDOM) {
+          if (target.parentElement === pmDOM) { blockDOM = target; break; }
+          target = target.parentElement;
+        }
+        if (blockDOM) {
+          try {
+            const innerPos = view.posAtDOM(blockDOM, 0);
+            const $pos = view.state.doc.resolve(innerPos);
+            if ($pos.depth >= 1) {
+              const blockPos = $pos.before(1);
+              // 自动选中该 block
+              view.dispatch(view.state.tr.setMeta(blockSelectionKey, {
+                action: 'select', positions: [blockPos],
+              }));
+              selState = blockSelectionKey.getState(view.state);
+            }
+          } catch { /* ignore */ }
+        }
+      }
 
       // 检测右键位置是否有 link mark
       let hasLink = false;
@@ -43,7 +70,6 @@ export function ContextMenu({ view, onOpen, onClose }: ContextMenuProps) {
         const linkMark = $pos.marks().find((m) => m.type.name === 'link');
         if (linkMark) {
           hasLink = true;
-          // 找 link mark 覆盖的范围
           const from = pos.pos;
           let start = from;
           let end = from;
@@ -61,9 +87,11 @@ export function ContextMenu({ view, onOpen, onClose }: ContextMenuProps) {
         }
       }
 
+      const blockPositions = selState?.active ? [...selState.positions] : [];
       setMenu({
         coords: { left: e.clientX, top: e.clientY },
-        blockSelected: (selState?.active && selState.positions.length > 0) || false,
+        blockSelected: blockPositions.length > 0,
+        blockPositions,
         hasLink,
         linkPos,
       });
@@ -83,7 +111,40 @@ export function ContextMenu({ view, onOpen, onClose }: ContextMenuProps) {
 
   if (!menu || !view) return null;
 
-  const close = () => { setMenu(null); onClose?.(); };
+  const close = () => {
+    // 关闭菜单时清除 block-selection
+    const selState = blockSelectionKey.getState(view.state);
+    if (selState?.active) {
+      view.dispatch(view.state.tr.setMeta(blockSelectionKey, { clear: true }));
+    }
+    setMenu(null);
+    onClose?.();
+  };
+
+  // 直接操作 positions（不依赖 plugin state，避免被中间事件清除）
+  const positions = menu.blockPositions;
+
+  const copyBlocks = () => {
+    const sorted = [...positions].sort((a, b) => a - b);
+    const items: { json: unknown }[] = [];
+    for (const pos of sorted) {
+      const node = view.state.doc.nodeAt(pos);
+      if (node) items.push({ json: node.toJSON() });
+    }
+    if (items.length > 0) (globalThis as any).__blockClipboard = items;
+  };
+
+  const deleteBlocks = () => {
+    const sorted = [...positions].sort((a, b) => b - a);
+    let tr = view.state.tr;
+    for (const pos of sorted) {
+      const node = tr.doc.nodeAt(pos);
+      if (node) tr = tr.delete(pos, pos + node.nodeSize);
+    }
+    tr.setMeta(blockSelectionKey, { clear: true });
+    view.dispatch(tr);
+    view.focus();
+  };
 
   type MenuItem = { id: string; label: string; icon: string; shortcut: string; separator?: boolean; action: () => void };
   const items: MenuItem[] = [];
@@ -92,7 +153,7 @@ export function ContextMenu({ view, onOpen, onClose }: ContextMenuProps) {
   items.push({
     id: 'cut', label: 'Cut', icon: '✂', shortcut: '⌘X',
     action: () => {
-      if (menu.blockSelected) { blockAction.cut(view); } else { document.execCommand('cut'); }
+      if (menu.blockSelected) { copyBlocks(); deleteBlocks(); } else { document.execCommand('cut'); }
       close();
     },
   });
@@ -100,7 +161,7 @@ export function ContextMenu({ view, onOpen, onClose }: ContextMenuProps) {
   items.push({
     id: 'copy', label: 'Copy', icon: '📋', shortcut: '⌘C',
     action: () => {
-      if (menu.blockSelected) { blockAction.copy(view); } else { document.execCommand('copy'); }
+      if (menu.blockSelected) { copyBlocks(); } else { document.execCommand('copy'); }
       close();
     },
   });
@@ -108,10 +169,19 @@ export function ContextMenu({ view, onOpen, onClose }: ContextMenuProps) {
   items.push({
     id: 'paste', label: 'Paste', icon: '📄', shortcut: '⌘V',
     action: async () => {
-      if (blockAction.hasClipboard()) {
-        const { $from } = view.state.selection;
-        const blockPos = $from.depth >= 1 ? $from.after(1) : $from.pos;
-        blockAction.paste(view, blockPos);
+      const clipboard = (globalThis as any).__blockClipboard as { json: unknown }[] | undefined;
+      if (clipboard && clipboard.length > 0) {
+        // 粘贴到选中 block 之后（或文档末尾）
+        let insertPos: number;
+        if (positions.length > 0) {
+          const lastPos = Math.max(...positions);
+          const lastNode = view.state.doc.nodeAt(lastPos);
+          insertPos = lastNode ? lastPos + lastNode.nodeSize : lastPos;
+        } else {
+          const { $from } = view.state.selection;
+          insertPos = $from.depth >= 1 ? $from.after(1) : $from.pos;
+        }
+        blockAction.paste(view, insertPos);
       } else {
         try {
           const text = await navigator.clipboard.readText();
@@ -143,14 +213,13 @@ export function ContextMenu({ view, onOpen, onClose }: ContextMenuProps) {
 
     items.push({
       id: 'delete', label: 'Delete', icon: '🗑', shortcut: '⌫',
-      action: () => { blockAction.deleteSelected(view); close(); },
+      action: () => { deleteBlocks(); close(); },
     });
 
     items.push({
       id: 'indent', label: 'Indent', icon: '→', shortcut: 'Tab',
       action: () => {
-        const state = blockSelectionKey.getState(view.state);
-        if (state?.positions[0] !== undefined) blockAction.indent(view, state.positions[0]);
+        if (positions[0] !== undefined) blockAction.indent(view, positions[0]);
         close();
       },
     });
@@ -158,8 +227,7 @@ export function ContextMenu({ view, onOpen, onClose }: ContextMenuProps) {
     items.push({
       id: 'outdent', label: 'Outdent', icon: '←', shortcut: '⇧Tab',
       action: () => {
-        const state = blockSelectionKey.getState(view.state);
-        if (state?.positions[0] !== undefined) blockAction.outdent(view, state.positions[0]);
+        if (positions[0] !== undefined) blockAction.outdent(view, positions[0]);
         close();
       },
     });

@@ -286,6 +286,8 @@ export function createRenderBlockView(
       contentDOM: pmContentDOM,
 
       stopEvent(event: Event) {
+        // 右键菜单不拦截 — 让 ContextMenu 正常弹出
+        if (event.type === 'contextmenu') return false;
         // contentDOM 内的事件不拦截 — ProseMirror 管理内容编辑
         if (pmContentDOM && pmContentDOM.contains(event.target as Node)) return false;
         // 其余（toolbar 点击、content 区域鼠标等）拦截

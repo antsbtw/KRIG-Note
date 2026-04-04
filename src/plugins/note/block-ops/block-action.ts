@@ -129,6 +129,60 @@ export const blockAction = {
     return true;
   },
 
+  /**
+   * 批量移动多个 block 到目标位置（block-selection 整体拖动）
+   * positions 必须是文档中的顶层 block 位置
+   */
+  moveMultiple(view: EditorView, positions: number[], toPos: number): boolean {
+    if (positions.length === 0) return false;
+
+    // 按文档顺序排列
+    const sorted = [...positions].sort((a, b) => a - b);
+
+    // 不允许放在选中范围内部
+    const firstPos = sorted[0];
+    const lastPos = sorted[sorted.length - 1];
+    const lastNode = view.state.doc.nodeAt(lastPos);
+    if (!lastNode) return false;
+    const rangeEnd = lastPos + lastNode.nodeSize;
+    if (toPos > firstPos && toPos < rangeEnd) return false;
+
+    // 收集所有 node 副本
+    const nodes: import('prosemirror-model').Node[] = [];
+    for (const pos of sorted) {
+      const node = view.state.doc.nodeAt(pos);
+      if (!node) return false;
+      nodes.push(node.copy(node.content));
+    }
+
+    let tr = view.state.tr;
+
+    // 从后往前删除（避免位置偏移）
+    let totalDeletedBeforeTarget = 0;
+    for (let i = sorted.length - 1; i >= 0; i--) {
+      const pos = sorted[i];
+      const node = tr.doc.nodeAt(pos);
+      if (!node) return false;
+      const size = node.nodeSize;
+      tr = tr.delete(pos, pos + size);
+      if (pos < toPos) totalDeletedBeforeTarget += size;
+    }
+
+    // 调整目标位置
+    const adjustedTo = toPos - totalDeletedBeforeTarget;
+
+    // 按顺序插入所有 node
+    let insertPos = adjustedTo;
+    for (const node of nodes) {
+      tr = tr.insert(insertPos, node);
+      insertPos += node.nodeSize;
+    }
+
+    view.dispatch(tr);
+    view.focus();
+    return true;
+  },
+
   // ── 类型转换 ──
 
   turnInto(view: EditorView, pos: number, targetType: string, attrs?: Record<string, unknown>): boolean {
