@@ -113,10 +113,8 @@ export const textBlockDef: BlockDef = {
     canDrag: true,
   },
 
-  enterBehavior: {
-    action: 'split',
-    exitCondition: 'empty-enter',
-  },
+  // Enter 行为由 ProseMirror 默认 split + groupKeyboardPlugin 处理
+  // 不声明 enterBehavior，让 enterHandlerPlugin 跳过
 
   slashMenu: {
     label: 'Paragraph',

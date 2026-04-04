@@ -1103,3 +1103,88 @@
   justify-content: center;
 }
 .render-block__fullscreen-close:hover { background: rgba(255, 255, 255, 0.2); }
+
+/* ═══════════════════════════════════════════════════════════
+   Group 视觉容器样式（groupType Decorations）
+   ═══════════════════════════════════════════════════════════ */
+
+/* ── 列表符号（共享） ── */
+.group-bullet-symbol,
+.group-ordered-symbol {
+  display: inline-block;
+  width: 24px;
+  text-align: center;
+  margin-right: 8px;
+  color: #e8eaed;
+  font-size: 24px;
+  line-height: 1.2;
+  user-select: none;
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+.group-ordered-symbol { font-variant-numeric: tabular-nums; }
+
+/* ── Task checkbox ── */
+.group-task-checkbox {
+  display: inline-block;
+  width: 20px;
+  margin-right: 6px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 16px;
+}
+.group-task-checked { opacity: 0.5; text-decoration: line-through; }
+
+/* ── Callout ── */
+.group-callout {
+  background: rgba(255, 255, 255, 0.02);
+  border-left: 3px solid #444;
+  padding-left: 12px;
+}
+.group-callout.group-first { border-top: 1px solid #333; border-top-left-radius: 6px; padding-top: 8px; }
+.group-callout.group-last { border-bottom: 1px solid #333; border-bottom-left-radius: 6px; padding-bottom: 8px; }
+.group-callout.group-only { border: 1px solid #333; border-left: 3px solid #444; border-radius: 6px; padding: 8px 12px; }
+.group-callout-emoji {
+  display: inline-block;
+  margin-right: 8px;
+  font-size: 20px;
+  cursor: pointer;
+  user-select: none;
+}
+
+/* ── Quote ── */
+.group-quote {
+  border-left: 3px solid #555;
+  padding-left: 16px;
+  color: #aaa;
+  font-style: italic;
+}
+
+/* ── Toggle ── */
+.group-toggle-arrow {
+  display: inline-block;
+  width: 20px;
+  margin-right: 4px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 14px;
+  color: #888;
+}
+.group-toggle-arrow:hover { color: #e8eaed; }
+.group-toggle:not(.group-first):not(.group-only) { padding-left: 24px; }
+.group-toggle-hidden { display: none !important; }
+
+/* ── Frame ── */
+.group-frame {
+  border-left: 3px solid var(--frame-color, #8ab4f8);
+  padding-left: 12px;
+}
+.group-frame.group-first { padding-top: 4px; }
+.group-frame.group-last { padding-bottom: 4px; }
+
+/* ── Bullet/Ordered/Task 列表缩进 ── */
+.group-bullet,
+.group-ordered,
+.group-task {
+  padding-left: 8px;
+}

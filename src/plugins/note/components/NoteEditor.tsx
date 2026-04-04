@@ -7,7 +7,7 @@ import { baseKeymap, toggleMark } from 'prosemirror-commands';
 import { history, undo, redo } from 'prosemirror-history';
 import { dropCursor } from 'prosemirror-dropcursor';
 import { gapCursor } from 'prosemirror-gapcursor';
-import { splitListItem, liftListItem, sinkListItem } from 'prosemirror-schema-list';
+// prosemirror-schema-list no longer needed — lists are groupType-based
 import { blockRegistry } from '../registry';
 import { buildTestDocument } from '../test-content';
 import { slashCommandPlugin } from '../plugins/slash-command';
@@ -18,6 +18,8 @@ import { blockSelectionPlugin } from '../block-ops/block-selection';
 import { blockAction } from '../block-ops/block-action';
 import { buildInputRules } from '../plugins/input-rules';
 import { formatInheritPlugin } from '../plugins/format-inherit';
+import { groupDecorationPlugin } from '../plugins/group-decoration';
+import { groupKeyboardPlugin } from '../plugins/group-keyboard';
 import { tableKeymapPlugin } from '../blocks/table';
 import { goToNextCell } from 'prosemirror-tables';
 import { SlashMenu } from './SlashMenu';
@@ -62,36 +64,169 @@ function getSchema() {
   return schema;
 }
 
-/** 迁移旧文档数据：noteTitle/paragraph/heading → textBlock */
+/** 迁移旧文档数据 → textBlock 统一模型 */
 function migrateDocContent(content: unknown[]): unknown[] {
-  return content.map((node: any) => {
-    const migrated = { ...node };
+  const result: any[] = [];
+
+  for (const node of content as any[]) {
+    const n = { ...node };
 
     // noteTitle → textBlock { isTitle: true }
-    if (migrated.type === 'noteTitle') {
-      migrated.type = 'textBlock';
-      migrated.attrs = { ...(migrated.attrs || {}), isTitle: true };
+    if (n.type === 'noteTitle') {
+      n.type = 'textBlock';
+      n.attrs = { ...(n.attrs || {}), isTitle: true };
+      if (Array.isArray(n.content)) n.content = migrateDocContent(n.content);
+      result.push(n);
+      continue;
     }
 
     // heading → textBlock { level: N }
-    if (migrated.type === 'heading') {
-      migrated.type = 'textBlock';
-      migrated.attrs = { ...(migrated.attrs || {}) };
+    if (n.type === 'heading') {
+      n.type = 'textBlock';
+      n.attrs = { ...(n.attrs || {}) };
+      if (Array.isArray(n.content)) n.content = migrateDocContent(n.content);
+      result.push(n);
+      continue;
     }
 
     // paragraph → textBlock
-    if (migrated.type === 'paragraph') {
-      migrated.type = 'textBlock';
-      migrated.attrs = { ...(migrated.attrs || {}) };
+    if (n.type === 'paragraph') {
+      n.type = 'textBlock';
+      n.attrs = { ...(n.attrs || {}) };
+      if (Array.isArray(n.content)) n.content = migrateDocContent(n.content);
+      result.push(n);
+      continue;
     }
 
-    // 递归处理子节点
-    if (Array.isArray(migrated.content)) {
-      migrated.content = migrateDocContent(migrated.content);
+    // bulletList → 展平：每个 listItem 的内容变为 textBlock { groupType: 'bullet' }
+    if (n.type === 'bulletList' && Array.isArray(n.content)) {
+      for (const item of n.content) {
+        if (item.type === 'listItem' && Array.isArray(item.content)) {
+          for (const child of item.content) {
+            const migrated = { ...child };
+            if (migrated.type === 'paragraph' || migrated.type === 'textBlock') {
+              migrated.type = 'textBlock';
+              migrated.attrs = { ...(migrated.attrs || {}), groupType: 'bullet' };
+            }
+            if (Array.isArray(migrated.content)) migrated.content = migrateDocContent(migrated.content);
+            result.push(migrated);
+          }
+        }
+      }
+      continue;
     }
 
-    return migrated;
-  });
+    // orderedList → 展平
+    if (n.type === 'orderedList' && Array.isArray(n.content)) {
+      for (const item of n.content) {
+        if (item.type === 'listItem' && Array.isArray(item.content)) {
+          for (const child of item.content) {
+            const migrated = { ...child };
+            if (migrated.type === 'paragraph' || migrated.type === 'textBlock') {
+              migrated.type = 'textBlock';
+              migrated.attrs = { ...(migrated.attrs || {}), groupType: 'ordered' };
+            }
+            if (Array.isArray(migrated.content)) migrated.content = migrateDocContent(migrated.content);
+            result.push(migrated);
+          }
+        }
+      }
+      continue;
+    }
+
+    // taskList → 展平
+    if (n.type === 'taskList' && Array.isArray(n.content)) {
+      for (const item of n.content) {
+        if (item.type === 'taskItem' && Array.isArray(item.content)) {
+          const checked = item.attrs?.checked ?? false;
+          for (const child of item.content) {
+            const migrated = { ...child };
+            if (migrated.type === 'paragraph' || migrated.type === 'textBlock') {
+              migrated.type = 'textBlock';
+              migrated.attrs = { ...(migrated.attrs || {}), groupType: 'task', groupAttrs: { checked } };
+            }
+            if (Array.isArray(migrated.content)) migrated.content = migrateDocContent(migrated.content);
+            result.push(migrated);
+          }
+        }
+      }
+      continue;
+    }
+
+    // blockquote → 展平为 groupType: 'quote'
+    if (n.type === 'blockquote' && Array.isArray(n.content)) {
+      for (const child of n.content) {
+        const migrated = { ...child };
+        if (migrated.type === 'paragraph' || migrated.type === 'textBlock') {
+          migrated.type = 'textBlock';
+          migrated.attrs = { ...(migrated.attrs || {}), groupType: 'quote' };
+        }
+        if (Array.isArray(migrated.content)) migrated.content = migrateDocContent(migrated.content);
+        result.push(migrated);
+      }
+      continue;
+    }
+
+    // callout → 展平为 groupType: 'callout'
+    if (n.type === 'callout' && Array.isArray(n.content)) {
+      const emoji = n.attrs?.emoji || '💡';
+      for (let i = 0; i < n.content.length; i++) {
+        const child = n.content[i];
+        const migrated = { ...child };
+        if (migrated.type === 'paragraph' || migrated.type === 'textBlock') {
+          migrated.type = 'textBlock';
+          migrated.attrs = { ...(migrated.attrs || {}), groupType: 'callout', groupAttrs: { emoji } };
+        }
+        if (Array.isArray(migrated.content)) migrated.content = migrateDocContent(migrated.content);
+        result.push(migrated);
+      }
+      continue;
+    }
+
+    // toggleList → 展平为 groupType: 'toggle'
+    if ((n.type === 'toggleList' || n.type === 'toggleHeading') && Array.isArray(n.content)) {
+      const open = n.attrs?.open !== false;
+      for (let i = 0; i < n.content.length; i++) {
+        const child = n.content[i];
+        const migrated = { ...child };
+        if (migrated.type === 'paragraph' || migrated.type === 'textBlock' || migrated.type === 'heading') {
+          migrated.type = 'textBlock';
+          const isFirst = i === 0;
+          migrated.attrs = {
+            ...(migrated.attrs || {}),
+            groupType: 'toggle',
+            groupAttrs: isFirst ? { open } : null,
+          };
+        }
+        if (Array.isArray(migrated.content)) migrated.content = migrateDocContent(migrated.content);
+        result.push(migrated);
+      }
+      continue;
+    }
+
+    // frameBlock → 展平为 groupType: 'frame'
+    if (n.type === 'frameBlock' && Array.isArray(n.content)) {
+      const color = n.attrs?.color || '#8ab4f8';
+      for (const child of n.content) {
+        const migrated = { ...child };
+        if (migrated.type === 'paragraph' || migrated.type === 'textBlock') {
+          migrated.type = 'textBlock';
+          migrated.attrs = { ...(migrated.attrs || {}), groupType: 'frame', groupAttrs: { color } };
+        }
+        if (Array.isArray(migrated.content)) migrated.content = migrateDocContent(migrated.content);
+        result.push(migrated);
+      }
+      continue;
+    }
+
+    // 其他节点：递归子节点
+    if (Array.isArray(n.content)) {
+      n.content = migrateDocContent(n.content);
+    }
+    result.push(n);
+  }
+
+  return result;
 }
 
 export function NoteEditor() {
@@ -286,26 +421,10 @@ export function NoteEditor() {
       return false;
     };
 
-    // 列表快捷键（listItem + taskItem 共享）
+    // Tab/Shift-Tab（Table 导航 + 通用 indent）
     const listKeymap: Record<string, Command> = {};
-    const listItemType = s.nodes.listItem;
-    const taskItemType = s.nodes.taskItem;
-    if (listItemType) {
-      listKeymap['Enter'] = splitListItem(listItemType);
-    }
-    if (taskItemType) {
-      const prevEnter = listKeymap['Enter'];
-      listKeymap['Enter'] = (state, dispatch, view) => {
-        if (splitListItem(taskItemType)(state, dispatch)) return true;
-        if (prevEnter) return prevEnter(state, dispatch, view);
-        return false;
-      };
-    }
     listKeymap['Tab'] = (state, dispatch, view) => {
-      // Table Tab 导航优先
       if (goToNextCell(1)(state, dispatch)) return true;
-      if (listItemType && sinkListItem(listItemType)(state, dispatch)) return true;
-      if (taskItemType && sinkListItem(taskItemType)(state, dispatch)) return true;
       if (view) {
         const { $from } = state.selection;
         const pos = $from.depth >= 1 ? $from.before(1) : $from.pos;
@@ -315,8 +434,6 @@ export function NoteEditor() {
     };
     listKeymap['Shift-Tab'] = (state, dispatch, view) => {
       if (goToNextCell(-1)(state, dispatch)) return true;
-      if (listItemType && liftListItem(listItemType)(state, dispatch)) return true;
-      if (taskItemType && liftListItem(taskItemType)(state, dispatch)) return true;
       if (view) {
         const { $from } = state.selection;
         const pos = $from.depth >= 1 ? $from.before(1) : $from.pos;
@@ -343,6 +460,8 @@ export function NoteEditor() {
         headingFoldPlugin(),
         tableKeymapPlugin(),
         formatInheritPlugin(),
+        groupDecorationPlugin(),
+        groupKeyboardPlugin(),
         ...blockPlugins,
       ],
     });

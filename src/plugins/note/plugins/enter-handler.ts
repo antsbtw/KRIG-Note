@@ -125,7 +125,7 @@ function exitToNextParagraph(
 
   // 如果 Block 后面没有内容，创建一个 paragraph
   if (blockEnd >= state.doc.content.size) {
-    const paragraphType = state.schema.nodes.paragraph;
+    const paragraphType = state.schema.nodes.textBlock || state.schema.nodes.paragraph;
     tr.insert(blockEnd, paragraphType.create());
     tr.setSelection(TextSelection.create(tr.doc, blockEnd + 1));
   } else {

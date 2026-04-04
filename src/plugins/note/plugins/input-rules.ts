@@ -5,112 +5,62 @@ import { Plugin } from 'prosemirror-state';
 /**
  * Markdown 输入规则
  *
- * 在行首输入特定模式 + 空格，自动转换为对应 Block：
- * - # / ## / ### → heading 1/2/3
- * - - / * → bulletList
- * - 1. → orderedList
- * - [] / [ ] → taskList（未勾选）
- * - [x] → taskList（已勾选）
- * - > → blockquote
+ * 行首输入模式 + 空格 → 自动转换：
+ * - # / ## / ### → level 1/2/3
+ * - - / * → groupType = 'bullet'
+ * - 1. → groupType = 'ordered'
+ * - [] / [ ] → groupType = 'task'
+ * - [x] → groupType = 'task' (checked)
+ * - > → groupType = 'quote'
  * - ``` → codeBlock
  * - --- → horizontalRule
  */
 
+/** 辅助：设置当前 textBlock 的 attrs */
+function setBlockAttrs(attrsToSet: Record<string, unknown>) {
+  return (state: any, match: any, start: number, end: number) => {
+    const $start = state.doc.resolve(start);
+    const depth = $start.depth;
+    const blockStart = $start.before(depth);
+    const node = state.doc.nodeAt(blockStart);
+    if (!node || node.type.name !== 'textBlock') return null;
+    return state.tr.delete(start, end).setNodeMarkup(blockStart, undefined, { ...node.attrs, ...attrsToSet });
+  };
+}
+
 export function buildInputRules(schema: Schema): Plugin {
   const rules: InputRule[] = [];
 
-  // # heading 1/2/3 — 修改 textBlock 的 level attr
-  if (schema.nodes.textBlock) {
-    rules.push(new InputRule(/^#\s$/, (state, match, start, end) => {
-      const $start = state.doc.resolve(start);
-      const blockStart = $start.before($start.depth);
-      return state.tr.delete(start, end).setNodeMarkup(blockStart, undefined, { ...state.doc.nodeAt(blockStart)!.attrs, level: 1 });
-    }));
-    rules.push(new InputRule(/^##\s$/, (state, match, start, end) => {
-      const $start = state.doc.resolve(start);
-      const blockStart = $start.before($start.depth);
-      return state.tr.delete(start, end).setNodeMarkup(blockStart, undefined, { ...state.doc.nodeAt(blockStart)!.attrs, level: 2 });
-    }));
-    rules.push(new InputRule(/^###\s$/, (state, match, start, end) => {
-      const $start = state.doc.resolve(start);
-      const blockStart = $start.before($start.depth);
-      return state.tr.delete(start, end).setNodeMarkup(blockStart, undefined, { ...state.doc.nodeAt(blockStart)!.attrs, level: 3 });
-    }));
-  }
+  if (!schema.nodes.textBlock) return inputRules({ rules });
 
-  // - / * → bulletList
-  if (schema.nodes.bulletList && schema.nodes.listItem) {
-    rules.push(new InputRule(/^[-*]\s$/, (state, match, start, end) => {
-      const listItem = schema.nodes.listItem.create(null, [schema.nodes.textBlock.create()]);
-      const list = schema.nodes.bulletList.create(null, [listItem]);
-      const $start = state.doc.resolve(start);
-      const blockStart = $start.before(1);
-      const blockEnd = $start.after(1);
-      return state.tr.replaceWith(blockStart, blockEnd, list);
-    }));
-  }
+  // # / ## / ### → heading level
+  rules.push(new InputRule(/^#\s$/, setBlockAttrs({ level: 1 })));
+  rules.push(new InputRule(/^##\s$/, setBlockAttrs({ level: 2 })));
+  rules.push(new InputRule(/^###\s$/, setBlockAttrs({ level: 3 })));
 
-  // 1. → orderedList
-  if (schema.nodes.orderedList && schema.nodes.listItem) {
-    rules.push(new InputRule(/^1\.\s$/, (state, match, start, end) => {
-      const listItem = schema.nodes.listItem.create(null, [schema.nodes.textBlock.create()]);
-      const list = schema.nodes.orderedList.create(null, [listItem]);
-      const $start = state.doc.resolve(start);
-      const blockStart = $start.before(1);
-      const blockEnd = $start.after(1);
-      return state.tr.replaceWith(blockStart, blockEnd, list);
-    }));
-  }
+  // - / * → bullet list
+  rules.push(new InputRule(/^[-*]\s$/, setBlockAttrs({ groupType: 'bullet' })));
 
-  // [] / [ ] → taskList（未勾选）
-  if (schema.nodes.taskList && schema.nodes.taskItem) {
-    rules.push(new InputRule(/^\[\]\s$/, (state, match, start, end) => {
-      const taskItem = schema.nodes.taskItem.create({ checked: false }, [schema.nodes.textBlock.create()]);
-      const list = schema.nodes.taskList.create(null, [taskItem]);
-      const $start = state.doc.resolve(start);
-      const blockStart = $start.before(1);
-      const blockEnd = $start.after(1);
-      return state.tr.replaceWith(blockStart, blockEnd, list);
-    }));
-    // [ ] with space inside
-    rules.push(new InputRule(/^\[ \]\s$/, (state, match, start, end) => {
-      const taskItem = schema.nodes.taskItem.create({ checked: false }, [schema.nodes.textBlock.create()]);
-      const list = schema.nodes.taskList.create(null, [taskItem]);
-      const $start = state.doc.resolve(start);
-      const blockStart = $start.before(1);
-      const blockEnd = $start.after(1);
-      return state.tr.replaceWith(blockStart, blockEnd, list);
-    }));
-    // [x] → taskList（已勾选）
-    rules.push(new InputRule(/^\[x\]\s$/, (state, match, start, end) => {
-      const taskItem = schema.nodes.taskItem.create({ checked: true }, [schema.nodes.textBlock.create()]);
-      const list = schema.nodes.taskList.create(null, [taskItem]);
-      const $start = state.doc.resolve(start);
-      const blockStart = $start.before(1);
-      const blockEnd = $start.after(1);
-      return state.tr.replaceWith(blockStart, blockEnd, list);
-    }));
-  }
+  // 1. → ordered list
+  rules.push(new InputRule(/^1\.\s$/, setBlockAttrs({ groupType: 'ordered' })));
 
-  // > → blockquote
-  if (schema.nodes.blockquote) {
-    rules.push(new InputRule(/^>\s$/, (state, match, start, end) => {
-      const para = schema.nodes.textBlock.create();
-      const quote = schema.nodes.blockquote.create(null, [para]);
-      const $start = state.doc.resolve(start);
-      const blockStart = $start.before(1);
-      const blockEnd = $start.after(1);
-      return state.tr.replaceWith(blockStart, blockEnd, quote);
-    }));
-  }
+  // [] / [ ] → task list（未勾选）
+  rules.push(new InputRule(/^\[\]\s$/, setBlockAttrs({ groupType: 'task', groupAttrs: { checked: false } })));
+  rules.push(new InputRule(/^\[ \]\s$/, setBlockAttrs({ groupType: 'task', groupAttrs: { checked: false } })));
 
-  // ``` → codeBlock
+  // [x] → task list（已勾选）
+  rules.push(new InputRule(/^\[x\]\s$/, setBlockAttrs({ groupType: 'task', groupAttrs: { checked: true } })));
+
+  // > → quote
+  rules.push(new InputRule(/^>\s$/, setBlockAttrs({ groupType: 'quote' })));
+
+  // ``` → codeBlock（替换为 RenderBlock）
   if (schema.nodes.codeBlock) {
     rules.push(new InputRule(/^```$/, (state, match, start, end) => {
       const codeBlock = schema.nodes.codeBlock.create();
       const $start = state.doc.resolve(start);
-      const blockStart = $start.before(1);
-      const blockEnd = $start.after(1);
+      const blockStart = $start.before($start.depth);
+      const blockEnd = $start.after($start.depth);
       return state.tr.replaceWith(blockStart, blockEnd, codeBlock);
     }));
   }
@@ -119,11 +69,11 @@ export function buildInputRules(schema: Schema): Plugin {
   if (schema.nodes.horizontalRule) {
     rules.push(new InputRule(/^---$/, (state, match, start, end) => {
       const hr = schema.nodes.horizontalRule.create();
-      const para = schema.nodes.textBlock.create();
+      const newP = schema.nodes.textBlock.create();
       const $start = state.doc.resolve(start);
-      const blockStart = $start.before(1);
-      const blockEnd = $start.after(1);
-      return state.tr.replaceWith(blockStart, blockEnd, [hr, para]);
+      const blockStart = $start.before($start.depth);
+      const blockEnd = $start.after($start.depth);
+      return state.tr.replaceWith(blockStart, blockEnd, [hr, newP]);
     }));
   }
 

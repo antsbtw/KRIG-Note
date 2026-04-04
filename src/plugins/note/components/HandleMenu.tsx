@@ -91,46 +91,54 @@ export function HandleMenu({ view }: HandleMenuProps) {
     });
   }
 
-  // 代码
+  // 代码（RenderBlock）
   turnIntoItems.push({
     id: 'codeBlock', label: '代码', icon: '</>',
     active: menu.blockType === 'codeBlock',
     action: () => { blockAction.turnInto(view, menu.pos, 'codeBlock'); setMenu(null); },
   });
 
-  // 引用
-  turnIntoItems.push({
-    id: 'blockquote', label: '引用', icon: '66',
-    active: menu.blockType === 'blockquote',
-    action: () => { blockAction.turnInto(view, menu.pos, 'blockquote'); setMenu(null); },
-  });
+  // groupType 项（设置当前 textBlock 的 groupType）
+  const setGroupType = (groupType: string | null, groupAttrs?: Record<string, unknown>) => {
+    if (currentNode?.type.name === 'textBlock') {
+      view.dispatch(view.state.tr.setNodeMarkup(menu.pos, undefined, {
+        ...currentNode.attrs,
+        groupType,
+        groupAttrs: groupAttrs ?? null,
+      }));
+    }
+    setMenu(null);
+  };
 
-  // 折叠列表
   turnIntoItems.push({
-    id: 'toggleList', label: '折叠列表', icon: '▸',
-    active: menu.blockType === 'toggleList',
-    action: () => { blockAction.turnInto(view, menu.pos, 'toggleList'); setMenu(null); },
+    id: 'quote', label: '引用', icon: '❝',
+    active: currentNode?.attrs.groupType === 'quote',
+    action: () => setGroupType(currentNode?.attrs.groupType === 'quote' ? null : 'quote'),
   });
-
-  // 项目符号列表
   turnIntoItems.push({
-    id: 'bulletList', label: '项目符号列表', icon: '•',
-    active: menu.blockType === 'bulletList',
-    action: () => { blockAction.turnInto(view, menu.pos, 'bulletList'); setMenu(null); },
+    id: 'toggle', label: '折叠列表', icon: '▸',
+    active: currentNode?.attrs.groupType === 'toggle',
+    action: () => setGroupType(currentNode?.attrs.groupType === 'toggle' ? null : 'toggle', { open: true }),
   });
-
-  // 有序列表
   turnIntoItems.push({
-    id: 'orderedList', label: '有序列表', icon: '1.',
-    active: menu.blockType === 'orderedList',
-    action: () => { blockAction.turnInto(view, menu.pos, 'orderedList'); setMenu(null); },
+    id: 'bullet', label: '项目符号列表', icon: '•',
+    active: currentNode?.attrs.groupType === 'bullet',
+    action: () => setGroupType(currentNode?.attrs.groupType === 'bullet' ? null : 'bullet'),
   });
-
-  // 待办清单
   turnIntoItems.push({
-    id: 'taskList', label: '待办清单', icon: '☐',
-    active: menu.blockType === 'taskList',
-    action: () => { blockAction.turnInto(view, menu.pos, 'taskList'); setMenu(null); },
+    id: 'ordered', label: '有序列表', icon: '1.',
+    active: currentNode?.attrs.groupType === 'ordered',
+    action: () => setGroupType(currentNode?.attrs.groupType === 'ordered' ? null : 'ordered'),
+  });
+  turnIntoItems.push({
+    id: 'task', label: '待办清单', icon: '☐',
+    active: currentNode?.attrs.groupType === 'task',
+    action: () => setGroupType(currentNode?.attrs.groupType === 'task' ? null : 'task', { checked: false }),
+  });
+  turnIntoItems.push({
+    id: 'callout', label: '提示框', icon: '💡',
+    active: currentNode?.attrs.groupType === 'callout',
+    action: () => setGroupType(currentNode?.attrs.groupType === 'callout' ? null : 'callout', { emoji: '💡' }),
   });
 
   // ── 构建第一级菜单 ──

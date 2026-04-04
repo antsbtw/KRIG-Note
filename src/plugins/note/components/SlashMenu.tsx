@@ -88,6 +88,22 @@ export function SlashMenu({ view }: SlashMenuProps) {
       tr.delete(from, to);
       view.dispatch(tr);
 
+      // groupType 项 → 修改当前 textBlock 的 attrs（不创建新节点）
+      if (actualBlockName === 'textBlock' && extraAttrs?.groupType) {
+        const { $from } = view.state.selection;
+        const depth = $from.depth;
+        const blockPos = $from.before(depth);
+        const blockNode = view.state.doc.nodeAt(blockPos);
+        if (blockNode?.type.name === 'textBlock') {
+          view.dispatch(view.state.tr.setNodeMarkup(blockPos, undefined, {
+            ...blockNode.attrs,
+            ...extraAttrs,
+          }));
+        }
+        view.focus();
+        return;
+      }
+
       // noteLink → 打开 NotePicker 面板（不直接插入节点）
       if (actualBlockName === 'noteLink') {
         triggerNotePicker(view);

@@ -28,16 +28,7 @@ import { tableBlock, tableRowBlock, tableCellBlock, tableHeaderBlock } from './t
 import { columnListBlock, columnBlock } from './column-list';
 import { horizontalRuleBlock } from './horizontal-rule';
 
-// ── 旧容器（Phase 2/3 迁移后删除） ──
-import { blockquoteBlock } from './blockquote';
-import { bulletListBlock } from './bullet-list';
-import { orderedListBlock } from './ordered-list';
-import { listItemBlock } from './list-item';
-import { taskListBlock } from './task-list';
-import { taskItemBlock } from './task-item';
-import { toggleListBlock } from './toggle-list';
-import { calloutBlock } from './callout';
-import { frameBlockBlock } from './frame-block';
+// ── 旧容器已删除，由 groupType 替代 ──
 
 export function registerAllBlocks(): void {
   // ── TextBlock 基类（替代旧的 paragraph + heading + noteTitle） ──
@@ -82,21 +73,49 @@ export function registerAllBlocks(): void {
   blockRegistry.register(columnListBlock);
   blockRegistry.register(columnBlock);
 
-  // ── 旧容器（暂时保留，Phase 2/3 迁移后删除） ──
-  blockRegistry.register(blockquoteBlock);
-  blockRegistry.register(bulletListBlock);
-  blockRegistry.register(orderedListBlock);
-  blockRegistry.register(listItemBlock);
-  blockRegistry.register(taskListBlock);
-  blockRegistry.register(taskItemBlock);
-  blockRegistry.register(toggleListBlock);
-  blockRegistry.register(calloutBlock);
-  blockRegistry.register(frameBlockBlock);
+  // ── 旧容器已由 groupType 替代 ──
+
+  // ── groupType SlashMenu（设置当前 textBlock 的 groupType） ──
+  blockRegistry.registerSlashItem({
+    id: 'bullet', blockName: 'textBlock', label: 'Bullet List', icon: '•',
+    group: 'basic', keywords: ['list', 'bullet', 'ul', 'unordered', '无序'], order: 5,
+    attrs: { groupType: 'bullet' },
+  });
+  blockRegistry.registerSlashItem({
+    id: 'ordered', blockName: 'textBlock', label: 'Numbered List', icon: '1.',
+    group: 'basic', keywords: ['list', 'numbered', 'ol', 'ordered', '有序'], order: 6,
+    attrs: { groupType: 'ordered' },
+  });
+  blockRegistry.registerSlashItem({
+    id: 'task', blockName: 'textBlock', label: 'Task List', icon: '☐',
+    group: 'basic', keywords: ['task', 'todo', 'checkbox', 'checklist', '待办'], order: 7,
+    attrs: { groupType: 'task', groupAttrs: { checked: false } },
+  });
+  blockRegistry.registerSlashItem({
+    id: 'callout', blockName: 'textBlock', label: 'Callout', icon: '💡',
+    group: 'basic', keywords: ['callout', 'note', 'warning', 'tip', '提示'], order: 11,
+    attrs: { groupType: 'callout', groupAttrs: { emoji: '💡' } },
+  });
+  blockRegistry.registerSlashItem({
+    id: 'quote', blockName: 'textBlock', label: 'Quote', icon: '❝',
+    group: 'basic', keywords: ['quote', 'blockquote', '引用'], order: 8,
+    attrs: { groupType: 'quote' },
+  });
+  blockRegistry.registerSlashItem({
+    id: 'toggle', blockName: 'textBlock', label: 'Toggle List', icon: '▸',
+    group: 'basic', keywords: ['toggle', 'fold', 'collapse', '折叠'], order: 9,
+    attrs: { groupType: 'toggle', groupAttrs: { open: true } },
+  });
+  blockRegistry.registerSlashItem({
+    id: 'frame', blockName: 'textBlock', label: 'Frame', icon: '▢',
+    group: 'layout', keywords: ['frame', 'border', 'box', '彩框'], order: 1,
+    attrs: { groupType: 'frame', groupAttrs: { color: '#8ab4f8' } },
+  });
 
   // ── 额外 SlashMenu ──
   blockRegistry.registerSlashItem({
     id: 'column3', blockName: 'columnList', label: '3 Columns', icon: '▥',
-    group: 'layout', keywords: ['column', 'three', '三列'], order: 1,
+    group: 'layout', keywords: ['column', 'three', '三列'], order: 2,
     attrs: { columns: 3 },
   });
   blockRegistry.registerSlashItem({
