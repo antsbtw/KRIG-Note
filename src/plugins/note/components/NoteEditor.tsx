@@ -374,6 +374,20 @@ export function NoteEditor() {
     if (s.marks.strike) markKeymap['Mod-Shift-s'] = toggleMark(s.marks.strike);
     if (s.marks.code) markKeymap['Mod-e'] = toggleMark(s.marks.code);
 
+    // Cmd+Alt+0 → 转为文本
+    markKeymap['Mod-Alt-0'] = (state, dispatch) => {
+      const { $from } = state.selection;
+      if ($from.depth < 1) return false;
+      const pos = $from.before(1);
+      const node = state.doc.nodeAt(pos);
+      if (!node) return false;
+      if (node.type.name !== 'textBlock') return false;
+      if (node.attrs.isTitle) return false;
+      if (!node.attrs.level) return false; // 已经是文本
+      if (dispatch) dispatch(state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, level: null }));
+      return true;
+    };
+
     // Cmd+Alt+1/2/3 → 标题转换
     for (const level of [1, 2, 3]) {
       markKeymap[`Mod-Alt-${level}`] = (state, dispatch) => {
@@ -396,6 +410,19 @@ export function NoteEditor() {
         return true;
       };
     }
+
+    // Cmd+Shift+T → 首行缩进 toggle
+    markKeymap['Mod-Shift-t'] = (state, dispatch) => {
+      const { $from } = state.selection;
+      if ($from.depth < 1) return false;
+      const pos = $from.before(1);
+      const node = state.doc.nodeAt(pos);
+      if (!node) return false;
+      if (node.type.name !== 'textBlock' && node.type.name !== 'paragraph') return false;
+      if (node.attrs.isTitle || node.attrs.level) return false; // 标题不支持首行缩进
+      if (dispatch) dispatch(state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, textIndent: !node.attrs.textIndent }));
+      return true;
+    };
 
     // Shift+Enter → hardBreak（软换行）
     if (s.nodes.hardBreak) {

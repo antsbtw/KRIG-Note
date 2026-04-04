@@ -286,8 +286,9 @@ export function createRenderBlockView(
       contentDOM: pmContentDOM,
 
       stopEvent(event: Event) {
-        // 如果有 contentDOM，只拦截 toolbar 和非 contentDOM 区域的事件
+        // contentDOM 内的事件不拦截 — ProseMirror 管理内容编辑
         if (pmContentDOM && pmContentDOM.contains(event.target as Node)) return false;
+        // 其余（toolbar 点击、content 区域鼠标等）拦截
         if (dom.contains(event.target as Node)) return true;
         return false;
       },

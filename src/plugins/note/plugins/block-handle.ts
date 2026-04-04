@@ -220,8 +220,9 @@ export function blockHandlePlugin(): Plugin {
   function updateDropIndicator(view: EditorView, mouseY: number): void {
     if (!dropIndicator) return;
 
-    const containerRect = view.dom.parentElement?.getBoundingClientRect();
-    if (!containerRect) return;
+    const container = view.dom.parentElement;
+    const containerRect = container?.getBoundingClientRect();
+    if (!containerRect || !container) return;
 
     // 找到鼠标最近的 Block 间隙
     const doc = view.state.doc;
@@ -252,7 +253,7 @@ export function blockHandlePlugin(): Plugin {
       } catch { /* ignore */ }
     });
 
-    dropIndicator.style.top = `${closestGapY - containerRect.top}px`;
+    dropIndicator.style.top = `${closestGapY - containerRect.top + container.scrollTop}px`;
     dragTargetPos = closestGapPos;
   }
 
@@ -289,27 +290,36 @@ export function blockHandlePlugin(): Plugin {
     }
 
     if (trackedBlockDOM && currentState.visible) {
-      const containerRect = handleDOM.parentElement?.getBoundingClientRect();
-      if (containerRect && trackedView) {
+      const container = handleDOM.parentElement;
+      const containerRect = container?.getBoundingClientRect();
+      if (containerRect && container && trackedView) {
         const blockRect = trackedBlockDOM.getBoundingClientRect();
-
-        // 获取第一行文字位置用于垂直居中
-        let textTop = blockRect.top;
-        let lineHeight = 27;
-        try {
-          const coords = trackedView.coordsAtPos(currentState.pos + 1);
-          // 验证坐标在 blockRect 范围内（防止 NodeView 内偏移不准）
-          if (coords.top >= blockRect.top && coords.top <= blockRect.bottom) {
-            textTop = coords.top;
-            lineHeight = coords.bottom - coords.top;
-          }
-        } catch { /* fallback */ }
-
+        const scrollTop = container.scrollTop;
         const handleHeight = 24;
-        const topOffset = (lineHeight - handleHeight) / 2;
-        // Handle 在 Block 左侧
-        handleDOM.style.left = `${blockRect.left - containerRect.left - 62}px`;
-        handleDOM.style.top = `${textTop - containerRect.top + topOffset}px`;
+
+        // 框体类 block（有边框/背景的）→ 手柄与框顶部对齐
+        const isBoxBlock = trackedBlockDOM.classList.contains('render-block')
+          || trackedBlockDOM.classList.contains('code-block');
+
+        let topPx: number;
+        if (isBoxBlock) {
+          topPx = blockRect.top - containerRect.top + scrollTop + 8;
+        } else {
+          // 文字类 block → 手柄与第一行文字垂直居中
+          let textTop = blockRect.top;
+          let lineHeight = 27;
+          try {
+            const coords = trackedView.coordsAtPos(currentState.pos + 1);
+            if (coords.top >= blockRect.top && coords.top <= blockRect.bottom) {
+              textTop = coords.top;
+              lineHeight = coords.bottom - coords.top;
+            }
+          } catch { /* fallback */ }
+          topPx = textTop - containerRect.top + scrollTop + (lineHeight - handleHeight) / 2;
+        }
+
+        handleDOM.style.left = `${blockRect.left - containerRect.left + container.scrollLeft - 62}px`;
+        handleDOM.style.top = `${topPx}px`;
         handleDOM.style.opacity = '1';
       }
     }
@@ -353,22 +363,42 @@ export function blockHandlePlugin(): Plugin {
         mousemove(view, event) {
           if (isHandleHovered || isDragging) return false;
 
-          const pos = view.posAtCoords({ left: event.clientX, top: event.clientY });
-          if (!pos) { hideHandle(); return false; }
+          // 从 DOM 向上查找 doc 的直接子节点（depth=1）
+          let target = event.target as HTMLElement | null;
+          const pmDOM = view.dom;
+          let blockDOM: HTMLElement | null = null;
+          while (target && target !== pmDOM) {
+            if (target.parentElement === pmDOM) {
+              blockDOM = target;
+              break;
+            }
+            target = target.parentElement;
+          }
+          if (!blockDOM) { hideHandle(); return false; }
 
-          const $pos = view.state.doc.resolve(pos.pos);
-          if ($pos.depth < 1) { hideHandle(); return false; }
-
-          const topNode = $pos.node(1);
+          // 从 DOM 反查 ProseMirror pos
+          let blockStart: number;
+          let topNode: any;
+          try {
+            const innerPos = view.posAtDOM(blockDOM, 0);
+            const $pos = view.state.doc.resolve(innerPos);
+            if ($pos.depth < 1) { hideHandle(); return false; }
+            blockStart = $pos.before(1);
+            topNode = $pos.node(1);
+          } catch { hideHandle(); return false; }
           if (!topNode) { hideHandle(); return false; }
+
+          // noteTitle（isTitle=true）不显示手柄
+          if (topNode.type.name === 'textBlock' && topNode.attrs.isTitle) {
+            hideHandle();
+            return false;
+          }
 
           const blockDef = blockRegistry.get(topNode.type.name);
           if (blockDef && blockDef.capabilities.canDrag === false && blockDef.capabilities.canDelete === false) {
             hideHandle();
             return false;
           }
-
-          const blockStart = $pos.before(1);
 
           if (currentState.pos === blockStart && currentState.visible) return false;
 

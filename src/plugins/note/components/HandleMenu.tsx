@@ -59,11 +59,11 @@ export function HandleMenu({ view }: HandleMenuProps) {
   const currentNode = view.state.doc.nodeAt(menu.pos);
 
   // ── 构建转换成子菜单项 ──
-  const turnIntoItems: { id: string; label: string; icon: string; active: boolean; action: () => void }[] = [];
+  const turnIntoItems: { id: string; label: string; icon: string; shortcut?: string; active: boolean; action: () => void }[] = [];
 
   // 文本（level=null）
   turnIntoItems.push({
-    id: 'paragraph', label: '文本', icon: 'T',
+    id: 'paragraph', label: '文本', icon: 'T', shortcut: '⌘⌥0',
     active: menu.blockType === 'textBlock' && !currentNode?.attrs.level,
     action: () => {
       if (currentNode?.type.name === 'textBlock') {
@@ -78,7 +78,7 @@ export function HandleMenu({ view }: HandleMenuProps) {
   // 标题 1-3（level=1/2/3）
   for (let level = 1; level <= 3; level++) {
     turnIntoItems.push({
-      id: `heading${level}`, label: `标题 ${level}`, icon: `H${level}`,
+      id: `heading${level}`, label: `标题 ${level}`, icon: `H${level}`, shortcut: `⌘⌥${level}`,
       active: menu.blockType === 'textBlock' && currentNode?.attrs.level === level,
       action: () => {
         if (currentNode?.type.name === 'textBlock') {
@@ -142,7 +142,7 @@ export function HandleMenu({ view }: HandleMenuProps) {
   });
 
   // ── 构建第一级菜单 ──
-  const hasTurnInto = capabilities?.turnInto && capabilities.turnInto.length > 0;
+  const hasTurnInto = menu.blockType === 'textBlock' || (capabilities?.turnInto && capabilities.turnInto.length > 0);
 
   return (
     <div
@@ -176,6 +176,7 @@ export function HandleMenu({ view }: HandleMenuProps) {
                   >
                     <span style={styles.icon}>{item.icon}</span>
                     <span style={styles.label}>{item.label}</span>
+                    {item.shortcut && <span style={styles.shortcut}>{item.shortcut}</span>}
                     {item.active && <span style={styles.check}>✓</span>}
                   </div>
                 ))}
@@ -216,6 +217,7 @@ export function HandleMenu({ view }: HandleMenuProps) {
                   >
                     <span style={styles.icon}>⇥</span>
                     <span style={styles.label}>首行缩进</span>
+                    <span style={styles.shortcut}>⌘⇧T</span>
                     {currentNode.attrs.textIndent && <span style={styles.check}>✓</span>}
                   </div>
                 )}
