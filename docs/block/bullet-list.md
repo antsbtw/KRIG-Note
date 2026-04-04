@@ -1,193 +1,115 @@
-# bulletList — 无序列表
+# Bullet List — 无序列表
 
-> **类型**：Container（包含 listItem 子节点）
+> **类型**：TextBlock groupType 变体（`groupType: 'bullet'`）
 > **位置**：文档中任意位置
-> **状态**：待实现
+> **状态**：✅ 已实现
 
 ---
 
 ## 一、定义
 
-bulletList 是无序列表容器，用圆点标记并列的内容要点。内部包含多个 listItem。
+Bullet List 是 TextBlock 的 groupType 变体，用圆点标记并列的内容要点。多个连续的 `textBlock { groupType: 'bullet' }` 在视觉上组成一个列表。
 
 ```
 • 要点 A
 • 要点 B
-  • 子要点 B1      ← 嵌套的 bulletList
-  • 子要点 B2
 • 要点 C
 ```
 
+**不是独立容器节点**——是 textBlock 通过 `groupType: 'bullet'` attrs 变体实现的。
+
 ---
 
-## 二、Schema
+## 二、实现方式
 
 ```typescript
-nodeSpec: {
-  content: 'listItem+',
-  group: 'block',
-  parseDOM: [{ tag: 'ul' }],
-  toDOM() { return ['ul', 0]; },
+textBlock {
+  groupType: 'bullet',
+  groupAttrs: null,
+  indent: 0,          // 缩进层级（每级 24px）
 }
 ```
 
-无额外 attrs。
+视觉装饰通过 group-decoration 插件添加圆点标记。
 
 ---
 
-## 三、Capabilities
+## 三、视觉规格
 
-```typescript
-capabilities: {
-  turnInto: ['paragraph'],       // 溶解 → 每个 listItem 首子成为独立 paragraph
-  marks: [],                      // 列表容器不接受 Mark
-  canDuplicate: true,
-  canDelete: true,
-  canDrag: true,
-}
+### 标记样式（按 indent 层级循环）
+
+| indent | 标记 | 说明 |
+|--------|------|------|
+| 0 | • 实心圆 | disc |
+| 1 | ◦ 空心圆 | circle |
+| 2 | ▪ 实心方 | square |
+| 3+ | 循环回 disc | |
+
+缩进时用 `margin-left`（圆点跟随缩进）。
+
+---
+
+## 四、创建方式
+
+| 方式 | 操作 |
+|------|------|
+| SlashMenu | `/bullet` 或 `/无序` |
+| Markdown | 行首输入 `- ` 或 `* ` + 空格 |
+| HandleMenu | 转换成 → 项目符号列表 |
+
+---
+
+## 五、交互行为
+
+### 5.1 回车（Enter）
+
+| 条件 | 行为 |
+|------|------|
+| 有内容 | 分裂为两个 bullet 行（继承 groupType） |
+| 空行 | 清除 groupType，变为普通段落（退出列表） |
+
+### 5.2 退格（Backspace，行首）
+
+清除 groupType，变为普通段落，保留文字。
+
+### 5.3 Tab / Shift+Tab
+
+```
+Tab → indent += 1（视觉嵌套一级，标记样式随层级变化）
+Shift+Tab → indent -= 1
+```
+
+### 5.4 与 orderedList 互转
+
+HandleMenu 选择"有序列表"→ 当前行 groupType 从 'bullet' 变为 'ordered'。
+内容和 indent 保留。
+
+### 5.5 整组拖动
+
+拖拽 bullet 行的手柄时，自动收集所有连续的 `groupType: 'bullet'` 行，整体移动。
+
+### 5.6 嵌套（设计中）
+
+在 bullet 内通过 SlashMenu 或 Markdown 插入其他 groupType：
+
+```
+• 要点 A
+• 要点 B
+  1. 嵌套编号一          ← indent=1, groupType='ordered'
+  2. 嵌套编号二
+• 要点 C                  ← 空行回车退回 bullet
 ```
 
 ---
 
-## 四、Container 规则
+## 六、与旧 bulletList Container 的关系
 
-```typescript
-containerRule: {
-  requiredFirstChildType: undefined,  // listItem 自身约束首子
-}
-```
+旧设计中 bulletList 是独立 Container 节点（`content: 'listItem+'`）。
+当前实现已迁移为 textBlock groupType 变体。
 
----
-
-## 五、SlashMenu
-
-```typescript
-slashMenu: {
-  label: 'Bullet List',
-  icon: '•',
-  group: 'basic',
-  keywords: ['list', 'bullet', 'ul', 'unordered'],
-  order: 5,
-}
-```
-
----
-
-## 六、交互行为
-
-### 6.1 创建
-
-- SlashMenu 选择 "Bullet List"
-- Markdown 快捷输入：`- ` 或 `* ` + 空格
-- 快捷键：待定
-
-### 6.2 溶解（turnInto paragraph）
-
-溶解时，每个 listItem 的首子 paragraph 成为独立的 paragraph：
-
-```
-溶解前：                溶解后：
-• Item A               Item A
-• Item B               Item B
-  • Sub B1             Sub B1（嵌套被展平）
-• Item C               Item C
-```
-
-### 6.3 与 orderedList 互转
-
-bulletList ↔ orderedList 直接互转，保留所有 listItem 内容和嵌套结构：
-
-```
-• Item A       →      1. Item A
-• Item B       →      2. Item B
-  • Sub        →        a. Sub
-```
-
----
-
-## 七、视觉规格
-
-### 标记样式（按嵌套层级循环）
-
-| 层级 | 标记 | CSS |
-|------|------|-----|
-| 第 1 级 | • 实心圆 | `list-style-type: disc` |
-| 第 2 级 | ◦ 空心圆 | `list-style-type: circle` |
-| 第 3 级 | ▪ 实心方 | `list-style-type: square` |
-| 第 4 级+ | 循环回 disc | |
-
-### 间距
-
-- 列表与前后 Block：0.5em
-- 嵌套缩进：每级 24px
-
----
-
-## 八、嵌套规则
-
-bulletList 的 listItem 内可以包含：
-
-| 内容类型 | 允许 | 示例 |
-|---------|------|------|
-| paragraph | ✅（必填首子） | 列表项文本 |
-| bulletList | ✅ | 子无序列表 |
-| orderedList | ✅ | 子有序列表 |
-| codeBlock | ✅ | 列表项内的代码 |
-| blockquote | ✅ | 列表项内的引用 |
-| image | ✅ | 列表项内的图片 |
-| heading | ✅ | 列表项内的标题（罕见但允许） |
-| table | ✅ | 列表项内的表格（罕见但允许） |
-
-规则：listItem 的 content 是 `paragraph block*`，任何属于 `block` 组的节点都可以出现。
-
----
-
-## 九、未来升级路径
-
-### 9.1 勾选列表（taskList）
-
-bulletList 的变体，listItem 增加勾选框。作为独立 Block 注册（taskList + taskItem），不修改 bulletList。
-
-### 9.2 拖拽排序增强
-
-列表内 listItem 拖拽排序，支持跨列表、跨层级拖拽。
-
----
-
-## 十、BlockDef
-
-```typescript
-export const bulletListBlock: BlockDef = {
-  name: 'bulletList',
-  group: 'block',
-  nodeSpec: {
-    content: 'listItem+',
-    group: 'block',
-    parseDOM: [{ tag: 'ul' }],
-    toDOM() { return ['ul', 0]; },
-  },
-  capabilities: {
-    turnInto: ['paragraph'],
-    canDuplicate: true,
-    canDelete: true,
-    canDrag: true,
-  },
-  containerRule: {},
-  slashMenu: {
-    label: 'Bullet List',
-    icon: '•',
-    group: 'basic',
-    keywords: ['list', 'bullet', 'ul', 'unordered'],
-    order: 5,
-  },
-};
-```
-
----
-
-## 十一、设计原则
-
-1. **Container 不管内容**：bulletList 只管"我包含 listItem"，listItem 内部放什么由 listItem 决定
-2. **与 orderedList 互转无损**：切换类型时保留所有内容和嵌套
-3. **嵌套无限制**：Schema 不限制嵌套深度，视觉上标记循环
-4. **溶解为 paragraph**：turnInto paragraph 时展平所有层级
+| 维度 | 旧 bulletList | 当前 bullet |
+|------|--------------|------------|
+| 节点类型 | Container（bulletList > listItem > paragraph） | textBlock attrs 变体 |
+| 嵌套 | listItem 内放 bulletList/orderedList | indent 层级 + groupType 切换 |
+| 操作 | 需要容器级 + listItem 级操作 | 与普通 textBlock 相同 |
+| 互转 | bulletList ↔ orderedList 容器级转换 | 单行 groupType attr 切换 |
