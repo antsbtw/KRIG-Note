@@ -22,7 +22,7 @@ function heading(schema: Schema, level: number, content: string): PMNode {
 export function buildTestDocument(schema: Schema): PMNode {
   return schema.node('doc', null, [
     // 标题
-    schema.node('textBlock', { isTitle: true }, null, [text(schema, 'NoteView 测试文档')]),
+    schema.node('textBlock', { isTitle: true }, [text(schema, 'NoteView 测试文档')]),
 
     // ── 一、noteTitle 测试 ──
     heading(schema, 2, '一、noteTitle 测试'),
