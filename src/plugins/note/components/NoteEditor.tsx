@@ -166,5 +166,6 @@ const styles: Record<string, React.CSSProperties> = {
     maxWidth: '900px',
     margin: '0 auto',
     minHeight: '100%',
+    position: 'relative' as const,  // block-handle 定位基准
   },
 };

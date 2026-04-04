@@ -6,12 +6,13 @@
 /* ── ProseMirror 基础 ── */
 .ProseMirror {
   outline: none;
-  padding: 24px 48px;
+  padding: 24px 48px 24px 72px;
   min-height: 100%;
   color: #e8eaed;
   font-size: 16px;
   line-height: 1.7;
   caret-color: #e8eaed;
+  position: relative;  /* block-handle 定位基准 */
 }
 .ProseMirror p { margin: 0.3em 0; }
 
