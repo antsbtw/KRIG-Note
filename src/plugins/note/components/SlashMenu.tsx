@@ -95,9 +95,19 @@ export function SlashMenu({ view }: SlashMenuProps) {
         const blockPos = $from.before(depth);
         const blockNode = view.state.doc.nodeAt(blockPos);
         if (blockNode?.type.name === 'textBlock') {
+          const newGroupType = extraAttrs.groupType as string;
+          const currentGroupType = blockNode.attrs.groupType as string | null;
+          const currentIndent = (blockNode.attrs.indent as number) || 0;
+
+          // 如果当前 block 已有不同的 groupType → 嵌套，indent+1
+          const indent = (currentGroupType && currentGroupType !== newGroupType)
+            ? currentIndent + 1
+            : currentIndent;
+
           view.dispatch(view.state.tr.setNodeMarkup(blockPos, undefined, {
             ...blockNode.attrs,
             ...extraAttrs,
+            indent,
           }));
         }
         view.focus();

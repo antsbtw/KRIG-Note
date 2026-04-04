@@ -2,7 +2,7 @@
  * Group Keyboard Plugin — groupType 的键盘行为
  *
  * Enter: 新 Block 继承 groupType + indent + groupAttrs
- *        空行 + Enter → 清除 groupType（脱离组）
+ *        空行 + Enter → 退回父级 groupType（或清除变普通段落）
  * Backspace: 行首 + 有 groupType → 清除 groupType
  * Tab/Shift-Tab: indent 调整（已在 NoteEditor 中处理）
  */
@@ -10,6 +10,34 @@
 import { Plugin } from 'prosemirror-state';
 import { TextSelection } from 'prosemirror-state';
 import type { Node as PMNode } from 'prosemirror-model';
+
+/**
+ * 查找父级 groupType — 向上搜索 indent 更小的最近 block
+ * 返回 { groupType, groupAttrs, indent } 或 null（退回普通段落）
+ */
+function findParentGroup(
+  doc: PMNode,
+  blockPos: number,
+  currentIndent: number,
+): { groupType: string; groupAttrs: Record<string, unknown> | null; indent: number } | null {
+  if (currentIndent <= 0) return null;
+
+  // 向前搜索 indent < currentIndent 的最近 textBlock
+  let found: { groupType: string; groupAttrs: Record<string, unknown> | null; indent: number } | null = null;
+  doc.forEach((node, pos) => {
+    if (pos >= blockPos) return; // 只看当前 block 之前的
+    if (node.type.name !== 'textBlock') return;
+    const nodeIndent = (node.attrs.indent as number) || 0;
+    if (nodeIndent < currentIndent && node.attrs.groupType) {
+      found = {
+        groupType: node.attrs.groupType as string,
+        groupAttrs: node.attrs.groupAttrs ? { ...node.attrs.groupAttrs } : null,
+        indent: nodeIndent,
+      };
+    }
+  });
+  return found;
+}
 
 export function groupKeyboardPlugin(): Plugin {
   return new Plugin({
@@ -31,13 +59,31 @@ export function groupKeyboardPlugin(): Plugin {
           const blockPos = $from.before($from.depth);
           const isBlockEmpty = blockNode.content.size === 0;
 
-          // 空行 + Enter → 清除 groupType（脱离组）
+          // 空行 + Enter → 退回父级 groupType（或清除变普通段落）
           if (isBlockEmpty) {
-            const tr = state.tr.setNodeMarkup(blockPos, undefined, {
-              ...blockNode.attrs,
-              groupType: null,
-              groupAttrs: null,
-            });
+            const currentIndent = (blockNode.attrs.indent as number) || 0;
+            const parent = findParentGroup(state.doc, blockPos, currentIndent);
+
+            let newAttrs: Record<string, unknown>;
+            if (parent) {
+              // 有父级 → 退回父级 groupType + indent
+              newAttrs = {
+                ...blockNode.attrs,
+                groupType: parent.groupType,
+                groupAttrs: parent.groupAttrs,
+                indent: parent.indent,
+              };
+            } else {
+              // 无父级 → 清除 groupType，变普通段落
+              newAttrs = {
+                ...blockNode.attrs,
+                groupType: null,
+                groupAttrs: null,
+                indent: 0,
+              };
+            }
+
+            const tr = state.tr.setNodeMarkup(blockPos, undefined, newAttrs);
             tr.setMeta('groupTypeCleared', true);
             view.dispatch(tr);
             return true;
