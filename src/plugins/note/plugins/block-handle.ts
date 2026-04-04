@@ -151,8 +151,22 @@ export function blockHandlePlugin(): Plugin {
             if (containerRect && container) {
               const blockRect = blockDOM.getBoundingClientRect();
               const scrollTop = container.scrollTop;
+              const handleHeight = 24;
+
+              // 获取第一行文字位置用于垂直居中
+              let textTop = blockRect.top;
+              let lineHeight = 27;
+              try {
+                const coords = view.coordsAtPos(blockStart + 1);
+                if (coords.top >= blockRect.top && coords.top <= blockRect.bottom) {
+                  textTop = coords.top;
+                  lineHeight = coords.bottom - coords.top;
+                }
+              } catch { /* fallback */ }
+
+              const topPx = textTop - containerRect.top + scrollTop + (lineHeight - handleHeight) / 2;
               handleDOM.style.left = `${blockRect.left - containerRect.left + container.scrollLeft - 62}px`;
-              handleDOM.style.top = `${blockRect.top - containerRect.top + scrollTop + 2}px`;
+              handleDOM.style.top = `${topPx}px`;
               handleDOM.style.opacity = '1';
             }
           }
