@@ -1,4 +1,4 @@
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useState } from 'react';
 import { EditorState } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
 import { keymap } from 'prosemirror-keymap';
@@ -12,6 +12,8 @@ import { registerAllBlocks } from '../blocks/index';
 import { noteTitleNodeView } from '../blocks/text-block';
 import { buildInputRules } from '../plugins/input-rules';
 import { containerKeyboardPlugin } from '../plugins/container-keyboard';
+import { slashCommandPlugin } from '../plugins/slash-command';
+import { SlashMenu } from './SlashMenu';
 import '../note.css';
 
 /**
@@ -40,6 +42,7 @@ function getSchema() {
 export function NoteEditor() {
   const editorRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const [editorView, setEditorView] = useState<EditorView | null>(null);
 
   useEffect(() => {
     if (!editorRef.current || viewRef.current) return;
@@ -106,6 +109,7 @@ export function NoteEditor() {
     const state = EditorState.create({
       doc,
       plugins: [
+        slashCommandPlugin(),
         containerKeyboardPlugin(),  // Container Enter/Backspace — 在 baseKeymap 之前
         buildInputRules(s),
         keymap({ 'Mod-z': undo, 'Mod-Shift-z': redo, 'Mod-y': redo }),
@@ -124,16 +128,19 @@ export function NoteEditor() {
     });
 
     viewRef.current = view;
+    setEditorView(view);
 
     return () => {
       view.destroy();
       viewRef.current = null;
+      setEditorView(null);
     };
   }, []);
 
   return (
     <div style={styles.container}>
       <div ref={editorRef} style={styles.editor} />
+      <SlashMenu view={editorView} />
     </div>
   );
 }
