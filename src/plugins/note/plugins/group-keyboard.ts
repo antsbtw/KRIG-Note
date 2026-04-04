@@ -75,14 +75,17 @@ export function groupKeyboardPlugin(): Plugin {
 
     // appendTransaction: 确保 split 后的新 Block 继承 groupType
     appendTransaction(trs, oldState, newState) {
-      // 检查是否有 split 操作（doc 变化 + 新增了 block）
+      // 只在 doc 变化时处理
       const tr = trs.find(t => t.docChanged && t.steps.length > 0);
       if (!tr) return null;
 
-      // 如果是主动清除 groupType（空行 Enter），不要恢复
+      // 如果是主动清除 groupType（空行 Enter / Backspace），不要恢复
       if (trs.some(t => t.getMeta('groupTypeCleared'))) return null;
 
-      // 简单启发式：如果新 state 的光标所在 block 的 groupType 为 null，
+      // 只在 split 操作后继承（block 数量增加了）
+      if (newState.doc.childCount <= oldState.doc.childCount) return null;
+
+      // 如果新 state 的光标所在 block 的 groupType 为 null，
       // 但上一个 block 有 groupType，说明是 split 后的新 block，需要继承
       const { $from } = newState.selection;
       if ($from.depth < 1) return null;

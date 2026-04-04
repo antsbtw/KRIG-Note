@@ -143,7 +143,40 @@ export function blockHandlePlugin(): Plugin {
       // 检查是否在 block-selection 中 → 整体拖动
       const selState = blockSelectionKey.getState(view.state);
       const isMultiDrag = selState?.active && selState.positions.includes(dragFromPos);
-      const dragPositions = isMultiDrag ? [...selState!.positions].sort((a, b) => a - b) : null;
+      let dragPositions: number[] | null = isMultiDrag ? [...selState!.positions].sort((a, b) => a - b) : null;
+
+      // 非多选模式：如果当前 block 有 groupType，收集同组连续 blocks 整体拖动
+      if (!dragPositions) {
+        const dragNode = view.state.doc.nodeAt(dragFromPos);
+        if (dragNode?.attrs.groupType) {
+          const groupType = dragNode.attrs.groupType;
+          const groupPositions: number[] = [];
+          view.state.doc.forEach((node, pos) => {
+            if (node.type.name === 'textBlock' && node.attrs.groupType === groupType) {
+              // 检查是否与 dragFromPos 连续（中间不能有其他类型的 block）
+              groupPositions.push(pos);
+            }
+          });
+          // 从 groupPositions 中找到包含 dragFromPos 的连续区间
+          const idx = groupPositions.indexOf(dragFromPos);
+          if (idx >= 0) {
+            let start = idx, end = idx;
+            // 向前扩展
+            while (start > 0) {
+              const prevPos = groupPositions[start - 1];
+              const prevNode = view.state.doc.nodeAt(prevPos);
+              if (prevNode && prevPos + prevNode.nodeSize === groupPositions[start]) { start--; } else break;
+            }
+            // 向后扩展
+            while (end < groupPositions.length - 1) {
+              const currNode = view.state.doc.nodeAt(groupPositions[end]);
+              if (currNode && groupPositions[end] + currNode.nodeSize === groupPositions[end + 1]) { end++; } else break;
+            }
+            const contiguous = groupPositions.slice(start, end + 1);
+            if (contiguous.length > 1) dragPositions = contiguous;
+          }
+        }
+      }
 
       const onMouseMove = (me: MouseEvent) => {
         const dy = Math.abs(me.clientY - dragStartY);

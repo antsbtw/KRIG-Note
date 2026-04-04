@@ -99,7 +99,7 @@ type ViewMode = 'code' | 'split' | 'preview';
 
 const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
   let renderTimer: ReturnType<typeof setTimeout> | null = null;
-  let viewMode: ViewMode = 'split';
+  let viewMode: ViewMode = (node.attrs.viewMode as ViewMode) || 'split';
 
   const dom = document.createElement('div');
   dom.classList.add('code-block');
@@ -258,11 +258,19 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
   dom.appendChild(preview);
 
   // ── 模式切换 ──
-  function updateViewMode(mode: ViewMode) {
+  function updateViewMode(mode: ViewMode, persist = true) {
     viewMode = mode;
     btnCode.classList.toggle('code-block__toolbar-btn--active', mode === 'code');
     btnSplit.classList.toggle('code-block__toolbar-btn--active', mode === 'split');
     btnPreview.classList.toggle('code-block__toolbar-btn--active', mode === 'preview');
+
+    // 持久化到 node attrs
+    if (persist) {
+      const pos = typeof getPos === 'function' ? getPos() : undefined;
+      if (pos != null && node.attrs.viewMode !== mode) {
+        view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, viewMode: mode }));
+      }
+    }
 
     if (node.attrs.language !== 'mermaid') return;
     pre.style.display = mode === 'preview' ? 'none' : '';
@@ -459,7 +467,7 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
   // 初始化
   updateToolbarVisibility();
   if (node.attrs.language === 'mermaid') {
-    updateViewMode('split');
+    updateViewMode(viewMode, false);
     setTimeout(() => renderMermaid(code.textContent || ''), 50);
   } else {
     preview.style.display = 'none';
@@ -481,7 +489,7 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
       updateToolbarVisibility();
 
       if (node.attrs.language === 'mermaid') {
-        if (langChanged) { updateViewMode('split'); renderMermaid(node.textContent); }
+        if (langChanged) { updateViewMode('split', false); renderMermaid(node.textContent); }
         else scheduleRender();
       } else {
         preview.style.display = 'none';
@@ -507,7 +515,7 @@ export const codeBlockBlock: BlockDef = {
     code: true,
     defining: true,
     marks: '',
-    attrs: { language: { default: '' } },
+    attrs: { language: { default: '' }, viewMode: { default: 'split' } },
     parseDOM: [{ tag: 'pre', preserveWhitespace: 'full', getAttrs(dom: HTMLElement) {
       return { language: dom.getAttribute('data-language') || '' };
     }}],

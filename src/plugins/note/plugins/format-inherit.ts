@@ -30,12 +30,15 @@ export function formatInheritPlugin(): Plugin {
       // 检查是否需要继承
       const textIndent = prevNode.attrs.textIndent;
       const align = prevNode.attrs.align;
+      const indent = prevNode.attrs.indent || 0;
 
-      if (!textIndent && (!align || align === 'left')) return null;
+      if (!textIndent && (!align || align === 'left') && !indent) return null;
 
       // 当前 paragraph 已经有这些 attrs 了就跳过
       const currentNode = $from.parent;
-      if (currentNode.attrs.textIndent === textIndent && currentNode.attrs.align === align) return null;
+      if (currentNode.attrs.textIndent === textIndent
+        && currentNode.attrs.align === align
+        && (currentNode.attrs.indent || 0) === indent) return null;
 
       // 设置 attrs
       const pos = $from.before($from.depth);
@@ -43,6 +46,7 @@ export function formatInheritPlugin(): Plugin {
         ...currentNode.attrs,
         textIndent,
         align,
+        indent,
       });
 
       return tr;

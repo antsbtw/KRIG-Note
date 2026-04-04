@@ -219,7 +219,7 @@ export function ContextMenu({ view, onOpen, onClose }: ContextMenuProps) {
     items.push({
       id: 'indent', label: 'Indent', icon: '→', shortcut: 'Tab',
       action: () => {
-        if (positions[0] !== undefined) blockAction.indent(view, positions[0]);
+        for (const pos of positions) blockAction.indent(view, pos);
         close();
       },
     });
@@ -227,7 +227,7 @@ export function ContextMenu({ view, onOpen, onClose }: ContextMenuProps) {
     items.push({
       id: 'outdent', label: 'Outdent', icon: '←', shortcut: '⇧Tab',
       action: () => {
-        if (positions[0] !== undefined) blockAction.outdent(view, positions[0]);
+        for (const pos of positions) blockAction.outdent(view, pos);
         close();
       },
     });

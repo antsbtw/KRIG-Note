@@ -37,7 +37,7 @@ const noteTitleNodeView: NodeViewFactory = (node, _view, _getPos) => {
 // ── toDOM：根据 attrs 决定渲染标签 ──
 
 function textBlockToDOM(node: any): any {
-  const { level, isTitle, indent, textIndent, align } = node.attrs;
+  const { level, isTitle, indent, textIndent, align, groupType } = node.attrs;
 
   // noteTitle 由 NodeView 处理
   if (isTitle) {
@@ -46,7 +46,8 @@ function textBlockToDOM(node: any): any {
 
   // 构建 style
   const styles: string[] = [];
-  if (indent > 0) styles.push(`padding-left: ${indent * 24}px`);
+  // 有 groupType 时用 margin-left（整体移动，包含 border/装饰），否则 padding-left
+  if (indent > 0) styles.push(`${groupType ? 'margin-left' : 'padding-left'}: ${indent * 24}px`);
   if (textIndent) styles.push('text-indent: 2em');
   if (align && align !== 'left') styles.push(`text-align: ${align}`);
 

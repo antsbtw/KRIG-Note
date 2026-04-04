@@ -152,6 +152,25 @@ export function blockSelectionPlugin(): Plugin {
 
         if (!isActive) return false;
 
+        // Tab / Shift+Tab：批量缩进
+        if (event.key === 'Tab') {
+          event.preventDefault();
+          const sorted = [...state!.positions].sort((a, b) => a - b);
+          const delta = event.shiftKey ? -1 : 1;
+          let tr = view.state.tr;
+          for (const pos of sorted) {
+            const node = tr.doc.nodeAt(pos);
+            if (!node || !node.type.spec.attrs || !('indent' in node.type.spec.attrs)) continue;
+            const current = (node.attrs.indent as number) || 0;
+            const next = Math.max(0, Math.min(8, current + delta));
+            if (next !== current) {
+              tr = tr.setNodeMarkup(pos, undefined, { ...node.attrs, indent: next });
+            }
+          }
+          view.dispatch(tr);
+          return true;
+        }
+
         // Shift+↑/↓ 多选
         if (event.shiftKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
           event.preventDefault();
