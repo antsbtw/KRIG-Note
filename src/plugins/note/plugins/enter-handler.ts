@@ -100,7 +100,40 @@ export function enterHandlerPlugin(): Plugin {
           return false;
         }
 
-        // action === 'split' → 使用 ProseMirror 默认的 splitBlock
+        // action === 'split' → 在 Container 内分裂 textBlock
+        // 不能用 ProseMirror 默认 splitBlock（defining Container 会导致分裂 Container 而非子 textBlock）
+        if (behavior.action === 'split' && blockDepth < $from.depth) {
+          // blockNode 是 Container（如 bulletList），光标在其子 textBlock 中
+          event.preventDefault();
+          const childNode = $from.parent; // textBlock
+          const childDepth = $from.depth;
+          const childPos = $from.before(childDepth);
+          const cursorInChild = $from.parentOffset;
+
+          const tr = state.tr;
+          const newBlock = state.schema.nodes.textBlock.create();
+
+          if (cursorInChild === childNode.content.size) {
+            // 光标在末尾 → 在当前 textBlock 之后插入新 textBlock
+            const insertPos = $from.after(childDepth);
+            tr.insert(insertPos, newBlock);
+            tr.setSelection(TextSelection.create(tr.doc, insertPos + 1));
+          } else if (cursorInChild === 0) {
+            // 光标在开头 → 在当前 textBlock 之前插入新 textBlock
+            tr.insert(childPos, newBlock);
+            tr.setSelection(TextSelection.create(tr.doc, childPos + childNode.nodeSize + 1 + 1));
+          } else {
+            // 光标在中间 → 分裂 textBlock
+            // 使用 ProseMirror 的 split 命令在 textBlock 层级分裂
+            tr.split($from.pos, 1);
+          }
+
+          view.dispatch(tr);
+          consecutiveEmptyEnters = 0;
+          return true;
+        }
+
+        // 其他 split → 使用 ProseMirror 默认的 splitBlock
         consecutiveEmptyEnters = 0;
         return false;
       },
