@@ -1213,8 +1213,8 @@
   left: -20px;
   width: 16px;
   text-align: center;
-  color: #e8eaed;
-  font-size: 20px;
+  color: #9aa0a6;
+  font-size: 1.2em;
   line-height: 1;
   top: 50%;
   transform: translateY(-50%);
@@ -1257,8 +1257,8 @@
   left: -24px;
   width: 20px;
   text-align: right;
-  color: #e8eaed;
-  font-size: 14px;
+  color: #9aa0a6;
+  font-size: 0.85em;
   top: 50%;
   transform: translateY(-50%);
   font-variant-numeric: tabular-nums;
