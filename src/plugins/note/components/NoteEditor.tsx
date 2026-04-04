@@ -13,6 +13,7 @@ import { noteTitleNodeView } from '../blocks/text-block';
 import { buildInputRules } from '../plugins/input-rules';
 import { containerKeyboardPlugin } from '../plugins/container-keyboard';
 import { slashCommandPlugin } from '../plugins/slash-command';
+import { tableKeymapPlugin } from '../blocks/table';
 import { SlashMenu } from './SlashMenu';
 import '../note.css';
 
@@ -115,6 +116,7 @@ export function NoteEditor() {
         keymap({ 'Mod-z': undo, 'Mod-Shift-z': redo, 'Mod-y': redo }),
         keymap(markKeymap),
         keymap(baseKeymap),
+        tableKeymapPlugin(),
         history(),
         dropCursor(),
         gapCursor(),

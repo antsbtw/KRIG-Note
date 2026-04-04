@@ -120,35 +120,51 @@ export function SlashMenu({ view }: SlashMenuProps) {
     const hasBlockContent = blockDef?.nodeSpec.content?.includes('block');
     const isAtom = blockDef?.nodeSpec.atom;
 
+    let containerNode;
+
     if (item.blockName === 'textBlock' && item.attrs) {
       // TextBlock 变体（heading 等）→ 修改 attrs
       const node = view.state.doc.nodeAt(blockStart);
       if (node?.type.name === 'textBlock') {
         view.dispatch(view.state.tr.setNodeMarkup(blockStart, undefined, { ...node.attrs, ...item.attrs }));
       }
-    } else if (isContainer || hasBlockContent) {
-      // ContainerBlock → 包裹当前 textBlock 或创建新 Container
-      let containerNode;
-      if (item.blockName === 'callout') {
-        containerNode = nodeType.create({ emoji: '💡' }, [schema.nodes.textBlock.create()]);
-      } else if (item.blockName === 'image' || item.blockName === 'videoBlock' || item.blockName === 'audioBlock' || item.blockName === 'tweetBlock') {
-        containerNode = nodeType.create(item.attrs ?? null, [schema.nodes.textBlock.create()]);
-      } else {
-        containerNode = nodeType.create(item.attrs ?? null, [schema.nodes.textBlock.create()]);
-      }
-      const replaceTr = view.state.tr.replaceWith(blockStart, blockEnd, containerNode);
-      const $pos = replaceTr.doc.resolve(blockStart + 1);
-      replaceTr.setSelection(TextSelection.near($pos));
-      view.dispatch(replaceTr);
+      view.focus();
+      return;
+    } else if (item.blockName === 'mathInline') {
+      // Inline atom → 插入到当前位置
+      const mathNode = nodeType.create({ latex: '' });
+      view.dispatch(view.state.tr.replaceSelectionWith(mathNode));
+      view.focus();
+      return;
+    } else if (item.blockName === 'toggleHeading') {
+      containerNode = nodeType.create({ open: true }, [
+        schema.nodes.textBlock.create({ level: 2 }),
+        schema.nodes.textBlock.create(),
+      ]);
+    } else if (item.blockName === 'table') {
+      const cell = () => schema.nodes.tableCell.create(null, [schema.nodes.textBlock.create()]);
+      const header = () => schema.nodes.tableHeader.create(null, [schema.nodes.textBlock.create()]);
+      containerNode = nodeType.create(null, [
+        schema.nodes.tableRow.create(null, [header(), header(), header()]),
+        schema.nodes.tableRow.create(null, [cell(), cell(), cell()]),
+        schema.nodes.tableRow.create(null, [cell(), cell(), cell()]),
+      ]);
+    } else if (item.blockName === 'columnList') {
+      const col = () => schema.nodes.column.create(null, [schema.nodes.textBlock.create()]);
+      const colCount = (item.attrs?.columns as number) || 2;
+      containerNode = nodeType.create({ columns: colCount }, Array.from({ length: colCount }, col));
     } else if (isAtom) {
-      // Atom Block（mathBlock, horizontalRule）→ 替换当前行
-      const atomNode = nodeType.create(item.attrs ?? null);
-      const replaceTr = view.state.tr.replaceWith(blockStart, blockEnd, atomNode);
-      view.dispatch(replaceTr);
+      containerNode = nodeType.create(item.attrs ?? null);
     } else if (nodeType.spec.content === 'text*' || item.blockName === 'codeBlock') {
-      // codeBlock → 替换当前行
-      const codeNode = nodeType.create(item.attrs ?? null);
-      const replaceTr = view.state.tr.replaceWith(blockStart, blockEnd, codeNode);
+      containerNode = nodeType.create(item.attrs ?? null);
+    } else if (isContainer || hasBlockContent) {
+      containerNode = nodeType.create(item.attrs ?? null, [schema.nodes.textBlock.create()]);
+    } else {
+      containerNode = nodeType.create(item.attrs ?? null);
+    }
+
+    if (containerNode) {
+      const replaceTr = view.state.tr.replaceWith(blockStart, blockEnd, containerNode);
       const $pos = replaceTr.doc.resolve(blockStart + 1);
       replaceTr.setSelection(TextSelection.near($pos));
       view.dispatch(replaceTr);

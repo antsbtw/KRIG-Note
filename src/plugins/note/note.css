@@ -296,3 +296,108 @@
 .ProseMirror hr {
   border: none; border-top: 1px solid #444; margin: 1.5em 0;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   Phase 7 — toggleList / toggleHeading / frameBlock / table / columnList / inline
+   ═══════════════════════════════════════════════════════════ */
+
+/* ── toggleList ── */
+.toggle-list {
+  margin: 0.2em 0;
+}
+.toggle-list__arrow {
+  display: inline-block;
+  width: 20px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 14px;
+  color: #888;
+  vertical-align: top;
+  margin-top: 4px;
+}
+.toggle-list__arrow:hover { color: #e8eaed; }
+.toggle-list__content { display: inline-block; width: calc(100% - 24px); vertical-align: top; }
+.toggle-list--closed .toggle-list__content > *:not(:first-child) { display: none; }
+
+/* ── toggleHeading ── */
+.toggle-heading {
+  margin: 0.3em 0;
+}
+.toggle-heading__arrow {
+  display: inline-block;
+  width: 20px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 14px;
+  color: #888;
+  vertical-align: top;
+  margin-top: 6px;
+}
+.toggle-heading__arrow:hover { color: #e8eaed; }
+.toggle-heading__content { display: inline-block; width: calc(100% - 24px); vertical-align: top; }
+.toggle-heading--closed .toggle-heading__content > *:not(:first-child) { display: none; }
+
+/* ── frameBlock ── */
+.frame-block {
+  display: flex;
+  margin: 0.3em 0;
+}
+.frame-block__border {
+  width: 3px;
+  background: var(--frame-color, #8ab4f8);
+  border-radius: 2px;
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-right: 12px;
+}
+.frame-block__border:hover { opacity: 0.7; }
+.frame-block__content { flex: 1; min-width: 0; }
+
+/* ── table ── */
+.ProseMirror table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.5em 0;
+}
+.ProseMirror th, .ProseMirror td {
+  border: 1px solid #444;
+  padding: 8px 12px;
+  text-align: left;
+  vertical-align: top;
+}
+.ProseMirror th {
+  background: #2a2a2a;
+  font-weight: 600;
+}
+.ProseMirror td { background: #1e1e1e; }
+.ProseMirror .selectedCell { background: rgba(74, 158, 255, 0.15); }
+
+/* ── columnList ── */
+.column-list__content {
+  display: grid;
+  grid-template-columns: repeat(var(--columns, 2), 1fr);
+  gap: 16px;
+}
+.column { min-width: 0; }
+
+/* ── mathInline ── */
+.math-inline {
+  display: inline;
+  padding: 0 2px;
+  cursor: pointer;
+  border-radius: 3px;
+}
+.math-inline:hover { background: rgba(74, 158, 255, 0.1); }
+
+/* ── noteLink ── */
+.note-link {
+  display: inline;
+  padding: 2px 6px;
+  background: #2a2a2a;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9em;
+  color: #8ab4f8;
+  user-select: none;
+}
+.note-link:hover { background: #333; }

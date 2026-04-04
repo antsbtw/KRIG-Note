@@ -13,6 +13,11 @@ import { orderedListBlock } from './ordered-list';
 import { taskListBlock } from './task-list';
 import { blockquoteBlock } from './blockquote';
 import { calloutBlock } from './callout';
+import { toggleListBlock } from './toggle-list';
+import { toggleHeadingBlock } from './toggle-heading';
+import { frameBlockBlock } from './frame-block';
+import { tableBlock, tableRowBlock, tableCellBlock, tableHeaderBlock } from './table';
+import { columnListBlock, columnBlock } from './column-list';
 
 // ── RenderBlock ──
 import { codeBlockBlock } from './code-block';
@@ -24,6 +29,8 @@ import { tweetBlockBlock } from './tweet-block';
 
 // ── Inline ──
 import { hardBreakBlock } from './hard-break';
+import { mathInlineBlock } from './math-inline';
+import { noteLinkBlock } from './note-link';
 
 // ── 特殊 ──
 import { horizontalRuleBlock } from './horizontal-rule';
@@ -50,6 +57,15 @@ export function registerAllBlocks(): void {
   blockRegistry.register(taskListBlock);
   blockRegistry.register(blockquoteBlock);
   blockRegistry.register(calloutBlock);
+  blockRegistry.register(toggleListBlock);
+  blockRegistry.register(toggleHeadingBlock);
+  blockRegistry.register(frameBlockBlock);
+  blockRegistry.register(tableBlock);
+  blockRegistry.register(tableRowBlock);
+  blockRegistry.register(tableCellBlock);
+  blockRegistry.register(tableHeaderBlock);
+  blockRegistry.register(columnListBlock);
+  blockRegistry.register(columnBlock);
 
   // ── RenderBlock ──
   blockRegistry.register(codeBlockBlock);
@@ -61,7 +77,19 @@ export function registerAllBlocks(): void {
 
   // ── Inline ──
   blockRegistry.register(hardBreakBlock);
+  blockRegistry.register(mathInlineBlock);
+  blockRegistry.register(noteLinkBlock);
 
   // ── 特殊 ──
   blockRegistry.register(horizontalRuleBlock);
+
+  // ── 额外 SlashMenu ──
+  blockRegistry.registerSlashItem({
+    id: 'column3', blockName: 'columnList', label: '3 Columns', icon: '▥',
+    group: 'layout', keywords: ['column', 'three', '三列'], order: 3, attrs: { columns: 3 },
+  });
+  blockRegistry.registerSlashItem({
+    id: 'mermaid', blockName: 'codeBlock', label: 'Mermaid Diagram', icon: '◇',
+    group: 'code', keywords: ['mermaid', 'diagram', 'flow', '流程图'], order: 1, attrs: { language: 'mermaid' },
+  });
 }
