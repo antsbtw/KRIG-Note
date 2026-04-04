@@ -15,6 +15,10 @@ import { containerKeyboardPlugin } from '../plugins/container-keyboard';
 import { slashCommandPlugin } from '../plugins/slash-command';
 import { tableKeymapPlugin } from '../blocks/table';
 import { SlashMenu } from './SlashMenu';
+import { FloatingToolbar } from './FloatingToolbar';
+import { HandleMenu } from './HandleMenu';
+import { ContextMenu } from './ContextMenu';
+import { blockHandlePlugin } from '../plugins/block-handle';
 import '../note.css';
 
 /**
@@ -117,6 +121,7 @@ export function NoteEditor() {
         keymap(markKeymap),
         keymap(baseKeymap),
         tableKeymapPlugin(),
+        blockHandlePlugin(),
         history(),
         dropCursor(),
         gapCursor(),
@@ -143,6 +148,9 @@ export function NoteEditor() {
     <div style={styles.container}>
       <div ref={editorRef} style={styles.editor} />
       <SlashMenu view={editorView} />
+      <FloatingToolbar view={editorView} />
+      <HandleMenu view={editorView} />
+      <ContextMenu view={editorView} />
     </div>
   );
 }
