@@ -38,6 +38,7 @@ export function groupKeyboardPlugin(): Plugin {
               groupType: null,
               groupAttrs: null,
             });
+            tr.setMeta('groupTypeCleared', true);
             view.dispatch(tr);
             return true;
           }
@@ -62,7 +63,9 @@ export function groupKeyboardPlugin(): Plugin {
             newAttrs = { ...newAttrs };
           }
 
-          view.dispatch(state.tr.setNodeMarkup(blockPos, undefined, newAttrs));
+          const bsTr = state.tr.setNodeMarkup(blockPos, undefined, newAttrs);
+          bsTr.setMeta('groupTypeCleared', true);
+          view.dispatch(bsTr);
           return true;
         }
 
@@ -75,6 +78,9 @@ export function groupKeyboardPlugin(): Plugin {
       // 检查是否有 split 操作（doc 变化 + 新增了 block）
       const tr = trs.find(t => t.docChanged && t.steps.length > 0);
       if (!tr) return null;
+
+      // 如果是主动清除 groupType（空行 Enter），不要恢复
+      if (trs.some(t => t.getMeta('groupTypeCleared'))) return null;
 
       // 简单启发式：如果新 state 的光标所在 block 的 groupType 为 null，
       // 但上一个 block 有 groupType，说明是 split 后的新 block，需要继承

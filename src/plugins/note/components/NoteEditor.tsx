@@ -478,6 +478,7 @@ export function NoteEditor() {
         keymap({ 'Mod-z': undo, 'Mod-Shift-z': redo, 'Mod-y': redo }),
         keymap(markKeymap),
         keymap(listKeymap),
+        groupKeyboardPlugin(),   // baseKeymap 之前，确保空行 Enter 退出 groupType
         keymap(baseKeymap),
         buildInputRules(s),
         history(),
@@ -488,7 +489,6 @@ export function NoteEditor() {
         tableKeymapPlugin(),
         formatInheritPlugin(),
         groupDecorationPlugin(),
-        groupKeyboardPlugin(),
         ...blockPlugins,
       ],
     });
