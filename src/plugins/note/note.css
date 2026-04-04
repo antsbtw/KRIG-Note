@@ -1158,11 +1158,6 @@
   color: #aaa;
   font-style: italic;
 }
-/* 缩进的 quote 用更浅的竖线表示层级 */
-.group-quote[style*="margin-left"] {
-  border-left-color: #444;
-  border-left-style: dashed;
-}
 
 /* ── Toggle ── */
 .group-toggle-arrow {

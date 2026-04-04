@@ -322,6 +322,39 @@ export const blockAction = {
 
 const MAX_INDENT = 8;
 
+/** 收集与 pos 位置 block 同 groupType 的连续 blocks */
+function getGroupPositions(view: EditorView, pos: number, node: import('prosemirror-model').Node): number[] {
+  const groupType = node.attrs.groupType;
+  if (!groupType) return [pos];
+
+  const positions: number[] = [];
+  // 收集同 groupType 的所有位置
+  const allGroupPos: number[] = [];
+  view.state.doc.forEach((n, offset) => {
+    if (n.type.name === node.type.name && n.attrs.groupType === groupType) {
+      allGroupPos.push(offset);
+    }
+  });
+
+  // 找包含 pos 的连续区间
+  const idx = allGroupPos.indexOf(pos);
+  if (idx < 0) return [pos];
+
+  let start = idx, end = idx;
+  while (start > 0) {
+    const prevPos = allGroupPos[start - 1];
+    const prevNode = view.state.doc.nodeAt(prevPos);
+    if (prevNode && prevPos + prevNode.nodeSize === allGroupPos[start]) start--;
+    else break;
+  }
+  while (end < allGroupPos.length - 1) {
+    const currNode = view.state.doc.nodeAt(allGroupPos[end]);
+    if (currNode && allGroupPos[end] + currNode.nodeSize === allGroupPos[end + 1]) end++;
+    else break;
+  }
+  return allGroupPos.slice(start, end + 1);
+}
+
 function defaultIndent(view: EditorView, pos: number, node: import('prosemirror-model').Node): boolean {
   const currentIndent = (node.attrs.indent as number) || 0;
   if (currentIndent >= MAX_INDENT) return false;
