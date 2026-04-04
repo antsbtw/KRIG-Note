@@ -1,6 +1,6 @@
 # videoPlaceholder — 视频（Tab Container）
 
-> **类型**：Container（Tab Container 架构）
+> **类型**：RenderBlock（见 `base/render-block.md`）
 > **位置**：文档中任意位置
 > **状态**：待实现
 

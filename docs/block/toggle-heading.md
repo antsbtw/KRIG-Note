@@ -1,6 +1,6 @@
 # toggleHeading — 折叠标题
 
-> **类型**：Container（必填首子 heading + block*）
+> **类型**：ContainerBlock（见 `base/container-block.md`）
 > **位置**：文档中任意位置
 > **状态**：待实现
 

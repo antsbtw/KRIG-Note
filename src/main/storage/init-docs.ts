@@ -35,6 +35,10 @@ const IMPORT_DIRS: { dir: string; folderName: string; files?: string[] }[] = [
     folderName: 'UI 框架',
   },
   {
+    dir: 'docs/block/base',
+    folderName: 'Block 基类',
+  },
+  {
     dir: 'docs/block',
     folderName: 'Block 设计',
   },
@@ -139,11 +143,16 @@ export async function initKrigNoteDocs(): Promise<{ created: number }> {
   // 查找 Block 设计文件夹中的笔记，构建 noteLink 引用
   const allNotes = await noteStore.list();
   const blockNames = [
-    'noteTitle', 'paragraph', 'heading', 'codeBlock', 'blockquote', 'horizontalRule',
-    'hardBreak', 'bulletList', 'orderedList', 'listItem', 'taskList', 'taskItem',
-    'toggleList', 'callout', 'image', 'table', 'noteLink', 'mathBlock', 'mathInline',
-    'columnList', 'frameBlock', 'audioBlock', 'videoBlock', 'tweetBlock',
-    'marks', 'block-action', 'toggle-heading', 'math-visual', 'translation-block',
+    // 基类文档
+    'base-classes', 'text-block', 'render-block', 'container-block',
+    // RenderBlock 实例
+    'code-block', 'image', 'math-block', 'video-block', 'audio-block', 'tweet-block',
+    // ContainerBlock 实例
+    'toggle-heading', 'toggle-list', 'task-list', 'frame-block', 'table', 'column-list',
+    // 其他
+    'horizontal-rule', 'hard-break', 'note-link', 'math-inline', 'marks',
+    // 框架文档
+    'block-action', 'block-relation-model', 'container-nesting-design',
   ];
 
   // 文件名到 noteId 的映射
@@ -226,12 +235,16 @@ export async function createBlockTaskDoc(): Promise<boolean> {
   }
 
   const blockNames = [
-    'note-title', 'paragraph', 'heading', 'code-block', 'blockquote', 'horizontal-rule',
-    'hard-break', 'bullet-list', 'ordered-list', 'list-item', 'task-list', 'task-item',
-    'toggle-list', 'toggle-heading', 'callout', 'image', 'table', 'note-link',
-    'math-block', 'math-inline', 'math-visual', 'column-list', 'frame-block',
-    'audio-block', 'video-block', 'tweet-block', 'translation-block',
-    'marks', 'block-action',
+    // 基类文档
+    'base-classes', 'text-block', 'render-block', 'container-block',
+    // RenderBlock 实例
+    'code-block', 'image', 'math-block', 'video-block', 'audio-block', 'tweet-block',
+    // ContainerBlock 实例
+    'toggle-heading', 'toggle-list', 'task-list', 'frame-block', 'table', 'column-list',
+    // 其他
+    'horizontal-rule', 'hard-break', 'note-link', 'math-inline', 'marks',
+    // 框架文档
+    'block-action', 'block-relation-model', 'container-nesting-design',
   ];
 
   // 构建 taskItem 列表

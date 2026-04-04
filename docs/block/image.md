@@ -1,6 +1,6 @@
 # image — 图片
 
-> **类型**：Block（叶子，可升级为 Tab Container）
+> **类型**：RenderBlock（见 `base/render-block.md`）
 > **位置**：文档中任意位置
 > **状态**：待实现
 

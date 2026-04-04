@@ -1,6 +1,6 @@
 # table — 表格
 
-> **类型**：Container（table + tableRow + tableCell + tableHeader 四个 Block 协同）
+> **类型**：ContainerBlock（见 `base/container-block.md`）
 > **位置**：文档中任意位置
 > **状态**：待实现
 

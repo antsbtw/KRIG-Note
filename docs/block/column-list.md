@@ -1,6 +1,6 @@
 # columnList + column — 多列布局
 
-> **类型**：Container（columnList 包含 2-3 个 column）
+> **类型**：ContainerBlock（见 `base/container-block.md`）
 > **位置**：文档中任意位置
 > **状态**：待实现
 

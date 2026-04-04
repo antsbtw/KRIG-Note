@@ -1,6 +1,6 @@
 # taskList — 任务列表
 
-> **类型**：Container（包含 taskItem 子节点）
+> **类型**：ContainerBlock（见 `base/container-block.md`）
 > **位置**：文档中任意位置
 > **状态**：待实现
 
