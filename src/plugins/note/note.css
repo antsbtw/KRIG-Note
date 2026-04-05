@@ -491,11 +491,12 @@
   cursor: pointer;
   user-select: none;
   font-size: 14px;
-  color: #888;
+  color: #e8eaed;
   vertical-align: top;
   margin-top: 4px;
+  text-align: center;
 }
-.toggle-list__arrow:hover { color: #e8eaed; }
+.toggle-list__arrow:hover { background: rgba(255, 255, 255, 0.1); }
 .toggle-list__content { display: inline-block; width: calc(100% - 24px); vertical-align: top; }
 .toggle-list--closed .toggle-list__content > *:not(:first-child) { display: none; }
 

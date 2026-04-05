@@ -15,7 +15,7 @@ const toggleListNodeView: NodeViewFactory = (node, view, getPos) => {
   // 折叠箭头
   const arrow = document.createElement('span');
   arrow.classList.add('toggle-list__arrow');
-  arrow.textContent = node.attrs.open !== false ? '▾' : '▸';
+  arrow.textContent = node.attrs.open !== false ? '▼' : '▶';
   arrow.setAttribute('contenteditable', 'false');
   arrow.addEventListener('mousedown', (e) => {
     e.preventDefault();
@@ -39,7 +39,7 @@ const toggleListNodeView: NodeViewFactory = (node, view, getPos) => {
       node = updatedNode;
       const isOpen = updatedNode.attrs.open !== false;
       dom.classList.toggle('toggle-list--closed', !isOpen);
-      arrow.textContent = isOpen ? '▾' : '▸';
+      arrow.textContent = isOpen ? '▼' : '▶';
       return true;
     },
     ignoreMutation(mutation) {
@@ -62,5 +62,5 @@ export const toggleListBlock: BlockDef = {
   nodeView: toggleListNodeView,
   capabilities: { turnInto: ['textBlock'], canDelete: true, canDrag: true },
   containerRule: {},
-  slashMenu: { label: 'Toggle List', icon: '▸', group: 'basic', keywords: ['toggle', 'fold', 'collapse', '折叠'], order: 9 },
+  slashMenu: { label: 'Toggle List', icon: '▶', group: 'basic', keywords: ['toggle', 'fold', 'collapse', '折叠'], order: 9 },
 };
