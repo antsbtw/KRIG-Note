@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
 import type { EditorView } from 'prosemirror-view';
+import { TextSelection } from 'prosemirror-state';
+import { blockRegistry } from '../registry';
 
 /**
  * HandleMenu — 手柄点击后的操作菜单
@@ -72,6 +74,26 @@ export function HandleMenu({ view }: HandleMenuProps) {
     close();
   };
 
+  /** RenderBlock → textBlock: 保留文本内容 */
+  const turnIntoTextBlock = () => {
+    const node = view.state.doc.nodeAt(menu.pos);
+    if (!node) return;
+    const text = node.textContent;
+    const schema = view.state.schema;
+    const newBlock = text
+      ? schema.nodes.textBlock.create(null, schema.text(text))
+      : schema.nodes.textBlock.create();
+    const tr = view.state.tr.replaceWith(menu.pos, menu.pos + node.nodeSize, newBlock);
+    tr.setSelection(TextSelection.create(tr.doc, menu.pos + 1));
+    view.dispatch(tr);
+    close();
+  };
+
+  // 查询当前 block 的 capabilities
+  const blockDef = blockRegistry.get(menu.blockType);
+  const canTurnInto = blockDef?.capabilities?.turnInto ?? [];
+  const showTurnInto = menu.blockType !== 'textBlock' && canTurnInto.length > 0;
+
   return (
     <div className="handle-menu" style={{ ...styles.container, left: menu.coords.left, top: menu.coords.top }} onMouseDown={(e) => e.stopPropagation()}>
       {menu.blockType === 'textBlock' && (
@@ -92,6 +114,21 @@ export function HandleMenu({ view }: HandleMenuProps) {
               <span style={styles.icon}>{item.icon}</span><span>{item.label}</span>
             </div>
           ))}
+          <div style={styles.separator} />
+        </>
+      )}
+      {showTurnInto && (
+        <>
+          {canTurnInto.includes('textBlock') && (
+            <div
+              style={styles.item}
+              onMouseDown={(e) => { e.preventDefault(); turnIntoTextBlock(); }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = '#3a3a3a')}
+              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+            >
+              <span style={styles.icon}>T</span><span>转为文本</span>
+            </div>
+          )}
           <div style={styles.separator} />
         </>
       )}

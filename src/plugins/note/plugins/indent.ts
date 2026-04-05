@@ -248,9 +248,13 @@ export function indentPlugin(): Plugin {
 
       handleKeyDown(view, event) {
         if (event.key !== 'Tab') return false;
-        event.preventDefault();
 
         const { $from } = view.state.selection;
+
+        // codeBlock 有自己的 Tab 处理（插入空格），这里跳过
+        if ($from.parent.type.spec.code) return false;
+
+        event.preventDefault();
         const listInfo = isInList(view, $from.pos);
 
         if (event.shiftKey) {

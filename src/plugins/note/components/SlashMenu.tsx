@@ -3,6 +3,7 @@ import type { EditorView } from 'prosemirror-view';
 import { TextSelection } from 'prosemirror-state';
 import { slashCommandKey } from '../plugins/slash-command';
 import { blockRegistry } from '../registry';
+import { CODE_LANGUAGES } from '../blocks/code-block';
 
 /**
  * SlashMenu — / 命令菜单
@@ -42,13 +43,42 @@ export function SlashMenu({ view }: SlashMenuProps) {
         keywords: item.keywords,
       }));
 
-      const filtered = allItems
+      let filtered = allItems
         .filter((item) => {
           if (!query) return true;
           return item.label.toLowerCase().includes(query)
             || item.keywords.some((k) => k.includes(query));
         })
         .sort((a, b) => a.order - b.order);
+
+      // /code <partial> → 前缀匹配已知语言，显示完整语言名
+      const codeMatch = query.match(/^code\s+(\S+)/i);
+      if (codeMatch) {
+        const partial = codeMatch[1].toLowerCase();
+        const matches = CODE_LANGUAGES.filter(l => l && l.startsWith(partial));
+        if (matches.length > 0) {
+          filtered = matches.map(lang => ({
+            id: `codeBlock-${lang}`,
+            label: `Code ${lang}`,
+            icon: '</>',
+            blockName: 'codeBlock',
+            attrs: { language: lang },
+            order: 0,
+            keywords: [],
+          }));
+        } else {
+          // 没有匹配的已知语言 → 用输入内容作为自定义语言
+          filtered = [{
+            id: `codeBlock-${partial}`,
+            label: `Code ${partial}`,
+            icon: '</>',
+            blockName: 'codeBlock',
+            attrs: { language: partial },
+            order: 0,
+            keywords: [],
+          }];
+        }
+      }
 
       setItems(filtered);
       setSelectedIdx(0);

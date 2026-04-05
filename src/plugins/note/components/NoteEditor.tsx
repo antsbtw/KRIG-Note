@@ -110,6 +110,7 @@ function buildPlugins(s: ReturnType<typeof getSchema>) {
     indentPlugin(),              // Tab/Shift+Tab — 在 baseKeymap 之前拦截
     slashCommandPlugin(),
     containerKeyboardPlugin(),
+    ...blockPlugins,             // Block 专有键盘处理（codeBlock 等）— 在 baseKeymap 之前
     buildInputRules(s),
     keymap({ 'Mod-z': undo, 'Mod-Shift-z': redo, 'Mod-y': redo }),
     keymap(markKeymap),
@@ -119,7 +120,6 @@ function buildPlugins(s: ReturnType<typeof getSchema>) {
     history(),
     dropCursor({ color: '#8ab4f8', width: 2 }),
     gapCursor(),
-    ...blockPlugins,
   ];
 }
 

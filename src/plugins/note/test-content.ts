@@ -192,8 +192,44 @@ export function buildTestDocument(schema: Schema): PMNode {
     heading(schema, 1, '三、RenderBlock / 独立 Block'),
 
     heading(schema, 2, '3.1 codeBlock'),
-    schema.node('codeBlock', { language: 'javascript' }),
-    p(schema, '测试：输入代码 / Enter 换行 / 双 Enter 退出'),
+
+    heading(schema, 3, '3.1.1 创建'),
+    p(schema, '• 空行输入 ``` → 转为 codeBlock'),
+    p(schema, '• SlashMenu /code → 创建 codeBlock'),
+    p(schema, '• SlashMenu /mermaid → 创建 language=mermaid 的 codeBlock'),
+    p(schema, '在下方空行测试 ``` 和 /code：'),
+    p(schema),
+
+    heading(schema, 3, '3.1.2 键盘行为'),
+    schema.node('codeBlock', { language: 'javascript' }, [
+      schema.text('// 在此测试键盘行为\nfunction hello() {\n  console.log("world");\n}'),
+    ]),
+    p(schema, '• Enter → 插入换行（不创建新 block）'),
+    p(schema, '• 双 Enter 退出 → 在代码末尾连按两次 Enter → 退出到新 textBlock'),
+    p(schema, '• Tab → 插入 2 个空格（代码缩进，不是 block 视觉缩进）'),
+    p(schema, '• Shift+Tab → 删除行首 2 个空格（反缩进）'),
+    p(schema, '• Backspace（空 codeBlock）→ 替换为 textBlock'),
+
+    heading(schema, 3, '3.1.3 语言选择器'),
+    schema.node('codeBlock', { language: 'python' }, [
+      schema.text('# hover 显示 toolbar → 点击语言名切换\nprint("hello")'),
+    ]),
+    p(schema, '• hover codeBlock → 顶部 toolbar 显示'),
+    p(schema, '• 点击语言名（如 python）→ 弹出输入框 + 下拉列表'),
+    p(schema, '• 输入关键字过滤 / 点击选择 / Enter 确认 / Escape 取消'),
+
+    heading(schema, 3, '3.1.4 复制按钮'),
+    schema.node('codeBlock', { language: '' }, [
+      schema.text('点击右上角 📋 按钮复制此代码'),
+    ]),
+    p(schema, '• hover → toolbar 右侧 📋 按钮 → 点击复制代码到剪贴板'),
+
+    heading(schema, 3, '3.1.5 HandleMenu'),
+    schema.node('codeBlock', { language: 'rust' }, [
+      schema.text('// 点击左侧手柄 ⠿ 测试菜单\nfn main() {}'),
+    ]),
+    p(schema, '• 手柄菜单 → "转为文本"（保留文本内容）'),
+    p(schema, '• 手柄菜单 → "删除"'),
 
     heading(schema, 2, '3.2 mathBlock'),
     mathBlock(schema, 'E = mc^2'),
