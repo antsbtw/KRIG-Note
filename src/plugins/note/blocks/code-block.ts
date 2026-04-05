@@ -424,20 +424,47 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
     fsSpacer.style.flex = '1';
     fsToolbar.appendChild(fsSpacer);
 
-    // 导出按钮组
-    const btnDownloadPng = makeBtn(ICON_DOWNLOAD, '下载 PNG');
-    const btnDownloadSvg = makeBtn(ICON_DOWNLOAD, '下载 SVG');
-    btnDownloadSvg.querySelector('svg')?.setAttribute('stroke', '#8ab4f8');
-    const btnCopyPng = makeBtn(ICON_CLIPBOARD, '复制 PNG');
-    const btnCopySvg = makeBtn(ICON_CLIPBOARD, '复制 SVG');
-    btnCopySvg.querySelector('svg')?.setAttribute('stroke', '#8ab4f8');
+    // 导出按钮（toggle 格式）
+    let downloadFormat: 'PNG' | 'SVG' = 'PNG';
+    let copyFormat: 'PNG' | 'SVG' = 'PNG';
+
+    function makeToggleBtn(icon: string, getLabel: () => string, title: string): HTMLButtonElement {
+      const btn = document.createElement('button');
+      btn.classList.add('code-block__fs-btn', 'code-block__fs-btn--labeled');
+      btn.title = title;
+      btn.innerHTML = `${icon}<span class="code-block__fs-btn-label">${getLabel()}</span>`;
+      return btn;
+    }
+    function updateBtnLabel(btn: HTMLButtonElement, icon: string, label: string) {
+      btn.innerHTML = `${icon}<span class="code-block__fs-btn-label">${label}</span>`;
+    }
+
+    const btnDownload = makeToggleBtn(ICON_DOWNLOAD, () => downloadFormat, '下载（点击标签切换格式）');
+    const btnCopy = makeToggleBtn(ICON_CLIPBOARD, () => copyFormat, '复制（点击标签切换格式）');
     const btnFit = makeBtn(ICON_FIT, '适应屏幕');
 
-    fsToolbar.appendChild(btnDownloadPng);
-    fsToolbar.appendChild(btnDownloadSvg);
-    fsToolbar.appendChild(makeSep());
-    fsToolbar.appendChild(btnCopyPng);
-    fsToolbar.appendChild(btnCopySvg);
+    // 点击标签切换格式
+    btnDownload.addEventListener('click', (e) => {
+      const label = (e.target as HTMLElement).closest('.code-block__fs-btn-label');
+      if (label) {
+        e.stopPropagation();
+        downloadFormat = downloadFormat === 'PNG' ? 'SVG' : 'PNG';
+        updateBtnLabel(btnDownload, ICON_DOWNLOAD, downloadFormat);
+        return;
+      }
+    });
+    btnCopy.addEventListener('click', (e) => {
+      const label = (e.target as HTMLElement).closest('.code-block__fs-btn-label');
+      if (label) {
+        e.stopPropagation();
+        copyFormat = copyFormat === 'PNG' ? 'SVG' : 'PNG';
+        updateBtnLabel(btnCopy, ICON_CLIPBOARD, copyFormat);
+        return;
+      }
+    });
+
+    fsToolbar.appendChild(btnDownload);
+    fsToolbar.appendChild(btnCopy);
     fsToolbar.appendChild(makeSep());
     fsToolbar.appendChild(btnFit);
     fsToolbar.appendChild(makeSep());
@@ -659,59 +686,61 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
     // ── 导出 ──
     function getSvgEl(): SVGElement | null { return previewWrapper.querySelector('svg'); }
 
-    btnDownloadPng.addEventListener('click', () => {
+    // 下载（根据当前 toggle 格式）
+    btnDownload.addEventListener('click', (e) => {
+      // 如果点击的是 label，已在上方 toggle 处理
+      if ((e.target as HTMLElement).closest('.code-block__fs-btn-label')) return;
       const svgEl = getSvgEl();
-      if (svgEl) exportSvgAsPng(svgEl, 'mermaid-diagram.png');
+      if (!svgEl) return;
+      if (downloadFormat === 'PNG') {
+        exportSvgAsPng(svgEl, 'mermaid-diagram.png');
+      } else {
+        const svgData = new XMLSerializer().serializeToString(svgEl);
+        const blob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'mermaid-diagram.svg';
+        a.click();
+        URL.revokeObjectURL(a.href);
+      }
     });
 
-    btnDownloadSvg.addEventListener('click', () => {
+    // 复制（根据当前 toggle 格式）
+    btnCopy.addEventListener('click', async (e) => {
+      if ((e.target as HTMLElement).closest('.code-block__fs-btn-label')) return;
       const svgEl = getSvgEl();
       if (!svgEl) return;
       const svgData = new XMLSerializer().serializeToString(svgEl);
-      const blob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = 'mermaid-diagram.svg';
-      a.click();
-      URL.revokeObjectURL(a.href);
-    });
 
-    btnCopyPng.addEventListener('click', async () => {
-      const svgEl = getSvgEl();
-      if (!svgEl) return;
-      const svgData = new XMLSerializer().serializeToString(svgEl);
-      const blob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        canvas.width = img.naturalWidth * 2;
-        canvas.height = img.naturalHeight * 2;
-        const ctx = canvas.getContext('2d')!;
-        ctx.scale(2, 2);
-        ctx.drawImage(img, 0, 0);
-        URL.revokeObjectURL(url);
-        canvas.toBlob(async (b) => {
-          if (!b) return;
-          try {
-            await navigator.clipboard.write([new ClipboardItem({ 'image/png': b })]);
-            btnCopyPng.classList.add('code-block__fs-btn--ok');
-            setTimeout(() => btnCopyPng.classList.remove('code-block__fs-btn--ok'), 1500);
-          } catch { /* clipboard API may fail */ }
-        }, 'image/png');
-      };
-      img.src = url;
-    });
-
-    btnCopySvg.addEventListener('click', async () => {
-      const svgEl = getSvgEl();
-      if (!svgEl) return;
-      const svgData = new XMLSerializer().serializeToString(svgEl);
-      try {
-        await navigator.clipboard.writeText(svgData);
-        btnCopySvg.classList.add('code-block__fs-btn--ok');
-        setTimeout(() => btnCopySvg.classList.remove('code-block__fs-btn--ok'), 1500);
-      } catch { /* fallback */ }
+      if (copyFormat === 'SVG') {
+        try {
+          await navigator.clipboard.writeText(svgData);
+          btnCopy.classList.add('code-block__fs-btn--ok');
+          setTimeout(() => btnCopy.classList.remove('code-block__fs-btn--ok'), 1500);
+        } catch { /* fallback */ }
+      } else {
+        const blob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          canvas.width = img.naturalWidth * 2;
+          canvas.height = img.naturalHeight * 2;
+          const ctx = canvas.getContext('2d')!;
+          ctx.scale(2, 2);
+          ctx.drawImage(img, 0, 0);
+          URL.revokeObjectURL(url);
+          canvas.toBlob(async (b) => {
+            if (!b) return;
+            try {
+              await navigator.clipboard.write([new ClipboardItem({ 'image/png': b })]);
+              btnCopy.classList.add('code-block__fs-btn--ok');
+              setTimeout(() => btnCopy.classList.remove('code-block__fs-btn--ok'), 1500);
+            } catch { /* clipboard API may fail */ }
+          }, 'image/png');
+        };
+        img.src = url;
+      }
     });
 
     // ── 关闭 → 同步内容回 ProseMirror ──
