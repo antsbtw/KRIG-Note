@@ -18,20 +18,11 @@ import { codeBlockKeyboardPlugin } from '../plugins/code-block-keyboard';
 let mermaidInitialized = false;
 let mermaidModule: any = null;
 
-async function ensureMermaidInit() {
-  if (mermaidInitialized) return;
-  mermaidInitialized = true;
-  mermaidModule = (await import('mermaid')).default;
-
-  try {
-    const elkLayouts = (await import('@mermaid-js/layout-elk')).default;
-    mermaidModule.registerLayoutLoaders(elkLayouts);
-  } catch { /* ELK not available, use dagre */ }
-
-  mermaidModule.initialize({
+function buildMermaidConfig(theme: string = 'dark') {
+  return {
     startOnLoad: false,
-    theme: 'dark',
-    darkMode: true,
+    theme,
+    darkMode: theme === 'dark',
     securityLevel: 'loose',
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
     fontSize: 16,
@@ -46,7 +37,20 @@ async function ensureMermaidInit() {
       wrappingWidth: 400,
       defaultRenderer: 'elk',
     },
-  });
+  };
+}
+
+async function ensureMermaidInit() {
+  if (mermaidInitialized) return;
+  mermaidInitialized = true;
+  mermaidModule = (await import('mermaid')).default;
+
+  try {
+    const elkLayouts = (await import('@mermaid-js/layout-elk')).default;
+    mermaidModule.registerLayoutLoaders(elkLayouts);
+  } catch { /* ELK not available, use dagre */ }
+
+  mermaidModule.initialize(buildMermaidConfig('dark'));
 }
 
 // ── 语言列表 ──
@@ -511,7 +515,7 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
       await ensureMermaidInit();
 
       // 应用主题
-      mermaidModule.initialize({ startOnLoad: false, theme: currentTheme, securityLevel: 'loose' });
+      mermaidModule.initialize(buildMermaidConfig(currentTheme));
 
       const renderId = `fs-mermaid-${++fsIdCounter}`;
       try {
@@ -691,9 +695,9 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
 
     // ── 关闭 → 同步内容回 ProseMirror ──
     const close = () => {
-      // 恢复 mermaid 主题为 dark（inline 预览用 dark）
+      // 恢复 mermaid 配置为 dark（inline 预览用 dark）
       if (currentTheme !== 'dark') {
-        mermaidModule?.initialize?.({ startOnLoad: false, theme: 'dark', securityLevel: 'loose' });
+        mermaidModule?.initialize?.(buildMermaidConfig('dark'));
       }
       const newContent = textarea.value;
       const pos = typeof getPos === 'function' ? getPos() : undefined;
