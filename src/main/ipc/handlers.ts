@@ -306,6 +306,25 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
       }
     }
   });
+
+  // ── 文件保存对话框 ──
+  ipcMain.handle(IPC.FILE_SAVE_DIALOG, async (_event, options: {
+    defaultName: string;
+    data: string;         // base64 编码的文件内容
+    filters?: { name: string; extensions: string[] }[];
+  }) => {
+    const { dialog } = await import('electron');
+    const { writeFile } = await import('fs/promises');
+    const mainWindow = getMainWindow();
+    const result = await dialog.showSaveDialog(mainWindow as any, {
+      defaultPath: options.defaultName,
+      filters: options.filters || [{ name: 'All Files', extensions: ['*'] }],
+    });
+    if (result.canceled || !result.filePath) return { canceled: true };
+    const buffer = Buffer.from(options.data, 'base64');
+    await writeFile(result.filePath, buffer);
+    return { canceled: false, filePath: result.filePath };
+  });
 }
 
 /** 广播 NoteFile 列表变更 */

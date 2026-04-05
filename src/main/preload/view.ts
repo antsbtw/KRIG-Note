@@ -77,6 +77,10 @@ contextBridge.exposeInMainWorld('viewAPI', {
     return () => ipcRenderer.removeListener(IPC.LOAD_TEST_DOC, listener);
   },
 
+  // 文件保存对话框
+  fileSaveDialog: (options: { defaultName: string; data: string; filters?: { name: string; extensions: string[] }[] }) =>
+    ipcRenderer.invoke(IPC.FILE_SAVE_DIALOG, options),
+
   // 状态监听
   onStateChanged: (callback: (state: unknown) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, state: unknown) => callback(state);

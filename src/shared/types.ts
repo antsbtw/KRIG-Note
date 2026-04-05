@@ -187,4 +187,7 @@ export const IPC = {
   // SurrealDB 状态
   DB_READY: 'db:ready',
   IS_DB_READY: 'db:is-ready',
+
+  // 文件保存对话框
+  FILE_SAVE_DIALOG: 'file:save-dialog',
 } as const;

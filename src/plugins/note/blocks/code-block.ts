@@ -327,6 +327,7 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
     exportSvgAsPng(svgEl, 'mermaid-diagram.png');
   });
 
+  /** 通过系统保存对话框导出 PNG */
   function exportSvgAsPng(svgEl: SVGElement, filename: string) {
     const svgData = new XMLSerializer().serializeToString(svgEl);
     const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
@@ -341,16 +342,29 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
       ctx.scale(scale, scale);
       ctx.drawImage(img, 0, 0);
       URL.revokeObjectURL(url);
-      canvas.toBlob((blob) => {
+      canvas.toBlob(async (blob) => {
         if (!blob) return;
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = filename;
-        a.click();
-        URL.revokeObjectURL(a.href);
+        const buf = await blob.arrayBuffer();
+        const base64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+        (window as any).viewAPI?.fileSaveDialog?.({
+          defaultName: filename,
+          data: base64,
+          filters: [{ name: 'PNG Image', extensions: ['png'] }],
+        });
       }, 'image/png');
     };
     img.src = url;
+  }
+
+  /** 通过系统保存对话框导出 SVG */
+  function exportSvgAsFile(svgEl: SVGElement, filename: string) {
+    const svgData = new XMLSerializer().serializeToString(svgEl);
+    const base64 = btoa(unescape(encodeURIComponent(svgData)));
+    (window as any).viewAPI?.fileSaveDialog?.({
+      defaultName: filename,
+      data: base64,
+      filters: [{ name: 'SVG Image', extensions: ['svg'] }],
+    });
   }
 
   // ── 全屏编辑 ──
@@ -688,20 +702,13 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
 
     // 下载（根据当前 toggle 格式）
     btnDownload.addEventListener('click', (e) => {
-      // 如果点击的是 label，已在上方 toggle 处理
       if ((e.target as HTMLElement).closest('.code-block__fs-btn-label')) return;
       const svgEl = getSvgEl();
       if (!svgEl) return;
       if (downloadFormat === 'PNG') {
         exportSvgAsPng(svgEl, 'mermaid-diagram.png');
       } else {
-        const svgData = new XMLSerializer().serializeToString(svgEl);
-        const blob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = 'mermaid-diagram.svg';
-        a.click();
-        URL.revokeObjectURL(a.href);
+        exportSvgAsFile(svgEl, 'mermaid-diagram.svg');
       }
     });
 
