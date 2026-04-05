@@ -64,15 +64,14 @@ function getLangLabel(language: string | null): string {
 
 // ── SVG Icons ──
 
-const ICON_CODE = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>';
-const ICON_SPLIT = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="3" x2="12" y2="21"/></svg>';
-const ICON_PREVIEW = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>';
+// 眼睛图标：toggle 代码显隐（split ↔ preview）
+const ICON_EYE = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
 const ICON_COPY = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
 const ICON_DOWNLOAD = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
 const ICON_FULLSCREEN = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>';
 
 let mermaidIdCounter = 0;
-type ViewMode = 'code' | 'split' | 'preview';
+type ViewMode = 'split' | 'preview';
 
 // ── NodeView ──
 
@@ -185,9 +184,7 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
 
   // ── Mermaid 扩展按钮（动态添加/移除） ──
   let mermaidBtnsInserted = false;
-  const btnCode = createBtn(ICON_CODE, '仅代码', 'code-block__toolbar-btn--mode');
-  const btnSplit = createBtn(ICON_SPLIT, '代码 + 预览', 'code-block__toolbar-btn--mode');
-  const btnPreview = createBtn(ICON_PREVIEW, '仅预览', 'code-block__toolbar-btn--mode');
+  const btnToggle = createBtn(ICON_EYE, '切换代码/预览');
   const mermaidSep = document.createElement('div');
   mermaidSep.classList.add('code-block__toolbar-sep');
   const btnDownload = createBtn(ICON_DOWNLOAD, '下载图片');
@@ -195,9 +192,7 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
 
   function insertMermaidBtns() {
     if (mermaidBtnsInserted) return;
-    toolbar.insertBefore(btnCode, spacer);
-    toolbar.insertBefore(btnSplit, spacer);
-    toolbar.insertBefore(btnPreview, spacer);
+    toolbar.insertBefore(btnToggle, spacer);
     toolbar.insertBefore(mermaidSep, spacer);
     toolbar.insertBefore(btnDownload, spacer);
     toolbar.insertBefore(btnFullscreen, spacer);
@@ -206,9 +201,7 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
 
   function removeMermaidBtns() {
     if (!mermaidBtnsInserted) return;
-    btnCode.remove();
-    btnSplit.remove();
-    btnPreview.remove();
+    btnToggle.remove();
     mermaidSep.remove();
     btnDownload.remove();
     btnFullscreen.remove();
@@ -231,17 +224,16 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
   preview.style.display = 'none';
   dom.appendChild(preview);
 
-  // ── 模式切换 ──
+  // ── 模式切换（split ↔ preview） ──
   function updateViewMode(mode: ViewMode) {
     viewMode = mode;
-    btnCode.classList.toggle('code-block__toolbar-btn--active', mode === 'code');
-    btnSplit.classList.toggle('code-block__toolbar-btn--active', mode === 'split');
-    btnPreview.classList.toggle('code-block__toolbar-btn--active', mode === 'preview');
+    btnToggle.classList.toggle('code-block__toolbar-btn--active', mode === 'preview');
+    btnToggle.title = mode === 'split' ? '隐藏代码' : '显示代码';
 
     if (node.attrs.language !== 'mermaid') return;
     pre.style.display = mode === 'preview' ? 'none' : '';
     dom.classList.toggle('code-block--preview-only', mode === 'preview');
-    preview.style.display = mode === 'code' ? 'none' : 'flex';
+    preview.style.display = 'flex';
   }
 
   function updateToolbarVisibility() {
@@ -254,9 +246,10 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
     }
   }
 
-  btnCode.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); updateViewMode('code'); });
-  btnSplit.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); updateViewMode('split'); });
-  btnPreview.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); updateViewMode('preview'); });
+  btnToggle.addEventListener('mousedown', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    updateViewMode(viewMode === 'split' ? 'preview' : 'split');
+  });
 
   // ── 复制 ──
   btnCopy.addEventListener('mousedown', (e) => {
@@ -398,7 +391,7 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
 
     const trimmed = source.replace(/[\u200B\u200C\u200D\uFEFF]/g, '').trim();
     if (!trimmed) {
-      if (viewMode !== 'code') preview.style.display = 'flex';
+      preview.style.display = 'flex';
       preview.innerHTML = '<div class="code-block__mermaid-empty">输入 Mermaid 语法查看预览</div>';
       return;
     }
@@ -407,10 +400,10 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
     const renderId = `mermaid-${++mermaidIdCounter}`;
     try {
       const { svg } = await mermaidModule.render(renderId, trimmed);
-      if (viewMode !== 'code') preview.style.display = 'flex';
+      preview.style.display = 'flex';
       preview.innerHTML = svg;
     } catch {
-      if (viewMode !== 'code') preview.style.display = 'flex';
+      preview.style.display = 'flex';
       preview.innerHTML = '<div class="code-block__mermaid-error">Mermaid 语法错误</div>';
       document.getElementById('d' + renderId)?.remove();
     }
