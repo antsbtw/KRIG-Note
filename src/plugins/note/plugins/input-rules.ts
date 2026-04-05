@@ -1,6 +1,6 @@
 import { inputRules, InputRule } from 'prosemirror-inputrules';
 import type { Schema } from 'prosemirror-model';
-import { Plugin } from 'prosemirror-state';
+import { Plugin, TextSelection } from 'prosemirror-state';
 
 /**
  * Markdown 输入规则
@@ -38,7 +38,10 @@ function wrapInContainer(containerName: string) {
     const updatedBlockEnd = blockStart + updatedNode.nodeSize;
 
     const container = containerType.create(null, [updatedNode.copy(updatedNode.content)]);
-    return tr.replaceWith(blockStart, updatedBlockEnd, container);
+    tr.replaceWith(blockStart, updatedBlockEnd, container);
+    // 光标定位到 container 内第一个子 block
+    tr.setSelection(TextSelection.near(tr.doc.resolve(blockStart + 2)));
+    return tr;
   };
 }
 
