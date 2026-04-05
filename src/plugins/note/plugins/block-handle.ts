@@ -140,23 +140,42 @@ export function blockHandlePlugin(): Plugin {
 
           if (!blockDOM) { hideHandle(); return false; }
 
+          // 找到鼠标位置对应的最内层 block（不限 depth=1）
           let blockStart: number;
-          let topNode: any;
+          let blockNode: any;
+          let targetBlockDOM: HTMLElement = blockDOM;
           try {
-            const innerPos = view.posAtDOM(blockDOM, 0);
-            const $pos = view.state.doc.resolve(innerPos);
+            const pos = view.posAtCoords({ left: event.clientX, top: event.clientY });
+            if (!pos) { hideHandle(); return false; }
+            const $pos = view.state.doc.resolve(pos.pos);
             if ($pos.depth < 1) { hideHandle(); return false; }
-            blockStart = $pos.before(1);
-            topNode = $pos.node(1);
+
+            // 找到最内层的 block 节点（textBlock 或其他叶子 block）
+            let targetDepth = $pos.depth;
+            let node = $pos.node(targetDepth);
+
+            // 如果当前是 inline 层级，向上一级到 block
+            if (node.isInline || node.type.name === 'text') {
+              targetDepth = $pos.depth - 1;
+              node = $pos.node(targetDepth);
+            }
+
+            blockStart = $pos.before(targetDepth);
+            blockNode = node;
+
+            // 获取该 block 的 DOM
+            const dom = view.nodeDOM(blockStart);
+            if (dom instanceof HTMLElement) targetBlockDOM = dom;
+            else if ((dom as Node)?.parentElement) targetBlockDOM = (dom as Node).parentElement as HTMLElement;
           } catch { hideHandle(); return false; }
-          if (!topNode) { hideHandle(); return false; }
+          if (!blockNode) { hideHandle(); return false; }
 
           // noteTitle 不显示手柄
-          if (topNode.type.name === 'textBlock' && topNode.attrs.isTitle) { hideHandle(); return false; }
+          if (blockNode.type.name === 'textBlock' && blockNode.attrs.isTitle) { hideHandle(); return false; }
 
           if (currentPos === blockStart) return false;
           currentPos = blockStart;
-          currentBlockType = topNode.type.name;
+          currentBlockType = blockNode.type.name;
 
           if (hideTimeout) { clearTimeout(hideTimeout); hideTimeout = null; }
 
@@ -165,7 +184,7 @@ export function blockHandlePlugin(): Plugin {
             const container = handleDOM.parentElement;
             const containerRect = container?.getBoundingClientRect();
             if (containerRect && container) {
-              const blockRect = blockDOM.getBoundingClientRect();
+              const blockRect = targetBlockDOM.getBoundingClientRect();
               const scrollTop = container.scrollTop;
               const handleHeight = 24;
 
