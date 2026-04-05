@@ -172,8 +172,14 @@ export function SlashMenu({ view }: SlashMenuProps) {
 
     if (containerNode) {
       const replaceTr = view.state.tr.replaceWith(blockStart, blockEnd, containerNode);
-      const $pos = replaceTr.doc.resolve(blockStart + 1);
-      replaceTr.setSelection(TextSelection.near($pos));
+      // 光标定位到新节点内第一个可编辑位置
+      try {
+        replaceTr.setSelection(TextSelection.near(replaceTr.doc.resolve(blockStart + 1)));
+      } catch {
+        try {
+          replaceTr.setSelection(TextSelection.near(replaceTr.doc.resolve(blockStart + 2)));
+        } catch { /* fallback */ }
+      }
       view.dispatch(replaceTr);
     }
 

@@ -56,7 +56,28 @@ export function buildInputRules(schema: Schema): Plugin {
 
   // Container shortcuts
   if (schema.nodes.bulletList) rules.push(new InputRule(/^[-*]\s$/, wrapInContainer('bulletList')));
-  if (schema.nodes.orderedList) rules.push(new InputRule(/^1\.\s$/, wrapInContainer('orderedList')));
+  if (schema.nodes.orderedList) {
+    rules.push(new InputRule(/^(\d+)\.\s$/, (state: any, match: any, start: number, end: number) => {
+      const startNum = parseInt(match[1], 10) || 1;
+      const containerType = state.schema.nodes.orderedList;
+      if (!containerType) return null;
+
+      const $start = state.doc.resolve(start);
+      const blockStart = $start.before($start.depth);
+      const node = state.doc.nodeAt(blockStart);
+      if (!node || node.type.name !== 'textBlock') return null;
+
+      let tr = state.tr.delete(start, end);
+      const updatedNode = tr.doc.nodeAt(blockStart);
+      if (!updatedNode) return null;
+      const updatedBlockEnd = blockStart + updatedNode.nodeSize;
+
+      const container = containerType.create({ start: startNum }, [updatedNode.copy(updatedNode.content)]);
+      tr.replaceWith(blockStart, updatedBlockEnd, container);
+      tr.setSelection(TextSelection.near(tr.doc.resolve(blockStart + 2)));
+      return tr;
+    }));
+  }
   if (schema.nodes.taskList && schema.nodes.taskItem) {
     const wrapInTaskList = (checked: boolean) => {
       return (state: any, _match: any, start: number, end: number) => {

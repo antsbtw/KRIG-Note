@@ -24,15 +24,25 @@ export function containerKeyboardPlugin(): Plugin {
         // 至少 depth=2 才可能在 Container 内（doc > Container > textBlock）
         if ($from.depth < 2) return false;
 
-        const parentNode = $from.node($from.depth - 1);
-        const parentDef = blockRegistry.get(parentNode.type.name);
+        let containerDepth = $from.depth - 1;
+        let parentNode = $from.node(containerDepth);
+        let parentDef = blockRegistry.get(parentNode.type.name);
 
         // 只处理有 containerRule 的父节点（= ContainerBlock）
         if (!parentDef?.containerRule) return false;
 
+        // taskItem 是中间层：Enter/Backspace 需要在 taskList 层级操作
+        // 向上找到 taskList 作为真正的容器
+        let taskListDepth = -1;
+        if (parentNode.type.name === 'taskItem' && containerDepth >= 2) {
+          const grandparent = $from.node(containerDepth - 1);
+          if (grandparent.type.name === 'taskList') {
+            taskListDepth = containerDepth - 1;
+          }
+        }
+
         const childNode = $from.parent; // 当前 textBlock
         const childDepth = $from.depth;
-        const containerDepth = $from.depth - 1;
 
         // ── Enter ──
         if (event.key === 'Enter' && !event.shiftKey) {
@@ -40,12 +50,18 @@ export function containerKeyboardPlugin(): Plugin {
 
           const isEmpty = childNode.content.size === 0;
 
-          if (isEmpty) {
+          if (isEmpty && taskListDepth >= 0) {
+            // taskList 内空行 Enter → 退出 taskItem（在 taskList 层级操作）
+            exitContainer(view, taskListDepth, containerDepth); // containerDepth = taskItem depth
+          } else if (isEmpty) {
             // 空行 Enter → 退出 Container
             exitContainer(view, containerDepth, childDepth);
+          } else if (taskListDepth >= 0) {
+            // taskList 内有内容 → 创建新 taskItem
+            splitInContainer(view, taskListDepth, childDepth);
           } else {
-            // 有内容 → 在 Container 内创建新 textBlock
-            splitInContainer(view, childDepth);
+            // 有内容 → 在 Container 内创建新子节点
+            splitInContainer(view, containerDepth, childDepth);
           }
           return true;
         }
@@ -117,35 +133,80 @@ function exitContainer(
 }
 
 /**
- * 在 Container 内分裂：光标位置创建新 textBlock
+ * 根据父容器类型创建正确的新子节点。
+ * taskList 内需要创建 taskItem > textBlock，其他容器直接创建 textBlock。
+ */
+function createNewChild(
+  view: import('prosemirror-view').EditorView,
+  containerDepth: number,
+): import('prosemirror-model').Node {
+  const { state } = view;
+  const { $from } = state.selection;
+  const parentNode = $from.node(containerDepth);
+
+  if (parentNode.type.name === 'taskList' && state.schema.nodes.taskItem) {
+    const nowISO = new Date().toISOString();
+    return state.schema.nodes.taskItem.create(
+      { createdAt: nowISO },
+      [state.schema.nodes.textBlock.create()],
+    );
+  }
+
+  return state.schema.nodes.textBlock.create();
+}
+
+/**
+ * 在 Container 内分裂：光标位置创建新子节点
  */
 function splitInContainer(
   view: import('prosemirror-view').EditorView,
+  containerDepth: number,
   childDepth: number,
 ): void {
   const { state } = view;
   const { $from } = state.selection;
   const cursorOffset = $from.parentOffset;
   const childNode = $from.parent;
+  const parentNode = $from.node(containerDepth);
+  const isTaskList = parentNode.type.name === 'taskList';
+
+  // taskList 内的 Enter 需要在 taskItem 层级操作
+  const insertDepth = isTaskList ? containerDepth + 1 : childDepth;
 
   let tr = state.tr;
 
   if (cursorOffset === childNode.content.size) {
-    // 光标在末尾 → 在当前行之后插入新空 textBlock
-    const insertPos = $from.after(childDepth);
-    const newBlock = state.schema.nodes.textBlock.create();
-    tr = tr.insert(insertPos, newBlock);
-    tr = tr.setSelection(TextSelection.create(tr.doc, insertPos + 1));
+    // 光标在末尾 → 在当前项之后插入新子节点
+    const insertPos = $from.after(insertDepth);
+    const newChild = createNewChild(view, containerDepth);
+    tr = tr.insert(insertPos, newChild);
+    tr = tr.setSelection(TextSelection.near(tr.doc.resolve(insertPos + 1)));
   } else if (cursorOffset === 0) {
-    // 光标在开头 → 在当前行之前插入新空 textBlock
-    const insertPos = $from.before(childDepth);
-    const newBlock = state.schema.nodes.textBlock.create();
-    tr = tr.insert(insertPos, newBlock);
-    // 光标保持在原位置（原内容下移一行）
-    tr = tr.setSelection(TextSelection.create(tr.doc, insertPos + newBlock.nodeSize + 1));
+    // 光标在开头 → 在当前项之前插入新子节点
+    const insertPos = $from.before(insertDepth);
+    const newChild = createNewChild(view, containerDepth);
+    tr = tr.insert(insertPos, newChild);
+    tr = tr.setSelection(TextSelection.near(tr.doc.resolve(insertPos + newChild.nodeSize + 1)));
   } else {
-    // 光标在中间 → 分裂 textBlock（在 textBlock 层级 split）
-    tr = tr.split($from.pos, 1);
+    // 光标在中间 → 分裂
+    if (isTaskList) {
+      // taskList: split 在 textBlock 层级，然后再 split 在 taskItem 层级
+      tr = tr.split($from.pos, 2);
+      // 新的 taskItem 需要设置 createdAt
+      const newTaskItemPos = $from.after(insertDepth);
+      const mappedPos = tr.mapping.map(newTaskItemPos);
+      const newTaskItem = tr.doc.nodeAt(mappedPos);
+      if (newTaskItem && newTaskItem.type.name === 'taskItem') {
+        tr = tr.setNodeMarkup(mappedPos, undefined, {
+          ...newTaskItem.attrs,
+          createdAt: new Date().toISOString(),
+          checked: false,
+          completedAt: null,
+        });
+      }
+    } else {
+      tr = tr.split($from.pos, 1);
+    }
   }
 
   view.dispatch(tr);

@@ -122,44 +122,21 @@ function nestListItem(view: EditorView, listInfo: { listPos: number; listType: s
   const prevChild = listNode.child(childIndex - 1);
   const prevChildPos = listInfo.listPos + 1 + childOffset(listNode, childIndex - 1);
 
-  // 检查上一个兄弟是否已有同类型子列表（合并进去）
   const listType = state.schema.nodes[listInfo.listType];
   if (!listType) return false;
 
-  // 检查 prevChild 内部是否已有嵌套列表
-  let existingNestedList = false;
-  let nestedListPos = -1;
-  if (prevChild.type.name === 'taskItem' || LIST_TYPES.has(prevChild.type.name)) {
-    // taskItem 或列表容器内可能有嵌套列表
-    prevChild.forEach((child, offset) => {
-      if (child.type.name === listInfo.listType) {
-        existingNestedList = true;
-        nestedListPos = prevChildPos + 1 + offset;
-      }
-    });
-  }
-
   const tr = state.tr;
 
-  if (existingNestedList && nestedListPos >= 0) {
-    // 合并：将当前项移入已有的嵌套列表末尾
-    const nestedList = state.doc.nodeAt(nestedListPos);
-    if (!nestedList) return false;
-    const insertPos = nestedListPos + nestedList.nodeSize - 1;
-
-    // 先删除当前项
+  // 如果上一个兄弟就是同类型列表 → 直接追加到它末尾（不再嵌套一层）
+  if (prevChild.type.name === listInfo.listType) {
+    const appendPos = prevChildPos + prevChild.nodeSize - 1; // 列表闭合前
     tr.delete(currentChildPos, currentChildEnd);
-    // 映射后插入
-    const mappedInsert = tr.mapping.map(insertPos);
-    tr.insert(mappedInsert, currentChild);
+    tr.insert(tr.mapping.map(appendPos), currentChild);
   } else {
-    // 创建新的嵌套列表
+    // 上一个兄弟是普通 block → 创建新子列表，插入在 prevChild 之后
     const nestedList = listType.create(null, [currentChild]);
-    // 删除当前项
     tr.delete(currentChildPos, currentChildEnd);
-    // 在上一个兄弟末尾插入嵌套列表
-    const mappedPrevEnd = tr.mapping.map(prevChildPos + prevChild.nodeSize);
-    tr.insert(mappedPrevEnd - 1, nestedList);
+    tr.insert(tr.mapping.map(prevChildPos + prevChild.nodeSize), nestedList);
   }
 
   view.dispatch(tr);

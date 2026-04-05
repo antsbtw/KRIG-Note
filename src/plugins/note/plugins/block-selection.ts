@@ -230,6 +230,23 @@ export function blockSelectionPlugin(): Plugin {
           return true;
         }
 
+        // Tab / Shift+Tab → 批量缩进
+        if (event.key === 'Tab') {
+          event.preventDefault();
+          const positions = state!.selectedPositions;
+          const tr = view.state.tr;
+          const delta = event.shiftKey ? -1 : 1;
+          for (const pos of positions) {
+            const node = tr.doc.nodeAt(pos);
+            if (node && node.attrs.indent !== undefined) {
+              const newIndent = Math.max(0, Math.min(8, (node.attrs.indent || 0) + delta));
+              tr.setNodeMarkup(pos, undefined, { ...node.attrs, indent: newIndent });
+            }
+          }
+          view.dispatch(tr);
+          return true;
+        }
+
         // Delete / Backspace → 删除选中 block
         if (event.key === 'Backspace' || event.key === 'Delete') {
           deleteSelectedBlocks(view, state!.selectedPositions);

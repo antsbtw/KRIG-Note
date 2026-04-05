@@ -61,6 +61,18 @@
 .bullet-list {
   margin: 1px 0;
 }
+/* 嵌套列表缩进（顶层不缩进，嵌套时缩进） */
+.bullet-list .bullet-list,
+.ordered-list .ordered-list,
+.task-list .task-list,
+.bullet-list .ordered-list,
+.bullet-list .task-list,
+.ordered-list .bullet-list,
+.ordered-list .task-list,
+.task-list .bullet-list,
+.task-list .ordered-list {
+  padding-left: 24px;
+}
 .bullet-list > .bullet-list__content > p,
 .bullet-list > .bullet-list__content > h1,
 .bullet-list > .bullet-list__content > h2,
@@ -130,6 +142,20 @@
   top: 3px;
   line-height: 1.7;
   font-variant-numeric: tabular-nums;
+}
+/* 嵌套 2 级 → a. b. c. */
+.ordered-list .ordered-list > .ordered-list__content > p::before,
+.ordered-list .ordered-list > .ordered-list__content > h1::before,
+.ordered-list .ordered-list > .ordered-list__content > h2::before,
+.ordered-list .ordered-list > .ordered-list__content > h3::before {
+  content: counter(ordered-item, lower-alpha) '.';
+}
+/* 嵌套 3 级 → i. ii. iii. */
+.ordered-list .ordered-list .ordered-list > .ordered-list__content > p::before,
+.ordered-list .ordered-list .ordered-list > .ordered-list__content > h1::before,
+.ordered-list .ordered-list .ordered-list > .ordered-list__content > h2::before,
+.ordered-list .ordered-list .ordered-list > .ordered-list__content > h3::before {
+  content: counter(ordered-item, lower-roman) '.';
 }
 
 /* ── taskList + taskItem ── */

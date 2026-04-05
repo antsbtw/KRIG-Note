@@ -163,12 +163,32 @@ export function buildTestDocument(schema: Schema): PMNode {
       ]),
     ]),
 
-    heading(schema, 2, '2.10 列表缩进测试'),
+    heading(schema, 2, '2.10 列表缩进测试（P2/P3）'),
     p(schema, '在 bulletList 第 2 项按 Tab → 嵌套为子列表，Shift+Tab → 提升：'),
     schema.node('bulletList', null, [
-      p(schema, '第一项（不可嵌套）'),
-      p(schema, '第二项：按 Tab 嵌套'),
-      p(schema, '第三项'),
+      p(schema, '第一项（不可嵌套——是列表第一项）'),
+      p(schema, '第二项：按 Tab 嵌套到第一项下'),
+      p(schema, '第三项：按 Tab 嵌套'),
+    ]),
+    p(schema, '在 orderedList 中测试同样的 Tab 嵌套：'),
+    schema.node('orderedList', null, [
+      p(schema, '步骤一'),
+      p(schema, '步骤二：按 Tab 嵌套'),
+      p(schema, '步骤三'),
+    ]),
+    p(schema, '在 taskList 中测试 Tab 嵌套：'),
+    schema.node('taskList', null, [
+      schema.node('taskItem', { checked: false, createdAt: new Date().toISOString() }, [p(schema, '任务 A')]),
+      schema.node('taskItem', { checked: false, createdAt: new Date().toISOString() }, [p(schema, '任务 B：按 Tab 嵌套')]),
+      schema.node('taskItem', { checked: false, createdAt: new Date().toISOString() }, [p(schema, '任务 C')]),
+    ]),
+
+    heading(schema, 2, '2.11 SlashMenu 容器内嵌套（P5）'),
+    p(schema, '在 orderedList 内输入 /bullet → 应在当前位置嵌套 bulletList：'),
+    schema.node('orderedList', null, [
+      p(schema, '步骤一'),
+      p(schema, '步骤二：在此输入 /bullet 测试嵌套'),
+      p(schema, '步骤三'),
     ]),
     p(schema),
 
@@ -231,6 +251,13 @@ export function buildTestDocument(schema: Schema): PMNode {
     p(schema, '• Delete/Backspace → 删除选中 block'),
     p(schema, '• Cmd+C/X → 复制/剪切选中 block'),
     p(schema, '• Enter / 任意字符 → 退出选中并编辑'),
+
+    heading(schema, 2, '5.1 批量缩进测试（P4）'),
+    p(schema, '选中下方多个 block（ESC + Shift+↓），然后按 Tab 批量缩进：'),
+    p(schema, '批量缩进 A'),
+    p(schema, '批量缩进 B'),
+    p(schema, '批量缩进 C'),
+    p(schema, '批量缩进 D'),
     p(schema),
 
     // ════════════════════════════════════════════════════════
