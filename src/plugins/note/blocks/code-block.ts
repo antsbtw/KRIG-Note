@@ -694,11 +694,78 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
       }
     });
 
+    // ── 缩放控制条（预览区右下角） ──
+    const zoomBar = document.createElement('div');
+    zoomBar.classList.add('code-block__fs-zoom');
+    zoomBar.setAttribute('contenteditable', 'false');
+
+    const zoomOut = document.createElement('button');
+    zoomOut.classList.add('code-block__fs-zoom-btn');
+    zoomOut.textContent = '−';
+    zoomOut.title = '缩小';
+
+    const zoomLabel = document.createElement('span');
+    zoomLabel.classList.add('code-block__fs-zoom-label');
+    zoomLabel.textContent = '100%';
+
+    const zoomInput = document.createElement('input');
+    zoomInput.classList.add('code-block__fs-zoom-input');
+    zoomInput.type = 'text';
+    zoomInput.style.display = 'none';
+
+    const zoomIn = document.createElement('button');
+    zoomIn.classList.add('code-block__fs-zoom-btn');
+    zoomIn.textContent = '+';
+    zoomIn.title = '放大';
+
+    zoomBar.appendChild(zoomOut);
+    zoomBar.appendChild(zoomLabel);
+    zoomBar.appendChild(zoomInput);
+    zoomBar.appendChild(zoomIn);
+    previewPane.appendChild(zoomBar);
+
     // ── 预览区缩放 + 平移 ──
     let scale = 1, panX = 0, panY = 0;
+    function updateZoomLabel() {
+      zoomLabel.textContent = `${Math.round(scale * 100)}%`;
+    }
     const applyTransform = () => {
       previewWrapper.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+      updateZoomLabel();
     };
+
+    zoomOut.addEventListener('click', () => {
+      scale = Math.max(0.1, scale - 0.1);
+      applyTransform();
+    });
+    zoomIn.addEventListener('click', () => {
+      scale = Math.min(5, scale + 0.1);
+      applyTransform();
+    });
+
+    // 点击百分比 → 显示输入框
+    zoomLabel.addEventListener('click', () => {
+      zoomLabel.style.display = 'none';
+      zoomInput.style.display = '';
+      zoomInput.value = String(Math.round(scale * 100));
+      zoomInput.focus();
+      zoomInput.select();
+    });
+    function commitZoomInput() {
+      const val = parseInt(zoomInput.value, 10);
+      if (!isNaN(val) && val > 0) {
+        scale = Math.max(0.1, Math.min(5, val / 100));
+        applyTransform();
+      }
+      zoomInput.style.display = 'none';
+      zoomLabel.style.display = '';
+    }
+    zoomInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); commitZoomInput(); }
+      if (e.key === 'Escape') { e.preventDefault(); zoomInput.style.display = 'none'; zoomLabel.style.display = ''; }
+      e.stopPropagation(); // 防止触发全屏关闭
+    });
+    zoomInput.addEventListener('blur', commitZoomInput);
 
     previewPane.addEventListener('wheel', (ev) => {
       ev.preventDefault();

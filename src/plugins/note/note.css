@@ -541,11 +541,63 @@
   justify-content: center;
   background: #111;
   cursor: grab;
+  position: relative;
 }
 .code-block__fs-preview-wrapper {
   transform-origin: center center;
 }
 .code-block__fs-preview-wrapper svg { max-width: none; height: auto; }
+
+/* 缩放控制条 */
+.code-block__fs-zoom {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: #222;
+  border: 1px solid #444;
+  border-radius: 6px;
+  padding: 2px 4px;
+  z-index: 10;
+}
+.code-block__fs-zoom-btn {
+  width: 26px;
+  height: 24px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #aaa;
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.code-block__fs-zoom-btn:hover { background: #333; color: #e8eaed; }
+.code-block__fs-zoom-label {
+  min-width: 44px;
+  text-align: center;
+  font-size: 12px;
+  color: #ccc;
+  cursor: pointer;
+  user-select: none;
+  padding: 0 4px;
+}
+.code-block__fs-zoom-label:hover { color: #8ab4f8; }
+.code-block__fs-zoom-input {
+  width: 44px;
+  height: 22px;
+  text-align: center;
+  font-size: 12px;
+  color: #e8eaed;
+  background: #333;
+  border: 1px solid #555;
+  border-radius: 3px;
+  outline: none;
+  padding: 0;
+}
 
 /* 状态栏 */
 .code-block__fs-status {
