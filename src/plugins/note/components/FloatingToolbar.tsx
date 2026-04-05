@@ -14,6 +14,7 @@ interface FloatingToolbarProps {
 
 export function FloatingToolbar({ view }: FloatingToolbarProps) {
   const [coords, setCoords] = useState<{ left: number; top: number } | null>(null);
+  const [, forceUpdate] = useState(0);
 
   useEffect(() => {
     if (!view) return;
@@ -37,12 +38,24 @@ export function FloatingToolbar({ view }: FloatingToolbarProps) {
           top: start.top - 40,
         });
       } catch { setCoords(null); }
+
+      forceUpdate((n) => n + 1); // 强制重渲染以更新 active 状态
     };
 
-    // 用 DOM 事件监听选区变化
+    // 监听选区变化 + dispatch 后更新
     const onSelectionChange = () => setTimeout(update, 0);
     document.addEventListener('selectionchange', onSelectionChange);
-    return () => document.removeEventListener('selectionchange', onSelectionChange);
+
+    // 拦截 dispatch 以捕获格式化操作后的状态变化
+    const origDispatch = view.dispatch.bind(view);
+    view.dispatch = (tr) => {
+      origDispatch(tr);
+      setTimeout(update, 0);
+    };
+
+    return () => {
+      document.removeEventListener('selectionchange', onSelectionChange);
+    };
   }, [view]);
 
   if (!coords || !view) return null;
