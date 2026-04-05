@@ -76,22 +76,31 @@ export function HandleMenu({ view }: HandleMenuProps) {
     <div className="handle-menu" style={{ ...styles.container, left: menu.coords.left, top: menu.coords.top }} onMouseDown={(e) => e.stopPropagation()}>
       {menu.blockType === 'textBlock' && (
         <>
-          <div style={styles.item} onMouseDown={(e) => { e.preventDefault(); setLevel(null); }}>
-            <span style={styles.icon}>T</span><span>文本</span>
-          </div>
-          <div style={styles.item} onMouseDown={(e) => { e.preventDefault(); setLevel(1); }}>
-            <span style={styles.icon}>H1</span><span>标题 1</span>
-          </div>
-          <div style={styles.item} onMouseDown={(e) => { e.preventDefault(); setLevel(2); }}>
-            <span style={styles.icon}>H2</span><span>标题 2</span>
-          </div>
-          <div style={styles.item} onMouseDown={(e) => { e.preventDefault(); setLevel(3); }}>
-            <span style={styles.icon}>H3</span><span>标题 3</span>
-          </div>
+          {[
+            { icon: 'T', label: '文本', action: () => setLevel(null) },
+            { icon: 'H1', label: '标题 1', action: () => setLevel(1) },
+            { icon: 'H2', label: '标题 2', action: () => setLevel(2) },
+            { icon: 'H3', label: '标题 3', action: () => setLevel(3) },
+          ].map((item) => (
+            <div
+              key={item.icon}
+              style={styles.item}
+              onMouseDown={(e) => { e.preventDefault(); item.action(); }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = '#3a3a3a')}
+              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+            >
+              <span style={styles.icon}>{item.icon}</span><span>{item.label}</span>
+            </div>
+          ))}
           <div style={styles.separator} />
         </>
       )}
-      <div style={styles.item} onMouseDown={(e) => { e.preventDefault(); deleteBlock(); }}>
+      <div
+        style={styles.item}
+        onMouseDown={(e) => { e.preventDefault(); deleteBlock(); }}
+        onMouseEnter={(e) => (e.currentTarget.style.background = '#3a3a3a')}
+        onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+      >
         <span style={styles.icon}>🗑</span><span>删除</span>
       </div>
     </div>
