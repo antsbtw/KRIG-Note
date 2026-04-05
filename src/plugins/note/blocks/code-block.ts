@@ -70,6 +70,25 @@ const ICON_COPY = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" s
 const ICON_DOWNLOAD = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
 const ICON_FULLSCREEN = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>';
 
+const ICON_FIT = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>';
+const ICON_CLIPBOARD = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg>';
+
+// ── Mermaid 主题 ──
+const MERMAID_THEMES = ['dark', 'default', 'forest', 'neutral', 'base'] as const;
+type MermaidTheme = typeof MERMAID_THEMES[number];
+
+// ── Mermaid 图表模板 ──
+const MERMAID_TEMPLATES: { label: string; code: string }[] = [
+  { label: 'Flowchart', code: 'graph TD\n  A[开始] --> B{条件}\n  B -->|是| C[操作]\n  B -->|否| D[跳过]\n  C --> E[结束]\n  D --> E' },
+  { label: 'Sequence', code: 'sequenceDiagram\n  participant A as 用户\n  participant B as 服务器\n  A->>B: 请求\n  B-->>A: 响应' },
+  { label: 'Class', code: 'classDiagram\n  class Animal {\n    +String name\n    +move()\n  }\n  class Dog {\n    +bark()\n  }\n  Animal <|-- Dog' },
+  { label: 'State', code: 'stateDiagram-v2\n  [*] --> Idle\n  Idle --> Processing : start\n  Processing --> Done : finish\n  Done --> [*]' },
+  { label: 'ER', code: 'erDiagram\n  USER ||--o{ ORDER : places\n  ORDER ||--|{ ITEM : contains\n  USER {\n    int id\n    string name\n  }' },
+  { label: 'Gantt', code: 'gantt\n  title 项目计划\n  dateFormat YYYY-MM-DD\n  section 阶段一\n  任务A :a1, 2024-01-01, 7d\n  任务B :after a1, 5d\n  section 阶段二\n  任务C :2024-01-15, 10d' },
+  { label: 'Pie', code: 'pie title 分布\n  "A" : 40\n  "B" : 30\n  "C" : 20\n  "D" : 10' },
+  { label: 'Mindmap', code: 'mindmap\n  root((主题))\n    分支A\n      叶子1\n      叶子2\n    分支B\n      叶子3' },
+];
+
 let mermaidIdCounter = 0;
 type ViewMode = 'split' | 'preview';
 
@@ -305,10 +324,14 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
   });
 
   function openFullscreenEditor() {
+    const LS_SPLIT = 'krig-mermaid-split-ratio';
+    const LS_THEME = 'krig-mermaid-theme';
+    let currentTheme: MermaidTheme = (localStorage.getItem(LS_THEME) as MermaidTheme) || 'dark';
+
     const overlay = document.createElement('div');
     overlay.classList.add('code-block__fullscreen-overlay');
 
-    // 顶部工具栏
+    // ── 顶部工具栏 ──
     const fsToolbar = document.createElement('div');
     fsToolbar.classList.add('code-block__fs-toolbar');
 
@@ -317,40 +340,105 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
     fsTitle.textContent = 'Mermaid Editor';
     fsToolbar.appendChild(fsTitle);
 
+    function makeSep() {
+      const s = document.createElement('div');
+      s.classList.add('code-block__fs-sep');
+      return s;
+    }
+    function makeBtn(icon: string, title: string): HTMLButtonElement {
+      const b = document.createElement('button');
+      b.classList.add('code-block__fs-btn');
+      b.innerHTML = icon;
+      b.title = title;
+      return b;
+    }
+    function makeSelect(options: string[], selected: string, title: string): HTMLSelectElement {
+      const sel = document.createElement('select');
+      sel.classList.add('code-block__fs-select');
+      sel.title = title;
+      for (const opt of options) {
+        const o = document.createElement('option');
+        o.value = opt;
+        o.textContent = opt;
+        if (opt === selected) o.selected = true;
+        sel.appendChild(o);
+      }
+      return sel;
+    }
+
+    // 模板选择
+    const templateSelect = makeSelect(
+      ['Template...', ...MERMAID_TEMPLATES.map(t => t.label)],
+      'Template...',
+      '插入图表模板',
+    );
+    fsToolbar.appendChild(templateSelect);
+
+    fsToolbar.appendChild(makeSep());
+
+    // 主题切换
+    const themeSelect = makeSelect([...MERMAID_THEMES], currentTheme, '预览主题');
+    fsToolbar.appendChild(themeSelect);
+
+    // 方向切换
+    const dirSelect = makeSelect(['TB', 'LR', 'RL', 'BT'], 'TB', '流程方向');
+    fsToolbar.appendChild(dirSelect);
+
     const fsSpacer = document.createElement('div');
     fsSpacer.style.flex = '1';
     fsToolbar.appendChild(fsSpacer);
 
-    // 下载按钮
-    const fsBtnDownload = document.createElement('button');
-    fsBtnDownload.classList.add('code-block__fs-btn');
-    fsBtnDownload.innerHTML = ICON_DOWNLOAD;
-    fsBtnDownload.title = '下载 PNG';
-    fsToolbar.appendChild(fsBtnDownload);
+    // 导出按钮组
+    const btnDownloadPng = makeBtn(ICON_DOWNLOAD, '下载 PNG');
+    const btnDownloadSvg = makeBtn(ICON_DOWNLOAD, '下载 SVG');
+    btnDownloadSvg.querySelector('svg')?.setAttribute('stroke', '#8ab4f8');
+    const btnCopyPng = makeBtn(ICON_CLIPBOARD, '复制 PNG');
+    const btnCopySvg = makeBtn(ICON_CLIPBOARD, '复制 SVG');
+    btnCopySvg.querySelector('svg')?.setAttribute('stroke', '#8ab4f8');
+    const btnFit = makeBtn(ICON_FIT, '适应屏幕');
+
+    fsToolbar.appendChild(btnDownloadPng);
+    fsToolbar.appendChild(btnDownloadSvg);
+    fsToolbar.appendChild(makeSep());
+    fsToolbar.appendChild(btnCopyPng);
+    fsToolbar.appendChild(btnCopySvg);
+    fsToolbar.appendChild(makeSep());
+    fsToolbar.appendChild(btnFit);
+    fsToolbar.appendChild(makeSep());
 
     // 关闭按钮
-    const fsBtnClose = document.createElement('button');
-    fsBtnClose.classList.add('code-block__fs-btn');
-    fsBtnClose.innerHTML = '&times;';
-    fsBtnClose.title = '关闭 (Esc)';
-    fsBtnClose.style.fontSize = '20px';
-    fsToolbar.appendChild(fsBtnClose);
+    const btnClose = makeBtn('&times;', '关闭 (Esc)');
+    btnClose.style.fontSize = '20px';
+    fsToolbar.appendChild(btnClose);
 
     overlay.appendChild(fsToolbar);
 
-    // 编辑区（左右分屏）
+    // ── 编辑区（左右分屏） ──
     const editorArea = document.createElement('div');
     editorArea.classList.add('code-block__fs-editor');
 
-    // 左：代码编辑
+    // 左：行号 + 代码编辑
     const editorPane = document.createElement('div');
     editorPane.classList.add('code-block__fs-code');
+
+    const lineNumbers = document.createElement('div');
+    lineNumbers.classList.add('code-block__fs-lines');
+    editorPane.appendChild(lineNumbers);
+
     const textarea = document.createElement('textarea');
     textarea.classList.add('code-block__fs-textarea');
     textarea.value = code.textContent || '';
     textarea.spellcheck = false;
     editorPane.appendChild(textarea);
     editorArea.appendChild(editorPane);
+
+    // 行号更新
+    function updateLineNumbers() {
+      const lines = textarea.value.split('\n').length;
+      lineNumbers.innerHTML = Array.from({ length: lines }, (_, i) => `<div>${i + 1}</div>`).join('');
+    }
+    function syncScroll() { lineNumbers.scrollTop = textarea.scrollTop; }
+    updateLineNumbers();
 
     // 中：可拖拽分隔线
     const divider = document.createElement('div');
@@ -366,13 +454,16 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
     previewPane.appendChild(previewWrapper);
     editorArea.appendChild(previewPane);
 
+    // 底部状态栏（错误信息）
+    const statusBar = document.createElement('div');
+    statusBar.classList.add('code-block__fs-status');
+
     overlay.appendChild(editorArea);
+    overlay.appendChild(statusBar);
     document.body.appendChild(overlay);
 
-    // 分隔线拖拽（记忆比例）
-    const LS_KEY = 'krig-mermaid-split-ratio';
-    let splitRatio = parseFloat(localStorage.getItem(LS_KEY) || '0.5');
-
+    // ── 分隔线拖拽 ──
+    let splitRatio = parseFloat(localStorage.getItem(LS_SPLIT) || '0.5');
     function applySplitRatio(ratio: number) {
       splitRatio = ratio;
       editorPane.style.flex = 'none';
@@ -392,8 +483,7 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
     const onDividerMove = (e: MouseEvent) => {
       if (!dividerDragging) return;
       const rect = editorArea.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const ratio = Math.max(0.15, Math.min(0.85, x / rect.width));
+      const ratio = Math.max(0.15, Math.min(0.85, (e.clientX - rect.left) / rect.width));
       applySplitRatio(ratio);
     };
     const onDividerUp = () => {
@@ -401,12 +491,12 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
       dividerDragging = false;
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
-      localStorage.setItem(LS_KEY, splitRatio.toString());
+      localStorage.setItem(LS_SPLIT, splitRatio.toString());
     };
     document.addEventListener('mousemove', onDividerMove);
     document.addEventListener('mouseup', onDividerUp);
 
-    // 预览渲染
+    // ── 预览渲染 ──
     let fsRenderTimer: ReturnType<typeof setTimeout> | null = null;
     let fsIdCounter = 0;
 
@@ -414,15 +504,32 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
       const trimmed = source.replace(/[\u200B\u200C\u200D\uFEFF]/g, '').trim();
       if (!trimmed) {
         previewWrapper.innerHTML = '<div class="code-block__mermaid-empty">输入 Mermaid 语法查看预览</div>';
+        statusBar.textContent = '';
+        statusBar.className = 'code-block__fs-status';
         return;
       }
       await ensureMermaidInit();
+
+      // 应用主题
+      mermaidModule.initialize({ startOnLoad: false, theme: currentTheme, securityLevel: 'loose' });
+
       const renderId = `fs-mermaid-${++fsIdCounter}`;
       try {
         const { svg } = await mermaidModule.render(renderId, trimmed);
         previewWrapper.innerHTML = svg;
-      } catch {
-        previewWrapper.innerHTML = '<div class="code-block__mermaid-error">Mermaid 语法错误</div>';
+        statusBar.textContent = '✓ 渲染成功';
+        statusBar.className = 'code-block__fs-status code-block__fs-status--ok';
+      } catch (err: any) {
+        // 解析错误信息
+        const msg = err?.message || err?.toString() || 'Mermaid 语法错误';
+        // 尝试提取行号
+        const lineMatch = msg.match(/line\s+(\d+)/i) || msg.match(/at position.*?line:\s*(\d+)/i);
+        const lineInfo = lineMatch ? ` (第 ${lineMatch[1]} 行)` : '';
+        // 截取关键错误信息（去掉冗长的堆栈）
+        const shortMsg = msg.split('\n')[0].slice(0, 200);
+        statusBar.textContent = `✗ ${shortMsg}${lineInfo}`;
+        statusBar.className = 'code-block__fs-status code-block__fs-status--error';
+        previewWrapper.innerHTML = '<div class="code-block__mermaid-error">语法错误 — 查看底部状态栏</div>';
         document.getElementById('d' + renderId)?.remove();
       }
     }
@@ -435,8 +542,9 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
     // 初始渲染
     renderFsPreview(textarea.value);
 
-    // 实时编辑 → 预览
-    textarea.addEventListener('input', scheduleFsRender);
+    // 实时编辑 → 预览 + 行号
+    textarea.addEventListener('input', () => { updateLineNumbers(); scheduleFsRender(); });
+    textarea.addEventListener('scroll', syncScroll);
 
     // Tab 插入空格
     textarea.addEventListener('keydown', (e) => {
@@ -446,11 +554,43 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
         const end = textarea.selectionEnd;
         textarea.value = textarea.value.substring(0, start) + '  ' + textarea.value.substring(end);
         textarea.selectionStart = textarea.selectionEnd = start + 2;
+        updateLineNumbers();
         scheduleFsRender();
       }
     });
 
-    // 预览区缩放 + 平移
+    // ── 模板选择 ──
+    templateSelect.addEventListener('change', () => {
+      const tpl = MERMAID_TEMPLATES.find(t => t.label === templateSelect.value);
+      if (tpl) {
+        textarea.value = tpl.code;
+        updateLineNumbers();
+        scheduleFsRender();
+      }
+      templateSelect.value = 'Template...';
+    });
+
+    // ── 主题切换 ──
+    themeSelect.addEventListener('change', () => {
+      currentTheme = themeSelect.value as MermaidTheme;
+      localStorage.setItem(LS_THEME, currentTheme);
+      scheduleFsRender();
+    });
+
+    // ── 方向切换 ──
+    dirSelect.addEventListener('change', () => {
+      const dir = dirSelect.value;
+      const val = textarea.value;
+      // 替换 graph/flowchart 后的方向标识
+      const replaced = val.replace(/^(graph|flowchart)\s+(TD|TB|LR|RL|BT)/m, `$1 ${dir}`);
+      if (replaced !== val) {
+        textarea.value = replaced;
+        updateLineNumbers();
+        scheduleFsRender();
+      }
+    });
+
+    // ── 预览区缩放 + 平移 ──
     let scale = 1, panX = 0, panY = 0;
     const applyTransform = () => {
       previewWrapper.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
@@ -485,21 +625,82 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
 
-    // 下载 PNG
-    fsBtnDownload.addEventListener('click', () => {
-      const svgEl = previewWrapper.querySelector('svg');
+    // ── 适应屏幕 ──
+    btnFit.addEventListener('click', () => {
+      scale = 1; panX = 0; panY = 0;
+      applyTransform();
+    });
+
+    // ── 导出 ──
+    function getSvgEl(): SVGElement | null { return previewWrapper.querySelector('svg'); }
+
+    btnDownloadPng.addEventListener('click', () => {
+      const svgEl = getSvgEl();
       if (svgEl) exportSvgAsPng(svgEl, 'mermaid-diagram.png');
     });
 
-    // 关闭 → 同步内容回 ProseMirror
+    btnDownloadSvg.addEventListener('click', () => {
+      const svgEl = getSvgEl();
+      if (!svgEl) return;
+      const svgData = new XMLSerializer().serializeToString(svgEl);
+      const blob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'mermaid-diagram.svg';
+      a.click();
+      URL.revokeObjectURL(a.href);
+    });
+
+    btnCopyPng.addEventListener('click', async () => {
+      const svgEl = getSvgEl();
+      if (!svgEl) return;
+      const svgData = new XMLSerializer().serializeToString(svgEl);
+      const blob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth * 2;
+        canvas.height = img.naturalHeight * 2;
+        const ctx = canvas.getContext('2d')!;
+        ctx.scale(2, 2);
+        ctx.drawImage(img, 0, 0);
+        URL.revokeObjectURL(url);
+        canvas.toBlob(async (b) => {
+          if (!b) return;
+          try {
+            await navigator.clipboard.write([new ClipboardItem({ 'image/png': b })]);
+            btnCopyPng.classList.add('code-block__fs-btn--ok');
+            setTimeout(() => btnCopyPng.classList.remove('code-block__fs-btn--ok'), 1500);
+          } catch { /* clipboard API may fail */ }
+        }, 'image/png');
+      };
+      img.src = url;
+    });
+
+    btnCopySvg.addEventListener('click', async () => {
+      const svgEl = getSvgEl();
+      if (!svgEl) return;
+      const svgData = new XMLSerializer().serializeToString(svgEl);
+      try {
+        await navigator.clipboard.writeText(svgData);
+        btnCopySvg.classList.add('code-block__fs-btn--ok');
+        setTimeout(() => btnCopySvg.classList.remove('code-block__fs-btn--ok'), 1500);
+      } catch { /* fallback */ }
+    });
+
+    // ── 关闭 → 同步内容回 ProseMirror ──
     const close = () => {
+      // 恢复 mermaid 主题为 dark（inline 预览用 dark）
+      if (currentTheme !== 'dark') {
+        mermaidModule?.initialize?.({ startOnLoad: false, theme: 'dark', securityLevel: 'loose' });
+      }
       const newContent = textarea.value;
       const pos = typeof getPos === 'function' ? getPos() : undefined;
       if (pos != null) {
         const currentNode = view.state.doc.nodeAt(pos);
         if (currentNode && currentNode.textContent !== newContent) {
           const tr = view.state.tr;
-          // 替换 codeBlock 内部文本
           const start = pos + 1;
           const end = pos + currentNode.nodeSize - 1;
           if (newContent) {
@@ -520,13 +721,12 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
       view.focus();
     };
 
-    fsBtnClose.addEventListener('click', close);
+    btnClose.addEventListener('click', close);
     const onKey = (ev: KeyboardEvent) => {
       if (ev.key === 'Escape') close();
     };
     document.addEventListener('keydown', onKey);
 
-    // 自动聚焦编辑区
     setTimeout(() => textarea.focus(), 50);
   }
 
