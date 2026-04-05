@@ -329,8 +329,21 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
 
   /** 通过系统保存对话框导出 PNG */
   function exportSvgAsPng(svgEl: SVGElement, filename: string) {
-    const svgData = new XMLSerializer().serializeToString(svgEl);
-    // 用 data URI 避免 canvas tainted（blob URL 会导致跨域污染）
+    // 克隆 SVG，设置明确的像素宽高（避免 width="100%" 导致 naturalWidth 不准）
+    const clone = svgEl.cloneNode(true) as SVGElement;
+    const viewBox = svgEl.getAttribute('viewBox');
+    if (viewBox) {
+      const parts = viewBox.split(/\s+/).map(Number);
+      const w = parts[2] || svgEl.clientWidth || 800;
+      const h = parts[3] || svgEl.clientHeight || 600;
+      clone.setAttribute('width', String(w));
+      clone.setAttribute('height', String(h));
+    } else {
+      clone.setAttribute('width', String(svgEl.clientWidth || 800));
+      clone.setAttribute('height', String(svgEl.clientHeight || 600));
+    }
+
+    const svgData = new XMLSerializer().serializeToString(clone);
     const dataUri = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
     const img = new Image();
     img.onload = () => {
@@ -728,8 +741,16 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
           setTimeout(() => btnCopy.classList.remove('code-block__fs-btn--ok'), 1500);
         } catch { /* fallback */ }
       } else {
-        // 用 data URI 避免 canvas tainted
-        const dataUri = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
+        // 克隆 SVG 设置明确宽高，避免 naturalWidth 不准
+        const clone = svgEl.cloneNode(true) as SVGElement;
+        const vb = svgEl.getAttribute('viewBox');
+        if (vb) {
+          const p = vb.split(/\s+/).map(Number);
+          clone.setAttribute('width', String(p[2] || 800));
+          clone.setAttribute('height', String(p[3] || 600));
+        }
+        const cloneData = new XMLSerializer().serializeToString(clone);
+        const dataUri = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(cloneData)));
         const img = new Image();
         img.onload = () => {
           const canvas = document.createElement('canvas');
