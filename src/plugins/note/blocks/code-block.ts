@@ -366,7 +366,19 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
     overlay.appendChild(editorArea);
     document.body.appendChild(overlay);
 
-    // 分隔线拖拽
+    // 分隔线拖拽（记忆比例）
+    const LS_KEY = 'krig-mermaid-split-ratio';
+    let splitRatio = parseFloat(localStorage.getItem(LS_KEY) || '0.5');
+
+    function applySplitRatio(ratio: number) {
+      splitRatio = ratio;
+      editorPane.style.flex = 'none';
+      editorPane.style.width = `${ratio * 100}%`;
+      previewPane.style.flex = 'none';
+      previewPane.style.width = `${(1 - ratio) * 100}%`;
+    }
+    applySplitRatio(splitRatio);
+
     let dividerDragging = false;
     divider.addEventListener('mousedown', (e) => {
       e.preventDefault();
@@ -378,18 +390,15 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
       if (!dividerDragging) return;
       const rect = editorArea.getBoundingClientRect();
       const x = e.clientX - rect.left;
-      const total = rect.width;
-      const ratio = Math.max(0.15, Math.min(0.85, x / total));
-      editorPane.style.flex = 'none';
-      editorPane.style.width = `${ratio * 100}%`;
-      previewPane.style.flex = 'none';
-      previewPane.style.width = `${(1 - ratio) * 100}%`;
+      const ratio = Math.max(0.15, Math.min(0.85, x / rect.width));
+      applySplitRatio(ratio);
     };
     const onDividerUp = () => {
       if (!dividerDragging) return;
       dividerDragging = false;
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
+      localStorage.setItem(LS_KEY, splitRatio.toString());
     };
     document.addEventListener('mousemove', onDividerMove);
     document.addEventListener('mouseup', onDividerUp);
