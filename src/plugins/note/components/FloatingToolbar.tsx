@@ -1,136 +1,122 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { EditorView } from 'prosemirror-view';
+import type { MarkType } from 'prosemirror-model';
 import { toggleMark } from 'prosemirror-commands';
 
 /**
  * FloatingToolbar — 选中文字后弹出的格式化工具栏
  *
- * B I U S <> | H A
+ * 参考 mirro-desktop 实现：
+ * - rangeHasMark 精确检测 active marks
+ * - RAF 持续轮询选区变化
+ * - CSS class 控制 active 状态
  */
 
 interface FloatingToolbarProps {
   view: EditorView | null;
 }
 
+function isMarkActive(view: EditorView, markType: MarkType): boolean {
+  const { from, $from, to, empty } = view.state.selection;
+  if (empty) return !!markType.isInSet(view.state.storedMarks || $from.marks());
+  return view.state.doc.rangeHasMark(from, to, markType);
+}
+
 export function FloatingToolbar({ view }: FloatingToolbarProps) {
-  const [coords, setCoords] = useState<{ left: number; top: number } | null>(null);
+  const [visible, setVisible] = useState(false);
+  const [position, setPosition] = useState({ top: 0, left: 0 });
   const [, forceUpdate] = useState(0);
 
+  const updatePosition = useCallback(() => {
+    if (!view) return false;
+    const { from, to } = view.state.selection;
+    if (from === to) return false;
+
+    // 确保在 textBlock 中
+    const $from = view.state.doc.resolve(from);
+    if ($from.parent.type.name !== 'textBlock') return false;
+
+    try {
+      const fromCoords = view.coordsAtPos(from);
+      const toCoords = view.coordsAtPos(to);
+      setPosition({
+        top: Math.min(fromCoords.top, toCoords.top) - 8,
+        left: (fromCoords.left + toCoords.left) / 2,
+      });
+      return true;
+    } catch { return false; }
+  }, [view]);
+
+  // RAF 持续轮询选区变化
   useEffect(() => {
     if (!view) return;
 
-    const update = () => {
-      const { state } = view;
-      const { from, to, empty } = state.selection;
+    let rafId: number;
+    let prevFrom = -1;
+    let prevTo = -1;
 
-      // 只在有文字选区时显示
-      if (empty || from === to) { setCoords(null); return; }
-
-      // 确保在 textBlock 中
-      const $from = state.doc.resolve(from);
-      if ($from.parent.type.name !== 'textBlock') { setCoords(null); return; }
-
-      try {
-        const start = view.coordsAtPos(from);
-        const end = view.coordsAtPos(to);
-        setCoords({
-          left: (start.left + end.left) / 2,
-          top: start.top - 40,
-        });
-      } catch { setCoords(null); }
-
-      forceUpdate((n) => n + 1); // 强制重渲染以更新 active 状态
+    const check = () => {
+      const { from, to } = view.state.selection;
+      if (from !== prevFrom || to !== prevTo) {
+        prevFrom = from;
+        prevTo = to;
+        if (updatePosition()) {
+          setVisible(true);
+          forceUpdate((n) => n + 1);
+        } else {
+          setVisible(false);
+        }
+      }
+      rafId = requestAnimationFrame(check);
     };
 
-    // 监听选区变化 + dispatch 后更新
-    const onSelectionChange = () => setTimeout(update, 0);
-    document.addEventListener('selectionchange', onSelectionChange);
+    rafId = requestAnimationFrame(check);
+    return () => cancelAnimationFrame(rafId);
+  }, [view, updatePosition]);
 
-    // 拦截 dispatch 以捕获格式化操作后的状态变化
-    const origDispatch = view.dispatch.bind(view);
-    view.dispatch = (tr) => {
-      origDispatch(tr);
-      setTimeout(update, 0);
-    };
-
-    return () => {
-      document.removeEventListener('selectionchange', onSelectionChange);
-    };
-  }, [view]);
-
-  if (!coords || !view) return null;
+  if (!visible || !view) return null;
 
   const s = view.state.schema;
 
-  // 检查 mark 是否在当前选区激活
-  const isMarkActive = (markType: any): boolean => {
-    const { from, $from, to, empty } = view.state.selection;
-    if (empty) return !!markType.isInSet(view.state.storedMarks || $from.marks());
-    let active = false;
-    view.state.doc.nodesBetween(from, to, (node) => {
-      if (node.isText && markType.isInSet(node.marks)) active = true;
-    });
-    return active;
+  const run = (markType: MarkType) => {
+    toggleMark(markType)(view.state, view.dispatch);
+    view.focus();
+    forceUpdate((n) => n + 1);
   };
 
-  const buttons = [
-    { label: 'B', mark: s.marks.bold, style: { fontWeight: 700 } },
-    { label: 'I', mark: s.marks.italic, style: { fontStyle: 'italic' } },
-    { label: 'U', mark: s.marks.underline, style: { textDecoration: 'underline' } },
-    { label: 'S', mark: s.marks.strike, style: { textDecoration: 'line-through' } },
-    { label: '<>', mark: s.marks.code, style: { fontFamily: 'monospace', fontSize: '12px' } },
+  const buttons: { label: string; mark: MarkType; render: React.ReactNode }[] = [
+    { label: 'bold', mark: s.marks.bold, render: <strong>B</strong> },
+    { label: 'italic', mark: s.marks.italic, render: <em>I</em> },
+    { label: 'underline', mark: s.marks.underline, render: <u>U</u> },
+    { label: 'strike', mark: s.marks.strike, render: <s>S</s> },
+    { label: 'code', mark: s.marks.code, render: <span style={{ fontFamily: 'monospace', fontSize: '12px' }}>&lt;&gt;</span> },
   ].filter((b) => b.mark);
 
   return (
-    <div style={{ ...styles.container, left: coords.left, top: coords.top }}>
+    <div
+      className="floating-toolbar"
+      style={{
+        position: 'fixed',
+        top: position.top,
+        left: position.left,
+        transform: 'translate(-50%, -100%)',
+        zIndex: 900,
+      }}
+      onMouseDown={(e) => e.preventDefault()}
+    >
       {buttons.map((btn) => {
-        const active = isMarkActive(btn.mark!);
+        const active = isMarkActive(view, btn.mark);
         return (
-          <div
+          <button
             key={btn.label}
-            style={{
-              ...styles.btn,
-              ...btn.style,
-              color: active ? '#4a9eff' : '#e8eaed',
-            }}
-            onMouseDown={(e) => {
-              e.preventDefault();
-              toggleMark(btn.mark!)(view.state, view.dispatch);
-              view.focus();
-            }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = '#3a3a3a')}
-            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+            className={`ft-btn ${active ? 'ft-btn--active' : ''}`}
+            onClick={() => run(btn.mark)}
+            title={btn.label}
           >
-            {btn.label}
-          </div>
+            {btn.render}
+          </button>
         );
       })}
     </div>
   );
 }
-
-const styles: Record<string, React.CSSProperties> = {
-  container: {
-    position: 'fixed',
-    zIndex: 900,
-    display: 'flex',
-    gap: '2px',
-    background: '#2a2a2a',
-    border: '1px solid #444',
-    borderRadius: '6px',
-    padding: '4px',
-    boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
-    transform: 'translateX(-50%)',
-  },
-  btn: {
-    width: '28px',
-    height: '28px',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: '4px',
-    cursor: 'pointer',
-    color: '#e8eaed',
-    fontSize: '14px',
-  },
-};
