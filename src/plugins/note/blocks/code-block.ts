@@ -329,7 +329,7 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
 
   /** 通过系统保存对话框导出 PNG */
   function exportSvgAsPng(svgEl: SVGElement, filename: string) {
-    // 克隆 SVG，设置明确的像素宽高（避免 width="100%" 导致 naturalWidth 不准）
+    // 克隆 SVG，设置明确的像素宽高
     const clone = svgEl.cloneNode(true) as SVGElement;
     const viewBox = svgEl.getAttribute('viewBox');
     if (viewBox) {
@@ -371,9 +371,32 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
     img.src = dataUri;
   }
 
-  /** 通过系统保存对话框导出 SVG */
+  /** 通过系统保存对话框导出 SVG（添加背景色 + 居中 padding） */
   function exportSvgAsFile(svgEl: SVGElement, filename: string) {
-    const svgData = new XMLSerializer().serializeToString(svgEl);
+    const clone = svgEl.cloneNode(true) as SVGElement;
+
+    // 从 viewBox 获取尺寸，增加 padding 居中
+    const vb = svgEl.getAttribute('viewBox');
+    const pad = 40;
+    if (vb) {
+      const [vx, vy, vw, vh] = vb.split(/\s+/).map(Number);
+      const newVb = `${vx - pad} ${vy - pad} ${vw + pad * 2} ${vh + pad * 2}`;
+      clone.setAttribute('viewBox', newVb);
+      clone.setAttribute('width', String(vw + pad * 2));
+      clone.setAttribute('height', String(vh + pad * 2));
+      // 插入背景矩形
+      const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      bg.setAttribute('x', String(vx - pad));
+      bg.setAttribute('y', String(vy - pad));
+      bg.setAttribute('width', String(vw + pad * 2));
+      bg.setAttribute('height', String(vh + pad * 2));
+      bg.setAttribute('fill', '#1a1a1a');
+      clone.insertBefore(bg, clone.firstChild);
+    }
+    // 移除 width="100%"
+    if (clone.getAttribute('width') === '100%') clone.removeAttribute('width');
+
+    const svgData = new XMLSerializer().serializeToString(clone);
     const base64 = btoa(unescape(encodeURIComponent(svgData)));
     (window as any).viewAPI?.fileSaveDialog?.({
       defaultName: filename,
