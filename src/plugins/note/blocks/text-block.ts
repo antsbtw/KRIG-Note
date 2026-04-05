@@ -35,7 +35,7 @@ const noteTitleNodeView: NodeViewFactory = (node, _view, _getPos) => {
 // ── toDOM：根据 attrs 决定渲染标签 ──
 
 function textBlockToDOM(node: any): any {
-  const { level, isTitle, indent, textIndent, align } = node.attrs;
+  const { level, isTitle, textIndent, align } = node.attrs;
 
   // noteTitle 由 NodeView 处理
   if (isTitle) {
@@ -44,7 +44,7 @@ function textBlockToDOM(node: any): any {
 
   // 构建 style
   const styles: string[] = [];
-  if (indent > 0) styles.push(`padding-left: ${indent * 24}px`);
+  // indent 由 indent plugin 的 decoration 统一渲染，不在 toDOM 中处理
   if (textIndent) styles.push('text-indent: 2em');
   if (align && align !== 'left') styles.push(`text-align: ${align}`);
 

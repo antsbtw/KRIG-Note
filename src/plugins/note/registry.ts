@@ -58,7 +58,16 @@ class BlockRegistry {
     };
 
     for (const block of this.blocks.values()) {
-      nodes[block.name] = { ...block.nodeSpec };
+      const spec = { ...block.nodeSpec };
+      // 所有 block group 节点自动注入 indent attr（视觉缩进基类能力）
+      if (spec.group === 'block' && spec.attrs) {
+        if (!('indent' in spec.attrs)) {
+          spec.attrs = { ...spec.attrs, indent: { default: 0 } };
+        }
+      } else if (spec.group === 'block' && !spec.attrs) {
+        spec.attrs = { indent: { default: 0 } };
+      }
+      nodes[block.name] = spec;
     }
 
     const marks: Record<string, MarkSpec> = {

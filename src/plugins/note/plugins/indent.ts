@@ -1,5 +1,6 @@
 import { Plugin } from 'prosemirror-state';
 import type { EditorView } from 'prosemirror-view';
+import { Decoration, DecorationSet } from 'prosemirror-view';
 
 /**
  * Indent Plugin — Tab/Shift+Tab 缩进系统
@@ -38,28 +39,23 @@ function isInList(view: EditorView, pos: number): { listPos: number; listType: s
   return null;
 }
 
-/** P1: 视觉缩进（indent attr） */
+/** P1: 视觉缩进（indent attr）— 对任何有 indent attr 的 block 生效 */
 function indentBlock(view: EditorView): boolean {
   const { $from } = view.state.selection;
   if ($from.depth < 1) return false;
 
-  // 找到当前所在的 block（可能在 Container 内部）
-  let depth = $from.depth;
-  while (depth > 0) {
-    const node = $from.node(depth);
-    if (node.type.name === 'textBlock' && node.attrs.indent !== undefined) {
-      const pos = $from.before(depth);
-      const currentIndent = node.attrs.indent || 0;
-      if (currentIndent >= MAX_INDENT) return true;
-      view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, {
-        ...node.attrs,
-        indent: currentIndent + 1,
-      }));
-      return true;
-    }
-    depth--;
-  }
-  return false;
+  // 找到顶层 block（depth=1），对整个 block 缩进
+  const pos = $from.before(1);
+  const node = $from.node(1);
+  if (!node || node.attrs.indent === undefined) return false;
+
+  const currentIndent = node.attrs.indent || 0;
+  if (currentIndent >= MAX_INDENT) return true;
+  view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, {
+    ...node.attrs,
+    indent: currentIndent + 1,
+  }));
+  return true;
 }
 
 /** P1: 反缩进 */
@@ -67,26 +63,17 @@ function outdentBlock(view: EditorView): boolean {
   const { $from } = view.state.selection;
   if ($from.depth < 1) return false;
 
-  let depth = $from.depth;
-  while (depth > 0) {
-    const node = $pos_node(view, $from, depth);
-    if (node.type.name === 'textBlock' && node.attrs.indent !== undefined) {
-      const pos = $from.before(depth);
-      const currentIndent = node.attrs.indent || 0;
-      if (currentIndent <= 0) return false; // 不拦截，让 ProseMirror 处理
-      view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, {
-        ...node.attrs,
-        indent: currentIndent - 1,
-      }));
-      return true;
-    }
-    depth--;
-  }
-  return false;
-}
+  const pos = $from.before(1);
+  const node = $from.node(1);
+  if (!node || node.attrs.indent === undefined) return false;
 
-function $pos_node(view: EditorView, $from: any, depth: number) {
-  return $from.node(depth);
+  const currentIndent = node.attrs.indent || 0;
+  if (currentIndent <= 0) return false;
+  view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, {
+    ...node.attrs,
+    indent: currentIndent - 1,
+  }));
+  return true;
 }
 
 /** P2: 列表嵌套（将当前项包裹进同类型子列表） */
@@ -245,6 +232,20 @@ function liftListItem(view: EditorView): boolean {
 export function indentPlugin(): Plugin {
   return new Plugin({
     props: {
+      // 为所有有 indent > 0 的顶层 block 添加 padding-left 装饰
+      decorations(state) {
+        const decos: Decoration[] = [];
+        state.doc.forEach((node, pos) => {
+          const indent = node.attrs.indent;
+          if (indent && indent > 0) {
+            decos.push(Decoration.node(pos, pos + node.nodeSize, {
+              style: `margin-left: ${indent * 24}px`,
+            }));
+          }
+        });
+        return decos.length > 0 ? DecorationSet.create(state.doc, decos) : DecorationSet.empty;
+      },
+
       handleKeyDown(view, event) {
         if (event.key !== 'Tab') return false;
         event.preventDefault();
