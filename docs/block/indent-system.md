@@ -2,6 +2,20 @@
 
 > **状态**：P1-P5 已实现
 > **涉及模块**：键盘交互（Tab/Shift+Tab）、Block Selection、SlashMenu、Container 嵌套
+>
+> ### 实现完成情况
+>
+> | 阶段 | 状态 | 实现位置 |
+> |------|------|---------|
+> | **P1** 普通 block 视觉缩进 | ✅ 完成 | `plugins/indent.ts` — indentBlock/outdentBlock + Decoration 渲染 |
+> | **P2** 列表嵌套缩进 | ✅ 完成 | `plugins/indent.ts` — nestListItem |
+> | **P3** 列表提升 | ✅ 完成 | `plugins/indent.ts` — liftListItem |
+> | **P4** Block Selection 批量缩进 | ✅ 完成 | `plugins/block-selection.ts` — Tab/Shift-Tab 处理 |
+> | **P5** SlashMenu Container 内嵌套 | ✅ 完成 | `components/SlashMenu.tsx` — 通过 `$from.depth` 自然实现 |
+>
+> **备注**：
+> - 当前 `indent` attr 仅定义在 textBlock 上。codeBlock/mathBlock/image 等节点暂不支持块级视觉缩进，后续按需补充 schema attr 即可自动生效（indent plugin 的 Decoration 和 Block Selection 逻辑已就绪）
+> - codeBlock 内部 Tab 为代码制表符，块级缩进通过 Block Selection 模式操作
 
 ---
 
