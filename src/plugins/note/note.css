@@ -64,7 +64,6 @@
 /* 嵌套列表缩进（顶层不缩进，嵌套时缩进） */
 .bullet-list .bullet-list,
 .ordered-list .ordered-list,
-.task-list .task-list,
 .bullet-list .ordered-list,
 .bullet-list .task-list,
 .ordered-list .bullet-list,
@@ -72,6 +71,10 @@
 .task-list .bullet-list,
 .task-list .ordered-list {
   padding-left: 24px;
+}
+/* taskList 嵌套：checkbox 已占 24px，不需要额外 padding */
+.task-list .task-list {
+  padding-left: 0;
 }
 .bullet-list > .bullet-list__content > p,
 .bullet-list > .bullet-list__content > h1,

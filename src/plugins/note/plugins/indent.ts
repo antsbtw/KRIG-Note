@@ -126,14 +126,34 @@ function nestListItem(view: EditorView, listInfo: { listPos: number; listType: s
   if (!listType) return false;
 
   const tr = state.tr;
+  const isTaskList = listInfo.listType === 'taskList';
 
-  // 如果上一个兄弟就是同类型列表 → 直接追加到它末尾（不再嵌套一层）
   if (prevChild.type.name === listInfo.listType) {
-    const appendPos = prevChildPos + prevChild.nodeSize - 1; // 列表闭合前
+    // 上一个兄弟是同类型列表 → 追加到它末尾
+    const appendPos = prevChildPos + prevChild.nodeSize - 1;
     tr.delete(currentChildPos, currentChildEnd);
     tr.insert(tr.mapping.map(appendPos), currentChild);
+  } else if (isTaskList && prevChild.type.name === 'taskItem') {
+    // taskList: prevChild 是 taskItem → 在 taskItem 内部末尾插入嵌套 taskList
+    // 检查 prevChild 内是否已有嵌套 taskList
+    let existingNestedPos = -1;
+    prevChild.forEach((child, offset) => {
+      if (child.type.name === 'taskList') {
+        existingNestedPos = prevChildPos + 1 + offset;
+      }
+    });
+    tr.delete(currentChildPos, currentChildEnd);
+    if (existingNestedPos >= 0) {
+      // 已有嵌套 taskList → 追加到末尾
+      const nestedList = state.doc.nodeAt(existingNestedPos)!;
+      tr.insert(tr.mapping.map(existingNestedPos + nestedList.nodeSize - 1), currentChild);
+    } else {
+      // 没有嵌套 → 在 taskItem 内部末尾创建嵌套 taskList
+      const nestedList = listType.create(null, [currentChild]);
+      tr.insert(tr.mapping.map(prevChildPos + prevChild.nodeSize - 1), nestedList);
+    }
   } else {
-    // 上一个兄弟是普通 block → 创建新子列表，插入在 prevChild 之后
+    // 普通 block → 创建新子列表，插入在 prevChild 之后
     const nestedList = listType.create(null, [currentChild]);
     tr.delete(currentChildPos, currentChildEnd);
     tr.insert(tr.mapping.map(prevChildPos + prevChild.nodeSize), nestedList);
@@ -237,8 +257,8 @@ export function indentPlugin(): Plugin {
           if (listInfo) {
             // 在嵌套列表中 → 尝试提升
             if (liftListItem(view)) return true;
-            // 不在嵌套中 → 视觉反缩进
-            return outdentBlock(view);
+            // 不在嵌套中 → 不做任何事（列表内不支持视觉缩进）
+            return true;
           }
           return outdentBlock(view);
         } else {
@@ -246,8 +266,8 @@ export function indentPlugin(): Plugin {
           if (listInfo) {
             // 列表内 → 尝试嵌套
             if (nestListItem(view, listInfo)) return true;
-            // 嵌套失败（如第一项）→ 视觉缩进
-            return indentBlock(view);
+            // 嵌套失败（如第一项）→ 不做任何事（列表内不支持视觉缩进）
+            return true;
           }
           return indentBlock(view);
         }

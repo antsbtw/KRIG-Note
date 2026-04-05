@@ -1,20 +1,33 @@
 # Indent System — Block 缩进系统
 
-> **状态**：设计中
+> **状态**：P1-P5 已实现
 > **涉及模块**：键盘交互（Tab/Shift+Tab）、Block Selection、SlashMenu、Container 嵌套
 
 ---
 
 ## 一、概览
 
-缩进是 Block 的基础能力。不同上下文中 Tab/Shift+Tab 的行为不同：
+缩进分为两种，**互斥**：
 
-| 上下文 | Tab | Shift+Tab |
-|--------|-----|-----------|
-| 普通 textBlock | indent +1（视觉缩进） | indent -1 |
-| 列表内（bulletList/orderedList/taskList） | 嵌套为子列表 | 提升到父列表 |
-| Container 内（blockquote/callout 等） | indent +1（视觉缩进） | indent -1 或退出 Container |
-| Block Selection 模式 | 所有选中 block 批量缩进 | 所有选中 block 批量反缩进 |
+| 类型 | 定义 | 操作对象 |
+|------|------|---------|
+| **视觉缩进** | `indent` attr 控制 `padding-left`，Block 整体右移 | 整个 Block 作为单元 |
+| **结构缩进** | 列表内嵌套/提升，改变容器的父子结构 | 列表容器内部的某一项 |
+
+Tab/Shift+Tab 的行为由上下文决定：
+
+| 上下文 | Tab | Shift+Tab | 类型 |
+|--------|-----|-----------|------|
+| 普通 textBlock | indent +1 | indent -1 | 视觉缩进 |
+| 列表内某一项 | 嵌套为子列表 | 提升到父列表 | 结构缩进 |
+| Container 内（blockquote/callout 等） | indent +1 | indent -1 | 视觉缩进 |
+| **Block Selection 模式** | **所有选中 block indent +1** | **indent -1** | **视觉缩进（永远）** |
+
+### 关键规则
+
+- **列表内光标 = 结构缩进**：操作的是列表的一项，Tab 嵌套、Shift+Tab 提升
+- **Block Selection = 视觉缩进（永远）**：选中的是整个 block（包括整个列表容器），Tab 改 indent attr
+- **两者互斥**：列表内不做视觉缩进，Block Selection 不做结构缩进
 
 ---
 
