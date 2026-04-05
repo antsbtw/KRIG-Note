@@ -20,6 +20,7 @@ import { HandleMenu } from './HandleMenu';
 import { ContextMenu } from './ContextMenu';
 import { blockHandlePlugin } from '../plugins/block-handle';
 import { blockSelectionPlugin } from '../plugins/block-selection';
+import { indentPlugin } from '../plugins/indent';
 import { buildTestDocument } from '../test-content';
 import '../note.css';
 
@@ -106,6 +107,7 @@ function buildPlugins(s: ReturnType<typeof getSchema>) {
 
   return [
     blockSelectionPlugin(),
+    indentPlugin(),              // Tab/Shift+Tab — 在 baseKeymap 之前拦截
     slashCommandPlugin(),
     containerKeyboardPlugin(),
     buildInputRules(s),
