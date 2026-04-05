@@ -22,24 +22,33 @@ export function HandleMenu({ view }: HandleMenuProps) {
 
   useEffect(() => {
     if (!view) return;
-    let closeListener: (() => void) | null = null;
+    let closeListener: ((e: MouseEvent) => void) | null = null;
 
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail;
       setMenu({ pos: detail.pos, blockType: detail.blockType, coords: detail.coords });
 
-      // 延迟注册关闭监听（避免同一帧的 click 冒泡立即关闭）
-      if (closeListener) document.removeEventListener('click', closeListener);
-      closeListener = () => setMenu(null);
+      // 移除旧的关闭监听
+      if (closeListener) document.removeEventListener('mousedown', closeListener);
+
+      // 下一帧注册：点击菜单外任何地方关闭
       setTimeout(() => {
-        if (closeListener) document.addEventListener('click', closeListener);
-      }, 0);
+        closeListener = (me: MouseEvent) => {
+          // 如果点击在菜单内，不关闭
+          const menuEl = document.querySelector('.handle-menu');
+          if (menuEl?.contains(me.target as Node)) return;
+          setMenu(null);
+          if (closeListener) document.removeEventListener('mousedown', closeListener);
+          closeListener = null;
+        };
+        document.addEventListener('mousedown', closeListener);
+      }, 50);
     };
 
     view.dom.addEventListener('block-handle-click', handler);
     return () => {
       view.dom.removeEventListener('block-handle-click', handler);
-      if (closeListener) document.removeEventListener('click', closeListener);
+      if (closeListener) document.removeEventListener('mousedown', closeListener);
     };
   }, [view]);
 
@@ -64,7 +73,7 @@ export function HandleMenu({ view }: HandleMenuProps) {
   };
 
   return (
-    <div style={{ ...styles.container, left: menu.coords.left, top: menu.coords.top }} onClick={(e) => e.stopPropagation()}>
+    <div className="handle-menu" style={{ ...styles.container, left: menu.coords.left, top: menu.coords.top }} onMouseDown={(e) => e.stopPropagation()}>
       {menu.blockType === 'textBlock' && (
         <>
           <div style={styles.item} onMouseDown={(e) => { e.preventDefault(); setLevel(null); }}>
