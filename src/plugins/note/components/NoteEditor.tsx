@@ -1,13 +1,13 @@
-import { useRef, useEffect, useState } from 'react';
+import { useRef, useEffect, useState, useCallback } from 'react';
 import { EditorState } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
+import { Node as PMNode } from 'prosemirror-model';
 import { keymap } from 'prosemirror-keymap';
 import { baseKeymap, toggleMark } from 'prosemirror-commands';
 import { history, undo, redo } from 'prosemirror-history';
 import { dropCursor } from 'prosemirror-dropcursor';
 import { gapCursor } from 'prosemirror-gapcursor';
 import { blockRegistry } from '../registry';
-import { buildTestDocument } from '../test-content';
 import { registerAllBlocks } from '../blocks/index';
 import { noteTitleNodeView } from '../blocks/text-block';
 import { buildInputRules } from '../plugins/input-rules';
@@ -25,8 +25,21 @@ import '../note.css';
 /**
  * NoteEditor — ProseMirror 编辑器 React 组件
  *
- * 重建版：三基类架构，干净的插件组织。
+ * 从 SurrealDB 加载文档，自动保存。
+ * 不再使用内存测试文档。
  */
+
+declare const viewAPI: {
+  noteLoad: (id: string) => Promise<any>;
+  noteSave: (id: string, docContent: unknown[], title: string) => Promise<void>;
+  onNoteOpenInEditor: (callback: (noteId: string) => void) => () => void;
+  setActiveNote: (noteId: string | null, noteTitle?: string) => Promise<void>;
+  onRestoreWorkspaceState: (callback: (state: { activeNoteId: string | null }) => void) => () => void;
+  onNoteTitleChanged: (callback: (data: { noteId: string; title: string }) => void) => () => void;
+  onLoadTestDoc: (callback: () => void) => () => void;
+  isDBReady: () => Promise<boolean>;
+  onDBReady: (callback: () => void) => () => void;
+};
 
 // 注册所有 Block（只执行一次）
 let registered = false;
@@ -45,106 +58,229 @@ function getSchema() {
   return schemaCache;
 }
 
-export function NoteEditor() {
-  const editorRef = useRef<HTMLDivElement>(null);
-  const viewRef = useRef<EditorView | null>(null);
-  const [editorView, setEditorView] = useState<EditorView | null>(null);
+/** 构建 ProseMirror 插件列表 */
+function buildPlugins(s: ReturnType<typeof getSchema>) {
+  const markKeymap: Record<string, any> = {};
+  if (s.marks.bold) markKeymap['Mod-b'] = toggleMark(s.marks.bold);
+  if (s.marks.italic) markKeymap['Mod-i'] = toggleMark(s.marks.italic);
+  if (s.marks.underline) markKeymap['Mod-u'] = toggleMark(s.marks.underline);
+  if (s.marks.strike) markKeymap['Mod-Shift-s'] = toggleMark(s.marks.strike);
+  if (s.marks.code) markKeymap['Mod-e'] = toggleMark(s.marks.code);
 
-  useEffect(() => {
-    if (!editorRef.current || viewRef.current) return;
-
-    const s = getSchema();
-    const nodeViews = blockRegistry.buildNodeViews();
-    const blockPlugins = blockRegistry.buildBlockPlugins();
-
-    // textBlock 的 NodeView 条件分发：isTitle → noteTitleNodeView，其他不用 NodeView
-    nodeViews['textBlock'] = (node, view, getPos) => {
-      if (node.attrs.isTitle) {
-        return noteTitleNodeView(node, view, getPos);
-      }
-      // 非 noteTitle 不使用 NodeView，走 toDOM
-      return undefined as any;
-    };
-
-    // ── 快捷键 ──
-    const markKeymap: Record<string, any> = {};
-    if (s.marks.bold) markKeymap['Mod-b'] = toggleMark(s.marks.bold);
-    if (s.marks.italic) markKeymap['Mod-i'] = toggleMark(s.marks.italic);
-    if (s.marks.underline) markKeymap['Mod-u'] = toggleMark(s.marks.underline);
-    if (s.marks.strike) markKeymap['Mod-Shift-s'] = toggleMark(s.marks.strike);
-    if (s.marks.code) markKeymap['Mod-e'] = toggleMark(s.marks.code);
-
-    // Cmd+Alt+0/1/2/3 标题切换
-    markKeymap['Mod-Alt-0'] = (state: any, dispatch: any) => {
+  // Cmd+Alt+0/1/2/3 标题切换
+  markKeymap['Mod-Alt-0'] = (state: any, dispatch: any) => {
+    const { $from } = state.selection;
+    if ($from.depth < 1) return false;
+    const pos = $from.before(1);
+    const node = state.doc.nodeAt(pos);
+    if (!node || node.type.name !== 'textBlock' || node.attrs.isTitle) return false;
+    if (!node.attrs.level) return false;
+    if (dispatch) dispatch(state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, level: null }));
+    return true;
+  };
+  for (const level of [1, 2, 3]) {
+    markKeymap[`Mod-Alt-${level}`] = (state: any, dispatch: any) => {
       const { $from } = state.selection;
       if ($from.depth < 1) return false;
       const pos = $from.before(1);
       const node = state.doc.nodeAt(pos);
       if (!node || node.type.name !== 'textBlock' || node.attrs.isTitle) return false;
-      if (!node.attrs.level) return false;
-      if (dispatch) dispatch(state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, level: null }));
+      if (node.attrs.level === level) {
+        if (dispatch) dispatch(state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, level: null }));
+      } else {
+        if (dispatch) dispatch(state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, level }));
+      }
       return true;
     };
-    for (const level of [1, 2, 3]) {
-      markKeymap[`Mod-Alt-${level}`] = (state: any, dispatch: any) => {
-        const { $from } = state.selection;
-        if ($from.depth < 1) return false;
-        const pos = $from.before(1);
-        const node = state.doc.nodeAt(pos);
-        if (!node || node.type.name !== 'textBlock' || node.attrs.isTitle) return false;
-        if (node.attrs.level === level) {
-          if (dispatch) dispatch(state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, level: null }));
-        } else {
-          if (dispatch) dispatch(state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, level }));
-        }
-        return true;
-      };
+  }
+
+  if (s.nodes.hardBreak) {
+    markKeymap['Shift-Enter'] = (state: any, dispatch: any) => {
+      if (dispatch) dispatch(state.tr.replaceSelectionWith(s.nodes.hardBreak.create()));
+      return true;
+    };
+  }
+
+  const blockPlugins = blockRegistry.buildBlockPlugins();
+
+  return [
+    blockSelectionPlugin(),
+    slashCommandPlugin(),
+    containerKeyboardPlugin(),
+    buildInputRules(s),
+    keymap({ 'Mod-z': undo, 'Mod-Shift-z': redo, 'Mod-y': redo }),
+    keymap(markKeymap),
+    keymap(baseKeymap),
+    tableKeymapPlugin(),
+    blockHandlePlugin(),
+    history(),
+    dropCursor({ color: '#8ab4f8', width: 2 }),
+    gapCursor(),
+    ...blockPlugins,
+  ];
+}
+
+/** 从 doc_content JSON 构建 ProseMirror doc */
+function docFromJSON(s: ReturnType<typeof getSchema>, docContent: unknown[]): PMNode {
+  try {
+    return PMNode.fromJSON(s, { type: 'doc', content: docContent });
+  } catch (err) {
+    console.error('[NoteEditor] Failed to parse doc_content:', err);
+    // 回退到空文档
+    return createEmptyDoc(s);
+  }
+}
+
+/** 创建空文档（noteTitle + 空段落） */
+function createEmptyDoc(s: ReturnType<typeof getSchema>): PMNode {
+  return s.node('doc', null, [
+    s.nodes.textBlock.create({ isTitle: true }),
+    s.nodes.textBlock.create(),
+  ]);
+}
+
+export function NoteEditor() {
+  const editorRef = useRef<HTMLDivElement>(null);
+  const viewRef = useRef<EditorView | null>(null);
+  const [editorView, setEditorView] = useState<EditorView | null>(null);
+  const currentNoteIdRef = useRef<string | null>(null);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // 创建/重建编辑器
+  const createEditor = useCallback((doc: PMNode) => {
+    if (!editorRef.current) return;
+
+    // 销毁旧编辑器
+    if (viewRef.current) {
+      viewRef.current.destroy();
+      viewRef.current = null;
     }
 
-    // Shift+Enter → hardBreak
-    if (s.nodes.hardBreak) {
-      markKeymap['Shift-Enter'] = (state: any, dispatch: any) => {
-        if (dispatch) dispatch(state.tr.replaceSelectionWith(s.nodes.hardBreak.create()));
-        return true;
-      };
-    }
+    const s = getSchema();
+    const nodeViews = blockRegistry.buildNodeViews();
+    nodeViews['textBlock'] = (node, view, getPos) => {
+      if (node.attrs.isTitle) return noteTitleNodeView(node, view, getPos);
+      return undefined as any;
+    };
 
-    // ── 初始文档 ──
-    const doc = buildTestDocument(s);
-
-    const state = EditorState.create({
-      doc,
-      plugins: [
-        blockSelectionPlugin(),     // 最高优先级 — ESC 选中 Block
-        slashCommandPlugin(),
-        containerKeyboardPlugin(),  // Container Enter/Backspace — 在 baseKeymap 之前
-        buildInputRules(s),
-        keymap({ 'Mod-z': undo, 'Mod-Shift-z': redo, 'Mod-y': redo }),
-        keymap(markKeymap),
-        keymap(baseKeymap),
-        tableKeymapPlugin(),
-        blockHandlePlugin(),
-        history(),
-        dropCursor({ color: '#8ab4f8', width: 2 }),
-        gapCursor(),
-        ...blockPlugins,
-      ],
-    });
-
+    const state = EditorState.create({ doc, plugins: buildPlugins(s) });
     const view = new EditorView(editorRef.current, {
       state,
       nodeViews: nodeViews as any,
+      dispatchTransaction(tr) {
+        const newState = view.state.apply(tr);
+        view.updateState(newState);
+        // 文档变化时触发自动保存
+        if (tr.docChanged) scheduleSave();
+      },
     });
 
     viewRef.current = view;
     setEditorView(view);
+  }, []);
+
+  // 加载文档
+  const loadNote = useCallback(async (noteId: string) => {
+    const s = getSchema();
+    try {
+      const record = await viewAPI.noteLoad(noteId);
+      if (!record || !record.doc_content || record.doc_content.length === 0) {
+        createEditor(createEmptyDoc(s));
+      } else {
+        createEditor(docFromJSON(s, record.doc_content));
+      }
+      currentNoteIdRef.current = noteId;
+      viewAPI.setActiveNote(noteId, record?.title);
+    } catch (err) {
+      console.error('[NoteEditor] Failed to load note:', err);
+      createEditor(createEmptyDoc(s));
+      currentNoteIdRef.current = noteId;
+    }
+  }, [createEditor]);
+
+  // 保存文档
+  const saveNote = useCallback(() => {
+    const noteId = currentNoteIdRef.current;
+    const view = viewRef.current;
+    if (!noteId || !view) return;
+
+    const doc = view.state.doc;
+    const docJSON = doc.toJSON();
+    const docContent = docJSON.content || [];
+
+    // 提取标题
+    let title = 'Untitled';
+    doc.forEach((node) => {
+      if (node.type.name === 'textBlock' && node.attrs.isTitle && node.textContent) {
+        title = node.textContent;
+      }
+    });
+
+    viewAPI.noteSave(noteId, docContent, title);
+  }, []);
+
+  // 防抖自动保存（1秒）
+  const scheduleSave = useCallback(() => {
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(saveNote, 1000);
+  }, [saveNote]);
+
+  // 初始化
+  useEffect(() => {
+    const s = getSchema();
+
+    // 先创建空编辑器
+    createEditor(createEmptyDoc(s));
+
+    // 监听打开笔记事件
+    const unsubOpen = viewAPI.onNoteOpenInEditor((noteId) => {
+      loadNote(noteId);
+    });
+
+    // 恢复上次打开的笔记
+    const unsubRestore = viewAPI.onRestoreWorkspaceState((state) => {
+      if (state.activeNoteId) {
+        loadNote(state.activeNoteId);
+      }
+    });
+
+    // 标题外部变更同步
+    const unsubTitle = viewAPI.onNoteTitleChanged(({ noteId, title }) => {
+      if (noteId !== currentNoteIdRef.current) return;
+      const view = viewRef.current;
+      if (!view) return;
+      // 找到 noteTitle 节点并更新
+      let titlePos = -1;
+      view.state.doc.forEach((node, offset) => {
+        if (titlePos < 0 && node.type.name === 'textBlock' && node.attrs.isTitle) {
+          titlePos = offset;
+        }
+      });
+      if (titlePos >= 0) {
+        const titleNode = view.state.doc.nodeAt(titlePos);
+        if (titleNode && titleNode.textContent !== title) {
+          const tr = view.state.tr;
+          tr.replaceWith(titlePos + 1, titlePos + titleNode.nodeSize - 1,
+            title ? s.text(title) : s.text(''));
+          view.dispatch(tr);
+        }
+      }
+    });
 
     return () => {
-      view.destroy();
-      viewRef.current = null;
-      setEditorView(null);
+      unsubOpen();
+      unsubRestore();
+      unsubTitle();
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveNote(); // 关闭前保存
+      }
+      if (viewRef.current) {
+        viewRef.current.destroy();
+        viewRef.current = null;
+      }
     };
-  }, []);
+  }, [createEditor, loadNote, saveNote]);
 
   return (
     <div style={styles.container}>
@@ -168,6 +304,6 @@ const styles: Record<string, React.CSSProperties> = {
     maxWidth: '900px',
     margin: '0 auto',
     minHeight: '100%',
-    position: 'relative' as const,  // block-handle 定位基准
+    position: 'relative' as const,
   },
 };
