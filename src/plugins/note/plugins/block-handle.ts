@@ -114,61 +114,31 @@ export function blockHandlePlugin(): Plugin {
         mousemove(view, event) {
           if (isHovered) return false;
 
-          // 方式 1：DOM 遍历找直接子节点
-          let target = event.target as HTMLElement | null;
-          const pmDOM = view.dom;
-          let blockDOM: HTMLElement | null = null;
-          while (target && target !== pmDOM) {
-            if (target.parentElement === pmDOM) { blockDOM = target; break; }
-            target = target.parentElement;
-          }
+          // 用编辑器内容区 X + 鼠标 Y 查找 block（左侧空白也能触发）
+          const editorRect = view.dom.getBoundingClientRect();
+          const probeX = Math.max(event.clientX, editorRect.left + 80);
+          const pos = view.posAtCoords({ left: probeX, top: event.clientY });
+          if (!pos) { hideHandle(); return false; }
 
-          // 方式 2：鼠标在左侧空白区域时，用 posAtCoords 按 Y 坐标查找
-          if (!blockDOM) {
-            const pos = view.posAtCoords({ left: pmDOM.getBoundingClientRect().left + 80, top: event.clientY });
-            if (pos) {
-              try {
-                const $pos = view.state.doc.resolve(pos.pos);
-                if ($pos.depth >= 1) {
-                  const nodePos = $pos.before(1);
-                  const dom = view.nodeDOM(nodePos);
-                  blockDOM = dom instanceof HTMLElement ? dom : (dom as Node)?.parentElement ?? null;
-                }
-              } catch { /* ignore */ }
-            }
-          }
-
-          if (!blockDOM) { hideHandle(); return false; }
-
-          // 找到鼠标位置对应的最内层 block（不限 depth=1）
           let blockStart: number;
           let blockNode: any;
-          let targetBlockDOM: HTMLElement = blockDOM;
+          let targetBlockDOM: HTMLElement | null = null;
           try {
-            const pos = view.posAtCoords({ left: event.clientX, top: event.clientY });
-            if (!pos) { hideHandle(); return false; }
             const $pos = view.state.doc.resolve(pos.pos);
             if ($pos.depth < 1) { hideHandle(); return false; }
 
-            // 找到最内层的 block 节点（textBlock 或其他叶子 block）
-            let targetDepth = $pos.depth;
-            let node = $pos.node(targetDepth);
+            // 找最内层 block（跳过 inline/text 层级）
+            let depth = $pos.depth;
+            while (depth > 0 && ($pos.node(depth).isInline || $pos.node(depth).type.name === 'text')) depth--;
+            if (depth < 1) { hideHandle(); return false; }
 
-            // 如果当前是 inline 层级，向上一级到 block
-            if (node.isInline || node.type.name === 'text') {
-              targetDepth = $pos.depth - 1;
-              node = $pos.node(targetDepth);
-            }
+            blockStart = $pos.before(depth);
+            blockNode = $pos.node(depth);
 
-            blockStart = $pos.before(targetDepth);
-            blockNode = node;
-
-            // 获取该 block 的 DOM
             const dom = view.nodeDOM(blockStart);
-            if (dom instanceof HTMLElement) targetBlockDOM = dom;
-            else if ((dom as Node)?.parentElement) targetBlockDOM = (dom as Node).parentElement as HTMLElement;
+            targetBlockDOM = dom instanceof HTMLElement ? dom : (dom as Node)?.parentElement as HTMLElement ?? null;
           } catch { hideHandle(); return false; }
-          if (!blockNode) { hideHandle(); return false; }
+          if (!blockNode || !targetBlockDOM) { hideHandle(); return false; }
 
           // noteTitle 不显示手柄
           if (blockNode.type.name === 'textBlock' && blockNode.attrs.isTitle) { hideHandle(); return false; }
