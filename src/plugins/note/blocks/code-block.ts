@@ -726,23 +726,23 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
     // 插入到 toolbar：适应屏幕按钮后面
     btnFit.after(zoomBar);
 
-    // ── 预览区缩放 + 平移 ──
-    let scale = 1, panX = 0, panY = 0;
+    // ── 预览区缩放（仅通过 toolbar 控制，原生滚动条浏览） ──
+    let scale = 1;
     function updateZoomLabel() {
       zoomLabel.textContent = `${Math.round(scale * 100)}%`;
     }
-    const applyTransform = () => {
-      previewWrapper.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+    function applyScale() {
+      previewWrapper.style.transform = `scale(${scale})`;
       updateZoomLabel();
-    };
+    }
 
     zoomOut.addEventListener('click', () => {
       scale = Math.max(0.1, scale - 0.1);
-      applyTransform();
+      applyScale();
     });
     zoomIn.addEventListener('click', () => {
       scale = Math.min(5, scale + 0.1);
-      applyTransform();
+      applyScale();
     });
 
     // 点击百分比 → 显示输入框
@@ -757,7 +757,7 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
       const val = parseInt(zoomInput.value, 10);
       if (!isNaN(val) && val > 0) {
         scale = Math.max(0.1, Math.min(5, val / 100));
-        applyTransform();
+        applyScale();
       }
       zoomInput.style.display = 'none';
       zoomLabel.style.display = '';
@@ -765,43 +765,16 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
     zoomInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') { e.preventDefault(); commitZoomInput(); }
       if (e.key === 'Escape') { e.preventDefault(); zoomInput.style.display = 'none'; zoomLabel.style.display = ''; }
-      e.stopPropagation(); // 防止触发全屏关闭
+      e.stopPropagation();
     });
     zoomInput.addEventListener('blur', commitZoomInput);
 
-    previewPane.addEventListener('wheel', (ev) => {
-      ev.preventDefault();
-      const rect = previewPane.getBoundingClientRect();
-      const mx = ev.clientX - rect.left - rect.width / 2;
-      const my = ev.clientY - rect.top - rect.height / 2;
-      const oldScale = scale;
-      scale = Math.max(0.2, Math.min(5, scale + (ev.deltaY > 0 ? -0.1 : 0.1)));
-      const ratio = scale / oldScale;
-      panX = mx - ratio * (mx - panX);
-      panY = my - ratio * (my - panY);
-      applyTransform();
-    });
-
-    let dragging = false, lastX = 0, lastY = 0;
-    previewPane.addEventListener('mousedown', (ev) => {
-      if (ev.button !== 0) return;
-      dragging = true; lastX = ev.clientX; lastY = ev.clientY;
-      previewPane.style.cursor = 'grabbing';
-    });
-    const onMove = (ev: MouseEvent) => {
-      if (!dragging) return;
-      panX += ev.clientX - lastX; panY += ev.clientY - lastY;
-      lastX = ev.clientX; lastY = ev.clientY;
-      applyTransform();
-    };
-    const onUp = () => { dragging = false; previewPane.style.cursor = 'grab'; };
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
-
     // ── 适应屏幕 ──
     btnFit.addEventListener('click', () => {
-      scale = 1; panX = 0; panY = 0;
-      applyTransform();
+      scale = 1;
+      applyScale();
+      previewPane.scrollTop = 0;
+      previewPane.scrollLeft = 0;
     });
 
     // ── 导出 ──
@@ -888,8 +861,6 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
       }
       cmEditor.destroy();
       overlay.remove();
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
       document.removeEventListener('mousemove', onDividerMove);
       document.removeEventListener('mouseup', onDividerUp);
       document.removeEventListener('keydown', onKey);

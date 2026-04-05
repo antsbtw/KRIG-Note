@@ -535,15 +535,13 @@
 .code-block__fs-divider:hover { background: #555; }
 .code-block__fs-preview {
   flex: 1;
-  overflow: hidden;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  overflow: auto;
   background: #111;
-  cursor: grab;
+  padding: 24px;
 }
 .code-block__fs-preview-wrapper {
-  transform-origin: center center;
+  transform-origin: top left;
+  display: inline-block;
 }
 .code-block__fs-preview-wrapper svg { max-width: none; height: auto; }
 
