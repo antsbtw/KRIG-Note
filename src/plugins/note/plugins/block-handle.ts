@@ -114,31 +114,69 @@ export function blockHandlePlugin(): Plugin {
         mousemove(view, event) {
           if (isHovered) return false;
 
-          // 只用 Y 坐标查找 block — X 坐标固定在编辑器内容区中部
+          // X 范围限制：只在编辑器视图内触发
           const editorRect = view.dom.getBoundingClientRect();
+          if (event.clientX < editorRect.left - 70 || event.clientX > editorRect.right + 10) {
+            hideHandle(); return false;
+          }
+
+          // 按 Y 坐标查找 block — 用 posAtCoords，X 固定在内容区
+          const mouseY = event.clientY;
           const probeX = editorRect.left + editorRect.width / 2;
-          const pos = view.posAtCoords({ left: probeX, top: event.clientY });
-          if (!pos) { hideHandle(); return false; }
-
-          let blockStart: number;
-          let blockNode: any;
+          let blockStart = -1;
+          let blockNode: any = null;
           let targetBlockDOM: HTMLElement | null = null;
-          try {
-            const $pos = view.state.doc.resolve(pos.pos);
-            if ($pos.depth < 1) { hideHandle(); return false; }
 
-            // 找最内层 block（跳过 inline/text 层级）
-            let depth = $pos.depth;
-            while (depth > 0 && ($pos.node(depth).isInline || $pos.node(depth).type.name === 'text')) depth--;
-            if (depth < 1) { hideHandle(); return false; }
+          // 主方案：posAtCoords
+          const pos = view.posAtCoords({ left: probeX, top: mouseY });
+          if (pos) {
+            try {
+              const $pos = view.state.doc.resolve(pos.pos);
+              let depth = $pos.depth;
+              while (depth > 0 && ($pos.node(depth).isInline || $pos.node(depth).type.name === 'text')) depth--;
+              if (depth >= 1) {
+                blockStart = $pos.before(depth);
+                blockNode = $pos.node(depth);
+                const dom = view.nodeDOM(blockStart);
+                targetBlockDOM = dom instanceof HTMLElement ? dom : (dom as Node)?.parentElement as HTMLElement ?? null;
+              }
+            } catch { /* ignore */ }
+          }
 
-            blockStart = $pos.before(depth);
-            blockNode = $pos.node(depth);
+          // 回退：posAtCoords 在 margin 间隙失败时，遍历顶层子 DOM 找 Y 最近的
+          if (blockStart < 0) {
+            const children = view.dom.children;
+            let minDist = Infinity;
+            for (let i = 0; i < children.length; i++) {
+              const child = children[i] as HTMLElement;
+              const rect = child.getBoundingClientRect();
+              // 鼠标在 block rect 范围内
+              if (mouseY >= rect.top && mouseY <= rect.bottom) {
+                try {
+                  const p = view.posAtDOM(child, 0);
+                  const $p = view.state.doc.resolve(p);
+                  blockStart = $p.before(1);
+                  blockNode = $p.node(1);
+                  targetBlockDOM = child;
+                } catch { /* ignore */ }
+                break;
+              }
+              // 最近的 block（margin 间隙）
+              const dist = mouseY < rect.top ? rect.top - mouseY : mouseY - rect.bottom;
+              if (dist < minDist && dist < 20) {
+                minDist = dist;
+                try {
+                  const p = view.posAtDOM(child, 0);
+                  const $p = view.state.doc.resolve(p);
+                  blockStart = $p.before(1);
+                  blockNode = $p.node(1);
+                  targetBlockDOM = child;
+                } catch { /* ignore */ }
+              }
+            }
+          }
 
-            const dom = view.nodeDOM(blockStart);
-            targetBlockDOM = dom instanceof HTMLElement ? dom : (dom as Node)?.parentElement as HTMLElement ?? null;
-          } catch { hideHandle(); return false; }
-          if (!blockNode || !targetBlockDOM) { hideHandle(); return false; }
+          if (blockStart < 0 || !blockNode || !targetBlockDOM) { hideHandle(); return false; }
 
           // noteTitle 不显示手柄
           if (blockNode.type.name === 'textBlock' && blockNode.attrs.isTitle) { hideHandle(); return false; }
