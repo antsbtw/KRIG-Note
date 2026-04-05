@@ -21,6 +21,7 @@ function renderKaTeX(target: HTMLElement, source: string) {
     return;
   }
   try {
+    target.innerHTML = '';
     katex.render(trimmed, target, { throwOnError: false, displayMode: true });
   } catch {
     target.innerHTML = '<div class="math-block__error">Invalid LaTeX</div>';
@@ -58,11 +59,11 @@ const mathBlockNodeView: NodeViewFactory = (initialNode, view, getPos) => {
   headerBar.appendChild(label);
   editorArea.appendChild(headerBar);
 
-  // LaTeX input area (contentDOM)
-  const pre = document.createElement('pre');
-  const code = document.createElement('code');
-  pre.appendChild(code);
-  editorArea.appendChild(pre);
+  // LaTeX input area (contentDOM) — single element, no pre>code nesting
+  // ProseMirror needs contentDOM to be the direct container of text nodes
+  const code = document.createElement('pre');
+  code.classList.add('math-block__code');
+  editorArea.appendChild(code);
 
   // Live preview
   const livePreview = document.createElement('div');
@@ -72,18 +73,9 @@ const mathBlockNodeView: NodeViewFactory = (initialNode, view, getPos) => {
 
   dom.appendChild(editorArea);
 
-  // ── Helper: get LaTeX from ProseMirror node ──
+  // ── Helper: get LaTeX from cached node ──
   function getLatex(): string {
-    const pos = getPos();
-    if (pos != null) {
-      try {
-        const resolvedNode = view.state.doc.nodeAt(pos);
-        if (resolvedNode && resolvedNode.type.name === 'mathBlock') {
-          return resolvedNode.textContent;
-        }
-      } catch {}
-    }
-    return code.textContent || '';
+    return node.textContent;
   }
 
   function renderRenderedView() {
@@ -91,7 +83,11 @@ const mathBlockNodeView: NodeViewFactory = (initialNode, view, getPos) => {
   }
 
   function renderLivePreview() {
-    renderKaTeX(livePreview, getLatex());
+    const latex = getLatex();
+    // Defer KaTeX rendering to avoid interfering with ProseMirror's DOMObserver flush
+    requestAnimationFrame(() => {
+      renderKaTeX(livePreview, latex);
+    });
   }
 
   function scheduleRender() {
@@ -191,7 +187,8 @@ const mathBlockNodeView: NodeViewFactory = (initialNode, view, getPos) => {
       if (updatedNode.type.name !== 'mathBlock') return false;
       node = updatedNode;
       if (editing) {
-        scheduleRender();
+        if (renderTimer) clearTimeout(renderTimer);
+        renderLivePreview();
       } else {
         renderRenderedView();
       }
@@ -217,7 +214,7 @@ export const mathBlockBlock: BlockDef = {
     defining: true,
     marks: '',
     parseDOM: [{ tag: 'div.math-block-wrapper', preserveWhitespace: 'full' as const }],
-    toDOM() { return ['div', { class: 'math-block-wrapper' }, ['pre', ['code', 0]]]; },
+    toDOM() { return ['div', { class: 'math-block-wrapper' }, ['pre', { class: 'math-block__code' }, 0]]; },
   },
   nodeView: mathBlockNodeView,
   capabilities: { canDelete: true, canDrag: true },
