@@ -114,6 +114,15 @@ export function blockHandlePlugin(): Plugin {
         mousemove(view, event) {
           if (isHovered) return false;
 
+          // ══════════════════════════════════════════════════
+          // 手柄定位逻辑（已稳定，不要修改）
+          //
+          // 原则：只看 Y 坐标，鼠标在哪一行就显示哪行的手柄
+          // 方案：posAtCoords（X 固定）+ DOM rect 回退
+          // X 范围：编辑器区域内（含左侧手柄空间）
+          // Y 容差：margin 间隙 20px 内也命中
+          // ══════════════════════════════════════════════════
+
           // X 范围限制：只在编辑器视图内触发
           const editorRect = view.dom.getBoundingClientRect();
           if (event.clientX < editorRect.left - 70 || event.clientX > editorRect.right + 10) {
