@@ -20,6 +20,7 @@ import { HandleMenu } from './HandleMenu';
 import { ContextMenu } from './ContextMenu';
 import { blockHandlePlugin } from '../plugins/block-handle';
 import { blockSelectionPlugin } from '../plugins/block-selection';
+import { buildTestDocument } from '../test-content';
 import '../note.css';
 
 /**
@@ -244,6 +245,12 @@ export function NoteEditor() {
       }
     });
 
+    // 加载测试文档（Help 菜单）
+    const unsubTestDoc = viewAPI.onLoadTestDoc(() => {
+      currentNoteIdRef.current = null; // 测试文档不保存到数据库
+      createEditor(buildTestDocument(s));
+    });
+
     // 标题外部变更同步
     const unsubTitle = viewAPI.onNoteTitleChanged(({ noteId, title }) => {
       if (noteId !== currentNoteIdRef.current) return;
@@ -270,6 +277,7 @@ export function NoteEditor() {
     return () => {
       unsubOpen();
       unsubRestore();
+      unsubTestDoc();
       unsubTitle();
       if (saveTimerRef.current) {
         clearTimeout(saveTimerRef.current);
