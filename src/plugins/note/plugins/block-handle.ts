@@ -345,7 +345,9 @@ export function blockHandlePlugin(): Plugin {
               } catch { /* fallback */ }
 
               const topPx = textTop - containerRect.top + scrollTop + (lineHeight - handleHeight) / 2;
-              handleDOM.style.left = `${blockRect.left - containerRect.left + container.scrollLeft - 62}px`;
+              // left 固定：紧贴编辑器内容区左边缘，不受 block 类型影响
+              const editorLeft = view.dom.getBoundingClientRect().left - containerRect.left + container.scrollLeft;
+              handleDOM.style.left = `${editorLeft + 20}px`;
               handleDOM.style.top = `${topPx}px`;
               handleDOM.style.opacity = '1';
             }

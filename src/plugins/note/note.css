@@ -15,8 +15,8 @@
   position: relative;  /* block-handle 定位基准 */
 }
 /* ── Block 统一间距 ── */
-.ProseMirror > * { margin: 4px 0; padding: 3px 2px; }
-.ProseMirror p { margin: 4px 0; padding: 3px 2px; }
+.ProseMirror > * { margin: 1px 0; padding: 3px 2px; }
+.ProseMirror p { margin: 1px 0; padding: 3px 2px; }
 
 /* ── noteTitle ── */
 .note-title {
@@ -39,9 +39,9 @@
 }
 
 /* ── Heading ── */
-.ProseMirror h1 { font-size: 30px; font-weight: 700; margin: 4px 0; padding: 3px 2px; }
-.ProseMirror h2 { font-size: 24px; font-weight: 600; margin: 4px 0; padding: 3px 2px; }
-.ProseMirror h3 { font-size: 20px; font-weight: 600; margin: 4px 0; padding: 3px 2px; }
+.ProseMirror h1 { font-size: 30px; font-weight: 700; margin: 1px 0; padding: 3px 2px; }
+.ProseMirror h2 { font-size: 24px; font-weight: 600; margin: 1px 0; padding: 3px 2px; }
+.ProseMirror h3 { font-size: 20px; font-weight: 600; margin: 1px 0; padding: 3px 2px; }
 
 /* ── Inline marks ── */
 .ProseMirror code {
@@ -59,8 +59,7 @@
 
 /* ── bulletList ── */
 .bullet-list {
-  padding-left: 24px;
-  margin: 0.2em 0;
+  margin: 1px 0;
 }
 .bullet-list > .bullet-list__content > p,
 .bullet-list > .bullet-list__content > h1,
@@ -72,37 +71,41 @@
 .bullet-list > .bullet-list__content > h1::before,
 .bullet-list > .bullet-list__content > h2::before,
 .bullet-list > .bullet-list__content > h3::before {
-  content: '•';
+  content: '';
   position: absolute;
-  left: -20px;
-  width: 16px;
-  text-align: center;
-  color: #9aa0a6;
-  font-size: 1.4em;
-  line-height: 1;
-  top: 50%;
+  left: -24px;
+  top: calc(3px + 1.7em / 2);
   transform: translateY(-50%);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
 }
-/* 嵌套 2 级 → ◦ */
+/* 嵌套 2 级 → 空心圆 */
 .bullet-list .bullet-list > .bullet-list__content > p::before,
 .bullet-list .bullet-list > .bullet-list__content > h1::before,
 .bullet-list .bullet-list > .bullet-list__content > h2::before,
 .bullet-list .bullet-list > .bullet-list__content > h3::before {
-  content: '◦';
+  background: transparent;
+  border: 1.5px solid currentColor;
+  width: 5px;
+  height: 5px;
 }
-/* 嵌套 3 级 → ▪ */
+/* 嵌套 3 级 → 实心方块 */
 .bullet-list .bullet-list .bullet-list > .bullet-list__content > p::before,
 .bullet-list .bullet-list .bullet-list > .bullet-list__content > h1::before,
 .bullet-list .bullet-list .bullet-list > .bullet-list__content > h2::before,
 .bullet-list .bullet-list .bullet-list > .bullet-list__content > h3::before {
-  content: '▪';
-  font-size: 0.9em;
+  background: currentColor;
+  border: none;
+  border-radius: 1px;
+  width: 5px;
+  height: 5px;
 }
 
 /* ── orderedList ── */
 .ordered-list {
-  padding-left: 28px;
-  margin: 0.2em 0;
+  margin: 1px 0;
 }
 .ordered-list > .ordered-list__content > p,
 .ordered-list > .ordered-list__content > h1,
@@ -120,17 +123,16 @@
   left: -28px;
   width: 24px;
   text-align: right;
-  color: #9aa0a6;
-  font-size: 0.9em;
-  top: 50%;
-  transform: translateY(-50%);
+  color: inherit;
+  font-size: inherit;
+  top: 3px;
+  line-height: 1.7;
   font-variant-numeric: tabular-nums;
 }
 
 /* ── taskList ── */
 .task-list {
-  padding-left: 24px;
-  margin: 0.2em 0;
+  margin: 1px 0;
 }
 .task-list > .task-list__content > p,
 .task-list > .task-list__content > h1,
@@ -142,16 +144,17 @@
 .task-list > .task-list__content > h1::before,
 .task-list > .task-list__content > h2::before,
 .task-list > .task-list__content > h3::before {
-  content: '☐';
+  content: '';
   position: absolute;
-  left: -22px;
-  width: 18px;
-  text-align: center;
-  font-size: 0.9em;
-  cursor: pointer;
-  user-select: none;
-  top: 50%;
+  left: -24px;
+  top: calc(3px + 1.7em / 2);
   transform: translateY(-50%);
+  width: 14px;
+  height: 14px;
+  border: 2px solid #9aa0a6;
+  border-radius: 3px;
+  cursor: pointer;
+  box-sizing: border-box;
 }
 
 /* ── blockquote ── */
