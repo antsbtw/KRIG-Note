@@ -77,7 +77,8 @@ type ViewMode = 'split' | 'preview';
 
 const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
   let renderTimer: ReturnType<typeof setTimeout> | null = null;
-  let viewMode: ViewMode = 'split';
+  const LS_VIEW_KEY = 'krig-mermaid-view-mode';
+  let viewMode: ViewMode = (localStorage.getItem(LS_VIEW_KEY) as ViewMode) || 'split';
 
   const dom = document.createElement('div');
   dom.classList.add('code-block');
@@ -248,7 +249,9 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
 
   btnToggle.addEventListener('mousedown', (e) => {
     e.preventDefault(); e.stopPropagation();
-    updateViewMode(viewMode === 'split' ? 'preview' : 'split');
+    const next = viewMode === 'split' ? 'preview' : 'split';
+    updateViewMode(next);
+    localStorage.setItem(LS_VIEW_KEY, next);
   });
 
   // ── 复制 ──
@@ -565,7 +568,7 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
   // 初始化
   updateToolbarVisibility();
   if (node.attrs.language === 'mermaid') {
-    updateViewMode('split');
+    updateViewMode(viewMode);
     setTimeout(() => renderMermaid(code.textContent || ''), 50);
   } else {
     preview.style.display = 'none';
@@ -587,7 +590,7 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
       updateToolbarVisibility();
 
       if (node.attrs.language === 'mermaid') {
-        if (langChanged) { updateViewMode('split'); renderMermaid(node.textContent); }
+        if (langChanged) { updateViewMode(viewMode); renderMermaid(node.textContent); }
         else scheduleRender();
       } else {
         preview.style.display = 'none';
