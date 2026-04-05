@@ -78,14 +78,15 @@ export function FloatingToolbar({ view }: FloatingToolbarProps) {
             style={{
               ...styles.btn,
               ...btn.style,
-              background: active ? '#4a9eff' : 'transparent',
-              color: active ? '#fff' : '#e8eaed',
+              color: active ? '#4a9eff' : '#e8eaed',
             }}
             onMouseDown={(e) => {
               e.preventDefault();
               toggleMark(btn.mark!)(view.state, view.dispatch);
               view.focus();
             }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = '#3a3a3a')}
+            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
           >
             {btn.label}
           </div>
