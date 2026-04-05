@@ -114,9 +114,9 @@ export function blockHandlePlugin(): Plugin {
         mousemove(view, event) {
           if (isHovered) return false;
 
-          // 用编辑器内容区 X + 鼠标 Y 查找 block（左侧空白也能触发）
+          // 只用 Y 坐标查找 block — X 坐标固定在编辑器内容区中部
           const editorRect = view.dom.getBoundingClientRect();
-          const probeX = Math.max(event.clientX, editorRect.left + 80);
+          const probeX = editorRect.left + editorRect.width / 2;
           const pos = view.posAtCoords({ left: probeX, top: event.clientY });
           if (!pos) { hideHandle(); return false; }
 
