@@ -224,7 +224,18 @@ export function buildTestDocument(schema: Schema): PMNode {
     ]),
     p(schema, '• hover → toolbar 右侧 📋 按钮 → 点击复制代码到剪贴板'),
 
-    heading(schema, 3, '3.1.5 HandleMenu'),
+    heading(schema, 3, '3.1.5 Mermaid 三模式'),
+    schema.node('codeBlock', { language: 'mermaid' }, [
+      schema.text('graph TD\n  A[开始] --> B{条件判断}\n  B -->|是| C[执行操作]\n  B -->|否| D[跳过]\n  C --> E[结束]\n  D --> E'),
+    ]),
+    p(schema, '• 分屏模式（默认）：左侧代码 + 右侧预览'),
+    p(schema, '• 仅代码 / 仅预览 模式切换（toolbar 按钮）'),
+    p(schema, '• 编辑代码 → 500ms debounce 自动刷新预览'),
+    p(schema, '• 下载 PNG（2x retina）'),
+    p(schema, '• 点击预览或全屏按钮 → 全屏查看（拖拽平移 + 滚轮缩放）'),
+    p(schema, '• /code mermaid 或 /mermaid 创建'),
+
+    heading(schema, 3, '3.1.6 HandleMenu'),
     schema.node('codeBlock', { language: 'rust' }, [
       schema.text('// 点击左侧手柄 ⠿ 测试菜单\nfn main() {}'),
     ]),
