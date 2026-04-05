@@ -349,7 +349,7 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
     editorPane.appendChild(textarea);
     editorArea.appendChild(editorPane);
 
-    // 中：分隔线
+    // 中：可拖拽分隔线
     const divider = document.createElement('div');
     divider.classList.add('code-block__fs-divider');
     editorArea.appendChild(divider);
@@ -365,6 +365,34 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
 
     overlay.appendChild(editorArea);
     document.body.appendChild(overlay);
+
+    // 分隔线拖拽
+    let dividerDragging = false;
+    divider.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      dividerDragging = true;
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+    });
+    const onDividerMove = (e: MouseEvent) => {
+      if (!dividerDragging) return;
+      const rect = editorArea.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const total = rect.width;
+      const ratio = Math.max(0.15, Math.min(0.85, x / total));
+      editorPane.style.flex = 'none';
+      editorPane.style.width = `${ratio * 100}%`;
+      previewPane.style.flex = 'none';
+      previewPane.style.width = `${(1 - ratio) * 100}%`;
+    };
+    const onDividerUp = () => {
+      if (!dividerDragging) return;
+      dividerDragging = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+    document.addEventListener('mousemove', onDividerMove);
+    document.addEventListener('mouseup', onDividerUp);
 
     // 预览渲染
     let fsRenderTimer: ReturnType<typeof setTimeout> | null = null;
@@ -473,6 +501,8 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
       overlay.remove();
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
+      document.removeEventListener('mousemove', onDividerMove);
+      document.removeEventListener('mouseup', onDividerUp);
       document.removeEventListener('keydown', onKey);
       if (fsRenderTimer) clearTimeout(fsRenderTimer);
       view.focus();

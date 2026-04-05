@@ -501,10 +501,13 @@
   tab-size: 2;
 }
 .code-block__fs-divider {
-  width: 1px;
+  width: 5px;
   background: #333;
   flex-shrink: 0;
+  cursor: col-resize;
+  transition: background 0.15s;
 }
+.code-block__fs-divider:hover { background: #555; }
 .code-block__fs-preview {
   flex: 1;
   overflow: hidden;
