@@ -319,6 +319,40 @@
 }
 .ft-btn:hover { background: #3a3a3a; }
 .ft-btn--active { color: #4a9eff; }
+.ft-separator { width: 1px; height: 18px; background: #444; margin: 0 2px; align-self: center; }
+
+/* ── ColorPicker ── */
+.color-picker {
+  background: #2d2d2d;
+  border: 1px solid #3c3c3c;
+  border-radius: 8px;
+  padding: 8px 10px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  min-width: 200px;
+}
+.color-picker__section-label {
+  font-size: 11px;
+  color: #9aa0a6;
+  margin: 4px 0;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.color-picker__grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.color-picker__swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  border: 2px solid transparent;
+  cursor: pointer;
+  padding: 0;
+  transition: border-color 0.1s;
+}
+.color-picker__swatch:hover { border-color: #8ab4f8; }
+.color-picker__swatch--active { border-color: #8ab4f8 !important; box-shadow: 0 0 0 1px #8ab4f8; }
 
 .ProseMirror hr {
   border: none; border-top: 1px solid #444; margin: 1.5em 0;

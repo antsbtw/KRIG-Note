@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import type { EditorView } from 'prosemirror-view';
 import type { MarkType } from 'prosemirror-model';
 import { toggleMark } from 'prosemirror-commands';
+import { ColorPicker } from './ColorPicker';
 
 /**
  * FloatingToolbar — 选中文字后弹出的格式化工具栏
@@ -26,6 +27,9 @@ export function FloatingToolbar({ view }: FloatingToolbarProps) {
   const [visible, setVisible] = useState(false);
   const [position, setPosition] = useState({ top: 0, left: 0 });
   const [, forceUpdate] = useState(0);
+  const [showColorPicker, setShowColorPicker] = useState(false);
+  const [lastTextColor, setLastTextColor] = useState('');
+  const [lastBgColor, setLastBgColor] = useState('');
 
   const updatePosition = useCallback(() => {
     if (!view) return false;
@@ -65,6 +69,7 @@ export function FloatingToolbar({ view }: FloatingToolbarProps) {
           forceUpdate((n) => n + 1);
         } else {
           setVisible(false);
+          setShowColorPicker(false);
         }
       }
       rafId = requestAnimationFrame(check);
@@ -117,6 +122,31 @@ export function FloatingToolbar({ view }: FloatingToolbarProps) {
           </button>
         );
       })}
+
+      <div className="ft-separator" />
+
+      {/* 颜色按钮 */}
+      <button
+        className={`ft-btn ${showColorPicker ? 'ft-btn--active' : ''}`}
+        onClick={() => setShowColorPicker(!showColorPicker)}
+        title="颜色"
+      >
+        <span style={{ borderBottom: `2px solid ${lastTextColor || '#8ab4f8'}`, lineHeight: 1 }}>A</span>
+      </button>
+
+      {/* ColorPicker 弹出面板 */}
+      {showColorPicker && (
+        <div style={{ position: 'absolute', top: '100%', left: '50%', transform: 'translateX(-50%)', marginTop: 4 }}>
+          <ColorPicker
+            view={view}
+            onClose={() => setShowColorPicker(false)}
+            onTextColorApplied={(c) => setLastTextColor(c)}
+            onHighlightApplied={(c) => setLastBgColor(c)}
+            lastTextColor={lastTextColor}
+            lastBgColor={lastBgColor}
+          />
+        </div>
+      )}
     </div>
   );
 }
