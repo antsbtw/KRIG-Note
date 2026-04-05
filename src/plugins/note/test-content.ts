@@ -133,13 +133,7 @@ export function buildTestDocument(schema: Schema): PMNode {
       p(schema, '折叠的子内容 2'),
     ]),
 
-    heading(schema, 2, '2.7 toggleHeading'),
-    schema.node('toggleHeading', { open: true }, [
-      heading(schema, 2, '折叠标题（点击 ▾ 折叠）'),
-      p(schema, '折叠标题的子内容'),
-    ]),
-
-    heading(schema, 2, '2.8 frameBlock'),
+    heading(schema, 2, '2.7 frameBlock'),
     schema.node('frameBlock', { color: '#8ab4f8' }, [
       p(schema, '蓝色边框内容'),
       p(schema, '点击左侧边框切换颜色'),

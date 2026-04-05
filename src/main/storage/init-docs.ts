@@ -157,7 +157,7 @@ interface NoteListItem { id: string; title: string; folder_id: string | null; up
 const BLOCK_GROUPS: { heading: string; names: string[] }[] = [
   { heading: '基类文档', names: ['base-classes', 'text-block', 'render-block', 'container-block'] },
   { heading: 'RenderBlock 实例', names: ['code-block', 'image', 'math-block', 'video-block', 'audio-block', 'tweet-block'] },
-  { heading: 'ContainerBlock 实例', names: ['toggle-heading', 'toggle-list', 'task-list', 'frame-block', 'table', 'column-list'] },
+  { heading: 'ContainerBlock 实例', names: ['toggle-list', 'task-list', 'frame-block', 'table', 'column-list'] },
   { heading: 'Inline 节点', names: ['hard-break', 'note-link', 'math-inline'] },
   { heading: '其他', names: ['horizontal-rule', 'marks', 'block-action', 'block-relation-model', 'container-nesting-design'] },
 ];

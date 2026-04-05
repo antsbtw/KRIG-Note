@@ -14,7 +14,6 @@ import { taskListBlock, taskItemBlock } from './task-list';
 import { blockquoteBlock } from './blockquote';
 import { calloutBlock } from './callout';
 import { toggleListBlock } from './toggle-list';
-import { toggleHeadingBlock } from './toggle-heading';
 import { frameBlockBlock } from './frame-block';
 import { tableBlock, tableRowBlock, tableCellBlock, tableHeaderBlock } from './table';
 import { columnListBlock, columnBlock } from './column-list';
@@ -59,7 +58,6 @@ export function registerAllBlocks(): void {
   blockRegistry.register(blockquoteBlock);
   blockRegistry.register(calloutBlock);
   blockRegistry.register(toggleListBlock);
-  blockRegistry.register(toggleHeadingBlock);
   blockRegistry.register(frameBlockBlock);
   blockRegistry.register(tableBlock);
   blockRegistry.register(tableRowBlock);

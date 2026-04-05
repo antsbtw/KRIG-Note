@@ -478,7 +478,7 @@
 }
 
 /* ═══════════════════════════════════════════════════════════
-   Phase 7 — toggleList / toggleHeading / frameBlock / table / columnList / inline
+   Phase 7 — toggleList / frameBlock / table / columnList / inline
    ═══════════════════════════════════════════════════════════ */
 
 /* ── toggleList ── */
@@ -499,23 +499,6 @@
 .toggle-list__content { display: inline-block; width: calc(100% - 24px); vertical-align: top; }
 .toggle-list--closed .toggle-list__content > *:not(:first-child) { display: none; }
 
-/* ── toggleHeading ── */
-.toggle-heading {
-  margin: 0.3em 0;
-}
-.toggle-heading__arrow {
-  display: inline-block;
-  width: 20px;
-  cursor: pointer;
-  user-select: none;
-  font-size: 14px;
-  color: #888;
-  vertical-align: top;
-  margin-top: 6px;
-}
-.toggle-heading__arrow:hover { color: #e8eaed; }
-.toggle-heading__content { display: inline-block; width: calc(100% - 24px); vertical-align: top; }
-.toggle-heading--closed .toggle-heading__content > *:not(:first-child) { display: none; }
 
 /* ── frameBlock ── */
 .frame-block {

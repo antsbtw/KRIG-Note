@@ -143,11 +143,6 @@ export function SlashMenu({ view }: SlashMenuProps) {
         [schema.nodes.textBlock.create()],
       );
       containerNode = nodeType.create(null, [taskItem]);
-    } else if (item.blockName === 'toggleHeading') {
-      containerNode = nodeType.create({ open: true }, [
-        schema.nodes.textBlock.create({ level: 2 }),
-        schema.nodes.textBlock.create(),
-      ]);
     } else if (item.blockName === 'table') {
       const cell = () => schema.nodes.tableCell.create(null, [schema.nodes.textBlock.create()]);
       const header = () => schema.nodes.tableHeader.create(null, [schema.nodes.textBlock.create()]);
