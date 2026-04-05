@@ -49,6 +49,17 @@ export function FloatingToolbar({ view }: FloatingToolbarProps) {
 
   const s = view.state.schema;
 
+  // 检查 mark 是否在当前选区激活
+  const isMarkActive = (markType: any): boolean => {
+    const { from, $from, to, empty } = view.state.selection;
+    if (empty) return !!markType.isInSet(view.state.storedMarks || $from.marks());
+    let active = false;
+    view.state.doc.nodesBetween(from, to, (node) => {
+      if (node.isText && markType.isInSet(node.marks)) active = true;
+    });
+    return active;
+  };
+
   const buttons = [
     { label: 'B', mark: s.marks.bold, style: { fontWeight: 700 } },
     { label: 'I', mark: s.marks.italic, style: { fontStyle: 'italic' } },
@@ -59,19 +70,27 @@ export function FloatingToolbar({ view }: FloatingToolbarProps) {
 
   return (
     <div style={{ ...styles.container, left: coords.left, top: coords.top }}>
-      {buttons.map((btn) => (
-        <div
-          key={btn.label}
-          style={{ ...styles.btn, ...btn.style }}
-          onMouseDown={(e) => {
-            e.preventDefault();
-            toggleMark(btn.mark!)(view.state, view.dispatch);
-            view.focus();
-          }}
-        >
-          {btn.label}
-        </div>
-      ))}
+      {buttons.map((btn) => {
+        const active = isMarkActive(btn.mark!);
+        return (
+          <div
+            key={btn.label}
+            style={{
+              ...styles.btn,
+              ...btn.style,
+              background: active ? '#4a9eff' : 'transparent',
+              color: active ? '#fff' : '#e8eaed',
+            }}
+            onMouseDown={(e) => {
+              e.preventDefault();
+              toggleMark(btn.mark!)(view.state, view.dispatch);
+              view.focus();
+            }}
+          >
+            {btn.label}
+          </div>
+        );
+      })}
     </div>
   );
 }
