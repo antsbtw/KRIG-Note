@@ -437,47 +437,87 @@
 .code-block--preview-only { border-radius: 6px; }
 .code-block--preview-only .code-block__mermaid { border-top: none; border-radius: 6px; }
 
-/* 全屏 */
+/* 全屏编辑器 */
 .code-block__fullscreen-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.85);
+  background: #111;
   z-index: 9999;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  flex-direction: column;
 }
-.code-block__fullscreen-container {
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-  cursor: grab;
+.code-block__fs-toolbar {
   display: flex;
   align-items: center;
-  justify-content: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: #1a1a1a;
+  border-bottom: 1px solid #333;
+  flex-shrink: 0;
 }
-.code-block__fullscreen-wrapper {
-  transform-origin: center center;
-  transition: none;
+.code-block__fs-title {
+  font-size: 13px;
+  color: #888;
+  font-weight: 500;
 }
-.code-block__fullscreen-close {
-  position: fixed;
-  top: 16px;
-  right: 16px;
-  width: 36px;
-  height: 36px;
+.code-block__fs-btn {
+  width: 32px;
+  height: 32px;
   border: none;
-  border-radius: 50%;
-  background: rgba(255,255,255,0.15);
-  color: #fff;
-  font-size: 24px;
+  border-radius: 6px;
+  background: transparent;
+  color: #888;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 10000;
 }
-.code-block__fullscreen-close:hover { background: rgba(255,255,255,0.3); }
+.code-block__fs-btn:hover { background: #333; color: #e8eaed; }
+
+/* 编辑区：左右分屏 */
+.code-block__fs-editor {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+.code-block__fs-code {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid #333;
+}
+.code-block__fs-textarea {
+  flex: 1;
+  width: 100%;
+  padding: 16px 20px;
+  background: #1e1e1e;
+  color: #d4d4d4;
+  border: none;
+  outline: none;
+  resize: none;
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 14px;
+  line-height: 1.6;
+  tab-size: 2;
+}
+.code-block__fs-divider {
+  width: 1px;
+  background: #333;
+  flex-shrink: 0;
+}
+.code-block__fs-preview {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #111;
+  cursor: grab;
+}
+.code-block__fs-preview-wrapper {
+  transform-origin: center center;
+}
+.code-block__fs-preview-wrapper svg { max-width: none; height: auto; }
 
 /* ── mathBlock ── */
 .math-block-wrapper {
