@@ -1,5 +1,11 @@
 import type { BlockDef, NodeViewFactory } from '../types';
 import { codeBlockKeyboardPlugin } from '../plugins/code-block-keyboard';
+import { EditorView as CMView, lineNumbers, keymap as cmKeymap } from '@codemirror/view';
+import { EditorState as CMState } from '@codemirror/state';
+import { defaultKeymap, indentWithTab } from '@codemirror/commands';
+import { syntaxHighlighting, defaultHighlightStyle, HighlightStyle } from '@codemirror/language';
+import { tags } from '@lezer/highlight';
+import { mermaidLanguage } from './mermaid-lang';
 
 /**
  * codeBlock — 代码块（RenderBlock）
@@ -94,6 +100,30 @@ const MERMAID_TEMPLATES: { label: string; code: string }[] = [
   { label: 'Pie', code: 'pie title 分布\n  "A" : 40\n  "B" : 30\n  "C" : 20\n  "D" : 10' },
   { label: 'Mindmap', code: 'mindmap\n  root((主题))\n    分支A\n      叶子1\n      叶子2\n    分支B\n      叶子3' },
 ];
+
+// ── CodeMirror 暗色主题 ──
+
+const cmDarkTheme = CMView.theme({
+  '&': { backgroundColor: '#1e1e1e', color: '#d4d4d4', height: '100%' },
+  '.cm-content': { caretColor: '#e8eaed', fontFamily: "'SF Mono', 'Fira Code', 'Consolas', monospace", fontSize: '14px', lineHeight: '1.6' },
+  '.cm-cursor': { borderLeftColor: '#e8eaed' },
+  '.cm-gutters': { backgroundColor: '#1a1a1a', color: '#555', borderRight: '1px solid #2a2a2a' },
+  '.cm-activeLineGutter': { backgroundColor: '#252525', color: '#888' },
+  '.cm-activeLine': { backgroundColor: '#252525' },
+  '&.cm-focused .cm-selectionBackground, .cm-selectionBackground': { backgroundColor: '#264f78 !important' },
+  '.cm-matchingBracket': { backgroundColor: '#3a3a3a', outline: '1px solid #555' },
+}, { dark: true });
+
+const cmDarkHighlight = HighlightStyle.define([
+  { tag: tags.keyword, color: '#569cd6' },
+  { tag: tags.comment, color: '#6a9955', fontStyle: 'italic' },
+  { tag: tags.string, color: '#ce9178' },
+  { tag: tags.number, color: '#b5cea8' },
+  { tag: tags.operator, color: '#d4d4d4', fontWeight: 'bold' },
+  { tag: tags.variableName, color: '#9cdcfe' },
+  { tag: tags.attributeName, color: '#dcdcaa' },
+  { tag: tags.punctuation, color: '#808080' },
+]);
 
 let mermaidIdCounter = 0;
 type ViewMode = 'split' | 'preview';
@@ -427,24 +457,32 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
     const editorPane = document.createElement('div');
     editorPane.classList.add('code-block__fs-code');
 
-    const lineNumbers = document.createElement('div');
-    lineNumbers.classList.add('code-block__fs-lines');
-    editorPane.appendChild(lineNumbers);
-
-    const textarea = document.createElement('textarea');
-    textarea.classList.add('code-block__fs-textarea');
-    textarea.value = code.textContent || '';
-    textarea.spellcheck = false;
-    editorPane.appendChild(textarea);
+    // CodeMirror 编辑器
+    const cmContainer = document.createElement('div');
+    cmContainer.classList.add('code-block__fs-cm');
+    editorPane.appendChild(cmContainer);
     editorArea.appendChild(editorPane);
 
-    // 行号更新
-    function updateLineNumbers() {
-      const lines = textarea.value.split('\n').length;
-      lineNumbers.innerHTML = Array.from({ length: lines }, (_, i) => `<div>${i + 1}</div>`).join('');
+    const cmState = CMState.create({
+      doc: code.textContent || '',
+      extensions: [
+        lineNumbers(),
+        cmDarkTheme,
+        syntaxHighlighting(cmDarkHighlight),
+        mermaidLanguage,
+        cmKeymap.of([...defaultKeymap, indentWithTab]),
+        CMView.updateListener.of((update) => {
+          if (update.docChanged) scheduleFsRender();
+        }),
+      ],
+    });
+    const cmEditor = new CMView({ state: cmState, parent: cmContainer });
+
+    // 获取编辑器内容的辅助函数
+    function getEditorContent(): string { return cmEditor.state.doc.toString(); }
+    function setEditorContent(text: string) {
+      cmEditor.dispatch({ changes: { from: 0, to: cmEditor.state.doc.length, insert: text } });
     }
-    function syncScroll() { lineNumbers.scrollTop = textarea.scrollTop; }
-    updateLineNumbers();
 
     // 中：可拖拽分隔线
     const divider = document.createElement('div');
@@ -542,35 +580,17 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
 
     function scheduleFsRender() {
       if (fsRenderTimer) clearTimeout(fsRenderTimer);
-      fsRenderTimer = setTimeout(() => renderFsPreview(textarea.value), 300);
+      fsRenderTimer = setTimeout(() => renderFsPreview(getEditorContent()), 300);
     }
 
     // 初始渲染
-    renderFsPreview(textarea.value);
-
-    // 实时编辑 → 预览 + 行号
-    textarea.addEventListener('input', () => { updateLineNumbers(); scheduleFsRender(); });
-    textarea.addEventListener('scroll', syncScroll);
-
-    // Tab 插入空格
-    textarea.addEventListener('keydown', (e) => {
-      if (e.key === 'Tab') {
-        e.preventDefault();
-        const start = textarea.selectionStart;
-        const end = textarea.selectionEnd;
-        textarea.value = textarea.value.substring(0, start) + '  ' + textarea.value.substring(end);
-        textarea.selectionStart = textarea.selectionEnd = start + 2;
-        updateLineNumbers();
-        scheduleFsRender();
-      }
-    });
+    renderFsPreview(getEditorContent());
 
     // ── 模板选择 ──
     templateSelect.addEventListener('change', () => {
       const tpl = MERMAID_TEMPLATES.find(t => t.label === templateSelect.value);
       if (tpl) {
-        textarea.value = tpl.code;
-        updateLineNumbers();
+        setEditorContent(tpl.code);
         scheduleFsRender();
       }
       templateSelect.value = 'Template...';
@@ -586,12 +606,11 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
     // ── 方向切换 ──
     dirSelect.addEventListener('change', () => {
       const dir = dirSelect.value;
-      const val = textarea.value;
+      const val = getEditorContent();
       // 替换 graph/flowchart 后的方向标识
       const replaced = val.replace(/^(graph|flowchart)\s+(TD|TB|LR|RL|BT)/m, `$1 ${dir}`);
       if (replaced !== val) {
-        textarea.value = replaced;
-        updateLineNumbers();
+        setEditorContent(replaced);
         scheduleFsRender();
       }
     });
@@ -701,7 +720,7 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
       if (currentTheme !== 'dark') {
         mermaidModule?.initialize?.(buildMermaidConfig('dark'));
       }
-      const newContent = textarea.value;
+      const newContent = getEditorContent();
       const pos = typeof getPos === 'function' ? getPos() : undefined;
       if (pos != null) {
         const currentNode = view.state.doc.nodeAt(pos);
@@ -717,6 +736,7 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
           view.dispatch(tr);
         }
       }
+      cmEditor.destroy();
       overlay.remove();
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
@@ -733,7 +753,7 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
     };
     document.addEventListener('keydown', onKey);
 
-    setTimeout(() => textarea.focus(), 50);
+    setTimeout(() => cmEditor.focus(), 50);
   }
 
   // ── Mermaid 渲染 ──

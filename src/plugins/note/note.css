@@ -505,35 +505,13 @@
   display: flex;
   overflow: hidden;
 }
-.code-block__fs-lines {
-  width: 40px;
-  padding: 16px 0;
-  background: #1a1a1a;
-  color: #555;
-  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
-  font-size: 14px;
-  line-height: 1.6;
-  text-align: right;
-  overflow: hidden;
-  user-select: none;
-  flex-shrink: 0;
-  border-right: 1px solid #2a2a2a;
-}
-.code-block__fs-lines div { padding-right: 8px; }
-.code-block__fs-textarea {
+.code-block__fs-cm {
   flex: 1;
-  width: 0;
-  padding: 16px 16px;
-  background: #1e1e1e;
-  color: #d4d4d4;
-  border: none;
+  overflow: hidden;
+}
+.code-block__fs-cm .cm-editor {
+  height: 100%;
   outline: none;
-  resize: none;
-  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
-  font-size: 14px;
-  line-height: 1.6;
-  tab-size: 2;
-  overflow-y: auto;
 }
 .code-block__fs-divider {
   width: 5px;
