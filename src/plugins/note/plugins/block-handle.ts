@@ -1,14 +1,62 @@
 import { Plugin, PluginKey } from 'prosemirror-state';
+import { Slice, Fragment } from 'prosemirror-model';
 import type { EditorView } from 'prosemirror-view';
+import type { Node as PMNode } from 'prosemirror-model';
 
 /**
  * Block Handle Plugin — 鼠标悬停 Block 时显示手柄（+ ⠿）
  *
- * 单击 ⠿ → 弹出 HandleMenu（通过 CustomEvent）
  * + → 在下方插入新 paragraph
+ * ⠿ 拖拽 → HTML5 native drag 移动 block
+ * ⠿ 单击 → 弹出 HandleMenu（通过 CustomEvent）
  */
 
 export const blockHandleKey = new PluginKey('blockHandle');
+
+/** 找到 pos 所在的顶层 block 起始位置 */
+function findTopBlockPos(doc: PMNode, pos: number): number | null {
+  let result: number | null = null;
+  doc.forEach((node, offset) => {
+    if (result !== null) return;
+    if (pos >= offset && pos < offset + node.nodeSize) {
+      result = offset;
+    }
+  });
+  return result;
+}
+
+/** 将 block 从 fromPos 移动到 targetPos */
+function relocateBlock(view: EditorView, fromPos: number, targetPos: number): boolean {
+  const { state } = view;
+  const node = state.doc.nodeAt(fromPos);
+  if (!node) return false;
+
+  // 不能自己移到自己内部
+  if (targetPos > fromPos && targetPos < fromPos + node.nodeSize) return false;
+
+  // 获取所有顶层 block 位置
+  const allPositions: number[] = [];
+  state.doc.forEach((_n: PMNode, offset: number) => allPositions.push(offset));
+
+  const sourceIdx = allPositions.indexOf(fromPos);
+  if (sourceIdx < 0) return false;
+
+  let targetIdx = allPositions.findIndex(p => p >= targetPos);
+  if (targetIdx < 0) targetIdx = allPositions.length;
+
+  // 已经在原位
+  if (targetIdx === sourceIdx || targetIdx === sourceIdx + 1) return false;
+
+  const tr = state.tr;
+  // 先删除源 block
+  tr.delete(fromPos, fromPos + node.nodeSize);
+  // 映射目标位置
+  const mappedTarget = tr.mapping.map(allPositions[targetIdx] ?? targetPos);
+  // 插入到目标位置
+  tr.replace(mappedTarget, mappedTarget, new Slice(Fragment.from(node), 0, 0));
+  view.dispatch(tr);
+  return true;
+}
 
 export function blockHandlePlugin(): Plugin {
   let handleDOM: HTMLDivElement | null = null;
@@ -16,6 +64,7 @@ export function blockHandlePlugin(): Plugin {
   let currentBlockType = '';
   let isHovered = false;
   let hideTimeout: ReturnType<typeof setTimeout> | null = null;
+  let isDragging = false;
 
   function createHandleDOM(view: EditorView): HTMLDivElement {
     const dom = document.createElement('div');
@@ -60,17 +109,47 @@ export function blockHandlePlugin(): Plugin {
     const dragBtn = document.createElement('div');
     dragBtn.className = 'block-handle__drag';
     dragBtn.innerHTML = '⠿';
+    dragBtn.draggable = true;
     dragBtn.style.cssText = `
       width: 24px; height: 24px;
       display: flex; align-items: center; justify-content: center;
       cursor: grab; color: #555; font-size: 18px; border-radius: 3px;
     `;
     dragBtn.addEventListener('mouseenter', () => { dragBtn.style.background = '#333'; dragBtn.style.color = '#e8eaed'; });
-    dragBtn.addEventListener('mouseleave', () => { dragBtn.style.background = 'transparent'; dragBtn.style.color = '#555'; });
-    dragBtn.addEventListener('mousedown', (e) => {
+    dragBtn.addEventListener('mouseleave', () => { if (!isDragging) { dragBtn.style.background = 'transparent'; dragBtn.style.color = '#555'; } });
+
+    // 拖拽开始
+    dragBtn.addEventListener('dragstart', (e) => {
+      if (currentPos < 0 || !e.dataTransfer) return;
+      isDragging = true;
+
+      // 最小化拖拽预览图
+      const ghost = document.createElement('div');
+      ghost.style.cssText = 'position:absolute;top:-1000px;width:1px;height:1px;';
+      document.body.appendChild(ghost);
+      e.dataTransfer.setDragImage(ghost, 0, 0);
+      setTimeout(() => document.body.removeChild(ghost), 0);
+
+      e.dataTransfer.setData('application/krig-block-pos', String(currentPos));
+      e.dataTransfer.effectAllowed = 'move';
+    });
+
+    dragBtn.addEventListener('dragend', () => {
+      isDragging = false;
+      dragBtn.style.background = 'transparent';
+      dragBtn.style.color = '#555';
+    });
+
+    // 单击 → 弹出菜单（只在非拖拽时触发）
+    let mouseDownTime = 0;
+    dragBtn.addEventListener('mousedown', () => {
+      mouseDownTime = Date.now();
+    });
+    dragBtn.addEventListener('click', (e) => {
+      // 如果按下时间 < 200ms，视为单击（不是拖拽）
+      if (Date.now() - mouseDownTime > 200) return;
       e.preventDefault();
       e.stopPropagation();
-      // 单击 → 弹出菜单
       view.dom.dispatchEvent(new CustomEvent('block-handle-click', {
         detail: { pos: currentPos, blockType: currentBlockType, coords: { left: dom.getBoundingClientRect().left, top: dom.getBoundingClientRect().bottom } },
       }));
@@ -112,31 +191,23 @@ export function blockHandlePlugin(): Plugin {
     props: {
       handleDOMEvents: {
         mousemove(view, event) {
-          if (isHovered) return false;
+          if (isHovered || isDragging) return false;
 
           // ══════════════════════════════════════════════════
           // 手柄定位逻辑（已稳定，不要修改）
-          //
-          // 原则：只看 Y 坐标，鼠标在哪一行就显示哪行的手柄
-          // 方案：posAtCoords（X 固定）+ DOM rect 回退
-          // X 范围：编辑器区域内（含左侧手柄空间）
-          // Y 容差：margin 间隙 20px 内也命中
           // ══════════════════════════════════════════════════
 
-          // X 范围限制：只在编辑器视图内触发
           const editorRect = view.dom.getBoundingClientRect();
           if (event.clientX < editorRect.left - 70 || event.clientX > editorRect.right + 10) {
             hideHandle(); return false;
           }
 
-          // 按 Y 坐标查找 block — 用 posAtCoords，X 固定在内容区
           const mouseY = event.clientY;
           const probeX = editorRect.left + editorRect.width / 2;
           let blockStart = -1;
           let blockNode: any = null;
           let targetBlockDOM: HTMLElement | null = null;
 
-          // 主方案：posAtCoords
           const pos = view.posAtCoords({ left: probeX, top: mouseY });
           if (pos) {
             try {
@@ -152,14 +223,12 @@ export function blockHandlePlugin(): Plugin {
             } catch { /* ignore */ }
           }
 
-          // 回退：posAtCoords 在 margin 间隙失败时，遍历顶层子 DOM 找 Y 最近的
           if (blockStart < 0) {
             const children = view.dom.children;
             let minDist = Infinity;
             for (let i = 0; i < children.length; i++) {
               const child = children[i] as HTMLElement;
               const rect = child.getBoundingClientRect();
-              // 鼠标在 block rect 范围内
               if (mouseY >= rect.top && mouseY <= rect.bottom) {
                 try {
                   const p = view.posAtDOM(child, 0);
@@ -170,7 +239,6 @@ export function blockHandlePlugin(): Plugin {
                 } catch { /* ignore */ }
                 break;
               }
-              // 最近的 block（margin 间隙）
               const dist = mouseY < rect.top ? rect.top - mouseY : mouseY - rect.bottom;
               if (dist < minDist && dist < 20) {
                 minDist = dist;
@@ -186,8 +254,6 @@ export function blockHandlePlugin(): Plugin {
           }
 
           if (blockStart < 0 || !blockNode || !targetBlockDOM) { hideHandle(); return false; }
-
-          // noteTitle 不显示手柄
           if (blockNode.type.name === 'textBlock' && blockNode.attrs.isTitle) { hideHandle(); return false; }
 
           if (currentPos === blockStart) return false;
@@ -196,7 +262,6 @@ export function blockHandlePlugin(): Plugin {
 
           if (hideTimeout) { clearTimeout(hideTimeout); hideTimeout = null; }
 
-          // 定位手柄
           if (handleDOM) {
             const container = handleDOM.parentElement;
             const containerRect = container?.getBoundingClientRect();
@@ -205,7 +270,6 @@ export function blockHandlePlugin(): Plugin {
               const scrollTop = container.scrollTop;
               const handleHeight = 24;
 
-              // 获取第一行文字位置用于垂直居中
               let textTop = blockRect.top;
               let lineHeight = 27;
               try {
@@ -226,6 +290,31 @@ export function blockHandlePlugin(): Plugin {
           return false;
         },
         mouseleave() { hideHandle(); return false; },
+        dragover(view, event) {
+          // 允许外部拖拽（block handle）放入编辑器，同时触发 dropCursor 显示对齐线
+          if (isDragging) {
+            event.preventDefault();
+          }
+          return false;
+        },
+      },
+
+      // 接收拖放
+      handleDrop(view, event) {
+        const posData = event.dataTransfer?.getData('application/krig-block-pos');
+        if (!posData) return false;
+
+        event.preventDefault();
+        const fromPos = parseInt(posData, 10);
+        if (isNaN(fromPos)) return false;
+
+        const dropResult = view.posAtCoords({ left: event.clientX, top: event.clientY });
+        if (!dropResult) return false;
+
+        const targetPos = findTopBlockPos(view.state.doc, dropResult.pos);
+        if (targetPos === null) return false;
+
+        return relocateBlock(view, fromPos, targetPos);
       },
     },
   });

@@ -123,7 +123,7 @@ export function NoteEditor() {
         tableKeymapPlugin(),
         blockHandlePlugin(),
         history(),
-        dropCursor(),
+        dropCursor({ color: '#8ab4f8', width: 2 }),
         gapCursor(),
         ...blockPlugins,
       ],
