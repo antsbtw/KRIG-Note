@@ -114,7 +114,7 @@ export function blockHandlePlugin(): Plugin {
         mousemove(view, event) {
           if (isHovered) return false;
 
-          // DOM 遍历找到 doc 的直接子节点
+          // 方式 1：DOM 遍历找直接子节点
           let target = event.target as HTMLElement | null;
           const pmDOM = view.dom;
           let blockDOM: HTMLElement | null = null;
@@ -122,6 +122,22 @@ export function blockHandlePlugin(): Plugin {
             if (target.parentElement === pmDOM) { blockDOM = target; break; }
             target = target.parentElement;
           }
+
+          // 方式 2：鼠标在左侧空白区域时，用 posAtCoords 按 Y 坐标查找
+          if (!blockDOM) {
+            const pos = view.posAtCoords({ left: pmDOM.getBoundingClientRect().left + 80, top: event.clientY });
+            if (pos) {
+              try {
+                const $pos = view.state.doc.resolve(pos.pos);
+                if ($pos.depth >= 1) {
+                  const nodePos = $pos.before(1);
+                  const dom = view.nodeDOM(nodePos);
+                  blockDOM = dom instanceof HTMLElement ? dom : (dom as Node)?.parentElement ?? null;
+                }
+              } catch { /* ignore */ }
+            }
+          }
+
           if (!blockDOM) { hideHandle(); return false; }
 
           let blockStart: number;
