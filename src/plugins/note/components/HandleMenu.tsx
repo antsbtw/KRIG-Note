@@ -22,16 +22,24 @@ export function HandleMenu({ view }: HandleMenuProps) {
 
   useEffect(() => {
     if (!view) return;
+    let closeListener: (() => void) | null = null;
+
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail;
       setMenu({ pos: detail.pos, blockType: detail.blockType, coords: detail.coords });
+
+      // 延迟注册关闭监听（避免同一帧的 click 冒泡立即关闭）
+      if (closeListener) document.removeEventListener('click', closeListener);
+      closeListener = () => setMenu(null);
+      setTimeout(() => {
+        if (closeListener) document.addEventListener('click', closeListener);
+      }, 0);
     };
+
     view.dom.addEventListener('block-handle-click', handler);
-    const close = () => setMenu(null);
-    document.addEventListener('click', close);
     return () => {
       view.dom.removeEventListener('block-handle-click', handler);
-      document.removeEventListener('click', close);
+      if (closeListener) document.removeEventListener('click', closeListener);
     };
   }, [view]);
 
