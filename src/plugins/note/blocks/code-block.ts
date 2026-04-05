@@ -330,8 +330,8 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
   /** 通过系统保存对话框导出 PNG */
   function exportSvgAsPng(svgEl: SVGElement, filename: string) {
     const svgData = new XMLSerializer().serializeToString(svgEl);
-    const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
-    const url = URL.createObjectURL(svgBlob);
+    // 用 data URI 避免 canvas tainted（blob URL 会导致跨域污染）
+    const dataUri = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
     const img = new Image();
     img.onload = () => {
       const scale = 2;
@@ -341,11 +341,13 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
       const ctx = canvas.getContext('2d')!;
       ctx.scale(scale, scale);
       ctx.drawImage(img, 0, 0);
-      URL.revokeObjectURL(url);
       canvas.toBlob(async (blob) => {
         if (!blob) return;
         const buf = await blob.arrayBuffer();
-        const base64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+        const bytes = new Uint8Array(buf);
+        let binary = '';
+        for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+        const base64 = btoa(binary);
         (window as any).viewAPI?.fileSaveDialog?.({
           defaultName: filename,
           data: base64,
@@ -353,7 +355,7 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
         });
       }, 'image/png');
     };
-    img.src = url;
+    img.src = dataUri;
   }
 
   /** 通过系统保存对话框导出 SVG */
@@ -726,8 +728,8 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
           setTimeout(() => btnCopy.classList.remove('code-block__fs-btn--ok'), 1500);
         } catch { /* fallback */ }
       } else {
-        const blob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
+        // 用 data URI 避免 canvas tainted
+        const dataUri = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
         const img = new Image();
         img.onload = () => {
           const canvas = document.createElement('canvas');
@@ -736,7 +738,6 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
           const ctx = canvas.getContext('2d')!;
           ctx.scale(2, 2);
           ctx.drawImage(img, 0, 0);
-          URL.revokeObjectURL(url);
           canvas.toBlob(async (b) => {
             if (!b) return;
             try {
