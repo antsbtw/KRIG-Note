@@ -48,7 +48,9 @@ async function ensureMermaidInit() {
   try {
     const elkLayouts = (await import('@mermaid-js/layout-elk')).default;
     mermaidModule.registerLayoutLoaders(elkLayouts);
-  } catch { /* ELK not available, use dagre */ }
+  } catch (e) {
+    console.warn('[Mermaid] ELK layout not available, using dagre:', e);
+  }
 
   mermaidModule.initialize(buildMermaidConfig('dark'));
 }
