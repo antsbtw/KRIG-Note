@@ -149,7 +149,11 @@ export function createRenderBlockView(
         return true;
       },
 
-      ignoreMutation() { return true; },
+      ignoreMutation(mutation: MutationRecord) {
+        // contentDOM 内的变化必须交给 ProseMirror 处理
+        if (pmContentDOM && pmContentDOM.contains(mutation.target)) return false;
+        return true;
+      },
 
       destroy() { renderer.destroy?.(contentEl); },
     };

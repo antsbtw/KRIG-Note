@@ -16,7 +16,9 @@ RenderBlock = 一个可注册的运行环境
 注册什么 renderer = 就能跑什么
 ```
 
-代码编辑器、图片查看器、视频播放器、数学公式渲染器、甚至 Python 运行时——都是 RenderBlock 的实例。
+图片查看器、视频播放器、甚至 Python 运行时——都是 RenderBlock 的实例。
+
+> **注**：`content: 'text*'` + `contentDOM` 的节点（codeBlock、mathBlock）需要 ProseMirror 管理文本内容，不适合 RenderBlock 基类，作为独立 Block 实现。
 
 ---
 
@@ -24,7 +26,7 @@ RenderBlock = 一个可注册的运行环境
 
 ```typescript
 interface RenderBlockDef {
-  type: string;                              // 唯一标识：'code' | 'image' | 'math' | ...
+  type: string;                              // 唯一标识：'image' | 'video' | 'audio' | ...
   renderer: NodeViewFactory;                 // ProseMirror NodeView 工厂函数
   attrs: Record<string, AttributeSpec>;      // 专属 attrs（加在基类 attrs 之上）
   slashMenu?: SlashMenuDef | null;           // SlashMenu 注册
@@ -35,10 +37,10 @@ interface RenderBlockDef {
 
 ```typescript
 registerRenderBlock({
-  type: 'code',
-  renderer: codeBlockRenderer,
-  attrs: { language: { default: '' } },
-  slashMenu: { label: 'Code Block', icon: '</>', keywords: ['code'] },
+  type: 'image',
+  renderer: imageRenderer,
+  attrs: { src: { default: '' }, alt: { default: '' } },
+  slashMenu: { label: 'Image', icon: '🖼', keywords: ['image', '图片'] },
 });
 ```
 
@@ -52,7 +54,7 @@ RenderBlock 继承基类的所有共享 attrs：
 
 ```typescript
 interface RenderBlockAttrs extends BlockBaseAttrs {
-  renderType: string;    // 对应注册的 type（'code' | 'image' | 'math' | ...）
+  renderType: string;    // 对应注册的 type（'image' | 'video' | 'audio' | ...）
   // + 各 renderer 的专属 attrs
 }
 ```
@@ -141,13 +143,10 @@ interface RenderBlockRenderer {
 
 | type | 全屏内容 | 交互 |
 |------|---------|------|
-| code (mermaid) | SVG 图表 | 缩放 + 平移 |
 | image | 原始大图 | 缩放 + 平移 |
 | video | 视频播放器 | 播放控制 |
-| math | KaTeX 大字渲染 | 缩放 |
 | excalidraw | 完整画布 | 画布交互 |
 | chart | 完整图表 | 缩放 + 平移 |
-| code (普通) | null（不全屏） | — |
 | audio | null（不全屏） | — |
 | tweet | null（不全屏） | — |
 
@@ -213,10 +212,8 @@ RenderBlock 可以有自己的内部 Toolbar，但须遵循：
 ### 7.3 示例
 
 ```
-Code：   [语言 ∨] ──────────── [📋 复制]
-Mermaid：[语言 ∨] [<> ▣ □ | ⬇ ⛶] ─ [📋 复制]
 Image：  ──────────────────── [🔄 替换]
-Math：   ──────────────────── [📋 复制 LaTeX]
+Video：  ──────────────────── [📋 复制]
 ```
 
 ---
@@ -225,12 +222,13 @@ Math：   ──────────────────── [📋 复
 
 | type | 渲染器 | 专属 attrs | Toolbar | 用途 |
 |------|--------|-----------|---------|------|
-| code | 代码编辑器 | language | 语言选择 + 复制 + Mermaid 扩展 | 代码/图表 |
 | image | 图片显示 + 上传 | src, alt, width | 替换 | 图片 |
-| math | LaTeX 输入 + KaTeX | latex | 复制 LaTeX | 数学公式 |
 | video | URL 输入 + 播放器 | src, title, poster | — | 视频 |
 | audio | 文件上传 + 播放器 | src, title, artist | — | 音频 |
 | tweet | URL 输入 + 预览 | tweetUrl, author, text | — | 社交媒体 |
+
+> **注**：code 和 math 使用 `content: 'text*'` + `contentDOM`，需要 ProseMirror 管理文本内容，
+> 不适合 RenderBlock 基类的 `atom` + `attrs` 模式，因此作为独立 Block 实现。
 
 ---
 

@@ -83,6 +83,11 @@ export function slashCommandPlugin(): Plugin {
           return true;
         }
 
+        // Enter / ArrowUp / ArrowDown 由 SlashMenu 组件处理，阻止 ProseMirror 默认行为
+        if (event.key === 'Enter' || event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+          return true;
+        }
+
         return false;
       },
     },

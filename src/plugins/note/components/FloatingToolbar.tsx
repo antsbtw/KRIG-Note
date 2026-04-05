@@ -89,6 +89,18 @@ export function FloatingToolbar({ view }: FloatingToolbarProps) {
     forceUpdate((n) => n + 1);
   };
 
+  const insertMathInline = () => {
+    const { from, to } = view.state.selection;
+    const mathType = s.nodes.mathInline;
+    if (!mathType) return;
+
+    // 选中文字作为初始 LaTeX
+    const selectedText = view.state.doc.textBetween(from, to, '');
+    const mathNode = mathType.create({ latex: selectedText });
+    view.dispatch(view.state.tr.replaceWith(from, to, mathNode));
+    view.focus();
+  };
+
   const buttons: { label: string; mark: MarkType; render: React.ReactNode }[] = [
     { label: 'bold', mark: s.marks.bold, render: <strong>B</strong> },
     { label: 'italic', mark: s.marks.italic, render: <em>I</em> },
@@ -122,6 +134,20 @@ export function FloatingToolbar({ view }: FloatingToolbarProps) {
           </button>
         );
       })}
+
+      {/* 行内公式 */}
+      {s.nodes.mathInline && (
+        <>
+          <div className="ft-separator" />
+          <button
+            className="ft-btn"
+            onClick={insertMathInline}
+            title="行内公式"
+          >
+            <span style={{ fontFamily: 'serif', fontSize: '14px', fontStyle: 'italic' }}>∑</span>
+          </button>
+        </>
+      )}
 
       <div className="ft-separator" />
 

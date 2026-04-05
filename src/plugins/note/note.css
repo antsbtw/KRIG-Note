@@ -276,14 +276,76 @@
 }
 
 /* ── mathBlock ── */
-.math-block { text-align: center; padding: 16px; }
-.math-block__preview { min-height: 40px; cursor: pointer; }
-.math-block__editor {
-  width: 100%; min-height: 60px; padding: 8px;
-  background: #2a2a2a; border: 1px solid #444; border-radius: 4px;
-  color: #e8eaed; font-family: 'SF Mono', monospace; font-size: 14px;
-  resize: vertical;
+.math-block-wrapper {
+  position: relative;
+  margin: 4px 0;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 0.15s;
 }
+.math-block-wrapper:hover { background: rgba(255, 255, 255, 0.03); }
+.math-block-wrapper--editing { cursor: default; background: none; }
+
+/* Rendered view (default) */
+.math-block__rendered {
+  padding: 20px 16px;
+  min-height: 50px;
+  border-radius: 6px;
+}
+.math-block__rendered .katex { font-size: 1.4em; color: #e8eaed; }
+
+/* Editor area (shown on click) */
+.math-block__editor {
+  position: relative;
+  border: 1px solid #3c3c3c;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.math-block__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  background: #2d2d2d;
+  border-bottom: 1px solid #3c3c3c;
+}
+.math-block__label {
+  font-size: 11px;
+  color: #9aa0a6;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+}
+.math-block__editor pre {
+  background: #2d2d2d;
+  padding: 12px 16px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-x: auto;
+  margin: 0;
+  min-height: 40px;
+  color: #e8eaed;
+}
+.math-block__editor pre code {
+  background: none;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  font-size: inherit;
+  color: inherit;
+}
+.math-block__preview {
+  background: #1e1e1e;
+  border-top: 1px solid #3c3c3c;
+  padding: 20px 16px;
+  text-align: center;
+  min-height: 50px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+.math-block__preview .katex { font-size: 1.3em; color: #e8eaed; }
+.math-block__empty { color: #666; font-size: 13px; font-style: italic; padding: 8px; }
+.math-block__error { color: #f28b82; font-size: 12px; padding: 8px; }
 
 /* ── image ── */
 .image-block__wrapper { text-align: center; min-height: 60px; }
@@ -447,8 +509,57 @@
   padding: 0 2px;
   cursor: pointer;
   border-radius: 3px;
+  transition: background 0.15s;
 }
-.math-inline:hover { background: rgba(74, 158, 255, 0.1); }
+.math-inline:hover { background: rgba(255, 255, 255, 0.08); }
+.math-inline .katex { font-size: 1em; }
+.math-inline--empty {
+  color: #888;
+  background: #2d2d2d;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: 13px;
+  font-style: italic;
+}
+
+/* ── mathInline Editor Popup ── */
+.math-inline-editor {
+  position: fixed;
+  z-index: 1000;
+  background: #2d2d2d;
+  border: 1px solid #444;
+  border-radius: 8px;
+  padding: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  min-width: 320px;
+  max-width: 480px;
+}
+.math-inline-editor__input {
+  width: 100%;
+  background: #1e1e1e;
+  border: 1px solid #3c3c3c;
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 13px;
+  color: #e8eaed;
+  outline: none;
+  box-sizing: border-box;
+}
+.math-inline-editor__input:focus { border-color: #8ab4f8; }
+.math-inline-editor__preview {
+  margin-top: 8px;
+  padding: 12px;
+  background: #1e1e1e;
+  border-radius: 4px;
+  text-align: center;
+  min-height: 40px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+.math-inline-editor__preview .katex { font-size: 1.3em; color: #e8eaed; }
+.math-inline-editor__hint { color: #666; font-size: 12px; font-style: italic; }
 
 /* ── noteLink ── */
 .note-link {
