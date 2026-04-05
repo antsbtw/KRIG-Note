@@ -10,7 +10,7 @@ import { textBlockDef } from './text-block';
 // ── ContainerBlock ──
 import { bulletListBlock } from './bullet-list';
 import { orderedListBlock } from './ordered-list';
-import { taskListBlock } from './task-list';
+import { taskListBlock, taskItemBlock } from './task-list';
 import { blockquoteBlock } from './blockquote';
 import { calloutBlock } from './callout';
 import { toggleListBlock } from './toggle-list';
@@ -55,6 +55,7 @@ export function registerAllBlocks(): void {
   blockRegistry.register(bulletListBlock);
   blockRegistry.register(orderedListBlock);
   blockRegistry.register(taskListBlock);
+  blockRegistry.register(taskItemBlock);
   blockRegistry.register(blockquoteBlock);
   blockRegistry.register(calloutBlock);
   blockRegistry.register(toggleListBlock);

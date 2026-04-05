@@ -57,10 +57,33 @@ export function buildInputRules(schema: Schema): Plugin {
   // Container shortcuts
   if (schema.nodes.bulletList) rules.push(new InputRule(/^[-*]\s$/, wrapInContainer('bulletList')));
   if (schema.nodes.orderedList) rules.push(new InputRule(/^1\.\s$/, wrapInContainer('orderedList')));
-  if (schema.nodes.taskList) {
-    rules.push(new InputRule(/^\[\]\s$/, wrapInContainer('taskList')));
-    rules.push(new InputRule(/^\[ \]\s$/, wrapInContainer('taskList')));
-    rules.push(new InputRule(/^\[x\]\s$/, wrapInContainer('taskList')));
+  if (schema.nodes.taskList && schema.nodes.taskItem) {
+    const wrapInTaskList = (checked: boolean) => {
+      return (state: any, _match: any, start: number, end: number) => {
+        const $start = state.doc.resolve(start);
+        const blockStart = $start.before($start.depth);
+        const node = state.doc.nodeAt(blockStart);
+        if (!node || node.type.name !== 'textBlock') return null;
+
+        let tr = state.tr.delete(start, end);
+        const updatedNode = tr.doc.nodeAt(blockStart);
+        if (!updatedNode) return null;
+        const updatedBlockEnd = blockStart + updatedNode.nodeSize;
+
+        const nowISO = new Date().toISOString();
+        const taskItem = state.schema.nodes.taskItem.create(
+          { checked, createdAt: nowISO },
+          [updatedNode.copy(updatedNode.content)],
+        );
+        const taskList = state.schema.nodes.taskList.create(null, [taskItem]);
+        tr.replaceWith(blockStart, updatedBlockEnd, taskList);
+        tr.setSelection(TextSelection.near(tr.doc.resolve(blockStart + 3)));
+        return tr;
+      };
+    };
+    rules.push(new InputRule(/^\[\]\s$/, wrapInTaskList(false)));
+    rules.push(new InputRule(/^\[ \]\s$/, wrapInTaskList(false)));
+    rules.push(new InputRule(/^\[x\]\s$/, wrapInTaskList(true)));
   }
   if (schema.nodes.blockquote) rules.push(new InputRule(/^>\s$/, wrapInContainer('blockquote')));
 

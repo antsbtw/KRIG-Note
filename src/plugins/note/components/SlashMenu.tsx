@@ -136,6 +136,13 @@ export function SlashMenu({ view }: SlashMenuProps) {
       view.dispatch(view.state.tr.replaceSelectionWith(mathNode));
       view.focus();
       return;
+    } else if (item.blockName === 'taskList') {
+      const nowISO = new Date().toISOString();
+      const taskItem = schema.nodes.taskItem.create(
+        { createdAt: nowISO },
+        [schema.nodes.textBlock.create()],
+      );
+      containerNode = nodeType.create(null, [taskItem]);
     } else if (item.blockName === 'toggleHeading') {
       containerNode = nodeType.create({ open: true }, [
         schema.nodes.textBlock.create({ level: 2 }),

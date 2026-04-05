@@ -127,6 +127,40 @@ return {
 
 标记通过 CSS 嵌套选择器或 NodeView 内部逻辑自动适应嵌套层级。
 
+### 4.3 列表符号布局规范（不变量）
+
+**列表符号必须在正文内容空间内，文字缩进到符号后面。** 这是所有列表类 Container 的布局约束：
+
+```
+正文 textBlock:
+│← padding-left: 72px →│
+                        文字从这里开始
+
+列表子 block:
+│← padding-left: 72px →│
+                        │←24px→│
+                        符号    文字从这里开始（缩进 24px）
+```
+
+实现方式：
+1. **Container 自身不加 `padding-left`**——避免改变子 block 的 `getBoundingClientRect().left`，确保手柄对齐不受影响
+2. **子 block 自身加 `padding-left: 24px`**——文字缩进，符号在 padding 空间内
+3. **符号用 `position: absolute` + `left: 0~24px`**——定位在子 block 的 padding 区域内
+
+```css
+/* 示例：所有列表子 block 统一缩进 */
+.bullet-list > .bullet-list__content > p { padding-left: 24px; }
+.ordered-list > .ordered-list__content > p { padding-left: 24px; }
+.task-item__content { padding-left: 24px; }
+
+/* 符号在 padding 空间内（left 值 0~24px） */
+.bullet-list > ... > p::before { position: absolute; left: 6px; }
+.ordered-list > ... > p::before { position: absolute; left: 0; }
+.task-item__checkbox { position: absolute; left: 2px; }
+```
+
+**为什么不用 Container 级 `padding-left`**：Container 的 `padding-left` 会右移所有子 block 的 DOM 左边缘，导致手柄定位（基于 `blockRect.left`）偏移，手柄不再和普通 textBlock 对齐。子 block 自身的 `padding-left` 只影响内容渲染，不影响 `getBoundingClientRect().left`。
+
 ---
 
 ## 五、共享操作

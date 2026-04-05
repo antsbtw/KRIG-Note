@@ -113,9 +113,9 @@ export function buildTestDocument(schema: Schema): PMNode {
     // §4.2 taskList
     heading(schema, 2, '2.3 taskList'),
     schema.node('taskList', null, [
-      p(schema, '任务一'),
-      p(schema, '任务二'),
-      p(schema, '任务三'),
+      schema.node('taskItem', { checked: false, createdAt: new Date().toISOString() }, [p(schema, '任务一')]),
+      schema.node('taskItem', { checked: true, createdAt: '2026-04-01T00:00:00Z', completedAt: new Date().toISOString() }, [p(schema, '任务二（已完成）')]),
+      schema.node('taskItem', { checked: false, createdAt: new Date().toISOString(), deadline: '2026-04-10T00:00:00Z' }, [p(schema, '任务三（有截止日期）')]),
     ]),
     p(schema, '测试：checkbox 显示 / Enter 新行 / 空行 Enter 退出'),
 

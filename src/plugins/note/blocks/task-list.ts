@@ -1,90 +1,188 @@
 import type { BlockDef, NodeViewFactory } from '../types';
 
 /**
- * taskList — 任务列表（ContainerBlock）
+ * taskList + taskItem — 任务列表（ContainerBlock 二层结构）
  *
- * content: 'block+'，checkbox 通过 CSS ::before 渲染。
- * checked 状态存储在 attrs.checkedItems（子 block 索引 → boolean）。
- * NodeView 监听点击事件，检测 checkbox 区域并切换 checked 状态。
+ * taskList（content: 'taskItem+'）→ taskItem（content: 'block+'）
+ *
+ * taskItem 是 ContainerBlock 中间层，自带 checkbox 和时间 attrs。
+ * 遵循三基类架构：checkbox 是 Container（taskItem）自己的装饰，不侵入子 Block。
  */
 
-const taskListNodeView: NodeViewFactory = (initialNode, view, getPos) => {
-  let node = initialNode;
-  const dom = document.createElement('div');
-  dom.classList.add('task-list');
+function generateId(): string {
+  return crypto.randomUUID?.() ?? Math.random().toString(36).slice(2);
+}
 
+// ── taskItem NodeView ──
+
+const taskItemNodeView: NodeViewFactory = (node, view, getPos) => {
+  const dom = document.createElement('div');
+  dom.classList.add('task-item');
+  syncState(dom, node.attrs);
+
+  // Checkbox（不可编辑）
+  const checkbox = document.createElement('input');
+  checkbox.type = 'checkbox';
+  checkbox.classList.add('task-item__checkbox');
+  checkbox.contentEditable = 'false';
+  checkbox.checked = !!node.attrs.checked;
+  checkbox.addEventListener('mousedown', (e) => e.preventDefault());
+  checkbox.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const pos = typeof getPos === 'function' ? getPos() : undefined;
+    if (pos == null) return;
+    const currentNode = view.state.doc.nodeAt(pos);
+    if (!currentNode) return;
+
+    const nowISO = new Date().toISOString();
+    const newChecked = !currentNode.attrs.checked;
+    view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, {
+      ...currentNode.attrs,
+      checked: newChecked,
+      completedAt: newChecked ? nowISO : null,
+    }));
+  });
+  dom.appendChild(checkbox);
+
+  // Content（ProseMirror 管理子 Block）
   const contentDOM = document.createElement('div');
-  contentDOM.classList.add('task-list__content');
+  contentDOM.classList.add('task-item__content');
   dom.appendChild(contentDOM);
 
-  function syncCheckedClasses(checkedItems: Record<string, boolean>) {
-    const children = contentDOM.children;
-    console.log('[taskList] syncCheckedClasses:', checkedItems, 'children:', children.length);
-    for (let i = 0; i < children.length; i++) {
-      const isChecked = !!checkedItems[String(i)];
-      (children[i] as HTMLElement).classList.toggle('task-item--checked', isChecked);
-      console.log(`[taskList] child[${i}] checked=${isChecked}, classList:`, (children[i] as HTMLElement).className);
+  // 时间标签（hover 时显示，点击设置 deadline）
+  const timeLabel = document.createElement('span');
+  timeLabel.classList.add('task-item__time');
+  timeLabel.contentEditable = 'false';
+  dom.appendChild(timeLabel);
+
+  // 隐藏的 date input（点击时间标签触发）
+  const dateInput = document.createElement('input');
+  dateInput.type = 'date';
+  dateInput.classList.add('task-item__date-input');
+  dom.appendChild(dateInput);
+
+  timeLabel.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // 设置当前 deadline 值
+    const pos = typeof getPos === 'function' ? getPos() : undefined;
+    if (pos == null) return;
+    const n = view.state.doc.nodeAt(pos);
+    if (n?.attrs.deadline) {
+      dateInput.value = n.attrs.deadline.slice(0, 10); // YYYY-MM-DD
+    } else {
+      dateInput.value = '';
+    }
+    dateInput.showPicker();
+  });
+
+  dateInput.addEventListener('change', () => {
+    const pos = typeof getPos === 'function' ? getPos() : undefined;
+    if (pos == null) return;
+    const currentNode = view.state.doc.nodeAt(pos);
+    if (!currentNode) return;
+    const deadline = dateInput.value ? new Date(dateInput.value + 'T23:59:59').toISOString() : null;
+    view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, {
+      ...currentNode.attrs,
+      deadline,
+    }));
+  });
+
+  function syncState(el: HTMLElement, attrs: Record<string, any>) {
+    el.classList.toggle('task-item--checked', !!attrs.checked);
+    // 超期标记
+    if (!attrs.checked && attrs.deadline) {
+      el.classList.toggle('task-item--overdue', new Date(attrs.deadline) < new Date());
+    } else {
+      el.classList.remove('task-item--overdue');
     }
   }
 
-  // 点击 checkbox 区域（子 block 的 padding-left 24px 内）
-  // 用 capture 阶段在 dom（外层）上监听，在 ProseMirror 处理之前拦截
-  dom.addEventListener('mousedown', (e) => {
-    const children = Array.from(contentDOM.children) as HTMLElement[];
-    console.log('[taskList] mousedown captured, children:', children.length, 'clientX:', e.clientX, 'clientY:', e.clientY);
+  function formatDate(iso: string | null): string {
+    if (!iso) return '';
+    const d = new Date(iso);
+    return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
 
-    for (let i = 0; i < children.length; i++) {
-      const child = children[i];
-      const rect = child.getBoundingClientRect();
-      console.log(`[taskList] child[${i}] rect:`, { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom }, 'checkboxZone: <', rect.left + 24);
-      // 点击在子 block 的 checkbox 区域内（左侧 24px）
-      if (e.clientY >= rect.top && e.clientY <= rect.bottom
-          && e.clientX >= rect.left && e.clientX < rect.left + 24) {
-        console.log(`[taskList] ✓ hit checkbox at index ${i}`);
-        e.preventDefault();
-        e.stopPropagation();
-
-        const pos = typeof getPos === 'function' ? getPos() : undefined;
-        if (pos == null) return;
-        const currentNode = view.state.doc.nodeAt(pos);
-        if (!currentNode) return;
-
-        const checked = { ...(currentNode.attrs.checkedItems || {}) } as Record<string, boolean>;
-        checked[String(i)] = !checked[String(i)];
-        view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, {
-          ...currentNode.attrs,
-          checkedItems: checked,
-        }));
-        return;
-      }
+  function updateTimeLabel(attrs: Record<string, any>) {
+    const parts: string[] = [];
+    if (attrs.checked && attrs.completedAt) {
+      parts.push(`${formatDate(attrs.completedAt)} 完成`);
+    } else {
+      if (attrs.createdAt) parts.push(`${formatDate(attrs.createdAt)} 创建`);
+      if (attrs.deadline) parts.push(`截止 ${formatDate(attrs.deadline)}`);
     }
-  }, true);  // capture phase
+    timeLabel.textContent = parts.join(' · ');
+  }
 
-  // 初始同步
-  setTimeout(() => syncCheckedClasses((node.attrs.checkedItems || {}) as Record<string, boolean>), 0);
+  updateTimeLabel(node.attrs);
 
   return {
     dom,
     contentDOM,
     update(updatedNode) {
-      if (updatedNode.type.name !== 'taskList') return false;
-      node = updatedNode;
-      syncCheckedClasses((updatedNode.attrs.checkedItems || {}) as Record<string, boolean>);
+      if (updatedNode.type.name !== 'taskItem') return false;
+      checkbox.checked = !!updatedNode.attrs.checked;
+      syncState(dom, updatedNode.attrs);
+      updateTimeLabel(updatedNode.attrs);
       return true;
     },
   };
+};
+
+// ── taskList NodeView ──
+
+const taskListNodeView: NodeViewFactory = (node, view, getPos) => {
+  const dom = document.createElement('div');
+  dom.classList.add('task-list');
+
+  return {
+    dom,
+    contentDOM: dom,
+    update(updatedNode) { return updatedNode.type.name === 'taskList'; },
+  };
+};
+
+// ── BlockDef ──
+
+export const taskItemBlock: BlockDef = {
+  name: 'taskItem',
+  group: '',  // 不在 block group 中，只作为 taskList 的子节点
+  nodeSpec: {
+    content: 'block+',
+    defining: true,
+    attrs: {
+      atomId: { default: null },
+      checked: { default: false },
+      createdAt: { default: null },
+      completedAt: { default: null },
+      deadline: { default: null },
+    },
+    parseDOM: [{
+      tag: 'div.task-item',
+      getAttrs(dom) {
+        return {
+          checked: (dom as HTMLElement).classList.contains('task-item--checked'),
+        };
+      },
+    }],
+    toDOM(node) {
+      return ['div', {
+        class: `task-item ${node.attrs.checked ? 'task-item--checked' : ''}`,
+      }, 0];
+    },
+  },
+  nodeView: taskItemNodeView,
+  capabilities: { canDelete: true },
+  containerRule: {},
 };
 
 export const taskListBlock: BlockDef = {
   name: 'taskList',
   group: 'block',
   nodeSpec: {
-    content: 'block+',
+    content: 'taskItem+',
     group: 'block',
-    defining: true,
-    attrs: {
-      checkedItems: { default: {} },
-    },
     parseDOM: [{ tag: 'div.task-list' }],
     toDOM() { return ['div', { class: 'task-list' }, 0]; },
   },
