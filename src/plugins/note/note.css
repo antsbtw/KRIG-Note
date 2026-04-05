@@ -14,7 +14,9 @@
   caret-color: #e8eaed;
   position: relative;  /* block-handle 定位基准 */
 }
-.ProseMirror p { margin: 0.3em 0; }
+/* ── Block 统一间距 ── */
+.ProseMirror > * { margin: 4px 0; padding: 3px 2px; }
+.ProseMirror p { margin: 4px 0; padding: 3px 2px; }
 
 /* ── noteTitle ── */
 .note-title {
@@ -37,9 +39,9 @@
 }
 
 /* ── Heading ── */
-.ProseMirror h1 { font-size: 30px; font-weight: 700; margin: 1em 0 0.5em; }
-.ProseMirror h2 { font-size: 24px; font-weight: 600; margin: 0.8em 0 0.4em; }
-.ProseMirror h3 { font-size: 20px; font-weight: 600; margin: 0.6em 0 0.3em; }
+.ProseMirror h1 { font-size: 30px; font-weight: 700; margin: 4px 0; padding: 3px 2px; }
+.ProseMirror h2 { font-size: 24px; font-weight: 600; margin: 4px 0; padding: 3px 2px; }
+.ProseMirror h3 { font-size: 20px; font-weight: 600; margin: 4px 0; padding: 3px 2px; }
 
 /* ── Inline marks ── */
 .ProseMirror code {
@@ -573,3 +575,13 @@
   user-select: none;
 }
 .note-link:hover { background: #333; }
+
+/* ── Block Selection ── */
+.block-selected {
+  background: rgba(138, 180, 248, 0.15);
+  border-radius: 3px;
+  outline: 2px solid rgba(138, 180, 248, 0.3);
+  outline-offset: -1px;
+}
+.ProseMirror.block-selection-active { caret-color: transparent; }
+.ProseMirror.block-selection-active ::selection { background: transparent; }

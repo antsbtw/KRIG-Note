@@ -19,6 +19,7 @@ import { FloatingToolbar } from './FloatingToolbar';
 import { HandleMenu } from './HandleMenu';
 import { ContextMenu } from './ContextMenu';
 import { blockHandlePlugin } from '../plugins/block-handle';
+import { blockSelectionPlugin } from '../plugins/block-selection';
 import '../note.css';
 
 /**
@@ -114,6 +115,7 @@ export function NoteEditor() {
     const state = EditorState.create({
       doc,
       plugins: [
+        blockSelectionPlugin(),     // 最高优先级 — ESC 选中 Block
         slashCommandPlugin(),
         containerKeyboardPlugin(),  // Container Enter/Backspace — 在 baseKeymap 之前
         buildInputRules(s),

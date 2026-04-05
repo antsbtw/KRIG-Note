@@ -2,7 +2,7 @@
 
 > **类型**：框架级 Plugin
 > **位置**：`src/plugins/note/plugins/block-selection.ts`
-> **状态**：设计中
+> **状态**：已实现
 > **依赖**：`block-action.md`（操作层）、`base/base-classes.md`（基类共享能力）
 
 ---
@@ -66,6 +66,8 @@ interface BlockSelectionState {
 
 | 触发方式 | 行为 |
 |----------|------|
+| **←** | 退出选中，光标定位到第一个选中 Block 开头 |
+| **→** | 退出选中，光标定位到最后一个选中 Block 末尾 |
 | **Enter** | 退出选中，光标进入第一个选中 Block |
 | **任意可打印字符** | 退出选中，光标进入第一个选中 Block 并输入该字符 |
 | **单击编辑器** | 退出选中，光标跳到点击位置 |
@@ -180,12 +182,18 @@ Cmd+V 时检查 `clipboardData` 是否包含 `application/krig-blocks`：
 
 ### 7.1 与 Block Handle 拖拽
 
-Block Handle 拖拽时检查 Block Selection 状态：
+选中多个 block 后，按住**任意一个选中 block 的手柄**即可整体拖拽：
 
 ```
-Block Selection active + 多个 selectedPositions？
-  → YES → dataTransfer 写入所有 selectedPositions（多 block 拖拽）
-  → NO  → dataTransfer 写入单个 block pos（单 block 拖拽）
+dragstart 时检查：
+  Block Selection active + 多个 selectedPositions + currentPos 在选中列表中？
+    → YES → dataTransfer 写入 'application/krig-multi-block'（JSON 数组）
+    → NO  → dataTransfer 写入 'application/krig-block-pos'（单个位置）
+
+handleDrop 时检查：
+  有 'application/krig-multi-block'？
+    → YES → relocateBlocks(positions, targetPos) 整体移动
+    → NO  → relocateBlock(fromPos, targetPos) 单块移动
 ```
 
 ### 7.2 与 FloatingToolbar

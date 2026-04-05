@@ -2,6 +2,7 @@ import { Plugin, PluginKey } from 'prosemirror-state';
 import { Slice, Fragment } from 'prosemirror-model';
 import type { EditorView } from 'prosemirror-view';
 import type { Node as PMNode } from 'prosemirror-model';
+import { blockSelectionKey } from './block-selection';
 
 /**
  * Block Handle Plugin — 鼠标悬停 Block 时显示手柄（+ ⠿）
@@ -14,7 +15,7 @@ import type { Node as PMNode } from 'prosemirror-model';
 export const blockHandleKey = new PluginKey('blockHandle');
 
 /** 找到 pos 所在的顶层 block 起始位置 */
-function findTopBlockPos(doc: PMNode, pos: number): number | null {
+export function findTopBlockPos(doc: PMNode, pos: number): number | null {
   let result: number | null = null;
   doc.forEach((node, offset) => {
     if (result !== null) return;
@@ -54,6 +55,59 @@ function relocateBlock(view: EditorView, fromPos: number, targetPos: number): bo
   const mappedTarget = tr.mapping.map(allPositions[targetIdx] ?? targetPos);
   // 插入到目标位置
   tr.replace(mappedTarget, mappedTarget, new Slice(Fragment.from(node), 0, 0));
+  view.dispatch(tr);
+  return true;
+}
+
+/** 将多个 block 从 positions 移动到 targetPos */
+function relocateBlocks(view: EditorView, positions: number[], targetPos: number): boolean {
+  const { state } = view;
+  const allPositions: number[] = [];
+  state.doc.forEach((_n: PMNode, offset: number) => allPositions.push(offset));
+
+  // 去重排序
+  const sorted = [...new Set(positions)].sort((a, b) => a - b);
+
+  // 不能移到自己内部
+  for (const pos of sorted) {
+    const node = state.doc.nodeAt(pos);
+    if (node && targetPos > pos && targetPos < pos + node.nodeSize) return false;
+  }
+
+  // 收集节点
+  const nodes = sorted.map(p => state.doc.nodeAt(p)).filter(Boolean) as PMNode[];
+  if (nodes.length === 0) return false;
+
+  // 检查是否原位
+  const sourceIndices = sorted.map(p => allPositions.indexOf(p)).filter(i => i >= 0);
+  let targetIdx = allPositions.findIndex(p => p >= targetPos);
+  if (targetIdx < 0) targetIdx = allPositions.length;
+  const firstSrcIdx = sourceIndices[0];
+  const lastSrcIdx = sourceIndices[sourceIndices.length - 1];
+  if (targetIdx >= firstSrcIdx && targetIdx <= lastSrcIdx + 1) return false;
+
+  const tr = state.tr;
+  // 从后往前删除
+  for (let i = sorted.length - 1; i >= 0; i--) {
+    const node = state.doc.nodeAt(sorted[i]);
+    if (node) tr.delete(sorted[i], sorted[i] + node.nodeSize);
+  }
+  const mappedTarget = tr.mapping.map(allPositions[targetIdx] ?? targetPos);
+  tr.replace(mappedTarget, mappedTarget, new Slice(Fragment.from(nodes), 0, 0));
+
+  // 计算移动后的新位置，保持选中状态
+  const newPositions: number[] = [];
+  let offset = mappedTarget;
+  for (const node of nodes) {
+    newPositions.push(offset);
+    offset += node.nodeSize;
+  }
+  tr.setMeta(blockSelectionKey, {
+    active: true,
+    selectedPositions: newPositions,
+    anchorPos: newPositions[0],
+  });
+
   view.dispatch(tr);
   return true;
 }
@@ -130,7 +184,17 @@ export function blockHandlePlugin(): Plugin {
       e.dataTransfer.setDragImage(ghost, 0, 0);
       setTimeout(() => document.body.removeChild(ghost), 0);
 
-      e.dataTransfer.setData('application/krig-block-pos', String(currentPos));
+      // 检查 block-selection：如果当前 block 在选中列表中，拖拽所有选中 block
+      const bsState = blockSelectionKey.getState(view.state);
+      if (bsState?.active && bsState.selectedPositions.length > 1
+          && bsState.selectedPositions.includes(currentPos)) {
+        e.dataTransfer.setData(
+          'application/krig-multi-block',
+          JSON.stringify(bsState.selectedPositions),
+        );
+      } else {
+        e.dataTransfer.setData('application/krig-block-pos', String(currentPos));
+      }
       e.dataTransfer.effectAllowed = 'move';
     });
 
@@ -301,18 +365,30 @@ export function blockHandlePlugin(): Plugin {
 
       // 接收拖放
       handleDrop(view, event) {
+        const dropResult = view.posAtCoords({ left: event.clientX, top: event.clientY });
+        if (!dropResult) return false;
+        const targetPos = findTopBlockPos(view.state.doc, dropResult.pos);
+        if (targetPos === null) return false;
+
+        // 多 block 拖拽
+        const multiData = event.dataTransfer?.getData('application/krig-multi-block');
+        if (multiData) {
+          event.preventDefault();
+          try {
+            const positions: number[] = JSON.parse(multiData);
+            if (Array.isArray(positions) && positions.length > 0) {
+              return relocateBlocks(view, positions, targetPos);
+            }
+          } catch {}
+          return false;
+        }
+
+        // 单 block 拖拽
         const posData = event.dataTransfer?.getData('application/krig-block-pos');
         if (!posData) return false;
-
         event.preventDefault();
         const fromPos = parseInt(posData, 10);
         if (isNaN(fromPos)) return false;
-
-        const dropResult = view.posAtCoords({ left: event.clientX, top: event.clientY });
-        if (!dropResult) return false;
-
-        const targetPos = findTopBlockPos(view.state.doc, dropResult.pos);
-        if (targetPos === null) return false;
 
         return relocateBlock(view, fromPos, targetPos);
       },
