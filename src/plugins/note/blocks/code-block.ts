@@ -35,11 +35,11 @@ function buildMermaidConfig(theme: string = 'dark') {
     flowchart: {
       useMaxWidth: true,
       htmlLabels: true,
-      curve: 'basis',
-      diagramPadding: 8,
-      nodeSpacing: 30,
-      rankSpacing: 40,
-      padding: 12,
+      curve: 'monotoneY',
+      diagramPadding: 16,
+      nodeSpacing: 50,
+      rankSpacing: 60,
+      padding: 15,
       wrappingWidth: 400,
       defaultRenderer: 'elk',
     },
@@ -747,7 +747,7 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
             } catch { /* clipboard API may fail */ }
           }, 'image/png');
         };
-        img.src = url;
+        img.src = dataUri;
       }
     });
 
