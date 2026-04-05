@@ -519,6 +519,7 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
     fsToolbar.appendChild(btnCopy);
     fsToolbar.appendChild(makeSep());
     fsToolbar.appendChild(btnFit);
+    // zoomBar 在下方创建后插入此处
     fsToolbar.appendChild(makeSep());
 
     // 关闭按钮
@@ -694,10 +695,9 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
       }
     });
 
-    // ── 缩放控制条（预览区右下角） ──
+    // ── 缩放控制条（toolbar 内，适应屏幕按钮之后） ──
     const zoomBar = document.createElement('div');
     zoomBar.classList.add('code-block__fs-zoom');
-    zoomBar.setAttribute('contenteditable', 'false');
 
     const zoomOut = document.createElement('button');
     zoomOut.classList.add('code-block__fs-zoom-btn');
@@ -722,7 +722,9 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
     zoomBar.appendChild(zoomLabel);
     zoomBar.appendChild(zoomInput);
     zoomBar.appendChild(zoomIn);
-    previewPane.appendChild(zoomBar);
+
+    // 插入到 toolbar：适应屏幕按钮后面
+    btnFit.after(zoomBar);
 
     // ── 预览区缩放 + 平移 ──
     let scale = 1, panX = 0, panY = 0;

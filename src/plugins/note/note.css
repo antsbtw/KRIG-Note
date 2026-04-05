@@ -541,26 +541,21 @@
   justify-content: center;
   background: #111;
   cursor: grab;
-  position: relative;
 }
 .code-block__fs-preview-wrapper {
   transform-origin: center center;
 }
 .code-block__fs-preview-wrapper svg { max-width: none; height: auto; }
 
-/* 缩放控制条 */
+/* 缩放控制条（toolbar 内联） */
 .code-block__fs-zoom {
-  position: absolute;
-  bottom: 12px;
-  right: 12px;
   display: flex;
   align-items: center;
   gap: 2px;
-  background: #222;
+  background: #252525;
   border: 1px solid #444;
-  border-radius: 6px;
-  padding: 2px 4px;
-  z-index: 10;
+  border-radius: 5px;
+  padding: 1px 3px;
 }
 .code-block__fs-zoom-btn {
   width: 26px;
