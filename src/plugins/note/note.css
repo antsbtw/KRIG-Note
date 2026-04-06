@@ -254,7 +254,15 @@
   border: 1px solid #333;
   border-radius: 6px;
   margin: 0.5em 0;
+  transition: outline 0.1s;
 }
+/* 选中状态 — 蓝色边框 */
+.render-block--selected {
+  outline: 2px solid #8ab4f8;
+  outline-offset: -1px;
+}
+.render-block--selected .render-block__toolbar { display: flex; }
+.render-block--editing .render-block__toolbar { display: flex; }
 .render-block__toolbar {
   display: none;
   align-items: center;
@@ -271,6 +279,13 @@
   user-select: none;
   margin-right: 8px;
 }
+.render-block__tabs { display: flex; align-items: center; gap: 0; margin-left: 4px; }
+.render-block__tab-btn {
+  padding: 4px 10px; background: transparent; border: none; border-bottom: 2px solid transparent;
+  color: #888; cursor: pointer; font-size: 12px;
+}
+.render-block__tab-btn:hover { color: #e8eaed; }
+.render-block__tab-btn--active { color: #8ab4f8; border-bottom-color: #8ab4f8; }
 .render-block__btn-group { display: flex; align-items: center; gap: 2px; }
 .render-block__toolbar-btn {
   width: 26px; height: 26px;
@@ -279,16 +294,45 @@
   display: flex; align-items: center; justify-content: center;
 }
 .render-block__toolbar-btn:hover { background: #3a3a3a; color: #e8eaed; }
+.render-block__toolbar-btn--active { color: #8ab4f8; }
 .render-block__toolbar-sep { width: 1px; height: 16px; background: #444; margin: 0 4px; }
 .render-block__content { min-height: 40px; }
+
+/* ── Placeholder 通用样式 ── */
 .render-block__placeholder {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  min-height: 100px; color: #555; cursor: pointer; user-select: none;
+  min-height: 100px; color: #555; user-select: none;
 }
-.render-block__placeholder input {
-  margin-top: 8px; padding: 4px 8px; background: #2a2a2a; border: 1px solid #444;
-  border-radius: 4px; color: #e8eaed; font-size: 13px; width: 260px; text-align: center;
+.render-block__placeholder-icon {
+  font-size: 32px; margin-bottom: 8px;
 }
+.render-block__placeholder-actions {
+  display: flex; gap: 8px; align-items: center;
+}
+.render-block__placeholder-btn {
+  padding: 6px 16px; background: #2a2a2a; border: 1px solid #444;
+  border-radius: 4px; color: #9aa0a6; cursor: pointer; font-size: 13px;
+}
+.render-block__placeholder-btn:hover {
+  background: #333; color: #e8eaed;
+}
+.render-block__placeholder-input {
+  display: flex; gap: 4px; align-items: center; margin-top: 8px;
+}
+.render-block__placeholder-input input {
+  padding: 6px 8px; background: #1a1a1a; border: 1px solid #444;
+  border-radius: 4px; color: #e8eaed; font-size: 13px; width: 280px;
+}
+.render-block__placeholder-input input:focus {
+  border-color: #8ab4f8; outline: none;
+}
+.render-block__placeholder-submit {
+  padding: 6px 12px; background: #8ab4f8; border: none;
+  border-radius: 4px; color: #1a1a1a; cursor: pointer; font-size: 13px; font-weight: 500;
+}
+.render-block__placeholder-submit:hover { background: #aecbfa; }
+
+/* ── Caption 通用样式 ── */
 .render-block__caption {
   padding: 4px 8px; font-size: 13px; color: #9aa0a6; border-top: 1px solid #333;
 }
@@ -681,13 +725,210 @@
 .math-block__empty { color: #666; font-size: 13px; font-style: italic; padding: 8px; }
 .math-block__error { color: #f28b82; font-size: 12px; padding: 8px; }
 
-/* ── image ── */
-.image-block__wrapper { text-align: center; min-height: 60px; }
-.image-block__placeholder {
-  display: flex; align-items: center; justify-content: center;
-  min-height: 100px; color: #555; cursor: pointer; border: 2px dashed #333; border-radius: 6px;
+/* ═══════════════════════════════════════════════════════════
+   image Block
+   ═══════════════════════════════════════════════════════════ */
+.image-block__wrapper { min-height: 60px; text-align: center; }
+.image-block__img-area {
+  position: relative; display: inline-block; max-width: 100%;
 }
+.image-block__img-area img {
+  display: block; max-width: 100%; border-radius: 4px; user-select: none;
+}
+/* 对齐 — 通过 wrapper 的 text-align 控制 inline-block 子元素位置 */
+.image-block__wrapper[data-alignment="left"] { text-align: left; }
+.image-block__wrapper[data-alignment="center"] { text-align: center; }
+.image-block__wrapper[data-alignment="right"] { text-align: right; }
+/* 对齐按钮现在在 render-block toolbar 中，通过 toolbarButtons 接口渲染 */
+/* Resize handles */
+.image-block__resize-handle {
+  position: absolute; top: 0; width: 8px; height: 100%;
+  cursor: col-resize; opacity: 0; transition: opacity 0.15s; z-index: 5;
+}
+.image-block__resize-handle::after {
+  content: ''; position: absolute; top: 50%; transform: translateY(-50%);
+  width: 3px; height: 32px; background: #8ab4f8; border-radius: 2px;
+}
+.image-block__resize-handle--left { left: -4px; }
+.image-block__resize-handle--left::after { left: 0; }
+.image-block__resize-handle--right { right: -4px; }
+.image-block__resize-handle--right::after { right: 0; }
+.image-block__img-area:hover .image-block__resize-handle { opacity: 1; }
+.image-block--resizing .image-block__resize-handle { opacity: 1; }
+/* Caption */
 .image-block__caption { padding: 4px 8px; font-size: 13px; color: #9aa0a6; text-align: center; }
+
+/* ═══════════════════════════════════════════════════════════
+   audio Block
+   ═══════════════════════════════════════════════════════════ */
+.audio-block__player {
+  position: relative; padding: 8px 12px;
+}
+.audio-block__title {
+  font-size: 13px; color: #9aa0a6; margin-bottom: 4px;
+}
+.audio-block__player audio {
+  width: 100%; height: 36px; display: block;
+}
+.audio-block__download-btn {
+  position: absolute; top: 8px; right: 8px;
+  width: 28px; height: 28px; border-radius: 50%;
+  background: #2a2a2a; border: 1px solid #444; color: #888;
+  cursor: pointer; font-size: 14px; opacity: 0; transition: opacity 0.15s;
+  display: flex; align-items: center; justify-content: center;
+}
+.audio-block__player:hover .audio-block__download-btn { opacity: 1; }
+.audio-block__download-btn:hover { background: #333; color: #8ab4f8; }
+.audio-block__download-btn:disabled { cursor: default; color: #555; }
+.audio-block__caption { padding: 4px 8px; font-size: 13px; color: #9aa0a6; border-top: 1px solid #333; }
+
+/* ═══════════════════════════════════════════════════════════
+   video Block
+   ═══════════════════════════════════════════════════════════ */
+.video-block__tab-bar {
+  display: flex; align-items: center; gap: 0;
+  padding: 0 8px; background: #252525; border-bottom: 1px solid #333;
+  position: relative;
+}
+.video-block__tab-btn {
+  padding: 6px 12px; background: transparent; border: none; border-bottom: 2px solid transparent;
+  color: #888; cursor: pointer; font-size: 12px;
+}
+.video-block__tab-btn:hover { color: #e8eaed; }
+.video-block__tab-btn--active { color: #8ab4f8; border-bottom-color: #8ab4f8; }
+.video-block__action-bar {
+  display: flex; gap: 2px; margin-left: auto; align-items: center;
+}
+.video-block__action-btn {
+  width: 28px; height: 28px; background: transparent; border: none; border-radius: 4px;
+  color: #888; cursor: pointer; font-size: 13px;
+  display: flex; align-items: center; justify-content: center;
+}
+.video-block__action-btn:hover { background: #3a3a3a; color: #e8eaed; }
+.video-block__action-btn--active { color: #8ab4f8; }
+.video-block__action-btn:disabled { color: #555; cursor: default; }
+/* Dropdown menus — 网格布局（CC language, Memory duration） */
+.video-block__dropdown {
+  position: absolute; top: 100%; right: 8px;
+  background: #2a2a2a; border: 1px solid #444; border-radius: 8px;
+  padding: 8px; z-index: 30;
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: 4px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+}
+.video-block__dropdown-item {
+  padding: 6px 16px; background: #333; border: 1px solid #444;
+  border-radius: 6px; color: #9aa0a6;
+  cursor: pointer; font-size: 13px; text-align: center; white-space: nowrap;
+}
+.video-block__dropdown-item:hover { background: #3a3a3a; color: #e8eaed; }
+.video-block__dropdown-item--active { color: #8ab4f8; border-color: #8ab4f8; }
+/* Tab 内容统一 16:9 最小高度 */
+.video-block__tab-content { min-height: 200px; }
+.video-block__play-panel { padding: 8px; position: relative; }
+.video-block__data-panel { padding: 12px; min-height: 0; aspect-ratio: 16/9; overflow-y: auto; }
+.video-block__transcript-panel {
+  padding: 8px; aspect-ratio: 16/9; overflow: hidden;
+  display: flex; flex-direction: column;
+}
+.video-block__meta-row { font-size: 13px; color: #9aa0a6; margin-bottom: 4px; }
+.video-block__meta-row strong { color: #e8eaed; }
+.video-block__meta-empty { font-size: 13px; color: #555; font-style: italic; }
+/* Subtitle overlay */
+.video-block__subtitle-overlay {
+  position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%);
+  background: rgba(0,0,0,0.75); padding: 4px 12px; border-radius: 4px;
+  max-width: 80%; text-align: center; z-index: 10; pointer-events: none;
+}
+.video-block__subtitle-text { color: #fff; font-size: 14px; line-height: 1.4; }
+/* Vocab panel — 右侧浮层，自适应高度，最多 ~10 条 */
+.video-block__vocab-panel {
+  position: absolute; top: 0; right: 0; width: 200px; max-height: 100%;
+  background: rgba(30,30,30,0.92); border-left: 1px solid #333;
+  overflow-y: auto; padding: 0; z-index: 15;
+}
+.video-block__vocab-panel:empty { display: none !important; }
+.video-block__vocab-item {
+  padding: 8px 12px; border-bottom: 1px solid #2a2a2a; color: #9aa0a6;
+}
+.video-block__vocab-item--current {
+  background: rgba(138,180,248,0.15); color: #e8eaed;
+}
+.video-block__vocab-word {
+  font-size: 14px; font-weight: 600; color: #8ab4f8; line-height: 1.4;
+}
+.video-block__vocab-item--current .video-block__vocab-word { color: #8ab4f8; }
+.video-block__vocab-def {
+  font-size: 12px; color: #777; line-height: 1.3; margin-top: 2px;
+}
+/* Memory progress bar */
+/* Memory bar 已移除，进度显示在 🧠 按钮文字上（如 🧠 3/146） */
+/* Transcript tab — 主定义在上方（aspect-ratio: 16/9） */
+.video-block__transcript-area {
+  width: 100%; flex: 1 1 0; min-height: 0; background: #1a1a1a; border: 1px solid #333;
+  border-radius: 4px; color: #e8eaed; font-size: 13px; font-family: 'SF Mono', monospace;
+  padding: 8px; resize: none; line-height: 1.5; box-sizing: border-box;
+  overflow-y: auto;
+}
+.video-block__transcript-area:focus { border-color: #8ab4f8; outline: none; }
+.video-block__translation-panel { margin-top: 8px; }
+.video-block__translation-label {
+  font-size: 13px; color: #9aa0a6; font-weight: 600;
+  padding: 8px 12px 4px; letter-spacing: 0.5px;
+}
+/* Download progress bar */
+.video-block__progress {
+  height: 3px; background: #1a1a1a; border-top: 1px solid #333;
+}
+.video-block__progress-fill {
+  height: 100%; width: 0%; background: #8ab4f8; transition: width 0.3s;
+}
+/* Caption */
+.video-block__caption { padding: 4px 8px; font-size: 13px; color: #9aa0a6; border-top: 1px solid #333; }
+
+/* ═══════════════════════════════════════════════════════════
+   tweet Block
+   ═══════════════════════════════════════════════════════════ */
+.tweet-block__tab-bar {
+  display: flex; align-items: center; gap: 0;
+  padding: 0 8px; background: #252525; border-bottom: 1px solid #333;
+}
+.tweet-block__tab-btn {
+  padding: 6px 12px; background: transparent; border: none; border-bottom: 2px solid transparent;
+  color: #888; cursor: pointer; font-size: 12px;
+}
+.tweet-block__tab-btn:hover { color: #e8eaed; }
+.tweet-block__tab-btn--active { color: #1d9bf0; border-bottom-color: #1d9bf0; }
+.tweet-block__fetch-btn {
+  margin-left: auto; padding: 4px 10px;
+  background: transparent; border: 1px solid #444; border-radius: 4px;
+  color: #888; cursor: pointer; font-size: 11px;
+}
+.tweet-block__fetch-btn:hover { background: #333; color: #e8eaed; }
+.tweet-block__fetch-btn:disabled { color: #555; cursor: default; }
+.tweet-block__browse-panel { padding: 8px; max-width: 550px; margin: 0 auto; }
+.tweet-block__data-panel { padding: 12px; }
+.tweet-block__no-embed,
+.tweet-block__no-data { font-size: 13px; color: #555; font-style: italic; text-align: center; padding: 20px; }
+/* 作者 */
+.tweet-block__author { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 14px; color: #e8eaed; }
+.tweet-block__avatar { width: 40px; height: 40px; border-radius: 50%; }
+.tweet-block__avatar-placeholder { font-size: 24px; }
+.tweet-block__handle { color: #888; font-size: 13px; }
+.tweet-block__reply-to { color: #1d9bf0; font-size: 13px; margin-bottom: 8px; }
+/* 正文 */
+.tweet-block__text { font-size: 14px; color: #e8eaed; white-space: pre-wrap; word-wrap: break-word; margin-bottom: 8px; line-height: 1.4; }
+/* 媒体网格 */
+.tweet-block__media-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 4px; margin-bottom: 8px; border-radius: 8px; overflow: hidden; }
+.tweet-block__media-item img { width: 100%; aspect-ratio: 16/9; object-fit: cover; }
+/* 互动数据 */
+.tweet-block__metrics { display: flex; gap: 16px; font-size: 13px; color: #888; margin-bottom: 8px; }
+/* 引用推文 */
+.tweet-block__quoted { border: 1px solid #333; border-radius: 8px; padding: 8px 12px; font-size: 13px; color: #9aa0a6; margin-bottom: 8px; }
+/* 链接 */
+.tweet-block__open-link { color: #1d9bf0; font-size: 13px; text-decoration: none; }
+.tweet-block__open-link:hover { text-decoration: underline; }
+/* Caption */
+.tweet-block__caption { padding: 4px 8px; font-size: 13px; color: #9aa0a6; border-top: 1px solid #333; }
 
 /* ── horizontalRule ── */
 /* ── FloatingToolbar ── */

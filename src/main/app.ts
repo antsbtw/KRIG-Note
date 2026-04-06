@@ -12,7 +12,8 @@ import { initSurrealDB, shutdownSurrealDB, isDBReady } from './storage/client';
 import { initSchema } from './storage/schema';
 import { surrealSessionStore } from './storage/surreal-session-store';
 import { activityStore } from './storage/activity-store';
-import { initKrigNoteDocs, createBlockTaskDoc } from './storage/init-docs';
+import { initKrigNoteDocs, createBlockTaskDoc, reimportTestDocs } from './storage/init-docs';
+import { mediaStore } from './media/media-store';
 
 /**
  * KRIG Note — 应用入口
@@ -221,6 +222,20 @@ function registerPlugins(): void {
           }
         }
       }},
+      { id: 'sep3', label: '', separator: true, handler: () => {} },
+      { id: 'reimport-test', label: 'Reimport Test Docs', handler: async () => {
+        const ok = await reimportTestDocs();
+        if (ok) {
+          const win = getMainWindow();
+          if (win) {
+            for (const child of win.contentView.children) {
+              if ('webContents' in child) {
+                (child as any).webContents.send('db:ready');
+              }
+            }
+          }
+        }
+      }},
     ],
   });
 }
@@ -228,6 +243,9 @@ function registerPlugins(): void {
 // ── 应用生命周期 ──
 
 app.whenReady().then(() => {
+  // 0. 注册自定义协议（必须在 app.whenReady 后）
+  mediaStore.registerProtocol();
+
   // 1. 插件注册
   registerPlugins();
 

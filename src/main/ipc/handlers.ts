@@ -1,4 +1,4 @@
-import { ipcMain, BaseWindow } from 'electron';
+import { ipcMain, BaseWindow, BrowserWindow, dialog, shell, net } from 'electron';
 import { IPC, ViewMessage } from '../../shared/types';
 import { workspaceManager } from '../workspace/manager';
 import { workModeRegistry } from '../workmode/registry';
@@ -20,6 +20,9 @@ import { isDBReady } from '../storage/client';
 import { lookupWord } from '../learning/dictionary-service';
 import { googleTranslate, googleTTS } from '../learning/providers/google-translate';
 import { vocabStore } from '../learning/vocabulary-store';
+import { mediaStore } from '../media/media-store';
+import { checkStatus as ytdlpCheckStatus, install as ytdlpInstall } from '../ytdlp/binary-manager';
+import { downloadVideo, getVideoInfo, saveTranslationSubtitle } from '../ytdlp/downloader';
 
 export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): void {
   // ── Workspace 操作 ──
@@ -357,6 +360,111 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
   ipcMain.handle(IPC.LEARNING_VOCAB_LIST, () =>
     vocabStore.list(),
   );
+
+  // ── 媒体操作 ──
+
+  ipcMain.handle(IPC.MEDIA_DOWNLOAD, async (_e, url: string, mediaType: 'video' | 'audio') => {
+    const type = mediaType === 'video' ? 'audio' : mediaType; // video 暂不支持，降级为 audio
+    return mediaStore.download(url, type as 'audio' | 'image');
+  });
+
+  ipcMain.handle(IPC.MEDIA_OPEN_EXTERNAL, async (_e, url: string) => {
+    await shell.openExternal(url);
+    return { success: true };
+  });
+
+  ipcMain.handle(IPC.SHOW_ITEM_IN_FOLDER, (_e, filePath: string) => {
+    shell.showItemInFolder(filePath);
+  });
+
+  // ── Tweet 数据获取 ──
+
+  // ── yt-dlp ──
+
+  ipcMain.handle(IPC.YTDLP_CHECK_STATUS, async () => {
+    return ytdlpCheckStatus();
+  });
+
+  ipcMain.handle(IPC.YTDLP_INSTALL, async (event) => {
+    try {
+      const status = await ytdlpInstall((percent) => {
+        // 发送安装进度到 renderer
+        event.sender.send(IPC.YTDLP_PROGRESS, { url: '', status: 'downloading', percent });
+      });
+      return { success: true, status };
+    } catch (err) {
+      return { success: false, error: String(err) };
+    }
+  });
+
+  ipcMain.handle(IPC.YTDLP_DOWNLOAD, async (event, url: string) => {
+    try {
+      // 1. 先获取视频标题（用于默认文件名）
+      const info = await getVideoInfo(url);
+      const defaultTitle = (info?.title as string) || 'video';
+      const safeTitle = defaultTitle.replace(/[/\\?%*:|"<>]/g, '_');
+
+      // 2. 弹出保存对话框
+      const mainWindow = getMainWindow();
+      const dialogResult = await dialog.showSaveDialog(mainWindow as any, {
+        defaultPath: `${safeTitle}.mp4`,
+        filters: [
+          { name: 'MP4 Video', extensions: ['mp4'] },
+          { name: 'WebM Video', extensions: ['webm'] },
+          { name: 'All Files', extensions: ['*'] },
+        ],
+      });
+
+      if (dialogResult.canceled || !dialogResult.filePath) {
+        return { url, status: 'error', percent: 0, error: 'Download canceled' };
+      }
+
+      // 3. 用用户选择的路径下载
+      const result = await downloadVideo(url, (progress) => {
+        event.sender.send(IPC.YTDLP_PROGRESS, progress);
+      }, dialogResult.filePath);
+      return result;
+    } catch (err) {
+      return { url, status: 'error', percent: 0, error: String(err) };
+    }
+  });
+
+  ipcMain.handle(IPC.YTDLP_SAVE_SUBTITLE, (_e, videoFilePath: string, langCode: string, timestampText: string) => {
+    try {
+      const srtPath = saveTranslationSubtitle(videoFilePath, langCode, timestampText);
+      return { success: true, path: srtPath };
+    } catch (err) {
+      return { success: false, error: String(err) };
+    }
+  });
+
+  ipcMain.handle(IPC.YTDLP_GET_INFO, async (_e, url: string) => {
+    const info = await getVideoInfo(url);
+    return info ? { success: true, info } : { success: false, error: 'Failed to get info' };
+  });
+
+  // ── YouTube 字幕 ──
+
+  ipcMain.handle(IPC.YOUTUBE_TRANSCRIPT, async (_e, videoUrl: string) => {
+    return fetchYouTubeTranscript(videoUrl);
+  });
+
+  ipcMain.handle(IPC.TWEET_FETCH_DATA, async (_e, tweetUrl: string) => {
+    return fetchTweetData(tweetUrl);
+  });
+
+  ipcMain.handle(IPC.TWEET_FETCH_OEMBED, async (_e, tweetUrl: string) => {
+    try {
+      const encodedUrl = encodeURIComponent(tweetUrl);
+      const oembedUrl = `https://publish.twitter.com/oembed?url=${encodedUrl}&theme=dark&dnt=true&omit_script=false`;
+      const response = await net.fetch(oembedUrl);
+      if (!response.ok) return { success: false, error: `oEmbed API returned ${response.status}` };
+      const data = await response.json();
+      return { success: true, html: data.html || '' };
+    } catch (err) {
+      return { success: false, error: String(err) };
+    }
+  });
 }
 
 /** 广播 NoteFile 列表变更 */
@@ -395,6 +503,192 @@ function broadcastWorkspaceState(mainWindow: BaseWindow | null): void {
     }
   }
 }
+
+// ═══════════════════════════════════════════════════════════
+// YouTube 字幕获取（使用 youtube-transcript 库，通过 InnerTube API）
+// ═══════════════════════════════════════════════════════════
+
+async function fetchYouTubeTranscript(videoUrl: string): Promise<{
+  success: boolean;
+  transcript?: string;
+  error?: string;
+}> {
+  try {
+    const { fetchTranscript } = await import('youtube-transcript');
+    const segments = await fetchTranscript(videoUrl);
+    if (!segments || segments.length === 0) {
+      return { success: false, error: 'No transcript available for this video' };
+    }
+    // 转为 { time, text } 格式（offset 是毫秒）
+    const result = segments.map((seg: { text: string; offset: number }) => ({
+      time: Math.floor(seg.offset / 1000),
+      text: seg.text,
+    }));
+    return { success: true, transcript: JSON.stringify(result) };
+  } catch (err) {
+    return { success: false, error: String(err) };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// Tweet 数据提取
+// ═══════════════════════════════════════════════════════════
+
+/** 隐藏 BrowserWindow + DOM 提取脚本获取推文结构化数据 */
+async function fetchTweetData(tweetUrl: string): Promise<{ success: boolean; data?: Record<string, unknown>; error?: string }> {
+  let win: BrowserWindow | null = null;
+  try {
+    win = new BrowserWindow({
+      width: 800, height: 900, show: false,
+      webPreferences: { nodeIntegration: false, contextIsolation: true },
+    });
+
+    await win.loadURL(tweetUrl);
+
+    // 等待 Twitter SPA 渲染（轮询最多 10 秒）
+    let rendered = false;
+    for (let i = 0; i < 20; i++) {
+      await new Promise(r => setTimeout(r, 500));
+      const hasArticle = await win.webContents.executeJavaScript(
+        'document.querySelector(\'article[data-testid="tweet"]\') !== null'
+      );
+      if (hasArticle) { rendered = true; break; }
+    }
+    if (!rendered) return { success: false, error: 'Tweet page did not render in time' };
+
+    // 执行 DOM 提取
+    const data = await win.webContents.executeJavaScript(EXTRACT_TWEET_JS);
+    return { success: true, data };
+  } catch (err) {
+    return { success: false, error: String(err) };
+  } finally {
+    if (win && !win.isDestroyed()) win.destroy();
+  }
+}
+
+/** DOM 提取脚本 — 基于 data-testid 属性 */
+const EXTRACT_TWEET_JS = `
+(function() {
+  const result = {};
+  try {
+    // 找到主推文 article
+    const articles = document.querySelectorAll('article[data-testid="tweet"]');
+    const article = articles[0];
+    if (!article) return result;
+
+    // 作者信息
+    try {
+      const userNameEl = article.querySelector('[data-testid="User-Name"]');
+      if (userNameEl) {
+        const spans = userNameEl.querySelectorAll('span');
+        for (const span of spans) {
+          const text = span.textContent || '';
+          if (text.startsWith('@')) result.authorHandle = text;
+          else if (text.length > 1 && !text.startsWith('@') && !text.includes('·')) {
+            if (!result.authorName) result.authorName = text;
+          }
+        }
+      }
+    } catch {}
+
+    // 头像
+    try {
+      const avatarImg = article.querySelector('[data-testid="Tweet-User-Avatar"] img');
+      if (avatarImg) result.authorAvatar = avatarImg.src;
+    } catch {}
+
+    // 推文正文
+    try {
+      const tweetText = article.querySelector('[data-testid="tweetText"]');
+      if (tweetText) {
+        result.text = tweetText.textContent || '';
+        result.lang = tweetText.getAttribute('lang') || '';
+      }
+    } catch {}
+
+    // 时间
+    try {
+      const timeEl = article.querySelector('time');
+      if (timeEl) result.createdAt = timeEl.getAttribute('datetime') || '';
+    } catch {}
+
+    // 图片媒体
+    try {
+      const photos = article.querySelectorAll('[data-testid="tweetPhoto"] img');
+      if (photos.length > 0) {
+        result.media = [];
+        photos.forEach(img => {
+          result.media.push({ type: 'image', url: img.src });
+        });
+      }
+    } catch {}
+
+    // 视频媒体
+    try {
+      const videos = article.querySelectorAll('video');
+      videos.forEach(v => {
+        if (!result.media) result.media = [];
+        result.media.push({ type: 'video', url: v.src || '', thumbUrl: v.poster || '' });
+      });
+    } catch {}
+
+    // 互动数据
+    try {
+      const group = article.querySelector('[role="group"]');
+      if (group) {
+        const buttons = group.querySelectorAll('[data-testid]');
+        const metrics = {};
+        buttons.forEach(btn => {
+          const testId = btn.getAttribute('data-testid') || '';
+          const numSpan = btn.querySelector('span[data-testid]') || btn.querySelector('span');
+          const numText = numSpan ? numSpan.textContent.trim() : '';
+          const num = parseMetricNumber(numText);
+          if (testId.includes('reply')) metrics.replies = num;
+          if (testId.includes('retweet')) metrics.retweets = num;
+          if (testId.includes('like')) metrics.likes = num;
+        });
+        // 浏览量
+        try {
+          const analyticsLink = article.querySelector('a[href*="/analytics"]');
+          if (analyticsLink) {
+            const viewSpan = analyticsLink.querySelector('span');
+            if (viewSpan) metrics.views = parseMetricNumber(viewSpan.textContent.trim());
+          }
+        } catch {}
+        if (Object.keys(metrics).length > 0) result.metrics = metrics;
+      }
+    } catch {}
+
+    // 引用推文
+    try {
+      const quote = article.querySelector('[data-testid="quoteTweet"]');
+      if (quote) {
+        const link = quote.querySelector('a[href*="/status/"]');
+        if (link) result.quotedTweet = link.href;
+      }
+    } catch {}
+
+    // 回复上下文
+    try {
+      const social = article.querySelector('[data-testid="socialContext"]');
+      if (social) {
+        const link = social.querySelector('a[href*="/status/"]');
+        if (link) result.inReplyTo = link.href;
+      }
+    } catch {}
+
+  } catch {}
+  return result;
+
+  function parseMetricNumber(s) {
+    if (!s) return 0;
+    s = s.replace(/,/g, '');
+    if (s.endsWith('K')) return Math.round(parseFloat(s) * 1000);
+    if (s.endsWith('M')) return Math.round(parseFloat(s) * 1000000);
+    return parseInt(s) || 0;
+  }
+})()
+`;
 
 /** 广播生词本变更 */
 function broadcastVocabChanged(mainWindow: BaseWindow | null): void {

@@ -21,6 +21,8 @@ import { ContextMenu } from './ContextMenu';
 import { blockHandlePlugin } from '../plugins/block-handle';
 import { blockSelectionPlugin } from '../plugins/block-selection';
 import { indentPlugin } from '../plugins/indent';
+import { pasteMediaPlugin } from '../plugins/paste-media';
+import { renderBlockFocusPlugin } from '../plugins/render-block-focus';
 import { vocabHighlightPlugin, updateVocabDefs, dispatchVocabUpdate } from '../learning/vocab-highlight-plugin';
 import { updateVocabList } from '../learning';
 import { buildTestDocument } from '../test-content';
@@ -121,6 +123,8 @@ function buildPlugins(s: ReturnType<typeof getSchema>) {
     keymap(baseKeymap),
     tableKeymapPlugin(),
     blockHandlePlugin(),
+    pasteMediaPlugin(),
+    renderBlockFocusPlugin(),
     vocabHighlightPlugin(),
     history(),
     dropCursor({ color: '#8ab4f8', width: 2 }),

@@ -204,6 +204,53 @@ function buildBlockTaskDocContent(allNotes: NoteListItem[]): unknown[] {
   return content;
 }
 
+/** 重新导入"测试"文件夹下的所有 .md 文档（增量更新） */
+export async function reimportTestDocs(): Promise<boolean> {
+  if (!isDBReady()) return false;
+
+  const folders = await folderStore.list();
+  const root = folders.find((f) => f.title === 'KRIG-Note');
+  if (!root) {
+    console.log('[InitDocs] KRIG-Note folder not found. Run Import first.');
+    return false;
+  }
+
+  // 找到或创建"测试"子文件夹
+  let testFolder = folders.find((f) => f.title === '测试' && f.parent_id === root.id);
+  if (testFolder) {
+    // 删除旧内容
+    const allNotes = await noteStore.list();
+    for (const note of allNotes) {
+      if (note.folder_id === testFolder.id) {
+        await noteStore.delete(note.id);
+      }
+    }
+  } else {
+    testFolder = await folderStore.create('测试', root.id);
+  }
+
+  // 从 docs/test/ 导入所有 .md
+  const dirPath = path.join(PROJECT_ROOT, 'docs/test');
+  const mdFiles = findMdFiles(dirPath);
+  let created = 0;
+
+  for (const file of mdFiles) {
+    try {
+      const mdContent = readFileSync(file.fullPath, 'utf-8');
+      const title = file.name;
+      const docContent = mdToDocContent(mdContent, title);
+      const note = await noteStore.create(title, testFolder.id);
+      await noteStore.save(note.id, docContent, title);
+      created++;
+    } catch (err) {
+      console.error(`[InitDocs] Failed to import ${file.fullPath}:`, err);
+    }
+  }
+
+  console.log(`[InitDocs] Reimported ${created} test docs.`);
+  return true;
+}
+
 /** 单独创建 Block 测试任务文档（可在已有 KRIG-Note 文件夹中追加） */
 export async function createBlockTaskDoc(): Promise<boolean> {
   if (!isDBReady()) return false;

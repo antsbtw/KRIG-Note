@@ -4,15 +4,17 @@
  * 提供：
  * - DOM 骨架：wrapper > toolbar + content
  * - Toolbar：左侧 label + 右侧按钮组
+ * - selectNode / deselectNode 选中视觉反馈
  * - stopEvent / ignoreMutation 统一处理
+ * - destroy 生命周期清理
+ * - 通用 placeholder 模式（Upload + Embed link 双按钮）
  *
- * Renderer 只需提供：
- * - 内容区域 DOM
- * - toolbar 按钮（可选）
- * - label 文字（可选）
+ * 适用于：image、audio 等简单 RenderBlock。
+ * video、tweet 有自己的 tab bar，不使用此基类，直接导出 NodeView 工厂。
  */
 
 import type { EditorView } from 'prosemirror-view';
+import { NodeSelection } from 'prosemirror-state';
 import type { Node as PMNode } from 'prosemirror-model';
 
 /** Toolbar 按钮定义 */
@@ -30,24 +32,120 @@ export interface ToolbarGroup {
   buttons: ToolbarButton[];
 }
 
+/** Placeholder 配置（Upload + Embed link 双按钮模式） */
+export interface PlaceholderConfig {
+  icon: string;
+  uploadLabel?: string;
+  uploadAccept?: string;
+  embedLabel?: string;
+  embedPlaceholder?: string;
+  onUpload?: (dataUrl: string, file: File) => void;
+  onEmbed?: (url: string) => void;
+}
+
 /** Renderer 实现接口 */
 export interface RenderBlockRenderer {
   createContent(node: PMNode, view: EditorView, getPos: () => number | undefined): HTMLElement;
   update?(node: PMNode, contentEl: HTMLElement): boolean;
-  toolbarButtons?(node: PMNode): ToolbarGroup[];
+  toolbarButtons?(node: PMNode, contentEl?: HTMLElement): ToolbarGroup[];
   label?(node: PMNode): string;
   getContentDOM?(contentEl: HTMLElement): HTMLElement | undefined;
   getCopyText?(node: PMNode, contentEl: HTMLElement): string;
   destroy?(contentEl: HTMLElement): void;
 }
 
-/** 创建 RenderBlock 的 ProseMirror NodeView */
+// ── Placeholder 构建工具 ──
+
+export function createPlaceholder(config: PlaceholderConfig): HTMLElement {
+  const placeholder = document.createElement('div');
+  placeholder.classList.add('render-block__placeholder');
+
+  const iconEl = document.createElement('span');
+  iconEl.classList.add('render-block__placeholder-icon');
+  iconEl.textContent = config.icon;
+  placeholder.appendChild(iconEl);
+
+  const btnRow = document.createElement('div');
+  btnRow.classList.add('render-block__placeholder-actions');
+
+  if (config.onUpload && config.uploadLabel) {
+    const uploadBtn = document.createElement('button');
+    uploadBtn.classList.add('render-block__placeholder-btn');
+    uploadBtn.textContent = config.uploadLabel;
+    uploadBtn.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = config.uploadAccept || '*/*';
+      input.addEventListener('change', () => {
+        const file = input.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => config.onUpload!(reader.result as string, file);
+        reader.readAsDataURL(file);
+      });
+      input.click();
+    });
+    btnRow.appendChild(uploadBtn);
+  }
+
+  if (config.onEmbed && config.embedLabel) {
+    const embedBtn = document.createElement('button');
+    embedBtn.classList.add('render-block__placeholder-btn');
+    embedBtn.textContent = config.embedLabel;
+
+    const inputWrapper = document.createElement('div');
+    inputWrapper.classList.add('render-block__placeholder-input');
+    inputWrapper.style.display = 'none';
+
+    const urlInput = document.createElement('input');
+    urlInput.type = 'text';
+    urlInput.placeholder = config.embedPlaceholder || 'https://...';
+
+    const submitBtn = document.createElement('button');
+    submitBtn.classList.add('render-block__placeholder-submit');
+    submitBtn.textContent = 'Embed';
+
+    const submit = () => {
+      const url = urlInput.value.trim();
+      if (url) config.onEmbed!(url);
+    };
+
+    urlInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); submit(); }
+      if (e.key === 'Escape') { inputWrapper.style.display = 'none'; btnRow.style.display = 'flex'; }
+    });
+    submitBtn.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); submit(); });
+
+    embedBtn.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      btnRow.style.display = 'none';
+      inputWrapper.style.display = 'flex';
+      setTimeout(() => urlInput.focus(), 0);
+    });
+
+    inputWrapper.appendChild(urlInput);
+    inputWrapper.appendChild(submitBtn);
+
+    btnRow.appendChild(embedBtn);
+    placeholder.appendChild(btnRow);
+    placeholder.appendChild(inputWrapper);
+  } else {
+    placeholder.appendChild(btnRow);
+  }
+
+  return placeholder;
+}
+
+// ── NodeView 工厂（简单 RenderBlock 用） ──
+
 export function createRenderBlockView(
   renderer: RenderBlockRenderer,
   blockType: string,
 ) {
   return (node: PMNode, view: EditorView, getPos: () => number | undefined) => {
-    // ── DOM 骨架 ──
     const dom = document.createElement('div');
     dom.classList.add('render-block', `render-block--${blockType}`);
 
@@ -79,9 +177,8 @@ export function createRenderBlockView(
     // ── Toolbar 按钮构建 ──
     function buildToolbarButtons() {
       btnContainer.innerHTML = '';
-      const groups = renderer.toolbarButtons?.(node) ?? [];
+      const groups = renderer.toolbarButtons?.(node, contentEl) ?? [];
 
-      // 复制按钮（基类提供）
       groups.push({
         id: '_copy',
         buttons: [{
@@ -122,20 +219,29 @@ export function createRenderBlockView(
 
     buildToolbarButtons();
 
-    // ── contentDOM（有 ProseMirror 管理的子内容时使用） ──
+    // ── contentDOM ──
     const pmContentDOM = renderer.getContentDOM?.(contentEl);
+
+    // ── 点击非 caption 区域 → NodeSelection ──
+    contentEl.addEventListener('mousedown', (e) => {
+      if (pmContentDOM && pmContentDOM.contains(e.target as Node)) return;
+      const pos = typeof getPos === 'function' ? getPos() : undefined;
+      if (pos == null) return;
+      view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, pos)));
+      view.focus();
+    });
 
     // ── NodeView 接口 ──
     return {
       dom,
       contentDOM: pmContentDOM,
 
+      selectNode() { dom.classList.add('render-block--selected'); },
+      deselectNode() { dom.classList.remove('render-block--selected'); },
+
       stopEvent(event: Event) {
-        // 右键菜单不拦截
         if (event.type === 'contextmenu') return false;
-        // contentDOM 内的事件不拦截
         if (pmContentDOM && pmContentDOM.contains(event.target as Node)) return false;
-        // 其余拦截
         if (dom.contains(event.target as Node)) return true;
         return false;
       },
@@ -150,7 +256,6 @@ export function createRenderBlockView(
       },
 
       ignoreMutation(mutation: MutationRecord) {
-        // contentDOM 内的变化必须交给 ProseMirror 处理
         if (pmContentDOM && pmContentDOM.contains(mutation.target)) return false;
         return true;
       },

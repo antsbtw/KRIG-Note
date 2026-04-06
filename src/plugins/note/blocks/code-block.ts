@@ -7,6 +7,7 @@ import { syntaxHighlighting, defaultHighlightStyle, HighlightStyle } from '@code
 import { tags } from '@lezer/highlight';
 import { mermaidLanguage } from './mermaid-lang';
 import { showMermaidPanel, hideMermaidPanel } from '../help-panel/mermaid';
+import { saveBlobFile, saveTextFile, SVG_FILTERS } from '../utils/save-file';
 
 /**
  * codeBlock — 代码块（RenderBlock）
@@ -388,16 +389,7 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
       ctx.drawImage(img, 0, 0);
       canvas.toBlob(async (blob) => {
         if (!blob) return;
-        const buf = await blob.arrayBuffer();
-        const bytes = new Uint8Array(buf);
-        let binary = '';
-        for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-        const base64 = btoa(binary);
-        (window as any).viewAPI?.fileSaveDialog?.({
-          defaultName: filename,
-          data: base64,
-          filters: [{ name: 'PNG Image', extensions: ['png'] }],
-        });
+        saveBlobFile({ defaultName: filename, blob, filters: [{ name: 'PNG Image', extensions: ['png'] }] });
       }, 'image/png');
     };
     img.src = dataUri;
@@ -429,12 +421,7 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
     if (clone.getAttribute('width') === '100%') clone.removeAttribute('width');
 
     const svgData = new XMLSerializer().serializeToString(clone);
-    const base64 = btoa(unescape(encodeURIComponent(svgData)));
-    (window as any).viewAPI?.fileSaveDialog?.({
-      defaultName: filename,
-      data: base64,
-      filters: [{ name: 'SVG Image', extensions: ['svg'] }],
-    });
+    saveTextFile({ defaultName: filename, text: svgData, filters: SVG_FILTERS });
   }
 
   // ── 全屏编辑 ──

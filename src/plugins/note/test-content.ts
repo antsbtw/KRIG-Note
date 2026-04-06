@@ -321,6 +321,90 @@ export function buildTestDocument(schema: Schema): PMNode {
     p(schema, '测试搜索：/h1 /bullet /code /math /table /image'),
     p(schema),
 
+    // ════════════════════════════════════════════════════════
+    // 八、Media Blocks（image / video / audio / tweet）
+    // ════════════════════════════════════════════════════════
+    heading(schema, 1, '八、Media Blocks'),
+
+    // ── 8.1 Image ──
+    heading(schema, 2, '8.1 Image Block'),
+    p(schema, '测试项目：'),
+    p(schema, '• SlashMenu /image → 应出现 placeholder（Upload + Embed link 双按钮）'),
+    p(schema, '• 点击 Upload → 文件选择器 → 选择图片 → 图片显示'),
+    p(schema, '• 点击 Embed link → URL 输入框 → 粘贴图片 URL → Enter → 图片显示'),
+    p(schema, '• hover 图片 → 对齐工具栏（◁ ▣ ▷）+ 左右 resize handles'),
+    p(schema, '• 拖拽 resize handle → 按比例缩放'),
+    p(schema, '• 点击对齐按钮 → 图片对齐切换（left / center / right）'),
+    p(schema, '• 点击图片 → 蓝色选中边框（selectNode）'),
+    p(schema, '• 选中后 Delete → 删除 block'),
+    p(schema, '• 剪贴板粘贴图片 → 自动创建 image block（paste plugin）'),
+    p(schema, '• caption 区域可编辑，支持 bold/italic 格式化'),
+
+    // 实际的 image block（空，等用户上传）
+    schema.node('image', { src: null }, [p(schema, '在这里测试 caption')]),
+    p(schema),
+
+    // ── 8.2 Audio ──
+    heading(schema, 2, '8.2 Audio Block'),
+    p(schema, '测试项目：'),
+    p(schema, '• SlashMenu /audio → 应出现 placeholder（Upload + Embed link 双按钮）'),
+    p(schema, '• Upload → 选择 .mp3/.ogg/.wav → 播放器显示'),
+    p(schema, '• Embed link → 输入音频 URL → 播放器显示'),
+    p(schema, '• 标题显示在播放器上方'),
+    p(schema, '• hover 时右上角显示下载按钮 ⬇（仅 https:// URL）'),
+    p(schema, '• 点击 ⬇ → 下载到本地 → URL 变为 media:// → 离线可用'),
+    p(schema, '• 点击 block → 蓝色选中边框'),
+    p(schema, '• 删除 block → audio 停止播放（destroy 清理）'),
+
+    schema.node('audioBlock', { src: null, title: 'Test Audio' }, [p(schema, 'Audio caption')]),
+    p(schema),
+
+    // ── 8.3 Video ──
+    heading(schema, 2, '8.3 Video Block'),
+    p(schema, '测试项目（基础播放）：'),
+    p(schema, '• SlashMenu /video → placeholder → 输入 YouTube/Vimeo/.mp4 URL'),
+    p(schema, '• YouTube URL → iframe embed 自动检测'),
+    p(schema, '• .mp4 URL → HTML5 <video> 播放器'),
+    p(schema, '• Play / Data / Transcript 三 Tab 切换'),
+    p(schema),
+    p(schema, '测试项目（字幕系统）：'),
+    p(schema, '• 点击 📝 → 导入 YouTube 字幕（InnerTube API）'),
+    p(schema, '• Transcript Tab 显示 [MM:SS] text 格式'),
+    p(schema, '• 点击 CC → 启用字幕浮层（视频底部半透明背景）'),
+    p(schema, '• 点击 🌐 → 翻译字幕为中文（Google Translate 批量）'),
+    p(schema),
+    p(schema, '测试项目（学习功能）：'),
+    p(schema, '• 点击 🧠 → Memory Playback Mode（分段进度条 A B C …）'),
+    p(schema, '• 自动按 60s 分段，播完当前段 → 重复前段 + 新段'),
+    p(schema, '• 点击 📖 → 右侧 Vocab Panel（词汇随播放时间滚动）'),
+    p(schema, '• ⛶ → 全屏播放'),
+
+    schema.node('videoBlock', { src: null }, [p(schema, 'Video caption')]),
+    p(schema),
+
+    // ── 8.4 Tweet ──
+    heading(schema, 2, '8.4 Tweet Block'),
+    p(schema, '测试项目：'),
+    p(schema, '• SlashMenu /tweet → placeholder → 输入 twitter.com 或 x.com URL'),
+    p(schema, '• 自动提取 Tweet ID → Browse Tab 显示 Twitter 官方 iframe embed'),
+    p(schema, '• Browse / Data 双 Tab 切换'),
+    p(schema, '• 点击 Fetch → 获取结构化数据（作者、正文、媒体、互动数据）'),
+    p(schema, '• Data Tab 显示卡片（头像 + @handle + 正文 + 媒体网格 + 💬🔁❤👁）'),
+    p(schema, '• "Open original ↗" → 系统浏览器打开原始推文'),
+
+    schema.node('tweetBlock', { tweetUrl: null }, [p(schema, 'Tweet caption')]),
+    p(schema),
+
+    // ════════════════════════════════════════════════════════
+    // 九、Paste Plugin
+    // ════════════════════════════════════════════════════════
+    heading(schema, 1, '九、Paste Plugin（图片粘贴）'),
+    p(schema, '• 复制一张图片到剪贴板（截图或右键复制图片）'),
+    p(schema, '• 在空行 Cmd+V → 空行被替换为 image block'),
+    p(schema, '• 在有内容的行 Cmd+V → image block 插入到下一行'),
+    p(schema, '• 粘贴普通文本不受影响（只拦截图片类型）'),
+    p(schema),
+
     // 底部空行
     p(schema),
   ]);

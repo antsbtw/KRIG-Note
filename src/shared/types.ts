@@ -199,4 +199,24 @@ export const IPC = {
   LEARNING_VOCAB_REMOVE: 'learning:vocab-remove',
   LEARNING_VOCAB_LIST: 'learning:vocab-list',
   LEARNING_VOCAB_CHANGED: 'learning:vocab-changed',
+
+  // 媒体操作
+  MEDIA_DOWNLOAD: 'media:download',              // 下载远程媒体到本地
+  MEDIA_OPEN_EXTERNAL: 'media:open-external',    // 用系统浏览器打开 URL
+  SHOW_ITEM_IN_FOLDER: 'media:show-in-folder',   // 在 Finder 中显示文件
+
+  // Tweet 数据获取
+  TWEET_FETCH_DATA: 'tweet:fetch-data',           // 获取结构化元数据
+  TWEET_FETCH_OEMBED: 'tweet:fetch-oembed',       // 获取 oEmbed HTML
+
+  // YouTube 字幕
+  YOUTUBE_TRANSCRIPT: 'youtube:fetch-transcript',  // 获取 YouTube 字幕
+
+  // yt-dlp
+  YTDLP_CHECK_STATUS: 'ytdlp:check-status',
+  YTDLP_INSTALL: 'ytdlp:install',
+  YTDLP_DOWNLOAD: 'ytdlp:download',
+  YTDLP_GET_INFO: 'ytdlp:get-info',
+  YTDLP_PROGRESS: 'ytdlp:progress',               // main → renderer 进度事件
+  YTDLP_SAVE_SUBTITLE: 'ytdlp:save-subtitle',     // 保存翻译字幕为 .srt
 } as const;

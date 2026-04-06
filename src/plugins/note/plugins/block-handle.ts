@@ -1,4 +1,4 @@
-import { Plugin, PluginKey } from 'prosemirror-state';
+import { Plugin, PluginKey, TextSelection } from 'prosemirror-state';
 import { Slice, Fragment } from 'prosemirror-model';
 import type { EditorView } from 'prosemirror-view';
 import type { Node as PMNode } from 'prosemirror-model';
@@ -151,7 +151,6 @@ export function blockHandlePlugin(): Plugin {
       const node = view.state.doc.nodeAt(currentPos);
       if (node) {
         const insertPos = currentPos + node.nodeSize;
-        const { TextSelection } = require('prosemirror-state');
         const tr = view.state.tr.insert(insertPos, view.state.schema.nodes.textBlock.create());
         tr.setSelection(TextSelection.create(tr.doc, insertPos + 1));
         view.dispatch(tr);

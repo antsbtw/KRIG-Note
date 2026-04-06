@@ -28,8 +28,11 @@ export function containerKeyboardPlugin(): Plugin {
         let parentNode = $from.node(containerDepth);
         let parentDef = blockRegistry.get(parentNode.type.name);
 
-        // 只处理有 containerRule 的父节点（= ContainerBlock）
-        if (!parentDef?.containerRule) return false;
+        // 只处理有 containerRule 的父节点（ContainerBlock）或 RenderBlock（image/audio/video/tweet 的 caption）
+        const isContainer = !!parentDef?.containerRule;
+        const RENDER_BLOCK_TYPES = new Set(['image', 'audioBlock', 'videoBlock', 'tweetBlock']);
+        const isRenderBlockCaption = !isContainer && RENDER_BLOCK_TYPES.has(parentNode.type.name);
+        if (!isContainer && !isRenderBlockCaption) return false;
 
         // taskItem 是中间层：Enter/Backspace 需要在 taskList 层级操作
         // 向上找到 taskList 作为真正的容器
@@ -46,6 +49,51 @@ export function containerKeyboardPlugin(): Plugin {
 
         // ── Enter ──
         if (event.key === 'Enter' && !event.shiftKey) {
+          // RenderBlock caption:
+          //   光标前是 hardBreak 且光标后无内容 → 删掉 hardBreak，退出到外部新建 paragraph
+          //   否则 → 插入 hardBreak（软换行）
+          if (isRenderBlockCaption) {
+            event.preventDefault();
+            const isEmpty = childNode.content.size === 0;
+
+            // 检测"双回车退出"：光标前一个节点是 hardBreak，且光标在末尾
+            const posInParent = $from.parentOffset;
+            const atEnd = posInParent >= childNode.content.size;
+            let prevIsHardBreak = false;
+            if (posInParent > 0) {
+              const resolved = $from;
+              // 向前查找：光标前的 inline node
+              const before = resolved.nodeBefore;
+              if (before && before.type.name === 'hardBreak') {
+                prevIsHardBreak = true;
+              }
+            }
+
+            if (isEmpty || (prevIsHardBreak && atEnd)) {
+              // RenderBlock 专用退出：不删 caption，只在 block 后方插入新 paragraph
+              let tr = state.tr;
+              // 如果末尾有 hardBreak，先删掉
+              if (prevIsHardBreak) {
+                tr = tr.delete($from.pos - 1, $from.pos);
+              }
+              // 在 RenderBlock 后方插入新 textBlock
+              const renderBlockEnd = $from.after(containerDepth);
+              const mappedEnd = tr.mapping.map(renderBlockEnd);
+              const newBlock = state.schema.nodes.textBlock.create();
+              tr = tr.insert(mappedEnd, newBlock);
+              tr = tr.setSelection(TextSelection.create(tr.doc, mappedEnd + 1));
+              view.dispatch(tr);
+            } else {
+              // 插入 hardBreak（软换行）
+              const { schema } = state;
+              if (schema.nodes.hardBreak) {
+                const tr = state.tr.replaceSelectionWith(schema.nodes.hardBreak.create());
+                view.dispatch(tr);
+              }
+            }
+            return true;
+          }
+
           event.preventDefault();
 
           const isEmpty = childNode.content.size === 0;
@@ -68,6 +116,16 @@ export function containerKeyboardPlugin(): Plugin {
 
         // ── Backspace（行首） ──
         if (event.key === 'Backspace') {
+          // RenderBlock caption: 行首 Backspace → 不做任何事（防止删除 RenderBlock）
+          if (isRenderBlockCaption) {
+            const atStart = $from.parentOffset === 0;
+            if (atStart) {
+              event.preventDefault();
+              return true; // 吞掉事件，不删除
+            }
+            return false; // 非行首，正常删除文字
+          }
+
           const atStart = $from.parentOffset === 0;
           if (!atStart) return false;
 

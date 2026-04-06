@@ -113,4 +113,51 @@ contextBridge.exposeInMainWorld('viewAPI', {
     ipcRenderer.on(IPC.LEARNING_VOCAB_CHANGED, listener);
     return () => ipcRenderer.removeListener(IPC.LEARNING_VOCAB_CHANGED, listener);
   },
+
+  // ── 媒体操作 ──
+
+  downloadMedia: (url: string, mediaType: 'video' | 'audio') =>
+    ipcRenderer.invoke(IPC.MEDIA_DOWNLOAD, url, mediaType),
+
+  openExternal: (url: string) =>
+    ipcRenderer.invoke(IPC.MEDIA_OPEN_EXTERNAL, url),
+
+  showItemInFolder: (filePath: string) =>
+    ipcRenderer.invoke(IPC.SHOW_ITEM_IN_FOLDER, filePath),
+
+  // ── Tweet 数据获取 ──
+
+  fetchTweetData: (tweetUrl: string) =>
+    ipcRenderer.invoke(IPC.TWEET_FETCH_DATA, tweetUrl),
+
+  fetchTweetOEmbed: (tweetUrl: string) =>
+    ipcRenderer.invoke(IPC.TWEET_FETCH_OEMBED, tweetUrl),
+
+  // ── YouTube 字幕 ──
+
+  fetchYouTubeTranscript: (videoUrl: string) =>
+    ipcRenderer.invoke(IPC.YOUTUBE_TRANSCRIPT, videoUrl),
+
+  // ── yt-dlp ──
+
+  ytdlpCheckStatus: () =>
+    ipcRenderer.invoke(IPC.YTDLP_CHECK_STATUS),
+
+  ytdlpInstall: () =>
+    ipcRenderer.invoke(IPC.YTDLP_INSTALL),
+
+  ytdlpDownload: (url: string) =>
+    ipcRenderer.invoke(IPC.YTDLP_DOWNLOAD, url),
+
+  ytdlpGetInfo: (url: string) =>
+    ipcRenderer.invoke(IPC.YTDLP_GET_INFO, url),
+
+  ytdlpSaveSubtitle: (videoFilePath: string, langCode: string, timestampText: string) =>
+    ipcRenderer.invoke(IPC.YTDLP_SAVE_SUBTITLE, videoFilePath, langCode, timestampText),
+
+  onYtdlpProgress: (callback: (progress: { url: string; status: string; percent: number }) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, progress: { url: string; status: string; percent: number }) => callback(progress);
+    ipcRenderer.on(IPC.YTDLP_PROGRESS, listener);
+    return () => ipcRenderer.removeListener(IPC.YTDLP_PROGRESS, listener);
+  },
 });

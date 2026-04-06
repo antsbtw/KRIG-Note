@@ -147,7 +147,8 @@ export function SlashMenu({ view }: SlashMenuProps) {
 
     const blockDef = blockRegistry.get(item.blockName);
     const isContainer = blockDef?.containerRule !== undefined;
-    const hasBlockContent = blockDef?.nodeSpec.content?.includes('block');
+    const contentExpr = blockDef?.nodeSpec.content || '';
+    const hasBlockContent = contentExpr.includes('block') || contentExpr.includes('Block');
     const isAtom = blockDef?.nodeSpec.atom;
 
     let containerNode;
