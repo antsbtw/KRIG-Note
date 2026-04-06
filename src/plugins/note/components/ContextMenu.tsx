@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import type { EditorView } from 'prosemirror-view';
+import { showDictionaryPanel, showTranslationPanel } from '../learning';
 
 /**
  * ContextMenu — 右键菜单
@@ -41,7 +42,7 @@ export function ContextMenu({ view }: ContextMenuProps) {
 
   const close = () => setMenu(null);
 
-  const items = [
+  const items: { id: string; label: string; icon: string; shortcut?: string; separator?: boolean; action: () => void }[] = [
     {
       id: 'cut', label: 'Cut', icon: '✂', shortcut: '⌘X',
       action: () => { document.execCommand('cut'); close(); },
@@ -76,19 +77,46 @@ export function ContextMenu({ view }: ContextMenuProps) {
     },
   ];
 
+  // 学习模块：选中文本时显示查词/翻译
+  const { from, to } = view.state.selection;
+  if (from !== to) {
+    const selectedText = view.state.doc.textBetween(from, to, ' ').trim();
+    if (selectedText) {
+      const isWord = !/\s/.test(selectedText);
+      // 获取选区所在段落作为上下文
+      const $from = view.state.selection.$from;
+      const parentStart = $from.start($from.depth);
+      const parentEnd = $from.end($from.depth);
+      const contextSentence = view.state.doc.textBetween(parentStart, parentEnd, ' ');
+
+      if (isWord) {
+        items.push({
+          id: 'lookup', label: '查词', icon: '📖', separator: true,
+          action: () => { showDictionaryPanel(selectedText, contextSentence); close(); },
+        });
+      }
+      items.push({
+        id: 'translate', label: '翻译', icon: '🌐', separator: !isWord,
+        action: () => { showTranslationPanel(selectedText); close(); },
+      });
+    }
+  }
+
   return (
     <div style={{ ...styles.container, left: menu.coords.left, top: menu.coords.top }} onClick={(e) => e.stopPropagation()}>
       {items.map((item) => (
-        <div
-          key={item.id}
-          style={styles.item}
-          onMouseDown={(e) => { e.preventDefault(); item.action(); }}
-          onMouseEnter={(e) => (e.currentTarget.style.background = '#3a3a3a')}
-          onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-        >
-          <span style={styles.icon}>{item.icon}</span>
-          <span style={styles.label}>{item.label}</span>
-          <span style={styles.shortcut}>{item.shortcut}</span>
+        <div key={item.id}>
+          {item.separator && <div style={styles.separator} />}
+          <div
+            style={styles.item}
+            onMouseDown={(e) => { e.preventDefault(); item.action(); }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = '#3a3a3a')}
+            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+          >
+            <span style={styles.icon}>{item.icon}</span>
+            <span style={styles.label}>{item.label}</span>
+            {item.shortcut && <span style={styles.shortcut}>{item.shortcut}</span>}
+          </div>
         </div>
       ))}
     </div>
@@ -108,4 +136,5 @@ const styles: Record<string, React.CSSProperties> = {
   icon: { width: '24px', textAlign: 'center' as const, marginRight: '8px', flexShrink: 0 },
   label: { flex: 1 },
   shortcut: { fontSize: '11px', color: '#888', marginLeft: '16px' },
+  separator: { height: '1px', background: '#444', margin: '4px 8px' },
 };
