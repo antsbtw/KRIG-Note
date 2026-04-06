@@ -786,10 +786,12 @@
    video Block
    ═══════════════════════════════════════════════════════════ */
 .video-block__tab-bar {
-  display: flex; align-items: center; gap: 0;
+  display: none; align-items: center; gap: 0;
   padding: 0 8px; background: #252525; border-bottom: 1px solid #333;
   position: relative;
 }
+.render-block--videoBlock:hover .video-block__tab-bar,
+.render-block--videoBlock.render-block--selected .video-block__tab-bar { display: flex; }
 .video-block__tab-btn {
   padding: 6px 12px; background: transparent; border: none; border-bottom: 2px solid transparent;
   color: #888; cursor: pointer; font-size: 12px;
@@ -889,9 +891,11 @@
    tweet Block
    ═══════════════════════════════════════════════════════════ */
 .tweet-block__tab-bar {
-  display: flex; align-items: center; gap: 0;
+  display: none; align-items: center; gap: 0;
   padding: 0 8px; background: #252525; border-bottom: 1px solid #333;
 }
+.render-block--tweetBlock:hover .tweet-block__tab-bar,
+.render-block--tweetBlock.render-block--selected .tweet-block__tab-bar { display: flex; }
 .tweet-block__tab-btn {
   padding: 6px 12px; background: transparent; border: none; border-bottom: 2px solid transparent;
   color: #888; cursor: pointer; font-size: 12px;

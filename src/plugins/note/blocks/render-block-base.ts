@@ -241,6 +241,8 @@ export function createRenderBlockView(
 
       stopEvent(event: Event) {
         if (event.type === 'contextmenu') return false;
+        // 放行 mousemove/mouseleave 让 block-handle 能探测到此 block
+        if (event.type === 'mousemove' || event.type === 'mouseleave') return false;
         if (pmContentDOM && pmContentDOM.contains(event.target as Node)) return false;
         if (dom.contains(event.target as Node)) return true;
         return false;

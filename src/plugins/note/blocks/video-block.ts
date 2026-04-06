@@ -892,6 +892,7 @@ function videoNodeView(node: PMNode, view: EditorView, getPos: () => number | un
 
       stopEvent(event: Event) {
         if (event.type === 'contextmenu') return false;
+        if (event.type === 'mousemove' || event.type === 'mouseleave') return false;
         if (captionDOM.contains(event.target as Node)) return false;
         if (dom.contains(event.target as Node)) return true;
         return false;
