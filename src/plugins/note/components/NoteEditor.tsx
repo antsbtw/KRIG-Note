@@ -21,6 +21,8 @@ import { ContextMenu } from './ContextMenu';
 import { blockHandlePlugin } from '../plugins/block-handle';
 import { blockSelectionPlugin } from '../plugins/block-selection';
 import { indentPlugin } from '../plugins/indent';
+import { vocabHighlightPlugin, updateVocabDefs, dispatchVocabUpdate } from '../learning/vocab-highlight-plugin';
+import { updateVocabList } from '../learning';
 import { buildTestDocument } from '../test-content';
 import '../note.css';
 
@@ -41,6 +43,8 @@ declare const viewAPI: {
   onLoadTestDoc: (callback: () => void) => () => void;
   isDBReady: () => Promise<boolean>;
   onDBReady: (callback: () => void) => () => void;
+  listVocabWords?: () => Promise<{ word: string; definition: string }[]>;
+  onVocabChanged?: (callback: (entries: { word: string; definition: string }[]) => void) => () => void;
 };
 
 // 注册所有 Block（只执行一次）
@@ -117,6 +121,7 @@ function buildPlugins(s: ReturnType<typeof getSchema>) {
     keymap(baseKeymap),
     tableKeymapPlugin(),
     blockHandlePlugin(),
+    vocabHighlightPlugin(),
     history(),
     dropCursor({ color: '#8ab4f8', width: 2 }),
     gapCursor(),
@@ -247,6 +252,22 @@ export function NoteEditor() {
       }
     });
 
+    // 生词本同步：加载初始词表 + 监听变化
+    function applyVocab(entries: { word: string; definition: string }[]) {
+      updateVocabDefs(entries);
+      updateVocabList(entries as any);
+      const view = viewRef.current;
+      if (view) {
+        dispatchVocabUpdate(view, entries.map(e => e.word));
+      }
+    }
+
+    viewAPI.listVocabWords?.().then(entries => {
+      if (entries) applyVocab(entries);
+    });
+
+    const unsubVocab = viewAPI.onVocabChanged?.(applyVocab) || (() => {});
+
     // 加载测试文档（Help 菜单）
     const unsubTestDoc = viewAPI.onLoadTestDoc(() => {
       currentNoteIdRef.current = null; // 测试文档不保存到数据库
@@ -281,6 +302,7 @@ export function NoteEditor() {
       unsubRestore();
       unsubTestDoc();
       unsubTitle();
+      unsubVocab();
       if (saveTimerRef.current) {
         clearTimeout(saveTimerRef.current);
         saveNote(); // 关闭前保存
