@@ -1,15 +1,35 @@
 import type { BlockDef } from '../types';
-import { createRenderBlockView, createPlaceholder, type RenderBlockRenderer } from './render-block-base';
+import { createPlaceholder } from './render-block-base';
 import type { Node as PMNode } from 'prosemirror-model';
 import type { EditorView } from 'prosemirror-view';
 
 /**
- * tweetBlock — 推文嵌入（RenderBlock）
+ * tweetBlock — X(Twitter) 帖子嵌入
  *
- * 双 Tab 视图：Browse（Twitter 官方 iframe）+ Data（结构化卡片）
+ * 双 Tab 视图：Browse（X 官方 iframe）+ Data（结构化卡片）
+ * 独立 NodeView，不继承 RenderBlock 基类
  */
 
 // ── 工具函数 ──
+
+/** 递归搜索对象中任意深度的 height 字段 */
+function findHeight(obj: unknown, depth = 0): number | null {
+  if (depth > 5 || !obj || typeof obj !== 'object') return null;
+  const o = obj as Record<string, unknown>;
+  if (typeof o.height === 'number' && o.height > 0) return o.height;
+  for (const val of Object.values(o)) {
+    if (Array.isArray(val)) {
+      for (const item of val) {
+        const h = findHeight(item, depth + 1);
+        if (h) return h;
+      }
+    } else if (val && typeof val === 'object') {
+      const h = findHeight(val, depth + 1);
+      if (h) return h;
+    }
+  }
+  return null;
+}
 
 function extractTweetId(url: string): string | null {
   const m = url.match(/(?:twitter\.com|x\.com)\/.+\/status\/(\d+)/);
@@ -17,7 +37,7 @@ function extractTweetId(url: string): string | null {
 }
 
 function tweetEmbedUrl(tweetId: string): string {
-  return `https://platform.twitter.com/embed/Tweet.html?id=${tweetId}&theme=dark`;
+  return `https://platform.twitter.com/embed/Tweet.html?id=${tweetId}&theme=dark&dnt=true`;
 }
 
 function formatCount(n: number): string {
@@ -36,256 +56,370 @@ function timeAgo(isoDate: string): string {
   return `${days}d`;
 }
 
-// ── Renderer ──
+// ── NodeView 工厂 ──
 
-const tweetRenderer: RenderBlockRenderer = {
-  label() { return 'Tweet'; },
+function tweetNodeView(node: PMNode, view: EditorView, getPos: () => number | undefined) {
+  const dom = document.createElement('div');
+  dom.classList.add('render-block', 'render-block--tweetBlock');
 
-  createContent(node: PMNode, view: EditorView, getPos: () => number | undefined): HTMLElement {
-    const content = document.createElement('div');
-    content.classList.add('tweet-block');
+  const content = document.createElement('div');
+  content.classList.add('render-block__content', 'tweet-block');
 
-    const updateAttrs = (attrs: Record<string, unknown>) => {
-      const pos = typeof getPos === 'function' ? getPos() : undefined;
-      if (pos == null) return;
-      let tr = view.state.tr;
-      for (const [key, value] of Object.entries(attrs)) {
-        tr = tr.setNodeAttribute(pos, key, value);
-      }
-      view.dispatch(tr);
-    };
+  const api = (window as any).viewAPI;
 
-    const tweetUrl = node.attrs.tweetUrl as string | null;
+  const updateAttrs = (attrs: Record<string, unknown>) => {
+    const pos = typeof getPos === 'function' ? getPos() : undefined;
+    if (pos == null) return;
+    let tr = view.state.tr;
+    for (const [key, value] of Object.entries(attrs)) {
+      tr = tr.setNodeAttribute(pos, key, value);
+    }
+    view.dispatch(tr);
+  };
 
-    if (tweetUrl) {
-      const tweetId = (node.attrs.tweetId as string) || extractTweetId(tweetUrl);
+  const tweetUrl = node.attrs.tweetUrl as string | null;
 
-      // ── Tab 栏 ──
-      const tabBar = document.createElement('div');
-      tabBar.classList.add('tweet-block__tab-bar');
+  if (tweetUrl) {
+    const tweetId = (node.attrs.tweetId as string) || extractTweetId(tweetUrl);
 
-      const activeTab = (node.attrs.activeTab as string) || 'browse';
+    // ── Tab 栏 ──
+    const tabBar = document.createElement('div');
+    tabBar.classList.add('tweet-block__tab-bar');
 
-      const tabs = [
-        { id: 'browse', label: 'Browse' },
-        { id: 'data', label: 'Data' },
-      ];
+    const activeTab = (node.attrs.activeTab as string) || 'browse';
 
-      for (const tab of tabs) {
-        const btn = document.createElement('button');
-        btn.classList.add('tweet-block__tab-btn');
-        if (tab.id === activeTab) btn.classList.add('tweet-block__tab-btn--active');
-        btn.textContent = tab.label;
-        btn.addEventListener('mousedown', (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          tabBar.querySelectorAll('.tweet-block__tab-btn').forEach(b => b.classList.remove('tweet-block__tab-btn--active'));
-          btn.classList.add('tweet-block__tab-btn--active');
-          updateAttrs({ activeTab: tab.id });
-          showTab(tab.id);
-        });
-        tabBar.appendChild(btn);
-      }
+    const tabs = [
+      { id: 'browse', label: 'Browse' },
+      { id: 'data', label: 'Data' },
+    ];
 
-      // Fetch 按钮
-      const fetchBtn = document.createElement('button');
-      fetchBtn.classList.add('tweet-block__fetch-btn');
-      fetchBtn.textContent = 'Fetch';
-      fetchBtn.title = 'Fetch tweet metadata';
-      fetchBtn.addEventListener('mousedown', async (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        fetchBtn.textContent = '⏳';
-        fetchBtn.disabled = true;
-        try {
-          const api = (window as any).viewAPI;
-          if (api?.fetchTweetData) {
-            const result = await api.fetchTweetData(tweetUrl);
-            if (result?.success && result.data) {
-              const d = result.data;
-              updateAttrs({
-                authorName: d.authorName || '',
-                authorHandle: d.authorHandle || '',
-                authorAvatar: d.authorAvatar || '',
-                text: d.text || '',
-                createdAt: d.createdAt || '',
-                lang: d.lang || '',
-                media: d.media || null,
-                metrics: d.metrics || null,
-                quotedTweet: d.quotedTweet || null,
-                inReplyTo: d.inReplyTo || null,
-                activeTab: 'data',
-              });
-              // 刷新 Data Tab
-              buildDataCard(dataPanel, { ...node, attrs: { ...node.attrs, ...d } } as any);
-              // 切换到 Data Tab
-              tabBar.querySelectorAll('.tweet-block__tab-btn').forEach(b => b.classList.remove('tweet-block__tab-btn--active'));
-              tabBar.querySelectorAll('.tweet-block__tab-btn')[1]?.classList.add('tweet-block__tab-btn--active');
-              showTab('data');
-            }
-          }
-          fetchBtn.textContent = 'Fetch';
-          fetchBtn.disabled = false;
-        } catch {
-          fetchBtn.textContent = '❌';
-          setTimeout(() => { fetchBtn.textContent = 'Fetch'; fetchBtn.disabled = false; }, 2000);
-        }
+    for (const tab of tabs) {
+      const btn = document.createElement('button');
+      btn.classList.add('tweet-block__tab-btn');
+      if (tab.id === activeTab) btn.classList.add('tweet-block__tab-btn--active');
+      btn.textContent = tab.label;
+      btn.addEventListener('mousedown', (e) => {
+        e.preventDefault(); e.stopPropagation();
+        tabBar.querySelectorAll('.tweet-block__tab-btn').forEach(b => b.classList.remove('tweet-block__tab-btn--active'));
+        btn.classList.add('tweet-block__tab-btn--active');
+        updateAttrs({ activeTab: tab.id });
+        showTab(tab.id);
       });
-      tabBar.appendChild(fetchBtn);
-
-      // ── Browse Tab ──
-      const browsePanel = document.createElement('div');
-      browsePanel.classList.add('tweet-block__browse-panel');
-
-      if (tweetId) {
-        const iframe = document.createElement('iframe');
-        iframe.src = tweetEmbedUrl(tweetId);
-        iframe.style.cssText = 'width:100%; min-height:250px; border:none; border-radius:4px;';
-        iframe.setAttribute('scrolling', 'no');
-
-        // 监听 Twitter postMessage 动态调整高度
-        const resizeHandler = (event: MessageEvent) => {
-          if (typeof event.data === 'object' && event.data['twttr.embed']) {
-            try {
-              const height = event.data['twttr.embed']?.params?.height;
-              if (height) iframe.style.height = `${height}px`;
-            } catch { /* ignore */ }
-          }
-        };
-        window.addEventListener('message', resizeHandler);
-        (content as any)._resizeHandler = resizeHandler;
-
-        browsePanel.appendChild(iframe);
-        // 保存 tweetId
-        if (!node.attrs.tweetId) updateAttrs({ tweetId });
-      } else {
-        browsePanel.innerHTML = '<div class="tweet-block__no-embed">Unable to parse tweet ID</div>';
-      }
-
-      // ── Data Tab ──
-      const dataPanel = document.createElement('div');
-      dataPanel.classList.add('tweet-block__data-panel');
-      dataPanel.style.display = 'none';
-
-      buildDataCard(dataPanel, node);
-
-      // Tab 切换
-      function showTab(tabId: string) {
-        browsePanel.style.display = tabId === 'browse' ? 'block' : 'none';
-        dataPanel.style.display = tabId === 'data' ? 'block' : 'none';
-      }
-      showTab(activeTab);
-
-      content.appendChild(tabBar);
-      content.appendChild(browsePanel);
-      content.appendChild(dataPanel);
-    } else {
-      // ── Placeholder ──
-      const placeholder = createPlaceholder({
-        icon: '🐦',
-        embedLabel: 'Embed link',
-        embedPlaceholder: 'Paste tweet URL (twitter.com or x.com)...',
-        onEmbed: (url) => {
-          const id = extractTweetId(url);
-          updateAttrs({ tweetUrl: url, tweetId: id });
-        },
-      });
-      content.appendChild(placeholder);
+      tabBar.appendChild(btn);
     }
 
-    // ── Caption ──
-    const captionDOM = document.createElement('div');
-    captionDOM.classList.add('tweet-block__caption');
-    content.appendChild(captionDOM);
-    (content as any)._captionDOM = captionDOM;
+    // Fetch 按钮
+    const fetchBtn = document.createElement('button');
+    fetchBtn.classList.add('tweet-block__fetch-btn');
+    fetchBtn.textContent = 'Fetch';
+    fetchBtn.title = 'Fetch post metadata';
+    fetchBtn.addEventListener('mousedown', async (e) => {
+      e.preventDefault(); e.stopPropagation();
+      fetchBtn.textContent = 'Fetching...';
+      fetchBtn.classList.add('tweet-block__fetch-btn--loading');
+      fetchBtn.disabled = true;
+      try {
+        if (api?.fetchTweetData) {
+          const result = await api.fetchTweetData(tweetUrl);
+          if (result?.success && result.data) {
+            const d = result.data;
+            updateAttrs({
+              authorName: d.authorName || '',
+              authorHandle: d.authorHandle || '',
+              authorAvatar: d.authorAvatar || '',
+              text: d.text || '',
+              createdAt: d.createdAt || '',
+              lang: d.lang || '',
+              media: d.media || null,
+              metrics: d.metrics || null,
+              quotedTweet: d.quotedTweet || null,
+              inReplyTo: d.inReplyTo || null,
+              activeTab: 'data',
+            });
+            buildDataCard(dataPanel, d, api);
+            tabBar.querySelectorAll('.tweet-block__tab-btn').forEach(b => b.classList.remove('tweet-block__tab-btn--active'));
+            tabBar.querySelectorAll('.tweet-block__tab-btn')[1]?.classList.add('tweet-block__tab-btn--active');
+            showTab('data');
+          }
+        }
+        fetchBtn.textContent = 'Fetch';
+      } catch {
+        fetchBtn.textContent = '❌';
+        setTimeout(() => { fetchBtn.textContent = 'Fetch'; }, 2000);
+      }
+      fetchBtn.classList.remove('tweet-block__fetch-btn--loading');
+      fetchBtn.disabled = false;
+    });
+    tabBar.appendChild(fetchBtn);
 
-    return content;
-  },
+    // ── Browse Tab ──
+    const browsePanel = document.createElement('div');
+    browsePanel.classList.add('tweet-block__browse-panel');
 
-  update(node: PMNode, contentEl: HTMLElement): boolean {
-    // 状态切换（placeholder ↔ embed）→ 重建 NodeView
-    const hasEmbed = contentEl.querySelector('.tweet-block__tab-bar') !== null;
-    const hasUrl = !!node.attrs.tweetUrl;
-    if (hasEmbed !== hasUrl) return false;
-    return true;
-  },
+    if (tweetId) {
+      const iframe = document.createElement('iframe');
+      iframe.classList.add('tweet-block__iframe');
+      iframe.src = tweetEmbedUrl(tweetId);
+      iframe.setAttribute('frameborder', '0');
+      iframe.setAttribute('scrolling', 'no');
+      iframe.setAttribute('allowtransparency', 'true');
+      iframe.setAttribute('allow', 'encrypted-media');
 
-  getContentDOM(contentEl: HTMLElement) {
-    return (contentEl as any)._captionDOM as HTMLElement;
-  },
+      // 监听 Twitter postMessage 动态调整高度
+      let maxHeight = 0;
+      const resizeHandler = (event: MessageEvent) => {
+        try {
+          let data = event.data;
+          if (typeof data === 'string') data = JSON.parse(data);
+          if (!data || typeof data !== 'object') return;
+          const height = findHeight(data);
+          if (height && height > 50 && height > maxHeight) {
+            maxHeight = height;
+            iframe.style.height = height + 'px';
+            browsePanel.style.height = height + 'px';
+          }
+        } catch { /* ignore */ }
+      };
+      window.addEventListener('message', resizeHandler);
+      (content as any)._resizeHandler = resizeHandler;
 
-  destroy(contentEl: HTMLElement) {
-    const handler = (contentEl as any)._resizeHandler as ((e: MessageEvent) => void) | undefined;
-    if (handler) window.removeEventListener('message', handler);
-  },
-};
+      browsePanel.appendChild(iframe);
+      if (!node.attrs.tweetId) updateAttrs({ tweetId });
+    } else {
+      browsePanel.innerHTML = '<div class="tweet-block__no-embed">Unable to parse post ID</div>';
+    }
 
-/** 构建 Data Tab 卡片 */
-function buildDataCard(panel: HTMLElement, node: PMNode) {
-  const authorName = node.attrs.authorName as string;
-  const authorHandle = node.attrs.authorHandle as string;
-  const text = node.attrs.text as string;
-  const createdAt = node.attrs.createdAt as string;
-  const metrics = node.attrs.metrics as Record<string, number> | null;
-  const media = node.attrs.media as Array<{ type: string; url: string; thumbUrl?: string }> | null;
-  const quotedTweet = node.attrs.quotedTweet as string | null;
-  const inReplyTo = node.attrs.inReplyTo as string | null;
+    // ── Data Tab ──
+    const dataPanel = document.createElement('div');
+    dataPanel.classList.add('tweet-block__data-panel');
+    dataPanel.style.display = 'none';
 
-  if (!authorName && !text) {
-    panel.innerHTML = '<div class="tweet-block__no-data">Click "Fetch" to load tweet data</div>';
-    return;
+    // 如果已有数据，构建卡片
+    if (node.attrs.authorName || node.attrs.text) {
+      buildDataCard(dataPanel, node.attrs, api);
+    } else {
+      dataPanel.innerHTML = '<div class="tweet-block__no-data">Click "Fetch" to load post data</div>';
+    }
+
+    // Tab 切换
+    function showTab(tabId: string) {
+      browsePanel.style.display = tabId === 'browse' ? 'block' : 'none';
+      dataPanel.style.display = tabId === 'data' ? 'block' : 'none';
+    }
+    showTab(activeTab);
+
+    content.appendChild(tabBar);
+    content.appendChild(browsePanel);
+    content.appendChild(dataPanel);
+  } else {
+    // ── Placeholder ──
+    const placeholder = createPlaceholder({
+      icon: '𝕏',
+      embedLabel: 'Embed link',
+      embedPlaceholder: 'Paste post URL (x.com or twitter.com)...',
+      onEmbed: (url) => {
+        const id = extractTweetId(url);
+        updateAttrs({ tweetUrl: url, tweetId: id });
+      },
+    });
+    content.appendChild(placeholder);
   }
 
-  let html = '';
+  // ── Caption ──
+  const captionDOM = document.createElement('div');
+  captionDOM.classList.add('tweet-block__caption');
+  content.appendChild(captionDOM);
+
+  dom.appendChild(content);
+
+  // ── NodeView 接口 ──
+  return {
+    dom,
+    contentDOM: captionDOM,
+
+    selectNode() { dom.classList.add('render-block--selected'); },
+    deselectNode() { dom.classList.remove('render-block--selected'); },
+
+    stopEvent(event: Event) {
+      if (event.type === 'contextmenu') return false;
+      if (captionDOM.contains(event.target as Node)) return false;
+      if (dom.contains(event.target as Node)) return true;
+      return false;
+    },
+
+    update(updatedNode: PMNode) {
+      if (updatedNode.type.name !== 'tweetBlock') return false;
+      node = updatedNode;
+      const hasEmbed = content.querySelector('.tweet-block__tab-bar') !== null;
+      const hasUrl = !!updatedNode.attrs.tweetUrl;
+      if (hasEmbed !== hasUrl) return false;
+      return true;
+    },
+
+    ignoreMutation(mutation: MutationRecord) {
+      if (captionDOM.contains(mutation.target)) return false;
+      return true;
+    },
+
+    destroy() {
+      const handler = (content as any)._resizeHandler as ((e: MessageEvent) => void) | undefined;
+      if (handler) window.removeEventListener('message', handler);
+    },
+  };
+}
+
+// ── Data Tab 卡片构建（使用 DOM API） ──
+
+function buildDataCard(panel: HTMLElement, attrs: Record<string, unknown>, api?: Record<string, any>) {
+  panel.innerHTML = '';
+
+  const authorName = (attrs.authorName as string) || '';
+  const authorHandle = (attrs.authorHandle as string) || '';
+  const authorAvatar = (attrs.authorAvatar as string) || '';
+  const text = (attrs.text as string) || '';
+  const createdAt = (attrs.createdAt as string) || '';
+  const metrics = attrs.metrics as Record<string, number> | null;
+  const media = attrs.media as Array<{ type: string; url: string; thumbUrl?: string }> | null;
+  const quotedTweet = (attrs.quotedTweet as string) || '';
+  const inReplyTo = (attrs.inReplyTo as string) || '';
+  const tweetUrl = (attrs.tweetUrl as string) || '';
 
   // 作者行
   if (authorName || authorHandle) {
-    const avatar = node.attrs.authorAvatar
-      ? `<img src="${node.attrs.authorAvatar}" class="tweet-block__avatar" />`
-      : '<span class="tweet-block__avatar-placeholder">🐦</span>';
-    const time = createdAt ? ` · ${timeAgo(createdAt)}` : '';
-    html += `<div class="tweet-block__author">${avatar}<strong>${authorName}</strong> <span class="tweet-block__handle">${authorHandle}</span>${time}</div>`;
+    const authorRow = document.createElement('div');
+    authorRow.classList.add('tweet-block__author');
+
+    if (authorAvatar) {
+      const img = document.createElement('img');
+      img.src = authorAvatar;
+      img.classList.add('tweet-block__avatar');
+      authorRow.appendChild(img);
+    } else {
+      const placeholder = document.createElement('span');
+      placeholder.classList.add('tweet-block__avatar-placeholder');
+      placeholder.textContent = '𝕏';
+      authorRow.appendChild(placeholder);
+    }
+
+    const nameEl = document.createElement('strong');
+    nameEl.textContent = authorName;
+    authorRow.appendChild(nameEl);
+
+    const handleEl = document.createElement('span');
+    handleEl.classList.add('tweet-block__handle');
+    handleEl.textContent = ` ${authorHandle}`;
+    authorRow.appendChild(handleEl);
+
+    if (createdAt) {
+      const timeEl = document.createElement('span');
+      timeEl.classList.add('tweet-block__time');
+      timeEl.textContent = ` · ${timeAgo(createdAt)}`;
+      authorRow.appendChild(timeEl);
+    }
+
+    panel.appendChild(authorRow);
   }
 
   // 回复指示
-  if (inReplyTo) html += `<div class="tweet-block__reply-to">↩ Replying to a tweet</div>`;
+  if (inReplyTo) {
+    const replyEl = document.createElement('div');
+    replyEl.classList.add('tweet-block__reply-to');
+    replyEl.textContent = '↩ Replying to a post';
+    panel.appendChild(replyEl);
+  }
 
   // 正文
-  if (text) html += `<div class="tweet-block__text">${escapeHtml(text)}</div>`;
+  if (text) {
+    const textEl = document.createElement('div');
+    textEl.classList.add('tweet-block__text');
+    textEl.textContent = text;
+    panel.appendChild(textEl);
+  }
 
   // 媒体网格
   if (media && media.length > 0) {
-    html += '<div class="tweet-block__media-grid">';
+    const grid = document.createElement('div');
+    grid.classList.add('tweet-block__media-grid', `tweet-block__media--${Math.min(media.length, 4)}`);
+
     for (const item of media) {
+      const wrapper = document.createElement('div');
+      wrapper.classList.add('tweet-block__media-item');
+
       const thumb = item.thumbUrl || item.url;
-      html += `<div class="tweet-block__media-item"><img src="${thumb}" /></div>`;
+      const img = document.createElement('img');
+      img.src = thumb;
+      wrapper.appendChild(img);
+
+      // 视频类型显示播放图标 + yt-dlp 下载按钮
+      if (item.type === 'video' || item.type === 'gif') {
+        const playIcon = document.createElement('div');
+        playIcon.classList.add('tweet-block__play-icon');
+        playIcon.textContent = '▶';
+        wrapper.appendChild(playIcon);
+
+        // yt-dlp 下载按钮
+        const dlBtn = document.createElement('button');
+        dlBtn.classList.add('tweet-block__media-dl');
+        dlBtn.textContent = '⬇';
+        dlBtn.title = 'Download video';
+        dlBtn.addEventListener('mousedown', async (e) => {
+          e.preventDefault(); e.stopPropagation();
+          if (!api?.ytdlpDownload) return;
+          dlBtn.textContent = '⏳';
+          dlBtn.disabled = true;
+          try {
+            const result = await api.ytdlpDownload(tweetUrl);
+            dlBtn.textContent = result?.status === 'complete' ? '✅' : '❌';
+          } catch {
+            dlBtn.textContent = '❌';
+          }
+          setTimeout(() => { dlBtn.textContent = '⬇'; dlBtn.disabled = false; }, 3000);
+        });
+        wrapper.appendChild(dlBtn);
+      }
+
+      grid.appendChild(wrapper);
     }
-    html += '</div>';
+    panel.appendChild(grid);
   }
 
   // 互动数据
   if (metrics) {
-    const parts = [];
+    const metricsRow = document.createElement('div');
+    metricsRow.classList.add('tweet-block__metrics');
+    const parts: string[] = [];
     if (metrics.replies != null) parts.push(`💬 ${formatCount(metrics.replies)}`);
     if (metrics.retweets != null) parts.push(`🔁 ${formatCount(metrics.retweets)}`);
     if (metrics.likes != null) parts.push(`❤ ${formatCount(metrics.likes)}`);
     if (metrics.views != null) parts.push(`👁 ${formatCount(metrics.views)}`);
-    if (parts.length) html += `<div class="tweet-block__metrics">${parts.join('  ')}</div>`;
+    metricsRow.textContent = parts.join('  ');
+    panel.appendChild(metricsRow);
   }
 
   // 引用推文
-  if (quotedTweet) html += `<div class="tweet-block__quoted">Quoted: ${escapeHtml(quotedTweet)}</div>`;
+  if (quotedTweet) {
+    const quoteEl = document.createElement('div');
+    quoteEl.classList.add('tweet-block__quoted');
+    quoteEl.textContent = `Quoted: ${quotedTweet}`;
+    panel.appendChild(quoteEl);
+  }
 
   // 打开原文
-  const tweetUrl = node.attrs.tweetUrl as string;
-  if (tweetUrl) html += `<a class="tweet-block__open-link" href="${tweetUrl}" target="_blank">Open original ↗</a>`;
-
-  panel.innerHTML = html;
+  if (tweetUrl) {
+    const link = document.createElement('a');
+    link.classList.add('tweet-block__open-link');
+    link.href = tweetUrl;
+    link.target = '_blank';
+    link.textContent = 'Open original ↗';
+    link.addEventListener('mousedown', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      api?.openExternal?.(tweetUrl);
+    });
+    panel.appendChild(link);
+  }
 }
 
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
+// ── BlockDef ──
 
 export const tweetBlockBlock: BlockDef = {
   name: 'tweetBlock',
@@ -318,7 +452,7 @@ export const tweetBlockBlock: BlockDef = {
     parseDOM: [{ tag: 'div.tweet-block' }],
     toDOM() { return ['div', { class: 'tweet-block' }, 0]; },
   },
-  nodeView: createRenderBlockView(tweetRenderer, 'tweetBlock'),
+  nodeView: tweetNodeView,
   capabilities: { canDelete: true, canDrag: true },
-  slashMenu: { label: 'Tweet', icon: '🐦', group: 'media', keywords: ['tweet', 'twitter', 'x', 'social', '推文'], order: 4 },
+  slashMenu: { label: 'X Post', icon: '𝕏', group: 'media', keywords: ['x', 'tweet', 'twitter', 'post', 'social', '推文'], order: 4 },
 };
