@@ -14,6 +14,9 @@ import { blockSelectionKey } from './block-selection';
 
 export const blockHandleKey = new PluginKey('blockHandle');
 
+/** RenderBlock 类型集合 — coordsAtPos 会指向 caption 底部，需特殊处理 */
+const RENDER_BLOCK_TYPES = new Set(['image', 'audioBlock', 'videoBlock', 'tweetBlock']);
+
 /** 找到 pos 所在的顶层 block 起始位置 */
 export function findTopBlockPos(doc: PMNode, pos: number): number | null {
   let result: number | null = null;
@@ -367,13 +370,17 @@ export function blockHandlePlugin(): Plugin {
 
               let textTop = blockRect.top;
               let lineHeight = 27;
-              try {
-                const coords = view.coordsAtPos(blockStart + 1);
-                if (coords.top >= blockRect.top && coords.top <= blockRect.bottom) {
-                  textTop = coords.top;
-                  lineHeight = coords.bottom - coords.top;
-                }
-              } catch { /* fallback */ }
+              // render-block（含 caption）的 blockStart+1 指向 caption 在底部，
+              // 直接用 blockRect.top 对齐顶部
+              if (!RENDER_BLOCK_TYPES.has(blockNode.type.name)) {
+                try {
+                  const coords = view.coordsAtPos(blockStart + 1);
+                  if (coords.top >= blockRect.top && coords.top <= blockRect.bottom) {
+                    textTop = coords.top;
+                    lineHeight = coords.bottom - coords.top;
+                  }
+                } catch { /* fallback */ }
+              }
 
               const topPx = textTop - containerRect.top + scrollTop + (lineHeight - handleHeight) / 2;
               // left：保持手柄和文字的相对距离一致

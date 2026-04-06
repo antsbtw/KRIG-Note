@@ -261,18 +261,30 @@
   outline: 2px solid #8ab4f8;
   outline-offset: -1px;
 }
-.render-block--selected .render-block__toolbar { display: flex; }
-.render-block--editing .render-block__toolbar { display: flex; }
-.render-block__toolbar {
+/* toolbar / tab-bar 统一显示规则 */
+.render-block__toolbar,
+.video-block__tab-bar,
+.tweet-block__tab-bar {
   display: none;
   align-items: center;
+}
+.render-block:hover > .render-block__toolbar,
+.render-block--selected > .render-block__toolbar,
+.render-block--editing > .render-block__toolbar,
+.render-block--hovered .video-block__tab-bar,
+.render-block--selected .video-block__tab-bar,
+.render-block--editing .video-block__tab-bar,
+.render-block--hovered .tweet-block__tab-bar,
+.render-block--selected .tweet-block__tab-bar,
+.render-block--editing .tweet-block__tab-bar { display: flex; }
+
+.render-block__toolbar {
   padding: 4px 8px;
   background: #252525;
   border-bottom: 1px solid #333;
   border-radius: 6px 6px 0 0;
   min-height: 32px;
 }
-.render-block:hover .render-block__toolbar { display: flex; }
 .render-block__label {
   font-size: 11px;
   color: #888;
@@ -759,7 +771,6 @@
 .image-block__img-area:hover .image-block__resize-handle { opacity: 1; }
 .image-block--resizing .image-block__resize-handle { opacity: 1; }
 /* Caption */
-/* image caption 样式已统一到通用规则 */
 
 /* ═══════════════════════════════════════════════════════════
    audio Block
@@ -783,19 +794,14 @@
 .audio-block__player:hover .audio-block__download-btn { opacity: 1; }
 .audio-block__download-btn:hover { background: #333; color: #8ab4f8; }
 .audio-block__download-btn:disabled { cursor: default; color: #555; }
-/* audio caption 样式已统一到通用规则 */
 
 /* ═══════════════════════════════════════════════════════════
    video Block
    ═══════════════════════════════════════════════════════════ */
 .video-block__tab-bar {
-  display: none; align-items: center; gap: 0;
   padding: 0 8px; background: #252525; border-bottom: 1px solid #333;
   position: relative;
 }
-.render-block--hovered > .render-block__content > .video-block__tab-bar,
-.render-block--selected > .render-block__content > .video-block__tab-bar,
-.render-block--editing > .render-block__content > .video-block__tab-bar { display: flex; }
 .video-block__tab-btn {
   padding: 6px 12px; background: transparent; border: none; border-bottom: 2px solid transparent;
   color: #888; cursor: pointer; font-size: 12px;
@@ -889,18 +895,13 @@
   height: 100%; width: 0%; background: #8ab4f8; transition: width 0.3s;
 }
 /* Caption */
-/* video caption 样式已统一到通用规则 */
 
 /* ═══════════════════════════════════════════════════════════
    tweet Block
    ═══════════════════════════════════════════════════════════ */
 .tweet-block__tab-bar {
-  display: none; align-items: center; gap: 0;
   padding: 0 8px; background: #252525; border-bottom: 1px solid #333;
 }
-.render-block--hovered > .render-block__content > .tweet-block__tab-bar,
-.render-block--selected > .render-block__content > .tweet-block__tab-bar,
-.render-block--editing > .render-block__content > .tweet-block__tab-bar { display: flex; }
 .tweet-block__tab-btn {
   padding: 6px 12px; background: transparent; border: none; border-bottom: 2px solid transparent;
   color: #888; cursor: pointer; font-size: 12px;
@@ -965,7 +966,6 @@
 .tweet-block__open-link { color: #1d9bf0; font-size: 13px; text-decoration: none; }
 .tweet-block__open-link:hover { text-decoration: underline; }
 /* Caption */
-/* tweet caption 样式已统一到通用规则 */
 
 /* ── horizontalRule ── */
 /* ── FloatingToolbar ── */
