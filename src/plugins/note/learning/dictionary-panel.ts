@@ -49,6 +49,7 @@ export function showDictionaryPanel(word: string, sentence?: string): void {
   currentLookup = null;
   currentTranslation = null;
   ensurePanel();
+  switchTab('lookup');
   setLoading(word);
   show();
 
@@ -72,6 +73,7 @@ export function showTranslationPanel(text: string): void {
   currentLookup = null;
   currentTranslation = null;
   ensurePanel();
+  switchTab('lookup');
   setLoading(text.length > 60 ? text.slice(0, 60) + '...' : text);
   show();
 

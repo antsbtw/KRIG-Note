@@ -28,6 +28,11 @@ const SCHEMA_QUERIES = [
 
   // session 表（状态记录）
   `DEFINE TABLE IF NOT EXISTS session SCHEMALESS;`,
+
+  // vocab 表（生词本）
+  `DEFINE TABLE IF NOT EXISTS vocab SCHEMALESS;`,
+  `DEFINE INDEX IF NOT EXISTS vocab_word ON vocab FIELDS word UNIQUE;`,
+  `DEFINE INDEX IF NOT EXISTS vocab_created ON vocab FIELDS created_at;`,
 ];
 
 export async function initSchema(): Promise<void> {

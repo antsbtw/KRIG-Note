@@ -87,4 +87,30 @@ contextBridge.exposeInMainWorld('viewAPI', {
     ipcRenderer.on(IPC.WORKSPACE_STATE_CHANGED, listener);
     return () => ipcRenderer.removeListener(IPC.WORKSPACE_STATE_CHANGED, listener);
   },
+
+  // ── 学习模块 ──
+
+  lookupWord: (word: string) =>
+    ipcRenderer.invoke(IPC.LEARNING_LOOKUP, word),
+
+  translateText: (text: string, targetLang?: string) =>
+    ipcRenderer.invoke(IPC.LEARNING_TRANSLATE, text, targetLang),
+
+  playTTS: (text: string, lang: string) =>
+    ipcRenderer.invoke(IPC.LEARNING_TTS, text, lang),
+
+  addVocabWord: (word: string, definition: string, context?: string, phonetic?: string) =>
+    ipcRenderer.invoke(IPC.LEARNING_VOCAB_ADD, word, definition, context, phonetic),
+
+  removeVocabWord: (id: string) =>
+    ipcRenderer.invoke(IPC.LEARNING_VOCAB_REMOVE, id),
+
+  listVocabWords: () =>
+    ipcRenderer.invoke(IPC.LEARNING_VOCAB_LIST),
+
+  onVocabChanged: (callback: (entries: unknown[]) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, entries: unknown[]) => callback(entries);
+    ipcRenderer.on(IPC.LEARNING_VOCAB_CHANGED, listener);
+    return () => ipcRenderer.removeListener(IPC.LEARNING_VOCAB_CHANGED, listener);
+  },
 });

@@ -190,4 +190,13 @@ export const IPC = {
 
   // 文件保存对话框
   FILE_SAVE_DIALOG: 'file:save-dialog',
+
+  // 学习模块
+  LEARNING_LOOKUP: 'learning:lookup',
+  LEARNING_TRANSLATE: 'learning:translate',
+  LEARNING_TTS: 'learning:tts',
+  LEARNING_VOCAB_ADD: 'learning:vocab-add',
+  LEARNING_VOCAB_REMOVE: 'learning:vocab-remove',
+  LEARNING_VOCAB_LIST: 'learning:vocab-list',
+  LEARNING_VOCAB_CHANGED: 'learning:vocab-changed',
 } as const;

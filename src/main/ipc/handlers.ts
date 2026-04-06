@@ -17,6 +17,9 @@ import { noteStore } from '../storage/note-store';
 import { folderStore } from '../storage/folder-store';
 import { activityStore } from '../storage/activity-store';
 import { isDBReady } from '../storage/client';
+import { lookupWord } from '../learning/dictionary-service';
+import { googleTranslate, googleTTS } from '../learning/providers/google-translate';
+import { vocabStore } from '../learning/vocabulary-store';
 
 export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): void {
   // ── Workspace 操作 ──
@@ -325,6 +328,35 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
     await writeFile(result.filePath, buffer);
     return { canceled: false, filePath: result.filePath };
   });
+
+  // ── 学习模块 ──
+
+  ipcMain.handle(IPC.LEARNING_LOOKUP, (_e, word: string) =>
+    lookupWord(word),
+  );
+
+  ipcMain.handle(IPC.LEARNING_TRANSLATE, (_e, text: string, targetLang?: string) =>
+    googleTranslate(text, targetLang || 'zh-CN'),
+  );
+
+  ipcMain.handle(IPC.LEARNING_TTS, (_e, text: string, lang: string) =>
+    googleTTS(text, lang),
+  );
+
+  ipcMain.handle(IPC.LEARNING_VOCAB_ADD, async (_e, word: string, definition: string, context?: string, phonetic?: string) => {
+    const entry = await vocabStore.add(word, definition, context, phonetic);
+    broadcastVocabChanged(getMainWindow());
+    return entry;
+  });
+
+  ipcMain.handle(IPC.LEARNING_VOCAB_REMOVE, async (_e, id: string) => {
+    await vocabStore.remove(id);
+    broadcastVocabChanged(getMainWindow());
+  });
+
+  ipcMain.handle(IPC.LEARNING_VOCAB_LIST, () =>
+    vocabStore.list(),
+  );
 }
 
 /** 广播 NoteFile 列表变更 */
@@ -362,4 +394,16 @@ function broadcastWorkspaceState(mainWindow: BaseWindow | null): void {
       view.webContents.send(IPC.WORKSPACE_STATE_CHANGED, state);
     }
   }
+}
+
+/** 广播生词本变更 */
+function broadcastVocabChanged(mainWindow: BaseWindow | null): void {
+  if (!mainWindow) return;
+  vocabStore.list().then((entries) => {
+    for (const view of mainWindow.contentView.children) {
+      if ('webContents' in view) {
+        (view as any).webContents.send(IPC.LEARNING_VOCAB_CHANGED, entries);
+      }
+    }
+  }).catch(() => {});
 }
