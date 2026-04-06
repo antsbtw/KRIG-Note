@@ -899,14 +899,20 @@
 .tweet-block__tab-btn:hover { color: #e8eaed; }
 .tweet-block__tab-btn--active { color: #1d9bf0; border-bottom-color: #1d9bf0; }
 .tweet-block__fetch-btn {
-  margin-left: auto; padding: 4px 10px;
+  padding: 4px 10px;
   background: transparent; border: 1px solid #444; border-radius: 4px;
   color: #888; cursor: pointer; font-size: 11px;
 }
 .tweet-block__fetch-btn:hover { background: #333; color: #e8eaed; }
 .tweet-block__fetch-btn:disabled { color: #555; cursor: default; }
-.tweet-block__browse-panel { background: transparent; max-width: 440px; margin: 0 auto; }
-.tweet-block__iframe { width: 100%; border: none; background: transparent; height: 700px; }
+.tweet-block__browse-panel {
+  background: transparent; overflow: hidden;
+  max-width: 470px; margin: 0 auto;
+}
+.tweet-block__iframe {
+  width: 647px; border: none; background: transparent; height: 700px;
+  transform: scale(0.85); transform-origin: top left;
+}
 .tweet-block__data-panel { padding: 12px; }
 .tweet-block__no-embed,
 .tweet-block__no-data { font-size: 13px; color: #555; font-style: italic; text-align: center; padding: 20px; }

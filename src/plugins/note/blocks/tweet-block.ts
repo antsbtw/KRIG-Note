@@ -108,6 +108,59 @@ function tweetNodeView(node: PMNode, view: EditorView, getPos: () => number | un
       tabBar.appendChild(btn);
     }
 
+    // ⬇️ 下载按钮（yt-dlp，不需要先 Fetch）
+    let dlState: 'idle' | 'downloading' | 'done' = 'idle';
+    let dlFilePath: string | null = null;
+    const dlBtn = document.createElement('button');
+    dlBtn.classList.add('tweet-block__fetch-btn');
+    dlBtn.style.marginLeft = 'auto';
+    dlBtn.textContent = '⬇️';
+    dlBtn.title = 'Download video';
+    dlBtn.addEventListener('mousedown', async (e) => {
+      e.preventDefault(); e.stopPropagation();
+
+      // 下载完成 → 打开文件夹
+      if (dlState === 'done' && dlFilePath) {
+        api?.showItemInFolder?.(dlFilePath);
+        return;
+      }
+      if (dlState === 'downloading') return;
+
+      // 未安装 yt-dlp → 安装
+      if (!api?.ytdlpDownload) {
+        if (api?.ytdlpInstall) {
+          dlBtn.textContent = '⏳'; dlBtn.disabled = true;
+          const r = await api.ytdlpInstall();
+          if (!r?.success) { dlBtn.textContent = '❌'; setTimeout(() => { dlBtn.textContent = '⬇️'; dlBtn.disabled = false; }, 2000); return; }
+          dlBtn.textContent = '⬇️'; dlBtn.disabled = false;
+        }
+        return;
+      }
+
+      // 下载
+      dlState = 'downloading';
+      dlBtn.textContent = '⏳'; dlBtn.disabled = true;
+      try {
+        const result = await api.ytdlpDownload(tweetUrl);
+        if (result?.status === 'complete') {
+          dlState = 'done';
+          dlFilePath = result.filename || null;
+          dlBtn.textContent = '📁';
+          dlBtn.title = 'Open in Finder';
+          dlBtn.disabled = false;
+        } else {
+          dlState = 'idle';
+          dlBtn.textContent = '❌';
+          setTimeout(() => { dlBtn.textContent = '⬇️'; dlBtn.disabled = false; }, 2000);
+        }
+      } catch {
+        dlState = 'idle';
+        dlBtn.textContent = '❌';
+        setTimeout(() => { dlBtn.textContent = '⬇️'; dlBtn.disabled = false; }, 2000);
+      }
+    });
+    tabBar.appendChild(dlBtn);
+
     // Fetch 按钮
     const fetchBtn = document.createElement('button');
     fetchBtn.classList.add('tweet-block__fetch-btn');
@@ -166,6 +219,7 @@ function tweetNodeView(node: PMNode, view: EditorView, getPos: () => number | un
       iframe.setAttribute('allow', 'encrypted-media');
 
       // 监听 Twitter postMessage 动态调整高度
+      const SCALE = 0.85;
       let maxHeight = 0;
       const resizeHandler = (event: MessageEvent) => {
         try {
@@ -176,7 +230,7 @@ function tweetNodeView(node: PMNode, view: EditorView, getPos: () => number | un
           if (height && height > 50 && height > maxHeight) {
             maxHeight = height;
             iframe.style.height = height + 'px';
-            browsePanel.style.height = height + 'px';
+            browsePanel.style.height = Math.ceil(height * SCALE) + 'px';
           }
         } catch { /* ignore */ }
       };
@@ -279,7 +333,6 @@ function buildDataCard(panel: HTMLElement, attrs: Record<string, unknown>, api?:
   const text = (attrs.text as string) || '';
   const createdAt = (attrs.createdAt as string) || '';
   const metrics = attrs.metrics as Record<string, number> | null;
-  const media = attrs.media as Array<{ type: string; url: string; thumbUrl?: string }> | null;
   const quotedTweet = (attrs.quotedTweet as string) || '';
   const inReplyTo = (attrs.inReplyTo as string) || '';
   const tweetUrl = (attrs.tweetUrl as string) || '';
@@ -336,54 +389,7 @@ function buildDataCard(panel: HTMLElement, attrs: Record<string, unknown>, api?:
     panel.appendChild(textEl);
   }
 
-  // 媒体网格
-  if (media && media.length > 0) {
-    const grid = document.createElement('div');
-    grid.classList.add('tweet-block__media-grid', `tweet-block__media--${Math.min(media.length, 4)}`);
-
-    for (const item of media) {
-      const wrapper = document.createElement('div');
-      wrapper.classList.add('tweet-block__media-item');
-
-      const thumb = item.thumbUrl || item.url;
-      const img = document.createElement('img');
-      img.src = thumb;
-      wrapper.appendChild(img);
-
-      // 视频类型显示播放图标 + yt-dlp 下载按钮
-      if (item.type === 'video' || item.type === 'gif') {
-        const playIcon = document.createElement('div');
-        playIcon.classList.add('tweet-block__play-icon');
-        playIcon.textContent = '▶';
-        wrapper.appendChild(playIcon);
-
-        // yt-dlp 下载按钮
-        const dlBtn = document.createElement('button');
-        dlBtn.classList.add('tweet-block__media-dl');
-        dlBtn.textContent = '⬇';
-        dlBtn.title = 'Download video';
-        dlBtn.addEventListener('mousedown', async (e) => {
-          e.preventDefault(); e.stopPropagation();
-          if (!api?.ytdlpDownload) return;
-          dlBtn.textContent = '⏳';
-          dlBtn.disabled = true;
-          try {
-            const result = await api.ytdlpDownload(tweetUrl);
-            dlBtn.textContent = result?.status === 'complete' ? '✅' : '❌';
-          } catch {
-            dlBtn.textContent = '❌';
-          }
-          setTimeout(() => { dlBtn.textContent = '⬇'; dlBtn.disabled = false; }, 3000);
-        });
-        wrapper.appendChild(dlBtn);
-      }
-
-      grid.appendChild(wrapper);
-    }
-    panel.appendChild(grid);
-  }
-
-  // 互动数据
+  // 互动数据（媒体在 Browse tab 的 iframe 中查看，Data tab 只显示文字+meta）
   if (metrics) {
     const metricsRow = document.createElement('div');
     metricsRow.classList.add('tweet-block__metrics');
