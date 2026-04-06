@@ -257,7 +257,7 @@ export function blockHandlePlugin(): Plugin {
           if (isHovered || isDragging) return false;
 
           // ══════════════════════════════════════════════════
-          // 手柄定位逻辑（已稳定，不要修改）
+          // 手柄定位逻辑
           // ══════════════════════════════════════════════════
 
           const editorRect = view.dom.getBoundingClientRect();
@@ -266,7 +266,8 @@ export function blockHandlePlugin(): Plugin {
           }
 
           const mouseY = event.clientY;
-          const probeX = editorRect.left + editorRect.width / 2;
+          // 用鼠标实际 X 坐标探测，这样能精确进入 column 内的子 block
+          const probeX = event.clientX;
           let blockStart = -1;
           let blockNode: any = null;
           let targetBlockDOM: HTMLElement | null = null;
@@ -277,9 +278,38 @@ export function blockHandlePlugin(): Plugin {
               const $pos = view.state.doc.resolve(pos.pos);
               let depth = $pos.depth;
               while (depth > 0 && ($pos.node(depth).isInline || $pos.node(depth).type.name === 'text')) depth--;
+
+              // 如果在 column 内部，钻入到 column 的直接子 block
+              // 结构: doc > columnList > column > textBlock
+              // 我们要定位到 column 的子 block（depth 对应 column 的子节点层）
               if (depth >= 1) {
-                blockStart = $pos.before(depth);
-                blockNode = $pos.node(depth);
+                // 检查是否在 column 内部：向上找 column 祖先
+                let targetDepth = depth;
+                for (let d = depth; d >= 1; d--) {
+                  const ancestor = $pos.node(d);
+                  if (ancestor.type.name === 'column') {
+                    // 定位到 column 的直接子节点（depth = d + 1）
+                    if (depth > d) {
+                      targetDepth = d + 1;
+                    }
+                    break;
+                  }
+                  // 如果碰到 columnList 但没碰到 column，说明光标在 columnList 层级但不在 column 内
+                  if (ancestor.type.name === 'columnList') break;
+                }
+
+                // 对于非 column 场景，回退到顶层 block（depth=1）
+                if (targetDepth > 1) {
+                  // 在 column 内：用 targetDepth
+                  let inColumn = false;
+                  for (let d = targetDepth; d >= 1; d--) {
+                    if ($pos.node(d).type.name === 'column') { inColumn = true; break; }
+                  }
+                  if (!inColumn) targetDepth = 1;
+                }
+
+                blockStart = $pos.before(targetDepth);
+                blockNode = $pos.node(targetDepth);
                 const dom = view.nodeDOM(blockStart);
                 targetBlockDOM = dom instanceof HTMLElement ? dom : (dom as Node)?.parentElement as HTMLElement ?? null;
               }
@@ -318,6 +348,8 @@ export function blockHandlePlugin(): Plugin {
 
           if (blockStart < 0 || !blockNode || !targetBlockDOM) { hideHandle(); return false; }
           if (blockNode.type.name === 'textBlock' && blockNode.attrs.isTitle) { hideHandle(); return false; }
+          // 不在 columnList / column 自身上显示手柄，只在其子 block 上
+          if (blockNode.type.name === 'columnList' || blockNode.type.name === 'column') { hideHandle(); return false; }
 
           if (currentPos === blockStart) return false;
           currentPos = blockStart;
@@ -344,9 +376,28 @@ export function blockHandlePlugin(): Plugin {
               } catch { /* fallback */ }
 
               const topPx = textTop - containerRect.top + scrollTop + (lineHeight - handleHeight) / 2;
-              // left 固定：紧贴编辑器内容区左边缘，不受 block 类型影响
+              // left：保持手柄和文字的相对距离一致
+              // 普通 block：editorLeft + 20，文字从 editorLeft + 72 开始 → 差 52px
+              // column 内 block：用 block DOM 的 left - 52，保持同样的视觉距离
               const editorLeft = view.dom.getBoundingClientRect().left - containerRect.left + container.scrollLeft;
-              handleDOM.style.left = `${editorLeft + 20}px`;
+              const isInsideColumn = blockStart >= 0 && (() => {
+                try {
+                  const $p = view.state.doc.resolve(blockStart);
+                  for (let d = $p.depth; d >= 1; d--) {
+                    if ($p.node(d).type.name === 'column') return true;
+                  }
+                } catch {}
+                return false;
+              })();
+
+              if (isInsideColumn) {
+                // column 内 block：手柄紧贴 block 文字左侧（叠加在文字上）
+                const blockLeftPx = blockRect.left - containerRect.left + container.scrollLeft;
+                handleDOM.style.left = `${blockLeftPx - 52}px`;
+              } else {
+                // 普通 block：固定在编辑器左边缘
+                handleDOM.style.left = `${editorLeft + 20}px`;
+              }
               handleDOM.style.top = `${topPx}px`;
               handleDOM.style.opacity = '1';
             }

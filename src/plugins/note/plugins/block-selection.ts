@@ -22,11 +22,55 @@ export const blockSelectionKey = new PluginKey<BlockSelectionState>('blockSelect
 
 // ── 辅助函数 ──
 
-/** 获取所有顶层 block 位置 */
+/**
+ * 获取所有可选中 block 的位置（视觉顺序）
+ *
+ * 普通 block → 直接加入
+ * columnList → 展开为: 左列子block从上到下 → 右列子block从上到下 → (第三列...)
+ * columnList/column 自身不加入（它们只是布局容器）
+ */
 function getAllBlockPositions(doc: PMNode): number[] {
   const positions: number[] = [];
-  doc.forEach((_node, offset) => positions.push(offset));
+  doc.forEach((node, offset) => {
+    if (node.type.name === 'columnList') {
+      // 展开 columnList：遍历每个 column 的子 block
+      let colOffset = offset + 1; // 进入 columnList
+      for (let c = 0; c < node.childCount; c++) {
+        const column = node.child(c);
+        if (column.type.name === 'column') {
+          let blockOffset = colOffset + 1; // 进入 column
+          for (let b = 0; b < column.childCount; b++) {
+            positions.push(blockOffset);
+            blockOffset += column.child(b).nodeSize;
+          }
+        }
+        colOffset += column.nodeSize;
+      }
+    } else {
+      positions.push(offset);
+    }
+  });
   return positions;
+}
+
+/**
+ * 找到光标所在的可选中 block 位置
+ * 如果在 column 内，定位到 column 的直接子 block
+ * 否则定位到顶层 block
+ */
+function findSelectableBlockPos(doc: PMNode, $from: import('prosemirror-model').ResolvedPos): number | null {
+  // 检查是否在 column 内部
+  for (let d = $from.depth; d >= 1; d--) {
+    if ($from.node(d).type.name === 'column') {
+      // 找 column 的直接子 block（depth = d + 1）
+      if ($from.depth > d) {
+        return $from.before(d + 1);
+      }
+      break;
+    }
+  }
+  // 普通 block：顶层
+  return findTopBlockPos(doc, $from.pos);
 }
 
 /** 找相邻 block */
@@ -142,7 +186,7 @@ export function blockSelectionPlugin(): Plugin {
           // 进入选中
           const { $from } = view.state.selection;
           if ($from.depth < 1) return false;
-          const pos = findTopBlockPos(view.state.doc, $from.pos);
+          const pos = findSelectableBlockPos(view.state.doc, $from);
           if (pos === null) return false;
           // noteTitle 不选中
           const node = view.state.doc.nodeAt(pos);

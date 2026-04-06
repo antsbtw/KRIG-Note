@@ -44,6 +44,18 @@ export function containerKeyboardPlugin(): Plugin {
           }
         }
 
+        // column 是 columnList 的子容器：空行 Enter 不应退出 column（会破坏 content 约束），
+        // 而是跳过 column+columnList 退出到 columnList 之后
+        let isColumn = false;
+        let columnListDepth = -1;
+        if (parentNode.type.name === 'column' && containerDepth >= 2) {
+          const grandparent = $from.node(containerDepth - 1);
+          if (grandparent.type.name === 'columnList') {
+            isColumn = true;
+            columnListDepth = containerDepth - 1;
+          }
+        }
+
         const childNode = $from.parent; // 当前 textBlock
         const childDepth = $from.depth;
 
@@ -98,7 +110,26 @@ export function containerKeyboardPlugin(): Plugin {
 
           const isEmpty = childNode.content.size === 0;
 
-          if (isEmpty && taskListDepth >= 0) {
+          if (isEmpty && isColumn && columnListDepth >= 0) {
+            // column 内空行 Enter → 如果是 column 的唯一子节点，退出到 columnList 之后
+            // 如果 column 有多个子节点，仅删除空行（不退出）
+            const columnNode = $from.node(containerDepth);
+            if (columnNode.childCount <= 1) {
+              // 唯一子节点：在 columnList 之后创建 textBlock，光标移过去
+              const columnListEnd = $from.after(columnListDepth);
+              const newBlock = state.schema.nodes.textBlock.create();
+              let tr = state.tr.insert(columnListEnd, newBlock);
+              tr = tr.setSelection(TextSelection.create(tr.doc, columnListEnd + 1));
+              view.dispatch(tr);
+            } else {
+              // 多个子节点：删除空行
+              const childStart = $from.before(childDepth);
+              const childEnd = $from.after(childDepth);
+              let tr = state.tr.delete(childStart, childEnd);
+              tr = tr.setSelection(TextSelection.near(tr.doc.resolve(childStart)));
+              view.dispatch(tr);
+            }
+          } else if (isEmpty && taskListDepth >= 0) {
             // taskList 内空行 Enter → 退出 taskItem（在 taskList 层级操作）
             exitContainer(view, taskListDepth, containerDepth); // containerDepth = taskItem depth
           } else if (isEmpty) {
@@ -128,6 +159,20 @@ export function containerKeyboardPlugin(): Plugin {
 
           const atStart = $from.parentOffset === 0;
           if (!atStart) return false;
+
+          // column 内行首 Backspace：如果是唯一子节点，吞掉事件（防止破坏 column 结构）
+          if (isColumn) {
+            const columnNode = $from.node(containerDepth);
+            const containerStart = $from.before(containerDepth);
+            const childStart = $from.before(childDepth);
+            const isFirstChild = childStart === containerStart + 1;
+            if (isFirstChild && columnNode.childCount <= 1) {
+              event.preventDefault();
+              return true; // 吞掉，不做任何事
+            }
+            // column 内非首子 → 正常合并
+            return false;
+          }
 
           // 如果是 Container 的第一个子节点 → 退出 Container
           const containerStart = $from.before(containerDepth);

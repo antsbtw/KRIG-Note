@@ -275,10 +275,37 @@ export function buildTestDocument(schema: Schema): PMNode {
     ]),
 
     heading(schema, 2, '4.3 columnList'),
+
+    p(schema, '4.3.1 基础 2 列'),
     schema.node('columnList', { columns: 2 }, [
-      schema.node('column', null, [p(schema, '左列内容')]),
+      schema.node('column', null, [p(schema, '左列内容'), p(schema, '可以包含多个段落')]),
       schema.node('column', null, [p(schema, '右列内容')]),
     ]),
+
+    p(schema, '4.3.2 基础 3 列'),
+    schema.node('columnList', { columns: 3 }, [
+      schema.node('column', null, [p(schema, '第一列')]),
+      schema.node('column', null, [p(schema, '第二列')]),
+      schema.node('column', null, [p(schema, '第三列')]),
+    ]),
+
+    p(schema, '4.3.3 自定义列宽（30% / 70%）'),
+    schema.node('columnList', { columns: 2 }, [
+      schema.node('column', { verticalAlign: 'top', width: 30 }, [p(schema, '窄列 30%')]),
+      schema.node('column', { verticalAlign: 'top', width: 70 }, [p(schema, '宽列 70%')]),
+    ]),
+
+    p(schema, '4.3.4 垂直对齐 — center'),
+    schema.node('columnList', { columns: 2 }, [
+      schema.node('column', { verticalAlign: 'center' }, [p(schema, '居中对齐')]),
+      schema.node('column', { verticalAlign: 'center' }, [
+        p(schema, '这列内容较多'),
+        p(schema, '第二段'),
+        p(schema, '第三段'),
+      ]),
+    ]),
+
+    p(schema, '测试：hover 显示 toolbar（+/−/对齐），拖拽列间 handle 调整宽度'),
 
     // ════════════════════════════════════════════════════════
     // 五、Block Selection

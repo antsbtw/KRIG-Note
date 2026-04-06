@@ -183,9 +183,27 @@ export function SlashMenu({ view }: SlashMenuProps) {
         schema.nodes.tableRow.create(null, [cell(), cell(), cell()]),
       ]);
     } else if (item.blockName === 'columnList') {
-      const col = () => schema.nodes.column.create(null, [schema.nodes.textBlock.create()]);
+      // 嵌套防护：不允许在已有 columnList 内部创建
+      for (let d = $from.depth; d >= 1; d--) {
+        if ($from.node(d).type.name === 'columnList') {
+          view.focus();
+          return;
+        }
+      }
       const colCount = (item.attrs?.columns as number) || 2;
-      containerNode = nodeType.create({ columns: colCount }, Array.from({ length: colCount }, col));
+      const columns = [];
+      // 第一列：继承当前段落内容
+      const currentBlock = view.state.doc.nodeAt(blockStart);
+      const firstContent = currentBlock?.type.name === 'textBlock'
+        && currentBlock.content.size > 0
+        ? [schema.nodes.textBlock.create(null, currentBlock.content)]
+        : [schema.nodes.textBlock.create()];
+      columns.push(schema.nodes.column.create(null, firstContent));
+      // 其余列：空 textBlock
+      for (let i = 1; i < colCount; i++) {
+        columns.push(schema.nodes.column.create(null, [schema.nodes.textBlock.create()]));
+      }
+      containerNode = nodeType.create({ columns: colCount }, columns);
     } else if (isAtom) {
       containerNode = nodeType.create(item.attrs ?? null);
     } else if (nodeType.spec.content === 'text*' || item.blockName === 'codeBlock') {
