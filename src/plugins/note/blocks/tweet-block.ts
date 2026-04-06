@@ -62,6 +62,10 @@ function tweetNodeView(node: PMNode, view: EditorView, getPos: () => number | un
   const dom = document.createElement('div');
   dom.classList.add('render-block', 'render-block--tweetBlock');
 
+  // Hover 检测（JS 方式，兼容 iframe）
+  dom.addEventListener('mouseenter', () => dom.classList.add('render-block--hovered'));
+  dom.addEventListener('mouseleave', () => dom.classList.remove('render-block--hovered'));
+
   const content = document.createElement('div');
   content.classList.add('render-block__content', 'tweet-block');
 
