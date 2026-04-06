@@ -12,24 +12,7 @@ import type { EditorView } from 'prosemirror-view';
 
 // ── 工具函数 ──
 
-/** 递归搜索对象中任意深度的 height 字段 */
-function findHeight(obj: unknown, depth = 0): number | null {
-  if (depth > 5 || !obj || typeof obj !== 'object') return null;
-  const o = obj as Record<string, unknown>;
-  if (typeof o.height === 'number' && o.height > 0) return o.height;
-  for (const val of Object.values(o)) {
-    if (Array.isArray(val)) {
-      for (const item of val) {
-        const h = findHeight(item, depth + 1);
-        if (h) return h;
-      }
-    } else if (val && typeof val === 'object') {
-      const h = findHeight(val, depth + 1);
-      if (h) return h;
-    }
-  }
-  return null;
-}
+
 
 function extractTweetId(url: string): string | null {
   const m = url.match(/(?:twitter\.com|x\.com)\/.+\/status\/(\d+)/);
@@ -223,16 +206,20 @@ function tweetNodeView(node: PMNode, view: EditorView, getPos: () => number | un
       iframe.setAttribute('allow', 'encrypted-media');
 
       // 监听 Twitter postMessage 动态调整高度
-      const SCALE = 0.85;
-      let maxHeight = 0;
+      const SCALE = 0.75;
       const resizeHandler = (event: MessageEvent) => {
+        // 只处理来自自己 iframe 的消息
+        if (event.source !== iframe.contentWindow) return;
         try {
           let data = event.data;
           if (typeof data === 'string') data = JSON.parse(data);
           if (!data || typeof data !== 'object') return;
-          const height = findHeight(data);
-          if (height && height > 50 && height > maxHeight) {
-            maxHeight = height;
+          // 只处理 Twitter embed 的 resize 消息
+          const embed = (data as any)?.['twttr.embed'];
+          if (!embed || embed.method !== 'twttr.private.resize') return;
+          const params = embed.params?.[0];
+          const height = params?.height;
+          if (typeof height === 'number' && height > 50) {
             iframe.style.height = height + 'px';
             browsePanel.style.height = Math.ceil(height * SCALE) + 'px';
           }
