@@ -2,6 +2,7 @@ import type { BlockDef, NodeViewFactory } from '../types';
 import { TextSelection } from 'prosemirror-state';
 import katex from 'katex';
 import 'katex/dist/katex.min.css';
+import { showMathPanel, hideMathPanel } from '../help-panel/latex';
 
 /**
  * mathBlock — 块级数学公式（独立 Block）
@@ -104,6 +105,14 @@ const mathBlockNodeView: NodeViewFactory = (initialNode, view, getPos) => {
     editorArea.style.display = 'block';
     renderLivePreview();
 
+    // 打开 LaTeX 参考面板
+    showMathPanel((latex: string) => {
+      const { state } = view;
+      const tr = state.tr.insertText(latex, state.selection.from);
+      view.dispatch(tr);
+      view.focus();
+    });
+
     // Focus and set cursor at end
     setTimeout(() => {
       const pos = getPos();
@@ -128,6 +137,7 @@ const mathBlockNodeView: NodeViewFactory = (initialNode, view, getPos) => {
     editorArea.style.display = 'none';
     rendered.style.display = '';
     renderRenderedView();
+    hideMathPanel();
   }
 
   // Click rendered view to enter edit mode
@@ -137,11 +147,12 @@ const mathBlockNodeView: NodeViewFactory = (initialNode, view, getPos) => {
     enterEditMode();
   });
 
-  // Click outside to exit edit mode
+  // Click outside to exit edit mode (exclude help panel)
   const onDocClick = (e: MouseEvent) => {
     if (!editing) return;
     const target = e.target as HTMLElement;
     if (dom.contains(target)) return;
+    if (target.closest('.help-panel')) return;
     exitEditMode();
   };
   document.addEventListener('mousedown', onDocClick);
