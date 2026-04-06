@@ -211,3 +211,73 @@
   font-size: 1em;
   color: var(--help-panel-text);
 }
+
+/* ─── Mermaid Panel Specifics ───────────────────────────── */
+
+.help-panel__item--mermaid {
+  display: flex;
+  flex-direction: column;
+}
+
+.help-panel__mermaid-label {
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--help-panel-text);
+  cursor: pointer;
+  border-bottom: 1px solid var(--help-panel-border);
+  transition: background 0.1s;
+}
+
+.help-panel__mermaid-label:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.help-panel__mermaid-preview {
+  padding: 8px;
+  min-height: 60px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.help-panel__mermaid-preview svg {
+  max-width: 100%;
+  max-height: 140px;
+  height: auto;
+}
+
+.help-panel__mermaid-loading,
+.help-panel__mermaid-error {
+  font-size: 11px;
+  color: var(--help-panel-text-secondary);
+  font-style: italic;
+}
+
+.help-panel__mermaid-detail {
+  padding: 8px 12px;
+  background: var(--help-panel-header-bg);
+  border-top: 1px solid var(--help-panel-border);
+}
+
+.help-panel__mermaid-code {
+  font-family: var(--help-panel-mono);
+  font-size: 11px;
+  color: var(--help-panel-code-color);
+  white-space: pre;
+  overflow-x: auto;
+  margin: 0 0 8px 0;
+  padding: 6px 0 !important;
+  background: none !important;
+  border: none !important;
+  border-radius: 0 !important;
+  word-break: normal;
+}
+
+.help-panel__mermaid-detail .help-panel__action-btn {
+  display: block;
+  width: 100%;
+  text-align: center;
+}

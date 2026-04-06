@@ -6,6 +6,7 @@ import { defaultKeymap, indentWithTab } from '@codemirror/commands';
 import { syntaxHighlighting, defaultHighlightStyle, HighlightStyle } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
 import { mermaidLanguage } from './mermaid-lang';
+import { showMermaidPanel, hideMermaidPanel } from '../help-panel/mermaid';
 
 /**
  * codeBlock — 代码块（RenderBlock）
@@ -292,6 +293,9 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
     preview.style.display = 'flex';
   }
 
+  /** 上一次 isMermaid 状态，用于检测 language 切换 */
+  let wasMermaid = node.attrs.language === 'mermaid';
+
   function updateToolbarVisibility() {
     const isMermaid = node.attrs.language === 'mermaid';
     dom.classList.toggle('code-block--mermaid', isMermaid);
@@ -299,8 +303,36 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
       insertMermaidBtns();
     } else {
       removeMermaidBtns();
+      // 只在从 mermaid 切走时关闭面板（避免其他 code-block 初始化时误关）
+      if (wasMermaid) {
+        hideMermaidPanel();
+      }
     }
+    wasMermaid = isMermaid;
   }
+
+  /** 打开 Mermaid 面板（点击进入 mermaid code-block 时调用） */
+  function openMermaidPanel() {
+    if (node.attrs.language !== 'mermaid') return;
+    showMermaidPanel((mermaidCode: string) => {
+      const pos = typeof getPos === 'function' ? getPos() : undefined;
+      if (pos == null) return;
+      const pmNode = view.state.doc.nodeAt(pos);
+      if (!pmNode) return;
+      const start = pos + 1;
+      const end = pos + pmNode.nodeSize - 1;
+      const tr = view.state.tr.insertText(mermaidCode, start, end);
+      view.dispatch(tr);
+      view.focus();
+    });
+  }
+
+  // 点击 code-block 时，如果是 mermaid 则打开面板
+  dom.addEventListener('mousedown', () => {
+    if (node.attrs.language === 'mermaid') {
+      openMermaidPanel();
+    }
+  });
 
   btnToggle.addEventListener('mousedown', (e) => {
     e.preventDefault(); e.stopPropagation();
@@ -937,7 +969,7 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
       updateToolbarVisibility();
 
       if (node.attrs.language === 'mermaid') {
-        if (langChanged) { updateViewMode(viewMode); renderMermaid(node.textContent); }
+        if (langChanged) { updateViewMode(viewMode); renderMermaid(node.textContent); openMermaidPanel(); }
         else scheduleRender();
       } else {
         preview.style.display = 'none';
@@ -948,6 +980,7 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
       observer.disconnect();
       document.removeEventListener('mousedown', closeDropdown);
       if (renderTimer) clearTimeout(renderTimer);
+      if (node.attrs.language === 'mermaid') hideMermaidPanel();
     },
   };
 };
