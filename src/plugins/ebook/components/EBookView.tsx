@@ -284,7 +284,7 @@ export function EBookView() {
         onFontSizeChange={(delta) => {
           if (renderer && isReflowable(renderer)) {
             const current = renderer.getFontSize();
-            const next = Math.max(12, Math.min(32, current + delta));
+            const next = Math.max(60, Math.min(200, current + delta));
             renderer.setFontSize(next);
           }
         }}

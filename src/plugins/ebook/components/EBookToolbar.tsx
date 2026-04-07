@@ -173,8 +173,8 @@ export function EBookToolbar({
       {/* Font size (reflowable only) */}
       {renderMode === 'reflowable' && (
         <div className="ebook-toolbar__section ebook-toolbar__section--right">
-          <button className="ebook-toolbar__btn" onClick={() => onFontSizeChange?.(-2)} title="缩小字体">A−</button>
-          <button className="ebook-toolbar__btn" onClick={() => onFontSizeChange?.(2)} title="放大字体">A+</button>
+          <button className="ebook-toolbar__btn" onClick={() => onFontSizeChange?.(-10)} title="缩小">A−</button>
+          <button className="ebook-toolbar__btn" onClick={() => onFontSizeChange?.(10)} title="放大">A+</button>
         </div>
       )}
 

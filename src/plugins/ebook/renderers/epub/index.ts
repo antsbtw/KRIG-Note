@@ -13,7 +13,7 @@ export class EPUBRenderer implements IReflowableRenderer {
   private view: any = null;
   private container: HTMLElement | null = null;
   private fileData: ArrayBuffer | null = null;
-  private fontSize = 20;
+  private fontSize = 100;  // 百分比缩放（100 = 100%）
   private currentProgress = { chapter: '', percentage: 0 };
   private tocItems: TOCItem[] = [];
 
@@ -63,8 +63,8 @@ export class EPUBRenderer implements IReflowableRenderer {
       // 显示第一节
       await this.view.init({ lastLocation: null, showTextStart: true });
 
-      // 应用字体大小
-      this.applyFontSize();
+      // 应用缩放
+      this.applyZoom();
 
       // 监听位置变化
       this.view.addEventListener('relocate', (e: any) => {
@@ -137,17 +137,13 @@ export class EPUBRenderer implements IReflowableRenderer {
 
   setFontSize(size: number): void {
     this.fontSize = size;
-    this.applyFontSize();
+    this.applyZoom();
   }
 
-  private applyFontSize(): void {
-    if (!this.view?.renderer?.setStyles) return;
-    this.view.renderer.setStyles(`
-      body, p, div, span, li, td, th, a, em, strong, blockquote, h1, h2, h3, h4, h5, h6 {
-        font-size: ${this.fontSize}px !important;
-        line-height: 1.6 !important;
-      }
-    `);
+  private applyZoom(): void {
+    if (!this.view) return;
+    // 使用 CSS zoom 整体缩放（文本+图片都会放大/缩小）
+    this.view.style.zoom = `${this.fontSize}%`;
   }
 
   getFontSize(): number {
