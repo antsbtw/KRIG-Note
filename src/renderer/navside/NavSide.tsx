@@ -425,6 +425,7 @@ export function NavSide() {
     // 不能把文件夹拖到自己的子文件夹
     if (dragItem.type === 'folder' && targetId !== 'root' && isDescendant(dragItem.id, targetId)) return;
     e.preventDefault();
+    e.stopPropagation();
     e.dataTransfer.dropEffect = 'move';
     setDropTargetId(targetId);
   }, [dragItem, isDescendant]);
@@ -437,6 +438,7 @@ export function NavSide() {
 
   const handleDrop = useCallback((e: React.DragEvent, targetFolderId: string | null) => {
     e.preventDefault();
+    e.stopPropagation();
     if (!dragItem) return;
 
     if (dragItem.type === 'note') {
@@ -498,10 +500,10 @@ export function NavSide() {
             onDoubleClick={() => startRename('folder', folder.id)}
             onContextMenu={(e) => handleContextMenu(e, 'folder', folder.id)}
             onMouseEnter={(e) => {
-              if (dropTargetId !== folder.id) e.currentTarget.style.background = '#2a2a2a';
+              if (!dragItem && dropTargetId !== folder.id) e.currentTarget.style.background = '#2a2a2a';
             }}
             onMouseLeave={(e) => {
-              if (dropTargetId !== folder.id) e.currentTarget.style.background = 'transparent';
+              if (!dragItem && dropTargetId !== folder.id) e.currentTarget.style.background = '';
             }}
             onDragOver={(e) => handleDragOver(e, folder.id)}
             onDragLeave={(e) => handleDragLeave(e, folder.id)}

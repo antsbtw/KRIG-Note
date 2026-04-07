@@ -251,13 +251,14 @@ export function EBookPanel({ activeBookId, initialExpandedFolders, onActiveBookC
   const handleDragEnd = useCallback(() => {
     setDragItem(null);
     setDropTargetId(null);
-  }, []);
+  }, [dropTargetId]);
 
   const handleDragOver = useCallback((e: React.DragEvent, targetId: string) => {
     if (!dragItem) return;
     if (dragItem.type === 'folder' && dragItem.id === targetId) return;
     if (dragItem.type === 'folder' && targetId !== 'root' && isDescendant(dragItem.id, targetId)) return;
     e.preventDefault();
+    e.stopPropagation(); // 阻止冒泡到根容器
     e.dataTransfer.dropEffect = 'move';
     setDropTargetId(targetId);
   }, [dragItem, isDescendant]);
@@ -270,6 +271,7 @@ export function EBookPanel({ activeBookId, initialExpandedFolders, onActiveBookC
 
   const handleDrop = useCallback((e: React.DragEvent, targetFolderId: string | null) => {
     e.preventDefault();
+    e.stopPropagation(); // 阻止冒泡到根目录容器
     if (!dragItem) return;
 
     if (dragItem.type === 'book') {
@@ -408,6 +410,7 @@ export function EBookPanel({ activeBookId, initialExpandedFolders, onActiveBookC
       const childCount = bookList.filter((b) => b.folderId === folder.id).length
         + folderList.filter((f) => f.parent_id === folder.id).length;
       const isDragging = dragItem?.type === 'folder' && dragItem.id === folder.id;
+      const isDropTarget = dropTargetId === folder.id;
 
       nodes.push(
         <div key={`f-${folder.id}`}>
@@ -418,18 +421,12 @@ export function EBookPanel({ activeBookId, initialExpandedFolders, onActiveBookC
             style={{
               ...styles.folderItem,
               paddingLeft: `${12 + depth * 16}px`,
-              ...(dropTargetId === folder.id ? styles.dropTarget : {}),
+              ...(isDropTarget ? styles.dropTarget : {}),
               ...(isDragging ? styles.dragging : {}),
             }}
             onClick={() => handleClickFolder(folder.id)}
             onDoubleClick={() => startRename('folder', folder.id)}
             onContextMenu={(e) => handleContextMenu(e, 'folder', folder.id)}
-            onMouseEnter={(e) => {
-              if (dropTargetId !== folder.id) (e.currentTarget as HTMLElement).style.background = '#2a2a2a';
-            }}
-            onMouseLeave={(e) => {
-              if (dropTargetId !== folder.id) (e.currentTarget as HTMLElement).style.background = 'transparent';
-            }}
             onDragOver={(e) => handleDragOver(e, folder.id)}
             onDragLeave={(e) => handleDragLeave(e, folder.id)}
             onDrop={(e) => handleDrop(e, folder.id)}
@@ -638,10 +635,9 @@ const styles: Record<string, React.CSSProperties> = {
     opacity: 0.35,
   },
   dropTarget: {
-    background: 'rgba(74, 158, 255, 0.25)',
+    background: '#264f78',
     borderLeft: '3px solid #4a9eff',
     borderRadius: '4px',
-    boxShadow: 'inset 0 0 0 1px rgba(74, 158, 255, 0.4)',
   },
   dropTargetRoot: {
     // 根目录拖放不需要高亮整个区域
