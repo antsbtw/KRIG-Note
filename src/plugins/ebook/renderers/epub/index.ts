@@ -13,7 +13,7 @@ export class EPUBRenderer implements IReflowableRenderer {
   private view: any = null;
   private container: HTMLElement | null = null;
   private fileData: ArrayBuffer | null = null;
-  private fontSize = 16;
+  private fontSize = 20;
   private currentProgress = { chapter: '', percentage: 0 };
   private tocItems: TOCItem[] = [];
 
@@ -51,9 +51,20 @@ export class EPUBRenderer implements IReflowableRenderer {
         { type: 'application/epub+zip' },
       );
 
-      // 打开 EPUB 并显示第一节
+      // 打开 EPUB
       await this.view.open(file);
+
+      // 设置单栏布局 + 默认字体大小
+      if (this.view.renderer) {
+        this.view.renderer.setAttribute('max-column-count', '1');
+        this.view.renderer.setAttribute('max-inline-size', '960');
+      }
+
+      // 显示第一节
       await this.view.init({ lastLocation: null, showTextStart: true });
+
+      // 应用字体大小
+      this.applyFontSize();
 
       // 监听位置变化
       this.view.addEventListener('relocate', (e: any) => {
@@ -126,10 +137,17 @@ export class EPUBRenderer implements IReflowableRenderer {
 
   setFontSize(size: number): void {
     this.fontSize = size;
-    // foliate-js 的样式注入
-    if (this.view?.renderer?.setStyles) {
-      this.view.renderer.setStyles(`* { font-size: ${size}px !important; }`);
-    }
+    this.applyFontSize();
+  }
+
+  private applyFontSize(): void {
+    if (!this.view?.renderer?.setStyles) return;
+    this.view.renderer.setStyles(`
+      body, p, div, span, li, td, th, a, em, strong, blockquote, h1, h2, h3, h4, h5, h6 {
+        font-size: ${this.fontSize}px !important;
+        line-height: 1.6 !important;
+      }
+    `);
   }
 
   getFontSize(): number {

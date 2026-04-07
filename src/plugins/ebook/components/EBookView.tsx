@@ -281,6 +281,13 @@ export function EBookView() {
         onNextChapter={() => {
           if (renderer && isReflowable(renderer)) renderer.nextChapter();
         }}
+        onFontSizeChange={(delta) => {
+          if (renderer && isReflowable(renderer)) {
+            const current = renderer.getFontSize();
+            const next = Math.max(12, Math.min(32, current + delta));
+            renderer.setFontSize(next);
+          }
+        }}
         isBookmarked={bookmarks.includes(currentPage)}
         onBookmarkToggle={() => {
           const bookId = bookIdRef.current;

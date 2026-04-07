@@ -20,6 +20,7 @@ interface EBookToolbarProps {
   onSidebarToggle: () => void;
   onPrevChapter?: () => void;
   onNextChapter?: () => void;
+  onFontSizeChange?: (delta: number) => void;
   isBookmarked?: boolean;
   onBookmarkToggle?: () => void;
 }
@@ -49,6 +50,7 @@ export function EBookToolbar({
   renderMode,
   onPrevChapter,
   onNextChapter,
+  onFontSizeChange,
   isBookmarked,
   onBookmarkToggle,
 }: EBookToolbarProps) {
@@ -165,6 +167,14 @@ export function EBookToolbar({
           <button className="ebook-toolbar__btn" onClick={onPrevChapter} title="上一章">‹</button>
           <span className="ebook-toolbar__page-info" style={{ margin: '0 8px' }}>章节</span>
           <button className="ebook-toolbar__btn" onClick={onNextChapter} title="下一章">›</button>
+        </div>
+      )}
+
+      {/* Font size (reflowable only) */}
+      {renderMode === 'reflowable' && (
+        <div className="ebook-toolbar__section ebook-toolbar__section--right">
+          <button className="ebook-toolbar__btn" onClick={() => onFontSizeChange?.(-2)} title="缩小字体">A−</button>
+          <button className="ebook-toolbar__btn" onClick={() => onFontSizeChange?.(2)} title="放大字体">A+</button>
         </div>
       )}
 
