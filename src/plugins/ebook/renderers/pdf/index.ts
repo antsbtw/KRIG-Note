@@ -52,6 +52,11 @@ export class PDFRenderer implements IFixedPageRenderer {
 
   destroy(): void {
     this.invalidateAll();
+    // 清理 text layers
+    for (const tl of this.textLayers.values()) {
+      try { tl.cancel(); } catch { /* ignore */ }
+    }
+    this.textLayers.clear();
     this.pageCache.clear();
     this.pageDims = [];
     if (this.doc) {
@@ -134,6 +139,7 @@ export class PDFRenderer implements IFixedPageRenderer {
   }
 
   async renderPage(pageNum: number, canvas: HTMLCanvasElement, scale: number): Promise<void> {
+    if (!this.doc) return; // 已 destroy，静默忽略
     return new Promise((resolve) => {
       // 去重
       const idx = this.queue.findIndex((t) => t.pageNum === pageNum);
@@ -163,6 +169,7 @@ export class PDFRenderer implements IFixedPageRenderer {
   private textLayers = new Map<number, TextLayer>();
 
   async renderTextLayer(pageNum: number, container: HTMLElement, scale: number): Promise<void> {
+    if (!this.doc) return; // 已 destroy，静默忽略
     if (!this.doc) return;
 
     // 清除旧的 text layer
@@ -238,6 +245,11 @@ export class PDFRenderer implements IFixedPageRenderer {
     this.rendering = true;
 
     while (this.queue.length > 0) {
+      if (!this.doc) { // 已 destroy，清空队列
+        this.queue.forEach((t) => t.resolve());
+        this.queue = [];
+        break;
+      }
       const task = this.queue.shift()!;
       const { pageNum, canvas, scale, resolve } = task;
 

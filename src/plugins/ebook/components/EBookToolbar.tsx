@@ -2,6 +2,8 @@ import { useState, useCallback, KeyboardEvent } from 'react';
 
 type AnnotationMode = 'off' | 'rect' | 'underline';
 
+type RenderMode = 'fixed-page' | 'reflowable';
+
 interface EBookToolbarProps {
   fileName: string;
   currentPage: number;
@@ -10,11 +12,14 @@ interface EBookToolbarProps {
   fitWidth: boolean;
   annotationMode: AnnotationMode;
   sidebarOpen: boolean;
+  renderMode: RenderMode;
   onPageChange: (page: number) => void;
   onScaleChange: (scale: number) => void;
   onFitWidthToggle: () => void;
   onAnnotationModeChange: (mode: AnnotationMode) => void;
   onSidebarToggle: () => void;
+  onPrevChapter?: () => void;
+  onNextChapter?: () => void;
   isBookmarked?: boolean;
   onBookmarkToggle?: () => void;
 }
@@ -41,6 +46,9 @@ export function EBookToolbar({
   onFitWidthToggle,
   onAnnotationModeChange,
   onSidebarToggle,
+  renderMode,
+  onPrevChapter,
+  onNextChapter,
   isBookmarked,
   onBookmarkToggle,
 }: EBookToolbarProps) {
@@ -107,7 +115,7 @@ export function EBookToolbar({
     <div className="ebook-toolbar">
       {/* Left: sidebar + file name */}
       <div className="ebook-toolbar__section ebook-toolbar__section--left">
-        {pageCount > 0 && (
+        {(pageCount > 0 || renderMode === 'reflowable') && (
           <button
             className={`ebook-toolbar__btn ${sidebarOpen ? 'ebook-toolbar__btn--active' : ''}`}
             onClick={onSidebarToggle}
@@ -121,8 +129,8 @@ export function EBookToolbar({
         )}
       </div>
 
-      {/* Center: page navigation */}
-      {pageCount > 0 && (
+      {/* Center: navigation (mode-dependent) */}
+      {renderMode === 'fixed-page' && pageCount > 0 && (
         <div className="ebook-toolbar__section ebook-toolbar__section--center">
           <button
             className="ebook-toolbar__btn"
@@ -152,8 +160,16 @@ export function EBookToolbar({
         </div>
       )}
 
-      {/* Annotation mode */}
-      {pageCount > 0 && (
+      {renderMode === 'reflowable' && (
+        <div className="ebook-toolbar__section ebook-toolbar__section--center">
+          <button className="ebook-toolbar__btn" onClick={onPrevChapter} title="上一章">‹</button>
+          <span className="ebook-toolbar__page-info" style={{ margin: '0 8px' }}>章节</span>
+          <button className="ebook-toolbar__btn" onClick={onNextChapter} title="下一章">›</button>
+        </div>
+      )}
+
+      {/* Annotation mode + bookmark (fixed-page only) */}
+      {renderMode === 'fixed-page' && pageCount > 0 && (
         <div className="ebook-toolbar__section" style={{ gap: 2 }}>
           <button
             className={`ebook-toolbar__btn ${annotationMode === 'rect' ? 'ebook-toolbar__btn--active' : ''}`}
@@ -180,8 +196,8 @@ export function EBookToolbar({
         </div>
       )}
 
-      {/* Right: zoom controls */}
-      {pageCount > 0 && (
+      {/* Right: zoom controls (fixed-page only) */}
+      {renderMode === 'fixed-page' && pageCount > 0 && (
         <div className="ebook-toolbar__section ebook-toolbar__section--right">
           <button className="ebook-toolbar__btn" onClick={handleZoomOut} title="Zoom out">
             −

@@ -269,11 +269,18 @@ export function EBookView() {
         fitWidth={fitWidth}
         annotationMode={annotationMode}
         sidebarOpen={sidebarOpen}
+        renderMode={renderer?.renderMode ?? 'fixed-page'}
         onPageChange={handlePageChange}
         onScaleChange={handleScaleChange}
         onFitWidthToggle={handleFitWidthToggle}
         onAnnotationModeChange={setAnnotationMode}
         onSidebarToggle={() => setSidebarOpen((p) => !p)}
+        onPrevChapter={() => {
+          if (renderer && isReflowable(renderer)) renderer.prevChapter();
+        }}
+        onNextChapter={() => {
+          if (renderer && isReflowable(renderer)) renderer.nextChapter();
+        }}
         isBookmarked={bookmarks.includes(currentPage)}
         onBookmarkToggle={() => {
           const bookId = bookIdRef.current;
