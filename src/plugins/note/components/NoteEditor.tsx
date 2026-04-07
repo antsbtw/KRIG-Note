@@ -13,10 +13,9 @@ import { noteTitleNodeView } from '../blocks/text-block';
 import { buildInputRules } from '../plugins/input-rules';
 import { containerKeyboardPlugin } from '../plugins/container-keyboard';
 import { slashCommandPlugin } from '../plugins/slash-command';
-import { noteLinkCommandPlugin } from '../plugins/note-link-command';
+import { linkClickPlugin, setCurrentNote } from '../plugins/link-click';
 import { tableKeymapPlugin } from '../blocks/table';
 import { SlashMenu } from './SlashMenu';
-import { NoteLinkSearch } from './NoteLinkSearch';
 import { FloatingToolbar } from './FloatingToolbar';
 import { HandleMenu } from './HandleMenu';
 import { ContextMenu } from './ContextMenu';
@@ -117,7 +116,7 @@ function buildPlugins(s: ReturnType<typeof getSchema>) {
     blockSelectionPlugin(),
     indentPlugin(),              // Tab/Shift+Tab — 在 baseKeymap 之前拦截
     slashCommandPlugin(),
-    noteLinkCommandPlugin(),
+    linkClickPlugin(),
     containerKeyboardPlugin(),
     ...blockPlugins,             // Block 专有键盘处理（codeBlock 等）— 在 baseKeymap 之前
     buildInputRules(s),
@@ -205,11 +204,13 @@ export function NoteEditor() {
         createEditor(docFromJSON(s, record.doc_content));
       }
       currentNoteIdRef.current = noteId;
+      setCurrentNote(noteId);
       viewAPI.setActiveNote(noteId, record?.title);
     } catch (err) {
       console.error('[NoteEditor] Failed to load note:', err);
       createEditor(createEmptyDoc(s));
       currentNoteIdRef.current = noteId;
+      setCurrentNote(noteId);
     }
   }, [createEditor]);
 
@@ -325,7 +326,6 @@ export function NoteEditor() {
     <div style={styles.container}>
       <div ref={editorRef} style={styles.editor} />
       <SlashMenu view={editorView} />
-      <NoteLinkSearch view={editorView} />
       <FloatingToolbar view={editorView} />
       <HandleMenu view={editorView} />
       <ContextMenu view={editorView} />

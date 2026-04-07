@@ -29,7 +29,6 @@ import { tweetBlockBlock } from './tweet-block';
 // ── Inline ──
 import { hardBreakBlock } from './hard-break';
 import { mathInlineBlock } from './math-inline';
-import { noteLinkBlock } from './note-link';
 
 // ── 特殊 ──
 import { horizontalRuleBlock } from './horizontal-rule';
@@ -77,7 +76,6 @@ export function registerAllBlocks(): void {
   // ── Inline ──
   blockRegistry.register(hardBreakBlock);
   blockRegistry.register(mathInlineBlock);
-  blockRegistry.register(noteLinkBlock);
 
   // ── 特殊 ──
   blockRegistry.register(horizontalRuleBlock);

@@ -1260,20 +1260,15 @@
 .math-inline-editor__preview .katex { font-size: 1.3em; color: #e8eaed; }
 .math-inline-editor__hint { color: #666; font-size: 12px; font-style: italic; }
 
-/* ── noteLink ── */
-.note-link {
-  display: inline;
-  padding: 2px 6px;
-  background: #2a2a2a;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 0.9em;
+/* ── link mark ── */
+.ProseMirror a[href] {
   color: #8ab4f8;
-  user-select: none;
+  text-decoration: none;
+  cursor: pointer;
 }
-.note-link:hover { background: #333; }
-.note-link--missing { color: #f28b82; text-decoration: line-through; }
-.note-link--missing:hover { background: #3a2020; }
+.ProseMirror a[href]:hover {
+  text-decoration: underline;
+}
 
 /* ── Block Selection ── */
 .block-selected {

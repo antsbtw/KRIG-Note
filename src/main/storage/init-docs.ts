@@ -194,12 +194,9 @@ function buildBlockTaskDocContent(allNotes: NoteListItem[]): unknown[] {
       const normalized = name.toLowerCase().replace(/[- ]/g, '');
       const match = nameToNote[normalized];
 
-      // 用 noteLink atom 节点链接到设计文档，后接普通文字
+      // 用 link mark 链接到设计文档
       const paraContent: unknown[] = match
-        ? [
-            { type: 'noteLink', attrs: { noteId: match.id, label: match.title } },
-            { type: 'text', text: ' 优化' },
-          ]
+        ? [{ type: 'text', text: `${name} 优化`, marks: [{ type: 'link', attrs: { href: `krig://note/${match.id}` } }] }]
         : [{ type: 'text', text: `${name} 优化` }];
 
       taskItems.push({
