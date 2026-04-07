@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, useCallback } from 'react';
+import { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import type { IFixedPageRenderer, PageDimension } from '../types';
 import { AnnotationLayer } from './AnnotationLayer';
 import type { Annotation } from './AnnotationLayer';
@@ -20,13 +20,14 @@ interface FixedPageContentProps {
 }
 
 const PAGE_GAP = 8;
-const BUFFER_PAGES = 1;
+const PADDING_TOP = 16;
+const DOM_BUFFER = 5; // 可见区域外多渲染 5 页的 DOM
 
 /**
  * FixedPageContent — 固定页面格式的连续滚动渲染器
  *
- * 通过 IFixedPageRenderer 接口渲染页面，不直接依赖任何格式的库。
- * 适用于 PDF、DjVu、CBZ 等固定页面格式。
+ * DOM 虚拟化：只创建可见区域 ± DOM_BUFFER 页的 DOM 元素，
+ * 其余用 spacer div 占位。大幅减少 DOM 节点数量。
  */
 export function FixedPageContent({ renderer, scale, initialPage, annotationMode = 'off', bookId, onPageChange, onScaleChange }: FixedPageContentProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -34,9 +35,7 @@ export function FixedPageContent({ renderer, scale, initialPage, annotationMode 
   const textLayerRefsRef = useRef<Map<number, HTMLDivElement>>(new Map());
   const [annotations, setAnnotations] = useState<any[]>([]);
   const [pageDimensions, setPageDimensions] = useState<PageDimension[]>([]);
-  const [visiblePages, setVisiblePages] = useState<Set<number>>(new Set());
-  const prevScaleRef = useRef(scale);
-  const observerRef = useRef<IntersectionObserver | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
   const totalPages = renderer.getTotalPages();
 
   // 加载页面尺寸
@@ -50,86 +49,107 @@ export function FixedPageContent({ renderer, scale, initialPage, annotationMode 
     viewAPI.ebookAnnotationList(bookId).then(setAnnotations);
   }, [bookId]);
 
-  // IntersectionObserver 检测可见页面
-  useEffect(() => {
-    if (!containerRef.current || pageDimensions.length === 0) return;
+  // 预计算每页的 Y 偏移（scale=1 下，乘以 scale 即可得到实际偏移）
+  const pageOffsets = useMemo(() => {
+    const offsets: number[] = [];
+    let y = PADDING_TOP;
+    for (const dim of pageDimensions) {
+      offsets.push(y);
+      y += dim.height + PAGE_GAP;
+    }
+    return offsets;
+  }, [pageDimensions]);
 
+  // 总高度
+  const totalHeight = useMemo(() => {
+    if (pageDimensions.length === 0) return 0;
+    const last = pageOffsets[pageOffsets.length - 1];
+    const lastH = pageDimensions[pageDimensions.length - 1].height;
+    return (last + lastH + PADDING_TOP) * scale;
+  }, [pageDimensions, pageOffsets, scale]);
+
+  // 根据 scrollTop 计算当前可见页范围
+  const getVisibleRange = useCallback(() => {
     const container = containerRef.current;
-    const visible = new Set<number>();
+    if (!container || pageDimensions.length === 0) return { first: 1, last: 1 };
 
-    // 延迟到下一帧，确保 page wrapper DOM 已渲染
-    const raf = requestAnimationFrame(() => {
-      observerRef.current = new IntersectionObserver(
-        (entries) => {
-          let changed = false;
-          for (const entry of entries) {
-            const pageNum = parseInt(entry.target.getAttribute('data-page') || '0', 10);
-            if (pageNum === 0) continue;
+    const scrollTop = container.scrollTop / scale;
+    const viewHeight = container.clientHeight / scale;
+    const scrollBottom = scrollTop + viewHeight;
 
-            if (entry.isIntersecting) {
-              if (!visible.has(pageNum)) { visible.add(pageNum); changed = true; }
-            } else {
-              if (visible.has(pageNum)) { visible.delete(pageNum); changed = true; }
-            }
-          }
-          if (changed) {
-            setVisiblePages(new Set(visible));
-            if (visible.size > 0) {
-              const sorted = Array.from(visible).sort((a, b) => a - b);
-              onPageChange(sorted[0]);
-            }
-          }
-        },
-        {
-          root: container,
-          rootMargin: '200px 0px',
-          threshold: 0.1,
-        },
-      );
+    let first = 1;
+    let last = 1;
 
-      const wrappers = container.querySelectorAll('[data-page]');
-      wrappers.forEach((el) => observerRef.current!.observe(el));
-    });
+    // 二分查找第一个可见页
+    let lo = 0, hi = pageDimensions.length - 1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      const pageBottom = pageOffsets[mid] + pageDimensions[mid].height;
+      if (pageBottom < scrollTop) lo = mid + 1;
+      else hi = mid - 1;
+    }
+    first = lo + 1; // 转为 1-based
+
+    // 找最后一个可见页
+    for (let i = lo; i < pageDimensions.length; i++) {
+      if (pageOffsets[i] > scrollBottom) break;
+      last = i + 1;
+    }
+
+    return { first: Math.max(1, first), last: Math.min(totalPages, last) };
+  }, [pageDimensions, pageOffsets, scale, totalPages]);
+
+  // 滚动事件 → 更新当前页 + 触发渲染
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || pageDimensions.length === 0) return;
+
+    let rafId = 0;
+    const onScroll = () => {
+      cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        const { first } = getVisibleRange();
+        setCurrentPage(first);
+        onPageChange(first);
+      });
+    };
+
+    container.addEventListener('scroll', onScroll, { passive: true });
+    // 初始触发
+    onScroll();
 
     return () => {
-      cancelAnimationFrame(raf);
-      observerRef.current?.disconnect();
-      observerRef.current = null;
+      container.removeEventListener('scroll', onScroll);
+      cancelAnimationFrame(rafId);
     };
-  }, [pageDimensions, onPageChange]);
+  }, [pageDimensions, getVisibleRange, onPageChange]);
 
-  // Scale 变化时重新渲染
-  useEffect(() => {
-    if (prevScaleRef.current !== scale) {
-      prevScaleRef.current = scale;
-      renderer.invalidateAll();
-      setVisiblePages((prev) => new Set(prev));
-    }
-  }, [scale, renderer]);
+  // 计算 DOM 渲染范围（可见页 ± DOM_BUFFER）
+  const domRange = useMemo(() => {
+    const first = Math.max(1, currentPage - DOM_BUFFER);
+    const last = Math.min(totalPages, currentPage + DOM_BUFFER + Math.ceil((containerRef.current?.clientHeight ?? 800) / ((pageDimensions[0]?.height ?? 800) * scale)));
+    return { first, last };
+  }, [currentPage, totalPages, pageDimensions, scale]);
 
-  // 渲染可见页面 + buffer
+  // 渲染可见页面的 canvas + textLayer
   useEffect(() => {
     if (pageDimensions.length === 0) return;
 
-    const toRender = new Set<number>();
-    for (const p of visiblePages) {
-      for (let i = p - BUFFER_PAGES; i <= p + BUFFER_PAGES; i++) {
-        if (i >= 1 && i <= totalPages) toRender.add(i);
-      }
-    }
+    const { first, last } = getVisibleRange();
+    const renderFirst = Math.max(1, first - 1);
+    const renderLast = Math.min(totalPages, last + 1);
 
-    for (const pageNum of toRender) {
+    for (let pageNum = renderFirst; pageNum <= renderLast; pageNum++) {
       const canvas = pageRefsRef.current.get(pageNum);
       if (canvas) {
         renderer.renderPage(pageNum, canvas, scale);
       }
-      // 渲染文本覆盖层
       const textDiv = textLayerRefsRef.current.get(pageNum);
       if (textDiv) {
         renderer.renderTextLayer(pageNum, textDiv, scale);
       }
     }
-  }, [visiblePages, scale, pageDimensions, totalPages, renderer]);
+  }, [currentPage, scale, pageDimensions, totalPages, renderer, getVisibleRange]);
 
   // 标注操作
   const handleAnnotationCreate = useCallback(async (pageNum: number, ann: Omit<Annotation, 'id'>) => {
@@ -147,22 +167,16 @@ export function FixedPageContent({ renderer, scale, initialPage, annotationMode 
   // 滚动到指定页
   const scrollToPage = useCallback((pageNum: number) => {
     const container = containerRef.current;
-    if (!container || pageDimensions.length === 0) return;
-
-    let top = 16;
-    for (let i = 0; i < pageNum - 1; i++) {
-      top += pageDimensions[i].height * scale + PAGE_GAP;
-    }
-
-    container.scrollTo({ top, behavior: 'smooth' });
-  }, [pageDimensions, scale]);
+    if (!container || pageOffsets.length === 0) return;
+    const idx = Math.max(0, Math.min(pageNum - 1, pageOffsets.length - 1));
+    container.scrollTo({ top: pageOffsets[idx] * scale, behavior: 'smooth' });
+  }, [pageOffsets, scale]);
 
   // 恢复阅读位置（首次加载时）
   const restoredRef = useRef(false);
   useEffect(() => {
     if (restoredRef.current || !initialPage || pageDimensions.length === 0) return;
     restoredRef.current = true;
-    // 延迟到渲染完成后滚动
     requestAnimationFrame(() => scrollToPage(initialPage));
   }, [initialPage, pageDimensions, scrollToPage]);
 
@@ -215,11 +229,24 @@ export function FixedPageContent({ renderer, scale, initialPage, annotationMode 
     return <div className="ebook-loading">Preparing pages...</div>;
   }
 
+  // 计算 spacer 高度
+  const topSpacerHeight = domRange.first > 1
+    ? pageOffsets[domRange.first - 1] * scale
+    : 0;
+
+  const bottomSpacerStart = domRange.last < totalPages
+    ? (pageOffsets[domRange.last] + pageDimensions[domRange.last].height) * scale + PAGE_GAP
+    : totalHeight;
+
   return (
     <div className="ebook-content" ref={containerRef}>
-      <div className="ebook-content__pages">
-        {pageDimensions.map((dim, i) => {
-          const pageNum = i + 1;
+      <div className="ebook-content__pages" style={{ minHeight: totalHeight }}>
+        {/* 顶部占位 */}
+        {topSpacerHeight > 0 && <div style={{ height: topSpacerHeight, flexShrink: 0 }} />}
+
+        {/* 只渲染 domRange 范围内的页面 */}
+        {pageDimensions.slice(domRange.first - 1, domRange.last).map((dim, idx) => {
+          const pageNum = domRange.first + idx;
           const w = Math.floor(dim.width * scale);
           const h = Math.floor(dim.height * scale);
 
@@ -256,6 +283,11 @@ export function FixedPageContent({ renderer, scale, initialPage, annotationMode 
             </div>
           );
         })}
+
+        {/* 底部占位 */}
+        {bottomSpacerStart < totalHeight && (
+          <div style={{ height: totalHeight - bottomSpacerStart, flexShrink: 0 }} />
+        )}
       </div>
     </div>
   );
