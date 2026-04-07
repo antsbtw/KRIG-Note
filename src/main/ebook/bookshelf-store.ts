@@ -26,6 +26,8 @@ export interface EBookEntry {
   addedAt: number;
   lastOpenedAt: number;
   lastPage?: number;
+  lastScale?: number;
+  lastFitWidth?: boolean;
 }
 
 export interface EBookFolder {
@@ -171,10 +173,15 @@ class BookshelfStore {
     if (entry) { entry.lastOpenedAt = Date.now(); this.save(); }
   }
 
-  updateProgress(id: string, lastPage: number): void {
+  updateProgress(id: string, lastPage: number, lastScale?: number, lastFitWidth?: boolean): void {
     this.load();
     const entry = this.data.entries.find((e) => e.id === id);
-    if (entry) { entry.lastPage = lastPage; this.save(); }
+    if (entry) {
+      entry.lastPage = lastPage;
+      if (lastScale !== undefined) entry.lastScale = lastScale;
+      if (lastFitWidth !== undefined) entry.lastFitWidth = lastFitWidth;
+      this.save();
+    }
   }
 
   async checkExists(id: string): Promise<boolean> {

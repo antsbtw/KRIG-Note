@@ -252,6 +252,7 @@ export const IPC = {
   // eBook Workspace 状态同步
   EBOOK_SET_ACTIVE_BOOK: 'ebook:set-active-book',
   EBOOK_SAVE_PROGRESS: 'ebook:save-progress',
+  EBOOK_RESTORE: 'ebook:restore',             // EBookView 请求恢复上次打开的书
 
   // yt-dlp
   YTDLP_CHECK_STATUS: 'ytdlp:check-status',

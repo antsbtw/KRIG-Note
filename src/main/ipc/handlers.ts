@@ -383,6 +383,8 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
       fileName: entry.displayName,
       fileType: entry.fileType,
       lastPage: entry.lastPage,
+      lastScale: entry.lastScale,
+      lastFitWidth: entry.lastFitWidth,
     });
     broadcastBookshelfChanged(getMainWindow());
 
@@ -441,6 +443,28 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
     closeEBook();
   });
 
+  // EBookView 启动时请求恢复上次打开的电子书
+  ipcMain.handle(IPC.EBOOK_RESTORE, async () => {
+    const active = workspaceManager.getActive();
+    if (!active?.activeBookId) return null;
+
+    const entry = bookshelfStore.get(active.activeBookId);
+    if (!entry) return null;
+
+    const exists = await bookshelfStore.checkExists(entry.id);
+    if (!exists) return null;
+
+    await loadEBook(entry.filePath);
+    return {
+      bookId: entry.id,
+      fileName: entry.displayName,
+      fileType: entry.fileType,
+      lastPage: entry.lastPage,
+      lastScale: entry.lastScale,
+      lastFitWidth: entry.lastFitWidth,
+    };
+  });
+
   // EBookView 报告当前打开的电子书
   ipcMain.handle(IPC.EBOOK_SET_ACTIVE_BOOK, (_event, bookId: string | null) => {
     const active = workspaceManager.getActive();
@@ -451,8 +475,8 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
   });
 
   // EBookView 保存阅读进度
-  ipcMain.handle(IPC.EBOOK_SAVE_PROGRESS, (_event, bookId: string, page: number) => {
-    bookshelfStore.updateProgress(bookId, page);
+  ipcMain.handle(IPC.EBOOK_SAVE_PROGRESS, (_event, bookId: string, page: number, scale?: number, fitWidth?: boolean) => {
+    bookshelfStore.updateProgress(bookId, page, scale, fitWidth);
   });
 
   // ── 文件保存对话框 ──
@@ -845,7 +869,10 @@ function broadcastBookshelfChanged(mainWindow: BaseWindow | null): void {
 }
 
 /** 通知 EBookView 文件已加载 */
-function broadcastEBookLoaded(mainWindow: BaseWindow | null, info: { bookId: string; fileName: string; fileType: string; lastPage?: number }): void {
+function broadcastEBookLoaded(mainWindow: BaseWindow | null, info: {
+  bookId: string; fileName: string; fileType: string;
+  lastPage?: number; lastScale?: number; lastFitWidth?: boolean;
+}): void {
   if (!mainWindow) return;
   for (const view of mainWindow.contentView.children) {
     if ('webContents' in view) {

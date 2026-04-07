@@ -94,10 +94,11 @@ contextBridge.exposeInMainWorld('viewAPI', {
   ebookGetData: () => ipcRenderer.invoke(IPC.EBOOK_GET_DATA),
   ebookClose: () => ipcRenderer.invoke(IPC.EBOOK_CLOSE),
 
+  ebookRestore: () => ipcRenderer.invoke(IPC.EBOOK_RESTORE),
   ebookSetActiveBook: (bookId: string | null) =>
     ipcRenderer.invoke(IPC.EBOOK_SET_ACTIVE_BOOK, bookId),
-  ebookSaveProgress: (bookId: string, page: number) =>
-    ipcRenderer.invoke(IPC.EBOOK_SAVE_PROGRESS, bookId, page),
+  ebookSaveProgress: (bookId: string, page: number, scale?: number, fitWidth?: boolean) =>
+    ipcRenderer.invoke(IPC.EBOOK_SAVE_PROGRESS, bookId, page, scale, fitWidth),
 
   onEbookLoaded: (callback: (info: { fileName: string; fileType: string }) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, info: { fileName: string; fileType: string }) => callback(info);
