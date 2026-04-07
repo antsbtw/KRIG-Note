@@ -636,7 +636,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   dropTarget: {
     background: '#264f78',
-    borderLeft: '3px solid #4a9eff',
+    boxShadow: 'inset 3px 0 0 #4a9eff',
     borderRadius: '4px',
   },
   dropTargetRoot: {

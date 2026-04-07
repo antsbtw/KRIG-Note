@@ -1011,10 +1011,9 @@ const styles: Record<string, React.CSSProperties> = {
     opacity: 0.35,
   },
   dropTarget: {
-    background: 'rgba(74, 158, 255, 0.25)',
-    borderLeft: '3px solid #4a9eff',
+    background: '#264f78',
+    boxShadow: 'inset 3px 0 0 #4a9eff',
     borderRadius: '4px',
-    boxShadow: 'inset 0 0 0 1px rgba(74, 158, 255, 0.4)',
   },
   dropTargetRoot: {
     // 根目录拖放不需要高亮整个区域
