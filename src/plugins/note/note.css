@@ -24,7 +24,7 @@
   margin-bottom: 1.2em;
 }
 .ProseMirror .note-title__content {
-  font-size: 40px !important;
+  font-size: 48px !important;
   font-weight: 700;
   color: #e8eaed;
   line-height: 1.2;
@@ -39,9 +39,9 @@
 }
 
 /* ── Heading ── */
-.ProseMirror h1 { font-size: 30px; font-weight: 700; margin: 1px 0; padding: 3px 2px; }
-.ProseMirror h2 { font-size: 24px; font-weight: 600; margin: 1px 0; padding: 3px 2px; }
-.ProseMirror h3 { font-size: 20px; font-weight: 600; margin: 1px 0; padding: 3px 2px; }
+.ProseMirror h1 { font-size: 40px; font-weight: 700; margin: 1px 0; padding: 3px 2px; }
+.ProseMirror h2 { font-size: 30px; font-weight: 600; margin: 1px 0; padding: 3px 2px; }
+.ProseMirror h3 { font-size: 24px; font-weight: 600; margin: 1px 0; padding: 3px 2px; }
 
 /* ── Inline marks ── */
 .ProseMirror code {

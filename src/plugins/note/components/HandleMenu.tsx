@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type { EditorView } from 'prosemirror-view';
 import { TextSelection } from 'prosemirror-state';
 import { blockRegistry } from '../registry';
@@ -6,7 +6,9 @@ import { blockRegistry } from '../registry';
 /**
  * HandleMenu — 手柄点击后的操作菜单
  *
- * 转换成 / 删除
+ * 一级菜单：Turn Into / Color / Copy / Delete
+ * Turn Into → 二级子菜单（文本类 block 转换）
+ * Color → 二级子菜单（文字颜色 + 背景颜色）
  */
 
 interface HandleMenuProps {
@@ -19,8 +21,60 @@ interface MenuState {
   coords: { left: number; top: number };
 }
 
+type SubMenu = 'turnInto' | 'color' | null;
+
+// ── 颜色定义（复用 ColorPicker） ──
+
+const TEXT_COLORS = [
+  { name: 'Default', color: '' },
+  { name: 'Gray', color: '#9aa0a6' },
+  { name: 'Brown', color: '#a67c52' },
+  { name: 'Orange', color: '#f29900' },
+  { name: 'Yellow', color: '#f5c518' },
+  { name: 'Green', color: '#34a853' },
+  { name: 'Blue', color: '#8ab4f8' },
+  { name: 'Purple', color: '#c58af9' },
+  { name: 'Pink', color: '#f48fb1' },
+  { name: 'Red', color: '#ea4335' },
+];
+
+const BG_COLORS = [
+  { name: 'Default', color: '' },
+  { name: 'Gray', color: 'rgba(154, 160, 166, 0.2)' },
+  { name: 'Brown', color: 'rgba(166, 124, 82, 0.2)' },
+  { name: 'Orange', color: 'rgba(242, 153, 0, 0.2)' },
+  { name: 'Yellow', color: 'rgba(245, 197, 24, 0.2)' },
+  { name: 'Green', color: 'rgba(52, 168, 83, 0.2)' },
+  { name: 'Blue', color: 'rgba(138, 180, 248, 0.2)' },
+  { name: 'Purple', color: 'rgba(197, 138, 249, 0.2)' },
+  { name: 'Pink', color: 'rgba(244, 143, 177, 0.2)' },
+  { name: 'Red', color: 'rgba(234, 67, 53, 0.2)' },
+];
+
+// Turn Into 排除的 group（媒体类不适合转换）
+const EXCLUDED_GROUPS = new Set(['media']);
+// Turn Into 排除的 block（column 变体、mermaid 等不适合从手柄转换）
+const EXCLUDED_IDS = new Set(['column3', 'mermaid', 'mathInline']);
+
+/** 获取 Turn Into 可用的目标列表 */
+function getTurnIntoItems() {
+  return blockRegistry.getSlashItems()
+    .filter(item => !EXCLUDED_GROUPS.has(item.group) && !EXCLUDED_IDS.has(item.id))
+    .sort((a, b) => {
+      // basic 优先，然后 layout，然后其他
+      const groupOrder: Record<string, number> = { basic: 0, layout: 1, code: 2 };
+      const ga = groupOrder[a.group] ?? 99;
+      const gb = groupOrder[b.group] ?? 99;
+      if (ga !== gb) return ga - gb;
+      return a.order - b.order;
+    });
+}
+
 export function HandleMenu({ view }: HandleMenuProps) {
   const [menu, setMenu] = useState<MenuState | null>(null);
+  const [subMenu, setSubMenu] = useState<SubMenu>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const subMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!view) return;
@@ -29,17 +83,18 @@ export function HandleMenu({ view }: HandleMenuProps) {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail;
       setMenu({ pos: detail.pos, blockType: detail.blockType, coords: detail.coords });
+      setSubMenu(null);
 
-      // 移除旧的关闭监听
       if (closeListener) document.removeEventListener('mousedown', closeListener);
 
-      // 下一帧注册：点击菜单外任何地方关闭
       setTimeout(() => {
         closeListener = (me: MouseEvent) => {
-          // 如果点击在菜单内，不关闭
           const menuEl = document.querySelector('.handle-menu');
+          const subEl = document.querySelector('.handle-submenu');
           if (menuEl?.contains(me.target as Node)) return;
+          if (subEl?.contains(me.target as Node)) return;
           setMenu(null);
+          setSubMenu(null);
           if (closeListener) document.removeEventListener('mousedown', closeListener);
           closeListener = null;
         };
@@ -56,7 +111,9 @@ export function HandleMenu({ view }: HandleMenuProps) {
 
   if (!menu || !view) return null;
 
-  const close = () => setMenu(null);
+  const close = () => { setMenu(null); setSubMenu(null); };
+
+  // ── 操作函数 ──
 
   const deleteBlock = () => {
     const node = view.state.doc.nodeAt(menu.pos);
@@ -66,81 +123,292 @@ export function HandleMenu({ view }: HandleMenuProps) {
     close();
   };
 
-  const setLevel = (level: number | null) => {
+  const copyBlock = () => {
     const node = view.state.doc.nodeAt(menu.pos);
-    if (node?.type.name === 'textBlock') {
-      view.dispatch(view.state.tr.setNodeMarkup(menu.pos, undefined, { ...node.attrs, level }));
+    if (node) {
+      const text = node.textContent;
+      if (text) navigator.clipboard.writeText(text);
     }
     close();
   };
 
-  /** RenderBlock → textBlock: 保留文本内容 */
-  const turnIntoTextBlock = () => {
+  /** Turn Into: 把当前 block 转换为目标类型 */
+  const turnInto = (item: { blockName: string; attrs?: Record<string, unknown> }) => {
     const node = view.state.doc.nodeAt(menu.pos);
-    if (!node) return;
-    const text = node.textContent;
+    if (!node) { close(); return; }
     const schema = view.state.schema;
-    const newBlock = text
-      ? schema.nodes.textBlock.create(null, schema.text(text))
-      : schema.nodes.textBlock.create();
-    const tr = view.state.tr.replaceWith(menu.pos, menu.pos + node.nodeSize, newBlock);
-    tr.setSelection(TextSelection.create(tr.doc, menu.pos + 1));
-    view.dispatch(tr);
+
+    // textBlock → textBlock（改 level）
+    if (item.blockName === 'textBlock' && node.type.name === 'textBlock') {
+      const level = item.attrs?.level ?? null;
+      view.dispatch(view.state.tr.setNodeMarkup(menu.pos, undefined, { ...node.attrs, level }));
+      close();
+      return;
+    }
+
+    // textBlock（含 heading）→ 其他类型
+    // 或 其他类型 → textBlock
+    const nodeType = schema.nodes[item.blockName];
+    if (!nodeType) { close(); return; }
+
+    const blockDef = blockRegistry.get(item.blockName);
+    const isContainer = blockDef?.containerRule !== undefined;
+    const contentExpr = blockDef?.nodeSpec.content || '';
+    const hasBlockContent = contentExpr.includes('block') || contentExpr.includes('Block');
+    const isAtom = blockDef?.nodeSpec.atom;
+
+    let newNode;
+
+    if (item.blockName === 'textBlock') {
+      // → textBlock: 保留文本内容
+      const text = node.textContent;
+      newNode = text
+        ? schema.nodes.textBlock.create(item.attrs ?? null, schema.text(text))
+        : schema.nodes.textBlock.create(item.attrs ?? null);
+    } else if (item.blockName === 'taskList') {
+      const nowISO = new Date().toISOString();
+      const text = node.textContent;
+      const inner = text
+        ? schema.nodes.textBlock.create(null, schema.text(text))
+        : schema.nodes.textBlock.create();
+      const taskItem = schema.nodes.taskItem.create({ createdAt: nowISO }, [inner]);
+      newNode = nodeType.create(null, [taskItem]);
+    } else if (item.blockName === 'table') {
+      const cell = () => schema.nodes.tableCell.create(null, [schema.nodes.textBlock.create()]);
+      const header = () => schema.nodes.tableHeader.create(null, [schema.nodes.textBlock.create()]);
+      newNode = nodeType.create(null, [
+        schema.nodes.tableRow.create(null, [header(), header(), header()]),
+        schema.nodes.tableRow.create(null, [cell(), cell(), cell()]),
+        schema.nodes.tableRow.create(null, [cell(), cell(), cell()]),
+      ]);
+    } else if (item.blockName === 'columnList') {
+      const colCount = (item.attrs?.columns as number) || 2;
+      const columns = [];
+      const text = node.textContent;
+      const firstContent = text
+        ? [schema.nodes.textBlock.create(null, schema.text(text))]
+        : [schema.nodes.textBlock.create()];
+      columns.push(schema.nodes.column.create(null, firstContent));
+      for (let i = 1; i < colCount; i++) {
+        columns.push(schema.nodes.column.create(null, [schema.nodes.textBlock.create()]));
+      }
+      newNode = nodeType.create({ columns: colCount }, columns);
+    } else if (nodeType.spec.content === 'text*' || item.blockName === 'codeBlock') {
+      // codeBlock: 保留文本
+      const text = node.textContent;
+      newNode = text
+        ? nodeType.create(item.attrs ?? null, schema.text(text))
+        : nodeType.create(item.attrs ?? null);
+    } else if (isAtom) {
+      newNode = nodeType.create(item.attrs ?? null);
+    } else if (isContainer || hasBlockContent) {
+      const text = node.textContent;
+      const inner = text
+        ? schema.nodes.textBlock.create(null, schema.text(text))
+        : schema.nodes.textBlock.create();
+      newNode = nodeType.create(item.attrs ?? null, [inner]);
+    } else {
+      newNode = nodeType.create(item.attrs ?? null);
+    }
+
+    if (newNode) {
+      const tr = view.state.tr.replaceWith(menu.pos, menu.pos + node.nodeSize, newNode);
+      try {
+        tr.setSelection(TextSelection.near(tr.doc.resolve(menu.pos + 1)));
+      } catch {
+        try { tr.setSelection(TextSelection.near(tr.doc.resolve(menu.pos + 2))); } catch { /* ok */ }
+      }
+      view.dispatch(tr);
+    }
     close();
   };
 
-  // 查询当前 block 的 capabilities
-  const blockDef = blockRegistry.get(menu.blockType);
-  const canTurnInto = blockDef?.capabilities?.turnInto ?? [];
-  const showTurnInto = menu.blockType !== 'textBlock' && canTurnInto.length > 0;
+  /** Color: 给整个 block 的文字设颜色 */
+  const applyTextColor = (color: string) => {
+    const node = view.state.doc.nodeAt(menu.pos);
+    if (!node) return;
+    const from = menu.pos + 1;
+    const to = menu.pos + node.nodeSize - 1;
+    if (from >= to) return;
+    const tr = view.state.tr;
+    if (!color) {
+      tr.removeMark(from, to, view.state.schema.marks.textStyle);
+    } else {
+      tr.addMark(from, to, view.state.schema.marks.textStyle.create({ color }));
+    }
+    view.dispatch(tr);
+  };
+
+  const applyBgColor = (color: string) => {
+    const node = view.state.doc.nodeAt(menu.pos);
+    if (!node) return;
+    const from = menu.pos + 1;
+    const to = menu.pos + node.nodeSize - 1;
+    if (from >= to) return;
+    const tr = view.state.tr;
+    if (!color) {
+      tr.removeMark(from, to, view.state.schema.marks.highlight);
+    } else {
+      tr.addMark(from, to, view.state.schema.marks.highlight.create({ color }));
+    }
+    view.dispatch(tr);
+  };
+
+  // ── 子菜单位置 ──
+  const getSubMenuStyle = (): React.CSSProperties => {
+    const base: React.CSSProperties = {
+      position: 'fixed',
+      zIndex: 1001,
+      background: '#2a2a2a',
+      border: '1px solid #444',
+      borderRadius: '8px',
+      padding: '4px',
+      boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+    };
+    // 子菜单出现在主菜单右侧
+    if (menuRef.current) {
+      const rect = menuRef.current.getBoundingClientRect();
+      base.left = rect.right + 4;
+      base.top = rect.top;
+    }
+    return base;
+  };
+
+  // ── Turn Into 子菜单 ──
+  const turnIntoItems = getTurnIntoItems();
+
+  // 按 group 分组，插入分隔线
+  const renderTurnIntoItems = () => {
+    const result: React.ReactElement[] = [];
+    let lastGroup = '';
+    for (const item of turnIntoItems) {
+      if (lastGroup && item.group !== lastGroup) {
+        result.push(<div key={`sep-${item.id}`} style={styles.separator} />);
+      }
+      lastGroup = item.group;
+      result.push(
+        <div
+          key={item.id}
+          style={styles.item}
+          onMouseDown={(e) => { e.preventDefault(); turnInto(item); }}
+          onMouseEnter={(e) => (e.currentTarget.style.background = '#3a3a3a')}
+          onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+        >
+          <span style={styles.icon}>{item.icon}</span>
+          <span>{item.label}</span>
+        </div>,
+      );
+    }
+    return result;
+  };
+
+  // ── 渲染 ──
 
   return (
-    <div className="handle-menu" style={{ ...styles.container, left: menu.coords.left, top: menu.coords.top }} onMouseDown={(e) => e.stopPropagation()}>
-      {menu.blockType === 'textBlock' && (
-        <>
-          {[
-            { icon: 'T', label: '文本', action: () => setLevel(null) },
-            { icon: 'H1', label: '标题 1', action: () => setLevel(1) },
-            { icon: 'H2', label: '标题 2', action: () => setLevel(2) },
-            { icon: 'H3', label: '标题 3', action: () => setLevel(3) },
-          ].map((item) => (
-            <div
-              key={item.icon}
-              style={styles.item}
-              onMouseDown={(e) => { e.preventDefault(); item.action(); }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = '#3a3a3a')}
-              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-            >
-              <span style={styles.icon}>{item.icon}</span><span>{item.label}</span>
-            </div>
-          ))}
-          <div style={styles.separator} />
-        </>
-      )}
-      {showTurnInto && (
-        <>
-          {canTurnInto.includes('textBlock') && (
-            <div
-              style={styles.item}
-              onMouseDown={(e) => { e.preventDefault(); turnIntoTextBlock(); }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = '#3a3a3a')}
-              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-            >
-              <span style={styles.icon}>T</span><span>转为文本</span>
-            </div>
-          )}
-          <div style={styles.separator} />
-        </>
-      )}
+    <>
+      {/* 一级菜单 */}
       <div
-        style={styles.item}
-        onMouseDown={(e) => { e.preventDefault(); deleteBlock(); }}
-        onMouseEnter={(e) => (e.currentTarget.style.background = '#3a3a3a')}
-        onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+        ref={menuRef}
+        className="handle-menu"
+        style={{ ...styles.container, left: menu.coords.left, top: menu.coords.top }}
+        onMouseDown={(e) => e.stopPropagation()}
       >
-        <span style={styles.icon}>🗑</span><span>删除</span>
+        {/* Turn Into */}
+        <div
+          style={styles.item}
+          onMouseEnter={(e) => { e.currentTarget.style.background = '#3a3a3a'; setSubMenu('turnInto'); }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+        >
+          <span style={styles.icon}>↔</span>
+          <span style={{ flex: 1 }}>Turn Into</span>
+          <span style={styles.arrow}>▸</span>
+        </div>
+
+        {/* Color */}
+        <div
+          style={styles.item}
+          onMouseEnter={(e) => { e.currentTarget.style.background = '#3a3a3a'; setSubMenu('color'); }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+        >
+          <span style={styles.icon}>🎨</span>
+          <span style={{ flex: 1 }}>Color</span>
+          <span style={styles.arrow}>▸</span>
+        </div>
+
+        <div style={styles.separator} />
+
+        {/* Copy */}
+        <div
+          style={styles.item}
+          onMouseDown={(e) => { e.preventDefault(); copyBlock(); }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = '#3a3a3a'; setSubMenu(null); }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+        >
+          <span style={styles.icon}>📋</span>
+          <span>Copy</span>
+        </div>
+
+        {/* Delete */}
+        <div
+          style={styles.item}
+          onMouseDown={(e) => { e.preventDefault(); deleteBlock(); }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = '#3a3a3a'; setSubMenu(null); }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+        >
+          <span style={styles.icon}>🗑</span>
+          <span>Delete</span>
+        </div>
       </div>
-    </div>
+
+      {/* Turn Into 子菜单 */}
+      {subMenu === 'turnInto' && (
+        <div
+          ref={subMenuRef}
+          className="handle-submenu"
+          style={{ ...getSubMenuStyle(), minWidth: '180px', maxHeight: '360px', overflowY: 'auto' }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onMouseEnter={() => setSubMenu('turnInto')}
+        >
+          {renderTurnIntoItems()}
+        </div>
+      )}
+
+      {/* Color 子菜单 */}
+      {subMenu === 'color' && (
+        <div
+          ref={subMenuRef}
+          className="handle-submenu"
+          style={{ ...getSubMenuStyle(), minWidth: '220px', padding: '8px 10px' }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onMouseEnter={() => setSubMenu('color')}
+        >
+          <div style={styles.sectionLabel}>文字颜色</div>
+          <div style={styles.colorGrid}>
+            {TEXT_COLORS.map((c) => (
+              <button
+                key={`t-${c.name}`}
+                className="color-picker__swatch"
+                style={{ background: c.color || '#e8eaed', width: 22, height: 22, borderRadius: 4, border: '2px solid transparent', cursor: 'pointer' }}
+                title={c.name}
+                onMouseDown={(e) => { e.preventDefault(); applyTextColor(c.color); }}
+              />
+            ))}
+          </div>
+          <div style={{ ...styles.sectionLabel, marginTop: 8 }}>背景颜色</div>
+          <div style={styles.colorGrid}>
+            {BG_COLORS.map((c) => (
+              <button
+                key={`b-${c.name}`}
+                className="color-picker__swatch"
+                style={{ background: c.color || '#3a3a3a', width: 22, height: 22, borderRadius: 4, border: '2px solid transparent', cursor: 'pointer' }}
+                title={c.name}
+                onMouseDown={(e) => { e.preventDefault(); applyBgColor(c.color); }}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -148,12 +416,15 @@ const styles: Record<string, React.CSSProperties> = {
   container: {
     position: 'fixed', zIndex: 1000,
     background: '#2a2a2a', border: '1px solid #444', borderRadius: '8px',
-    padding: '4px', minWidth: '160px', boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+    padding: '4px', minWidth: '170px', boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
   },
   item: {
     display: 'flex', alignItems: 'center', padding: '6px 12px',
     borderRadius: '4px', cursor: 'pointer', fontSize: '14px', color: '#e8eaed',
   },
   icon: { width: '28px', textAlign: 'center' as const, marginRight: '8px', flexShrink: 0 },
+  arrow: { fontSize: '10px', color: '#888', marginLeft: '4px' },
   separator: { height: '1px', background: '#444', margin: '4px 8px' },
+  sectionLabel: { fontSize: 11, color: '#9aa0a6', margin: '4px 0', textTransform: 'uppercase' as const, letterSpacing: '0.5px' },
+  colorGrid: { display: 'flex', flexWrap: 'wrap' as const, gap: '4px' },
 };
