@@ -550,6 +550,7 @@ const styles: Record<string, React.CSSProperties> = {
   list: {
     flex: 1,
     overflowY: 'auto',
+    overflowX: 'hidden',
     padding: '4px 0',
   },
   // ── Folder ──
@@ -562,6 +563,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 600,
     color: '#e8eaed',
     userSelect: 'none' as const,
+    overflow: 'hidden',
   },
   folderToggle: {
     width: '18px',
@@ -598,6 +600,7 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     fontSize: '13px',
     color: '#e8eaed',
+    overflow: 'hidden',
   },
   bookItemActive: {
     background: '#264f78',
