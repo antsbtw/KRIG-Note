@@ -6,6 +6,7 @@ declare module 'foliate-js/view.js' {
     history: any;
     isFixedLayout: boolean;
     open(book: any): Promise<void>;
+    init(options: { lastLocation?: any; showTextStart?: boolean }): Promise<void>;
     resolveNavigation(target: any): any;
     goTo(target: any): Promise<void>;
     goToFraction(fraction: number): Promise<void>;
