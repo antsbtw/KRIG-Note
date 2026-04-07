@@ -360,7 +360,11 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
 
     // 加载文件并通知 EBookView
     await loadEBook(entry.filePath);
-    broadcastEBookLoaded(getMainWindow(), { fileName: entry.displayName, fileType: entry.fileType });
+    broadcastEBookLoaded(getMainWindow(), {
+      bookId: entry.id,
+      fileName: entry.displayName,
+      fileType: entry.fileType,
+    });
 
     return entry;
   });
@@ -374,7 +378,12 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
 
     bookshelfStore.updateOpened(id);
     await loadEBook(entry.filePath);
-    broadcastEBookLoaded(getMainWindow(), { fileName: entry.displayName, fileType: entry.fileType });
+    broadcastEBookLoaded(getMainWindow(), {
+      bookId: entry.id,
+      fileName: entry.displayName,
+      fileType: entry.fileType,
+      lastPage: entry.lastPage,
+    });
     broadcastBookshelfChanged(getMainWindow());
 
     return { success: true };
@@ -430,6 +439,20 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
 
   ipcMain.handle(IPC.EBOOK_CLOSE, () => {
     closeEBook();
+  });
+
+  // EBookView 报告当前打开的电子书
+  ipcMain.handle(IPC.EBOOK_SET_ACTIVE_BOOK, (_event, bookId: string | null) => {
+    const active = workspaceManager.getActive();
+    if (active) {
+      workspaceManager.update(active.id, { activeBookId: bookId });
+      broadcastWorkspaceState(getMainWindow());
+    }
+  });
+
+  // EBookView 保存阅读进度
+  ipcMain.handle(IPC.EBOOK_SAVE_PROGRESS, (_event, bookId: string, page: number) => {
+    bookshelfStore.updateProgress(bookId, page);
   });
 
   // ── 文件保存对话框 ──
@@ -822,7 +845,7 @@ function broadcastBookshelfChanged(mainWindow: BaseWindow | null): void {
 }
 
 /** 通知 EBookView 文件已加载 */
-function broadcastEBookLoaded(mainWindow: BaseWindow | null, info: { fileName: string; fileType: string }): void {
+function broadcastEBookLoaded(mainWindow: BaseWindow | null, info: { bookId: string; fileName: string; fileType: string; lastPage?: number }): void {
   if (!mainWindow) return;
   for (const view of mainWindow.contentView.children) {
     if ('webContents' in view) {

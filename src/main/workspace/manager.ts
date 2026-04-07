@@ -26,6 +26,8 @@ class WorkspaceManager {
       dividerRatio: 0.5,
       activeNoteId: null,
       expandedFolders: [],
+      activeBookId: null,
+      ebookExpandedFolders: [],
       slotBinding: {
         left: null,
         right: null,

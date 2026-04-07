@@ -27,6 +27,8 @@ export interface WorkspaceState {
   dividerRatio: number;
   activeNoteId: string | null;        // NoteView 当前打开的笔记 ID
   expandedFolders: string[];          // NavSide 展开的文件夹 ID 列表
+  activeBookId: string | null;        // EBookView 当前打开的电子书 ID
+  ebookExpandedFolders: string[];     // 书架文件夹展开状态
   slotBinding: {
     left: ViewInstanceId | null;
     right: ViewInstanceId | null;
@@ -246,6 +248,10 @@ export const IPC = {
   EBOOK_GET_DATA: 'ebook:get-data',
   EBOOK_LOADED: 'ebook:loaded',
   EBOOK_CLOSE: 'ebook:close',
+
+  // eBook Workspace 状态同步
+  EBOOK_SET_ACTIVE_BOOK: 'ebook:set-active-book',
+  EBOOK_SAVE_PROGRESS: 'ebook:save-progress',
 
   // yt-dlp
   YTDLP_CHECK_STATUS: 'ytdlp:check-status',

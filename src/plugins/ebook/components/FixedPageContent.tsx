@@ -4,6 +4,7 @@ import type { IFixedPageRenderer, PageDimension } from '../types';
 interface FixedPageContentProps {
   renderer: IFixedPageRenderer;
   scale: number;
+  initialPage?: number | null;
   onPageChange: (page: number) => void;
   onScaleChange: (scale: number) => void;
 }
@@ -17,7 +18,7 @@ const BUFFER_PAGES = 1;
  * 通过 IFixedPageRenderer 接口渲染页面，不直接依赖任何格式的库。
  * 适用于 PDF、DjVu、CBZ 等固定页面格式。
  */
-export function FixedPageContent({ renderer, scale, onPageChange, onScaleChange }: FixedPageContentProps) {
+export function FixedPageContent({ renderer, scale, initialPage, onPageChange, onScaleChange }: FixedPageContentProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const pageRefsRef = useRef<Map<number, HTMLCanvasElement>>(new Map());
   const [pageDimensions, setPageDimensions] = useState<PageDimension[]>([]);
@@ -119,6 +120,15 @@ export function FixedPageContent({ renderer, scale, onPageChange, onScaleChange 
 
     container.scrollTo({ top, behavior: 'smooth' });
   }, [pageDimensions, scale]);
+
+  // 恢复阅读位置（首次加载时）
+  const restoredRef = useRef(false);
+  useEffect(() => {
+    if (restoredRef.current || !initialPage || pageDimensions.length === 0) return;
+    restoredRef.current = true;
+    // 延迟到渲染完成后滚动
+    requestAnimationFrame(() => scrollToPage(initialPage));
+  }, [initialPage, pageDimensions, scrollToPage]);
 
   // 监听 Toolbar 页码跳转
   useEffect(() => {

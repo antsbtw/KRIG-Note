@@ -1,9 +1,10 @@
-# EBookView 能力设计
+# EBookView 设计
 
-> 状态：设计中
+> 状态：Batch 1 已实现，Batch 2+ 设计中
 > 独立于 mirro-desktop，从电子书阅读器的本质出发设计 KRIG Note 的阅读能力。
 >
-> **命名**：统一使用 eBook（不叫 EBookView）。用户视角是一个"书架 + 阅读器"，内部根据文件格式分发渲染引擎。
+> **命名**：统一使用 eBook。用户视角是一个"书架 + 阅读器"，内部根据文件格式分发渲染引擎。
+> **ViewType**: `'ebook'`，**WorkMode**: `{ id: 'demo-b', viewType: 'ebook', icon: '📕', label: 'eBook' }`
 
 ---
 
@@ -267,11 +268,11 @@ Toolbar 左侧的侧栏按钮控制 EBookView 内部的左侧面板（不是 Nav
 | **页码导航** | 上一页/下一页/输入页码跳转 |
 | **缩放** | 预设（50%-200%）+ 步进 + Cmd+滚轮 + 键盘快捷键 |
 | **适应宽度** | 自动计算 scale 使页面宽度适应容器 |
-| **空状态** | 引导文字："在左侧书架中选择 PDF" |
+| **空状态** | 引导文字："在左侧书架中选择电子书" |
 
 ### 3.2 Batch 2：空间标注（核心能力）
 
-KRIG 的 PDF 标注以**空间标注**为核心，不依赖 text layer 质量。
+KRIG 的标注以**空间标注**为核心，不依赖 text layer 质量。适用于所有固定页面格式（PDF、DjVu、CBZ）。
 
 #### 空间标注 = 坐标 + OCR + 截图
 
@@ -306,16 +307,65 @@ KRIG 的 PDF 标注以**空间标注**为核心，不依赖 text layer 质量。
 
 传统文本高亮是空间标注的一个退化特例（恰好选中的是排版良好的纯文本区域）。
 
+#### 标注交互流程
+
+```
+1. 用户在 Toolbar 选择标注模式（线框 / 横线）
+2. 光标变为十字准星
+3. 用户在页面上拖拽画出区域
+4. 松开鼠标 → 弹出浮动工具栏：
+   ┌──────────────────────────────┐
+   │ 🟡 🟢 🔵 🟣 🔴 │ 💭 Thought │ ✕ │
+   └──────────────────────────────┘
+   - 颜色选择（默认黄色）
+   - 创建 Thought（Batch 4）
+   - 取消
+5. 选择颜色 → 标注创建完成
+6. 后台异步：OCR 识别区域文字 + 生成截图缩略图
+```
+
+#### 标注数据模型
+
+```typescript
+interface EBookAnnotation {
+  id: string;
+  bookId: string;                // 所属书架条目
+  type: 'rect' | 'underline';   // 线框 / 横线
+  color: 'yellow' | 'green' | 'blue' | 'purple' | 'red';
+  anchor: SpatialAnchor;        // { pageNum, rect: {x, y, w, h} }，坐标基于 scale=1
+  ocrText?: string;             // OCR 识别的文字
+  thumbnail?: string;           // 区域截图（base64 或文件路径）
+  thoughtId?: string;           // 关联的 Thought ID（Batch 4）
+  createdAt: number;
+}
+```
+
+存储位置：`{userData}/krig-note/ebook/annotations/{bookId}.json`
+
+#### EPUB 格式的标注差异
+
+EPUB 使用 CFI 锚点而非空间坐标：
+
+```typescript
+// 固定页面格式（PDF/DjVu/CBZ）→ SpatialAnchor
+{ type: 'spatial', pageNum: 12, rect: { x: 50, y: 200, w: 300, h: 80 } }
+
+// 可重排格式（EPUB）→ CFIAnchor
+{ type: 'cfi', cfiRange: 'epubcfi(/6/4[chap01]!/4/2/16,/1:0,/1:100)', textContent: '被标注的文字' }
+```
+
+标注 UI 不同：EPUB 不需要线框模式（有 DOM 文本），直接使用文本选择 + 高亮。
+
 #### Batch 2 能力清单
 
 | 能力 | 说明 |
 |------|------|
-| **线框标注** | 拖拽画矩形，框选任意区域 |
-| **横线标注** | 行间画线，标注文字行 |
+| **线框标注** | 拖拽画矩形，框选任意区域（fixed-page 格式） |
+| **横线标注** | 行间画线，标注文字行（fixed-page 格式） |
 | **OCR 识别** | 标注区域自动 OCR 提取文字（平台 OCR） |
 | **区域截图** | 标注区域自动生成缩略图 |
 | **标注颜色** | 5 种颜色，浮动工具栏选择 |
-| **标注持久化** | 存储在 KRIG 目录，不修改原 PDF |
+| **标注持久化** | 存储在 KRIG 目录，不修改原文件 |
 | **阅读进度** | 记住上次阅读位置，下次打开自动恢复 |
 | **Text Layer** | 透明文本覆盖层，支持基础文本选择和 Cmd+C 复制（基础能力，不是标注入口） |
 
@@ -424,7 +474,7 @@ KRIG 的 OCR 分为两个层级，各自独立：
 
 | 快捷键 | 功能 | Batch |
 |--------|------|-------|
-| `Cmd+O` | 打开 PDF（通过 Menu） | 1 |
+| `Cmd+O` | 导入电子书（通过 Menu） | 1 |
 | `Space` / `Shift+Space` | 向下/向上滚动一屏 | 1 |
 | `↑` / `↓` | 向上/向下滚动 | 1 |
 | `Cmd+=` / `Cmd+-` | 放大 / 缩小 | 1 |
@@ -443,11 +493,15 @@ KRIG 的 OCR 分为两个层级，各自独立：
 | # | 决策 | 结论 |
 |---|------|------|
 | 1 | 适应宽度 | Batch 1 支持 |
-| 2 | 书架作用域 | 全局共享（所有 Workspace 看到同一个书架），Workspace 单独记忆阅读状态（当前打开哪个 PDF、页码、缩放） |
+| 2 | 书架作用域 | 全局共享（所有 Workspace 看到同一个书架），Workspace 单独记忆阅读状态 |
 | 3 | 侧栏面板位置 | EBookView 内部（View 自管理），不占用 NavSide |
 | 4 | 单页模式 | 滚动时 snap 到页面边界（保留连续滚动流畅感） |
-| 5 | 托管目录结构 | 扁平化 `{id}.pdf`，用户不直接操作 library 目录。需要文件时通过"在 Finder 中显示"或"导出到..." |
+| 5 | 托管目录结构 | 扁平化 `{id}.pdf`，用户不直接操作 library 目录 |
 | 6 | 导入去重 | fileHash 检测 → 提示"此文件已在书架中" → 跳转到已有条目 |
+| 7 | 书架文件夹 | 支持，复用 Note 的交互模式（创建、嵌套、拖拽、重命名、删除） |
+| 8 | 导入提示 | 两步流程：选文件 → 弹窗选模式（托管默认）→ 导入 |
+| 9 | 书本重命名 | 双击或右键 → 重命名 displayName，不影响物理文件名 |
+| 10 | pdfjs-dist 版本 | 4.9.155（5.x 的 Map.getOrInsertComputed 与 Electron 40 不兼容） |
 
 ---
 
@@ -581,33 +635,43 @@ type AnnotationAnchor =
 ### 7.1 目录结构
 
 ```
-src/plugins/ebook/
-  types.ts                          ← 类型系统（接口 + 位置 + 标注 + 类型守卫）
-  renderer.tsx                      ← 渲染入口（挂载 EBookView）
-  ebook.css                         ← 暗色主题样式
+src/plugins/ebook/                    ← eBook 插件（renderer process）
+  types.ts                            ← 类型系统（接口 + 位置 + 标注 + 类型守卫）
+  renderer.tsx                        ← 渲染入口（挂载 EBookView）
+  ebook.css                           ← 暗色主题样式
   components/
-    EBookView.tsx                   ← 顶层 View（根据 renderMode 分发 Content）
-    EBookToolbar.tsx                ← 工具栏（导航 + 缩放）
-    FixedPageContent.tsx            ← 固定页面渲染（PDF/DjVu/CBZ 共用）
-    ReflowableContent.tsx           ← 可重排渲染（EPUB 用）
+    EBookView.tsx                     ← 顶层 View（被动加载 + renderMode 分发）
+    EBookToolbar.tsx                  ← 工具栏（导航 + 缩放）
+    FixedPageContent.tsx              ← 固定页面渲染（PDF/DjVu/CBZ 共用）
+    ReflowableContent.tsx             ← 可重排渲染（EPUB 用，骨架）
   renderers/
-    index.ts                        ← 工厂函数 createRenderer(fileType)
+    index.ts                          ← 工厂函数 createRenderer(fileType)
     pdf/
-      index.ts                      ← PDFRenderer（实现 IFixedPageRenderer）
+      index.ts                        ← PDFRenderer（pdfjs-dist 4.9.155）
 
-src/main/ebook/
-  file-loader.ts                    ← 文件加载器（对话框 + 读取）
+src/main/ebook/                       ← eBook main process
+  file-loader.ts                      ← 文件加载（读取 Buffer）
+  bookshelf-store.ts                  ← 书架 + 文件夹存储（JSON）
+
+src/main/navside/                     ← NavSide 注册制
+  registry.ts                         ← NavSideRegistry
+
+src/renderer/navside/                 ← NavSide renderer
+  NavSide.tsx                         ← 框架层（注册制分发 ActionBar + Content）
+  EBookPanel.tsx                      ← 书架面板（树形列表 + 拖拽 + 导入弹窗）
 
 构建配置:
-  ebook.html                        ← 入口 HTML
-  vite.ebook.config.mts             ← Vite 构建配置
-  forge.config.ts                   ← renderer: ebook_view
+  ebook.html                          ← 入口 HTML
+  vite.ebook.config.mts               ← Vite 构建配置
+  forge.config.ts                     ← renderer: ebook_view
 
 IPC + Preload:
-  src/shared/types.ts               ← EBOOK_OPEN / EBOOK_GET_DATA / EBOOK_CLOSE
-  src/main/preload/view.ts          ← ebookOpen / ebookGetData / ebookClose
-  src/main/ipc/handlers.ts          ← IPC handler 注册
-  src/main/window/shell.ts          ← viewType='ebook' 路由
+  src/shared/types.ts                 ← eBook IPC 通道（书架 + 文件夹 + 数据传输 + 注册制）
+  src/main/preload/view.ts            ← ebookGetData / onEbookLoaded / ebookClose
+  src/main/preload/navside.ts         ← 书架 API + 文件夹 API + 注册查询
+  src/main/ipc/handlers.ts            ← 全部 IPC handler
+  src/main/window/shell.ts            ← viewType='ebook' 路由
+  src/main/app.ts                     ← WorkMode 注册 + NavSide 注册 + Menu
 ```
 
 ### 7.2 关键依赖关系
@@ -859,22 +923,29 @@ onEbookBookshelfChanged: (callback: (list: unknown[]) => void) => {
 },
 ```
 
-### 8.5 数据流
+### 8.5 数据流（已实现）
 
-#### 导入 + 打开
+#### 导入流程（两步：选文件 → 选模式）
 
 ```
-NavSide                        Main Process                    EBookView
+EBookPanel                     Main Process                    EBookView
   │                                │                               │
-  │── ebookBookshelfImport() ────→ │                               │
+  │── ebookPickFile() ───────────→ │                               │
   │                                │── dialog.showOpenDialog       │
-  │                                │── readFile + 获取页数/格式     │
-  │                                │── bookshelfStore.add(entry)   │
-  │                                │── broadcastBookshelfChanged ──→ NavSide 刷新列表
-  │                                │── loadEBook(filePath) ───────→│
+  │←─ { filePath, fileName,       │                               │
+  │     fileType } ────────────── │                               │
+  │                                │                               │
+  │ [显示导入弹窗：托管/引用选择]    │                               │
+  │ [用户点击"导入"]                │                               │
+  │                                │                               │
+  │── ebookBookshelfAdd(           │                               │
+  │     filePath, fileType,        │                               │
+  │     'managed'|'link') ───────→ │                               │
+  │                                │── bookshelfStore.add()        │
+  │                                │── broadcastChanged ──────────→ EBookPanel 刷新
+  │                                │── loadEBook(filePath)         │
   │                                │── EBOOK_LOADED ──────────────→│
   │                                │                               │── ebookGetData()
-  │                                │← ArrayBuffer ────────────────│
   │                                │                               │── createRenderer()
   │                                │                               │── 渲染
 ```
@@ -882,72 +953,155 @@ NavSide                        Main Process                    EBookView
 #### 点击已有条目打开
 
 ```
-NavSide                        Main Process                    EBookView
+EBookPanel                     Main Process                    EBookView
   │                                │                               │
   │── ebookBookshelfOpen(id) ────→ │                               │
   │                                │── bookshelfStore.get(id)      │
-  │                                │── checkFileExists(filePath)   │
-  │                                │   ├─ 存在 → loadEBook()      │
-  │                                │   └─ 不存在 → 返回错误        │
+  │                                │── checkExists → loadEBook()   │
   │                                │── EBOOK_LOADED ──────────────→│（同上）
 ```
 
-### 8.6 NavSide 组件重构方向
-
-当前 `NavSide.tsx`（725 行）将笔记目录的所有逻辑写在一个组件中。重构为：
+### 8.6 当前实现状态
 
 ```
 src/renderer/navside/
-  NavSide.tsx                   ← 框架层：BrandBar + ModeBar + 根据注册信息分发面板
-  panels/
-    NotePanel.tsx               ← 笔记目录面板（从 NavSide.tsx 提取）
-    EBookPanel.tsx              ← eBook 书架面板（新建）
-```
+  NavSide.tsx          ← 框架层 + Note 笔记目录（共存，按 contentType 条件渲染）
+  EBookPanel.tsx       ← eBook 书架面板（独立组件，~500 行）
 
-**NavSide.tsx** 变为薄框架层：
-- 渲染 BrandBar + ModeBar（不变）
-- 查询当前 WorkMode 的 `NavSideRegistration`
-- 根据 `contentType` 渲染对应面板 + ActionBar
-
-**NotePanel.tsx** 接收从 NavSide.tsx 提取出的全部笔记目录逻辑（树形列表、拖拽、右键菜单、多选等）。
-
-**EBookPanel.tsx** 新建书架面板。
-
-### 8.7 Main Process 新增文件
-
-```
 src/main/navside/
-  registry.ts                   ← NavSideRegistry（注册表）
+  registry.ts          ← NavSideRegistry（已实现）
 
 src/main/ebook/
-  file-loader.ts                ← 已有
-  bookshelf-store.ts            ← 新建：书架存储（JSON）
+  file-loader.ts       ← 文件加载（已实现）
+  bookshelf-store.ts   ← 书架 + 文件夹存储（已实现）
 ```
+
+**未来重构**：将 NavSide.tsx 中的 Note 笔记目录逻辑提取为独立的 NotePanel.tsx，使 NavSide.tsx 成为纯框架层。当前 Note 逻辑仍内联在 NavSide.tsx 中。
 
 ---
 
-## 九、入口汇总
+## 九、Workspace 状态集成
+
+### 9.1 全局书架 vs Workspace 状态
+
+书架是全局的（所有 Workspace 共享同一份书架数据），但每个 Workspace 独立记忆阅读状态。
+
+| 数据 | 作用域 | 存储位置 |
+|------|--------|---------|
+| 书架条目列表 | 全局 | `bookshelf.json` |
+| 文件夹结构 | 全局 | `bookshelf.json` |
+| 标注数据 | 全局（按 bookId） | `annotations/{bookId}.json` |
+| 当前打开的书 | Workspace | `WorkspaceState` |
+| 阅读位置（页码/偏移） | Workspace | `WorkspaceState` |
+| 缩放比例 | Workspace | `WorkspaceState` |
+| 书架文件夹展开状态 | Workspace | `WorkspaceState` |
+
+### 9.2 WorkspaceState 扩展（待实现）
+
+```typescript
+interface WorkspaceState {
+  // ...现有字段...
+  activeBookId: string | null;           // 当前打开的电子书
+  ebookExpandedFolders: string[];        // 书架文件夹展开状态
+  ebookReadingState?: {                  // 阅读状态
+    position: BookPosition;              // 当前位置
+    scale: number;                       // 缩放
+  };
+}
+```
+
+### 9.3 场景
+
+- **切换 Workspace**：恢复该 Workspace 上次打开的电子书和阅读位置
+- **切换 WorkMode**：Note → eBook → Note → eBook，书架状态保持
+- **多 Workspace 读同一本书**：各自独立的阅读位置，标注数据共享
+
+---
+
+## 十、EPUB 渲染器设计（待实现）
+
+### 10.1 库选择
+
+| 库 | 状态 | 特点 |
+|---|---|---|
+| **epub.js** | 停止维护（4 年） | 最成熟，iframe + CSS columns |
+| **foliate-js** | 活跃维护 | 现代重写，支持 EPUB/MOBI/FB2/CBZ |
+| **readium** | 活跃维护 | 企业级，规范合规，重量级 |
+
+**建议选择 foliate-js**：
+- 活跃维护，现代 API
+- 支持多种格式（EPUB + MOBI + FB2），一个库覆盖所有 reflowable 格式
+- 比 epub.js 更轻量，比 readium 更简单
+
+### 10.2 EPUBRenderer 接口实现
+
+```typescript
+class EPUBRenderer implements IReflowableRenderer {
+  readonly fileType = 'epub';
+  readonly renderMode = 'reflowable';
+
+  // 使用 foliate-js 渲染到 container
+  renderTo(container: HTMLElement): void;
+
+  // 字体大小调整（不是页面缩放）
+  setFontSize(size: number): void;
+  getFontSize(): number;
+
+  // 章节导航
+  getProgress(): { chapter: string; percentage: number };
+  nextChapter(): void;
+  prevChapter(): void;
+
+  // 分页 / 滚动模式
+  setDisplayMode(mode: 'paginated' | 'scrolled'): void;
+
+  // 视口变化时重排
+  onResize(): void;
+}
+```
+
+### 10.3 EPUB 标注方式
+
+EPUB 不使用空间标注（没有固定页面坐标），使用 DOM 文本选择 + CFI 锚点：
+
+```
+用户选中文本
+  → 弹出高亮工具栏（和 NoteView 的 FloatingToolbar 类似）
+  → 选择颜色 → 创建标注
+  → 锚点 = CFI range + 选中文本内容
+```
+
+### 10.4 Toolbar 差异
+
+| 能力 | PDF Toolbar | EPUB Toolbar |
+|------|------------|-------------|
+| 导航 | ‹ [page] of N › | ‹ [chapter] › + 进度条 |
+| 缩放 | − [100%] + | A− [字号] A+ |
+| 显示模式 | 连续/单页/双页 | 分页/滚动 |
+| 标注模式 | 线框/横线 | 不需要（文本选择即标注入口） |
+
+EBookToolbar 通过 `renderer.getToolbarConfig()` 获取配置，动态调整 UI。
+
+---
+
+## 十一、入口汇总
 
 | 入口 | 触发方式 | 说明 |
 |------|----------|------|
 | **NavSide 书架** | 点击列表项 | 主要入口。切换到 eBook WorkMode 后，NavSide 显示书架 |
-| **NavSide 导入** | 点击 "+ 导入" 按钮 | 文件对话框 → 导入到书架 → 自动打开 |
-| **Application Menu** | Cmd+O | eBook 菜单 → "Open..." → 文件对话框 → 导入 + 打开 |
+| **NavSide 导入** | "+ 导入" → 选文件 → 选模式 → 导入 | 两步流程，弹窗选择托管/引用 |
+| **Application Menu** | Cmd+O | eBook 菜单 → 文件对话框 → 直接托管导入 |
 
 EBookView 本身不提供 Open 按钮。空状态显示："在左侧书架中选择电子书"。
 
 ---
 
-## 十、已确认的新增决策
-
-| # | 决策 | 结论 |
-|---|------|------|
-| 7 | 书架文件夹 | 支持，复用 Note 的文件夹交互模式（创建、嵌套、拖拽、重命名、删除） |
-| 8 | 导入提示 | 导入时弹窗选择：拷贝到 KRIG（默认） / 链接原文件。记住用户上次选择 |
-| 9 | 书本重命名 | 右键 → 重命名，修改 displayName，不影响物理文件名 |
-
----
-
-## 十一、待讨论
+## 十二、待讨论
 
 1. **用户是否需要参与 KRIG 的 library 目录管理？** 当前设计是不透明的（`{id}.pdf`），用户通过书架操作。是否需要提供一个"打开 Library 文件夹"的设置入口？
+
+2. **WorkspaceState 的 eBook 状态何时持久化？** 每次翻页都保存，还是定时保存？建议：页面切换时 debounce 保存（500ms）。
+
+3. **EPUB 库的最终选择**：foliate-js 还是 epub.js？需要实际集成测试后确认。
+
+4. **标注的跨格式统一搜索**：PDF 标注（OCR 文本）和 EPUB 标注（原始文本）能否在同一个搜索界面中查找？

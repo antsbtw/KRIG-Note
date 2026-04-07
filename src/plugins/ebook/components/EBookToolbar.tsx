@@ -5,8 +5,10 @@ interface EBookToolbarProps {
   currentPage: number;
   pageCount: number;
   scale: number;
+  fitWidth: boolean;
   onPageChange: (page: number) => void;
   onScaleChange: (scale: number) => void;
+  onFitWidthToggle: () => void;
 }
 
 const ZOOM_PRESETS = [
@@ -23,8 +25,10 @@ export function EBookToolbar({
   currentPage,
   pageCount,
   scale,
+  fitWidth,
   onPageChange,
   onScaleChange,
+  onFitWidthToggle,
 }: EBookToolbarProps) {
   const [pageInput, setPageInput] = useState('');
   const [editingPage, setEditingPage] = useState(false);
@@ -67,8 +71,13 @@ export function EBookToolbar({
   }, []);
 
   const handleZoomChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
-    onScaleChange(parseFloat(e.target.value));
-  }, [onScaleChange]);
+    const val = e.target.value;
+    if (val === 'fit-width') {
+      onFitWidthToggle();
+    } else {
+      onScaleChange(parseFloat(val));
+    }
+  }, [onScaleChange, onFitWidthToggle]);
 
   const handleZoomIn = useCallback(() => {
     const next = Math.min(scale + 0.25, 3.0);
@@ -128,15 +137,16 @@ export function EBookToolbar({
           </button>
           <select
             className="ebook-toolbar__zoom-select"
-            value={scale}
+            value={fitWidth ? 'fit-width' : scale}
             onChange={handleZoomChange}
           >
+            <option value="fit-width">适应宽度</option>
             {ZOOM_PRESETS.map((p) => (
               <option key={p.value} value={p.value}>
                 {p.label}
               </option>
             ))}
-            {!ZOOM_PRESETS.some((p) => p.value === scale) && (
+            {!fitWidth && !ZOOM_PRESETS.some((p) => p.value === scale) && (
               <option value={scale}>{Math.round(scale * 100)}%</option>
             )}
           </select>
