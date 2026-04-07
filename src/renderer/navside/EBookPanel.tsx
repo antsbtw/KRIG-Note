@@ -243,10 +243,18 @@ export function EBookPanel({ activeBookId, initialExpandedFolders, onActiveBookC
     setDragItem({ type, id });
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/plain', `${type}:${id}`);
-    if (e.currentTarget instanceof HTMLElement) {
-      e.dataTransfer.setDragImage(e.currentTarget, 10, 10);
-    }
-  }, []);
+    // 创建紧凑的自定义拖拽预览
+    const el = e.currentTarget as HTMLElement;
+    const ghost = document.createElement('div');
+    ghost.style.cssText = 'position:fixed;top:-1000px;left:-1000px;padding:4px 12px;background:#264f78;color:#e8eaed;font-size:12px;border-radius:4px;white-space:nowrap;max-width:200px;overflow:hidden;text-overflow:ellipsis;';
+    const name = type === 'book'
+      ? bookList.find((b) => b.id === id)?.displayName
+      : folderList.find((f) => f.id === id)?.title;
+    ghost.textContent = name || '';
+    document.body.appendChild(ghost);
+    e.dataTransfer.setDragImage(ghost, 10, 10);
+    requestAnimationFrame(() => document.body.removeChild(ghost));
+  }, [bookList, folderList]);
 
   const handleDragEnd = useCallback(() => {
     setDragItem(null);
