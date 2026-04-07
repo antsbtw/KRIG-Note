@@ -14,7 +14,7 @@
 | **underline** | Cmd+U | 下划线 | ✅ |
 | **strike** | Cmd+Shift+S | 删除线 | ✅ |
 | **code** | Cmd+E | 行内代码 | ✅ |
-| **link** | — | 超链接（href） | ✅ 注册，缺创建 UI |
+| **link** | Cmd+K | 统一链接（Note 内链 / Web 外链 / Block 引用） | ✅ 注册，待扩展（见 `note-link.md`） |
 
 ---
 

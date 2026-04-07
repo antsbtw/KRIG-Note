@@ -100,14 +100,12 @@ export function markdownToProseMirror(md: string): PMNode[] {
     }
 
     // Bullet list (- or *)
+    // KRIG-Note schema: bulletList content='block+'，无 listItem 中间层
     if (/^\s*[-*]\s+/.test(line) && !/^\s*[-*]\s+\[/.test(line)) {
       const items: PMNode[] = [];
       while (i < lines.length && /^\s*[-*]\s+/.test(lines[i]) && !/^\s*[-*]\s+\[/.test(lines[i])) {
         const text = lines[i].replace(/^\s*[-*]\s+/, '');
-        items.push({
-          type: 'listItem',
-          content: [{ type: 'textBlock', content: parseInline(text) }],
-        });
+        items.push({ type: 'textBlock', content: parseInline(text) });
         i++;
       }
       content.push({ type: 'bulletList', content: items });
@@ -115,14 +113,12 @@ export function markdownToProseMirror(md: string): PMNode[] {
     }
 
     // Ordered list (1. 2. etc)
+    // KRIG-Note schema: orderedList content='block+'，无 listItem 中间层
     if (/^\s*\d+\.\s+/.test(line)) {
       const items: PMNode[] = [];
       while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) {
         const text = lines[i].replace(/^\s*\d+\.\s+/, '');
-        items.push({
-          type: 'listItem',
-          content: [{ type: 'textBlock', content: parseInline(text) }],
-        });
+        items.push({ type: 'textBlock', content: parseInline(text) });
         i++;
       }
       content.push({ type: 'orderedList', content: items });

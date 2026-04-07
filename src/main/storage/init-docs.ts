@@ -54,6 +54,14 @@ const IMPORT_DIRS: { dir: string; folderName: string; files?: string[] }[] = [
     dir: 'docs/test',
     folderName: '测试',
   },
+  {
+    dir: 'docs/help',
+    folderName: 'Help 设计',
+  },
+  {
+    dir: 'docs/math',
+    folderName: '数学编辑器',
+  },
 ];
 
 function findMdFiles(dirPath: string, specificFiles?: string[]): { name: string; fullPath: string }[] {
@@ -159,7 +167,7 @@ const BLOCK_GROUPS: { heading: string; names: string[] }[] = [
   { heading: 'RenderBlock 实例', names: ['code-block', 'image', 'math-block', 'video-block', 'audio-block', 'tweet-block'] },
   { heading: 'ContainerBlock 实例', names: ['toggle-list', 'task-list', 'frame-block', 'table', 'column-list'] },
   { heading: 'Inline 节点', names: ['hard-break', 'note-link', 'math-inline'] },
-  { heading: '其他', names: ['horizontal-rule', 'marks', 'block-action', 'block-relation-model', 'container-nesting-design'] },
+  { heading: '系统设计', names: ['horizontal-rule', 'marks', 'block-action', 'block-relation-model', 'block-selection', 'indent-system', 'container-nesting-design', 'todo-system', 'media-blocks-plan'] },
 ];
 
 function buildBlockTaskDocContent(allNotes: NoteListItem[]): unknown[] {
@@ -186,8 +194,12 @@ function buildBlockTaskDocContent(allNotes: NoteListItem[]): unknown[] {
       const normalized = name.toLowerCase().replace(/[- ]/g, '');
       const match = nameToNote[normalized];
 
+      // 用 noteLink atom 节点链接到设计文档，后接普通文字
       const paraContent: unknown[] = match
-        ? [{ type: 'text', text: `${name} 优化`, marks: [{ type: 'link', attrs: { href: `krig://note/${match.id}`, title: match.title } }] }]
+        ? [
+            { type: 'noteLink', attrs: { noteId: match.id, label: match.title } },
+            { type: 'text', text: ' 优化' },
+          ]
         : [{ type: 'text', text: `${name} 优化` }];
 
       taskItems.push({

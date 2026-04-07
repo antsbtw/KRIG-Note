@@ -1272,6 +1272,8 @@
   user-select: none;
 }
 .note-link:hover { background: #333; }
+.note-link--missing { color: #f28b82; text-decoration: line-through; }
+.note-link--missing:hover { background: #3a2020; }
 
 /* ── Block Selection ── */
 .block-selected {

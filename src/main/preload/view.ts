@@ -29,6 +29,7 @@ contextBridge.exposeInMainWorld('viewAPI', {
   noteLoad: (id: string) => ipcRenderer.invoke(IPC.NOTE_LOAD, id),
   noteDelete: (id: string) => ipcRenderer.invoke(IPC.NOTE_DELETE, id),
   noteList: () => ipcRenderer.invoke(IPC.NOTE_LIST),
+  noteOpenInEditor: (id: string) => ipcRenderer.invoke(IPC.NOTE_OPEN_IN_EDITOR, id),
 
   // NoteFile 列表变更监听
   onNoteListChanged: (callback: (list: unknown[]) => void) => {
