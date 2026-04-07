@@ -27,6 +27,7 @@ import { renderBlockFocusPlugin } from '../plugins/render-block-focus';
 import { vocabHighlightPlugin, updateVocabDefs, dispatchVocabUpdate } from '../learning/vocab-highlight-plugin';
 import { updateVocabList } from '../learning';
 import { buildTestDocument } from '../test-content';
+import { createTocIndicator } from '../toc/toc-indicator';
 import '../note.css';
 
 /**
@@ -159,6 +160,7 @@ export function NoteEditor() {
   const [editorView, setEditorView] = useState<EditorView | null>(null);
   const currentNoteIdRef = useRef<string | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const tocRef = useRef<ReturnType<typeof createTocIndicator> | null>(null);
 
   // 创建/重建编辑器
   const createEditor = useCallback((doc: PMNode) => {
@@ -185,12 +187,19 @@ export function NoteEditor() {
         const newState = view.state.apply(tr);
         view.updateState(newState);
         // 文档变化时触发自动保存
-        if (tr.docChanged) scheduleSave();
+        if (tr.docChanged) {
+          scheduleSave();
+          tocRef.current?.update();
+        }
       },
     });
 
     viewRef.current = view;
     setEditorView(view);
+
+    // TOC 指示器
+    if (tocRef.current) tocRef.current.destroy();
+    tocRef.current = createTocIndicator(editorRef.current, view);
   }, []);
 
   // 加载文档
@@ -329,6 +338,10 @@ export function NoteEditor() {
       if (saveTimerRef.current) {
         clearTimeout(saveTimerRef.current);
         saveNote(); // 关闭前保存
+      }
+      if (tocRef.current) {
+        tocRef.current.destroy();
+        tocRef.current = null;
       }
       if (viewRef.current) {
         viewRef.current.destroy();

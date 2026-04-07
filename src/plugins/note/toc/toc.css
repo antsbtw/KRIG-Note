@@ -1,0 +1,116 @@
+/**
+ * toc.css — 目录导航指示器 + 弹出菜单样式
+ *
+ * 横线指示器：紧贴 NoteView 左边缘，和正文第一行对齐
+ * 弹出菜单：hover 横线区域时在右侧弹出
+ */
+
+/* ─── 指示器容器 ─── */
+
+.toc-indicator {
+  position: fixed;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  z-index: 10;
+  padding: 4px 8px;
+  border-radius: 0 4px 4px 0;
+  cursor: pointer;
+}
+
+.toc-indicator:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+/* ─── 横线 ─── */
+
+.toc-indicator__line {
+  height: 2px;
+  border-radius: 1px;
+  background: #555;
+  transition: background 0.15s, width 0.15s;
+}
+
+/* H1 最长最亮，H2 中等，H3 最短最暗 */
+.toc-indicator__line[data-level="1"] {
+  width: 24px;
+  background: #666;
+}
+
+.toc-indicator__line[data-level="2"] {
+  width: 18px;
+  background: #555;
+}
+
+.toc-indicator__line[data-level="3"] {
+  width: 12px;
+  background: #444;
+}
+
+/* 当前可见 heading 高亮 */
+.toc-indicator__line--active {
+  background: #e8eaed !important;
+}
+
+/* ─── 弹出菜单 ─── */
+
+.toc-menu {
+  position: absolute;
+  left: 0;
+  top: 0;
+  min-width: 200px;
+  max-width: 320px;
+  max-height: 400px;
+  overflow-y: auto;
+  background: #2a2a2a;
+  border: 1px solid #3c3c3c;
+  border-radius: 8px;
+  padding: 6px 0;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  z-index: 100;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+.toc-menu__item {
+  display: block;
+  width: 100%;
+  padding: 6px 14px;
+  background: none;
+  border: none;
+  text-align: left;
+  color: #9aa0a6;
+  font-size: 13px;
+  line-height: 1.4;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background 0.1s, color 0.1s;
+}
+
+.toc-menu__item:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: #e8eaed;
+}
+
+/* 当前可见 heading 高亮 */
+.toc-menu__item--active {
+  color: #8ab4f8;
+}
+
+/* 层级缩进 */
+.toc-menu__item[data-level="1"] {
+  padding-left: 14px;
+  font-weight: 600;
+}
+
+.toc-menu__item[data-level="2"] {
+  padding-left: 28px;
+  font-weight: 500;
+}
+
+.toc-menu__item[data-level="3"] {
+  padding-left: 42px;
+  font-weight: 400;
+}
