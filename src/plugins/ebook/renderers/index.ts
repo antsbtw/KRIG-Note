@@ -1,5 +1,6 @@
 import type { EBookFileType, IBookRenderer } from '../types';
 import { PDFRenderer } from './pdf';
+import { EPUBRenderer } from './epub';
 
 /**
  * 渲染引擎工厂
@@ -13,8 +14,7 @@ export function createRenderer(fileType: EBookFileType): IBookRenderer {
       return new PDFRenderer();
 
     case 'epub':
-      // TODO: return new EPUBRenderer();
-      throw new Error('EPUB renderer not yet implemented');
+      return new EPUBRenderer();
 
     case 'djvu':
       throw new Error('DjVu renderer not yet implemented');
