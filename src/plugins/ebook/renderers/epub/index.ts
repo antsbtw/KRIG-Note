@@ -57,7 +57,7 @@ export class EPUBRenderer implements IReflowableRenderer {
       // 设置单栏布局 + 默认字体大小
       if (this.view.renderer) {
         this.view.renderer.setAttribute('max-column-count', '1');
-        this.view.renderer.setAttribute('max-inline-size', '960');
+        this.view.renderer.setAttribute('max-inline-size', '720');
       }
 
       // 显示第一节
@@ -155,11 +155,12 @@ export class EPUBRenderer implements IReflowableRenderer {
   }
 
   nextChapter(): void {
-    this.view?.renderer?.next?.();
+    // 使用 View 的 next()（翻页），不是 renderer 的 next()
+    this.view?.next?.();
   }
 
   prevChapter(): void {
-    this.view?.renderer?.prev?.();
+    this.view?.prev?.();
   }
 
   setDisplayMode(mode: 'paginated' | 'scrolled'): void {
