@@ -86,6 +86,9 @@ contextBridge.exposeInMainWorld('navSideAPI', {
   ebookBookshelfMove: (id: string, folderId: string | null) =>
     ipcRenderer.invoke(IPC.EBOOK_BOOKSHELF_MOVE, id, folderId),
 
+  ebookSetExpandedFolders: (folderIds: string[]) =>
+    ipcRenderer.invoke(IPC.EBOOK_SET_EXPANDED_FOLDERS, folderIds),
+
   // eBook 文件夹
   ebookFolderList: () => ipcRenderer.invoke(IPC.EBOOK_FOLDER_LIST),
   ebookFolderCreate: (title: string, parentId?: string | null) =>

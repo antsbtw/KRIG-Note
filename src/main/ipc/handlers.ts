@@ -465,6 +465,14 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
     };
   });
 
+  // NavSide 保存书架文件夹展开状态
+  ipcMain.handle(IPC.EBOOK_SET_EXPANDED_FOLDERS, (_event, folderIds: string[]) => {
+    const active = workspaceManager.getActive();
+    if (active) {
+      workspaceManager.update(active.id, { ebookExpandedFolders: folderIds });
+    }
+  });
+
   // EBookView 报告当前打开的电子书
   ipcMain.handle(IPC.EBOOK_SET_ACTIVE_BOOK, (_event, bookId: string | null) => {
     const active = workspaceManager.getActive();

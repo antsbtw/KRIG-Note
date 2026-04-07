@@ -329,6 +329,8 @@ app.whenReady().then(() => {
         dividerRatio: ws.dividerRatio,
         activeNoteId: ws.activeNoteId ?? null,
         expandedFolders: ws.expandedFolders ?? [],
+        activeBookId: ws.activeBookId ?? null,
+        ebookExpandedFolders: ws.ebookExpandedFolders ?? [],
         customLabel: ws.customLabel ?? false,
       });
     }

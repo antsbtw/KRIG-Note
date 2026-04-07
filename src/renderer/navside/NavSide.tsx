@@ -83,6 +83,7 @@ export function NavSide() {
   const [activeWorkModeId, setActiveWorkModeId] = useState<string>('');
   const [registration, setRegistration] = useState<NavSideRegistration | null>(null);
   const [activeBookId, setActiveBookId] = useState<string | null>(null);
+  const [ebookExpandedFolders, setEbookExpandedFolders] = useState<string[]>([]);
   const [noteList, setNoteList] = useState<NoteListItem[]>([]);
   const [folderList, setFolderList] = useState<FolderRecord[]>([]);
   const [dbReady, setDbReady] = useState(false);
@@ -125,18 +126,23 @@ export function NavSide() {
 
     navSideAPI.getActiveState().then((data) => {
       if (data.active) {
-        setActiveWorkModeId((data.active as any).workModeId);
+        const ws = data.active as any;
+        setActiveWorkModeId(ws.workModeId);
         // 恢复 Workspace 的 NavSide 状态
-        if ((data.active as any).activeNoteId) setActiveNoteId((data.active as any).activeNoteId);
-        if ((data.active as any).expandedFolders) setExpandedFolders(new Set((data.active as any).expandedFolders));
+        if (ws.activeNoteId) setActiveNoteId(ws.activeNoteId);
+        if (ws.expandedFolders) setExpandedFolders(new Set(ws.expandedFolders));
+        if (ws.activeBookId) setActiveBookId(ws.activeBookId);
+        if (ws.ebookExpandedFolders) setEbookExpandedFolders(ws.ebookExpandedFolders);
       }
     });
 
     const unsubState = navSideAPI.onStateChanged((data: unknown) => {
-      const d = data as { active?: { workModeId: string; activeNoteId?: string | null } };
+      const d = data as { active?: { workModeId: string; activeNoteId?: string | null; activeBookId?: string | null; ebookExpandedFolders?: string[] } };
       if (d.active) {
         setActiveWorkModeId(d.active.workModeId);
         if (d.active.activeNoteId !== undefined) setActiveNoteId(d.active.activeNoteId);
+        if (d.active.activeBookId !== undefined) setActiveBookId(d.active.activeBookId);
+        if (d.active.ebookExpandedFolders) setEbookExpandedFolders(d.active.ebookExpandedFolders);
       }
     });
 
@@ -773,6 +779,7 @@ export function NavSide() {
       {registration?.contentType === 'ebook-bookshelf' && (
         <EBookPanel
           activeBookId={activeBookId}
+          initialExpandedFolders={ebookExpandedFolders}
           onActiveBookChange={setActiveBookId}
         />
       )}

@@ -39,6 +39,7 @@ declare const navSideAPI: {
   ebookFolderRename: (id: string, title: string) => Promise<void>;
   ebookFolderDelete: (id: string) => Promise<void>;
   ebookFolderMove: (id: string, parentId: string | null) => Promise<void>;
+  ebookSetExpandedFolders: (folderIds: string[]) => Promise<void>;
   onEbookBookshelfChanged: (callback: (list: EBookEntry[]) => void) => () => void;
 };
 
@@ -62,13 +63,16 @@ const FILE_ICONS: Record<string, string> = { pdf: '📄', epub: '📖', djvu: '�
 
 interface Props {
   activeBookId: string | null;
+  initialExpandedFolders?: string[];
   onActiveBookChange: (id: string | null) => void;
 }
 
-export function EBookPanel({ activeBookId, onActiveBookChange }: Props) {
+export function EBookPanel({ activeBookId, initialExpandedFolders, onActiveBookChange }: Props) {
   const [bookList, setBookList] = useState<EBookEntry[]>([]);
   const [folderList, setFolderList] = useState<EBookFolder[]>([]);
-  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(
+    new Set(initialExpandedFolders ?? []),
+  );
 
   // 右键菜单
   const [contextMenu, setContextMenu] = useState<{
@@ -95,6 +99,31 @@ export function EBookPanel({ activeBookId, onActiveBookChange }: Props) {
     fileType: string;
   } | null>(null);
   const [importStorage, setImportStorage] = useState<'managed' | 'link'>('managed');
+
+  // 持久化文件夹展开状态
+  useEffect(() => {
+    navSideAPI.ebookSetExpandedFolders(Array.from(expandedFolders));
+  }, [expandedFolders]);
+
+  // 首次加载时，自动展开 activeBookId 所在的文件夹链
+  useEffect(() => {
+    if (!activeBookId || bookList.length === 0) return;
+    const book = bookList.find((b) => b.id === activeBookId);
+    if (!book?.folderId) return;
+
+    // 向上遍历文件夹链，全部展开
+    const toExpand = new Set(expandedFolders);
+    let currentId: string | null = book.folderId;
+    while (currentId) {
+      toExpand.add(currentId);
+      const parent = folderList.find((f) => f.id === currentId);
+      currentId = parent?.parent_id ?? null;
+    }
+    if (toExpand.size !== expandedFolders.size) {
+      setExpandedFolders(toExpand);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeBookId, bookList.length]);
 
   // ── 数据加载 ──
 
