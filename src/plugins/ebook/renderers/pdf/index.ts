@@ -57,6 +57,7 @@ export class PDFRenderer implements IFixedPageRenderer {
       try { tl.cancel(); } catch { /* ignore */ }
     }
     this.textLayers.clear();
+    this.textLayerRendered.clear();
     this.pageCache.clear();
     this.pageDims = [];
     if (this.doc) {
@@ -167,19 +168,22 @@ export class PDFRenderer implements IFixedPageRenderer {
   // ── Text Layer ──
 
   private textLayers = new Map<number, TextLayer>();
+  private textLayerRendered = new Map<number, number>(); // pageNum → scale
 
   async renderTextLayer(pageNum: number, container: HTMLElement, scale: number): Promise<void> {
-    if (!this.doc) return; // 已 destroy，静默忽略
     if (!this.doc) return;
 
-    // 清除旧的 text layer
+    // 缓存检查：相同 scale 不重复渲染
+    if (this.textLayerRendered.get(pageNum) === scale) return;
+
     this.clearTextLayer(pageNum);
 
     const page = await this.getPage(pageNum);
     const textContent = await page.getTextContent();
-    const viewport = page.getViewport({ scale });
 
-    // 清空容器
+    if (!this.doc) return; // 异步期间可能被 destroy
+
+    const viewport = page.getViewport({ scale });
     container.innerHTML = '';
 
     const textLayer = new TextLayer({
@@ -190,6 +194,7 @@ export class PDFRenderer implements IFixedPageRenderer {
 
     await textLayer.render();
     this.textLayers.set(pageNum, textLayer);
+    this.textLayerRendered.set(pageNum, scale);
   }
 
   async searchText(query: string): Promise<Array<{ pageNum: number; index: number; text: string }>> {

@@ -149,7 +149,7 @@ export function FixedPageContent({ renderer, scale, initialPage, annotationMode 
         renderer.renderTextLayer(pageNum, textDiv, scale);
       }
     }
-  }, [currentPage, scale, pageDimensions, totalPages, renderer, getVisibleRange]);
+  }, [currentPage, scale, pageDimensions, totalPages, renderer, getVisibleRange, domRange]);
 
   // 标注操作
   const handleAnnotationCreate = useCallback(async (pageNum: number, ann: Omit<Annotation, 'id'>) => {
@@ -169,7 +169,7 @@ export function FixedPageContent({ renderer, scale, initialPage, annotationMode 
     const container = containerRef.current;
     if (!container || pageOffsets.length === 0) return;
     const idx = Math.max(0, Math.min(pageNum - 1, pageOffsets.length - 1));
-    container.scrollTo({ top: pageOffsets[idx] * scale, behavior: 'smooth' });
+    container.scrollTo({ top: pageOffsets[idx] * scale });
   }, [pageOffsets, scale]);
 
   // 恢复阅读位置（首次加载时）
