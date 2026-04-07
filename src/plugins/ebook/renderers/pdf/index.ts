@@ -87,12 +87,34 @@ export class PDFRenderer implements IFixedPageRenderer {
     }
   }
 
-  private convertOutline(items: any[]): TOCItem[] {
-    return items.map((item) => ({
-      label: item.title || '',
-      position: { type: 'page' as const, page: 1 }, // TODO: resolve dest to page number
-      children: item.items?.length ? this.convertOutline(item.items) : undefined,
-    }));
+  private async convertOutline(items: any[]): Promise<TOCItem[]> {
+    const result: TOCItem[] = [];
+    for (const item of items) {
+      const page = await this.resolveDestPage(item.dest);
+      result.push({
+        label: item.title || '',
+        position: { type: 'page' as const, page: page ?? 1 },
+        children: item.items?.length ? await this.convertOutline(item.items) : undefined,
+      });
+    }
+    return result;
+  }
+
+  private async resolveDestPage(dest: any): Promise<number | null> {
+    if (!this.doc || !dest) return null;
+    try {
+      // dest 可以是字符串（命名目标）或数组（显式目标）
+      let explicitDest = dest;
+      if (typeof dest === 'string') {
+        explicitDest = await this.doc.getDestination(dest);
+      }
+      if (!Array.isArray(explicitDest) || explicitDest.length === 0) return null;
+      // explicitDest[0] 是 page ref 对象
+      const pageIndex = await this.doc.getPageIndex(explicitDest[0]);
+      return pageIndex + 1; // 从 1 开始
+    } catch {
+      return null;
+    }
   }
 
   getPosition(): BookPosition {

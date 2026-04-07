@@ -9,10 +9,12 @@ interface EBookToolbarProps {
   scale: number;
   fitWidth: boolean;
   annotationMode: AnnotationMode;
+  sidebarOpen: boolean;
   onPageChange: (page: number) => void;
   onScaleChange: (scale: number) => void;
   onFitWidthToggle: () => void;
   onAnnotationModeChange: (mode: AnnotationMode) => void;
+  onSidebarToggle: () => void;
 }
 
 const ZOOM_PRESETS = [
@@ -31,10 +33,12 @@ export function EBookToolbar({
   scale,
   fitWidth,
   annotationMode,
+  sidebarOpen,
   onPageChange,
   onScaleChange,
   onFitWidthToggle,
   onAnnotationModeChange,
+  onSidebarToggle,
 }: EBookToolbarProps) {
   const [pageInput, setPageInput] = useState('');
   const [editingPage, setEditingPage] = useState(false);
@@ -97,8 +101,17 @@ export function EBookToolbar({
 
   return (
     <div className="ebook-toolbar">
-      {/* Left: file name */}
+      {/* Left: sidebar + file name */}
       <div className="ebook-toolbar__section ebook-toolbar__section--left">
+        {pageCount > 0 && (
+          <button
+            className={`ebook-toolbar__btn ${sidebarOpen ? 'ebook-toolbar__btn--active' : ''}`}
+            onClick={onSidebarToggle}
+            title="目录"
+          >
+            ☰
+          </button>
+        )}
         {fileName && (
           <span className="ebook-toolbar__filename">{fileName}</span>
         )}

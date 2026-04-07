@@ -2,6 +2,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { EBookToolbar } from './EBookToolbar';
 import { FixedPageContent } from './FixedPageContent';
 import { ReflowableContent } from './ReflowableContent';
+import { OutlinePanel } from './OutlinePanel';
 import { createRenderer } from '../renderers';
 import { detectFileType, isFixedPage, isReflowable } from '../types';
 import type { IBookRenderer, EBookFileType } from '../types';
@@ -47,6 +48,7 @@ export function EBookView() {
   const [loading, setLoading] = useState(false);
   const [restorePage, setRestorePage] = useState<number | null>(null);
   const [annotationMode, setAnnotationMode] = useState<'off' | 'rect' | 'underline'>('off');
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // 同步 ref
   useEffect(() => { fitWidthRef.current = fitWidth; }, [fitWidth]);
@@ -197,41 +199,60 @@ export function EBookView() {
         scale={scale}
         fitWidth={fitWidth}
         annotationMode={annotationMode}
+        sidebarOpen={sidebarOpen}
         onPageChange={handlePageChange}
         onScaleChange={handleScaleChange}
         onFitWidthToggle={handleFitWidthToggle}
         onAnnotationModeChange={setAnnotationMode}
+        onSidebarToggle={() => setSidebarOpen((p) => !p)}
       />
 
-      {loading && (
-        <div className="ebook-loading">Loading...</div>
-      )}
+      <div className="ebook-body">
+        {/* Sidebar */}
+        {sidebarOpen && rendererReady && renderer && (
+          <OutlinePanel
+            renderer={renderer}
+            onGoToPage={(page) => {
+              handlePageChange(page);
+              window.dispatchEvent(new CustomEvent('ebook:goto-page', { detail: page }));
+            }}
+            onClose={() => setSidebarOpen(false)}
+          />
+        )}
 
-      {!loading && !rendererReady && (
-        <div className="ebook-empty">
-          <div className="ebook-empty__icon">📕</div>
-          <div className="ebook-empty__text">在左侧书架中选择电子书</div>
+        {/* Content */}
+        <div className="ebook-body__content">
+          {loading && (
+            <div className="ebook-loading">Loading...</div>
+          )}
+
+          {!loading && !rendererReady && (
+            <div className="ebook-empty">
+              <div className="ebook-empty__icon">📕</div>
+              <div className="ebook-empty__text">在左侧书架中选择电子书</div>
+            </div>
+          )}
+
+          {!loading && rendererReady && renderer && isFixedPage(renderer) && (
+            <FixedPageContent
+              renderer={renderer}
+              scale={scale}
+              initialPage={restorePage}
+              annotationMode={annotationMode}
+              bookId={bookIdRef.current}
+              onPageChange={handlePageChange}
+              onScaleChange={handleScaleChange}
+            />
+          )}
+
+          {!loading && rendererReady && renderer && isReflowable(renderer) && (
+            <ReflowableContent
+              renderer={renderer}
+              onPageChange={handlePageChange}
+            />
+          )}
         </div>
-      )}
-
-      {!loading && rendererReady && renderer && isFixedPage(renderer) && (
-        <FixedPageContent
-          renderer={renderer}
-          scale={scale}
-          initialPage={restorePage}
-          annotationMode={annotationMode}
-          bookId={bookIdRef.current}
-          onPageChange={handlePageChange}
-          onScaleChange={handleScaleChange}
-        />
-      )}
-
-      {!loading && rendererReady && renderer && isReflowable(renderer) && (
-        <ReflowableContent
-          renderer={renderer}
-          onPageChange={handlePageChange}
-        />
-      )}
+      </div>
     </div>
   );
 }
