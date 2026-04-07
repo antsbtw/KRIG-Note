@@ -89,6 +89,17 @@ contextBridge.exposeInMainWorld('viewAPI', {
     return () => ipcRenderer.removeListener(IPC.WORKSPACE_STATE_CHANGED, listener);
   },
 
+  // ── eBook 操作 ──
+
+  ebookGetData: () => ipcRenderer.invoke(IPC.EBOOK_GET_DATA),
+  ebookClose: () => ipcRenderer.invoke(IPC.EBOOK_CLOSE),
+
+  onEbookLoaded: (callback: (info: { fileName: string; fileType: string }) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, info: { fileName: string; fileType: string }) => callback(info);
+    ipcRenderer.on(IPC.EBOOK_LOADED, listener);
+    return () => ipcRenderer.removeListener(IPC.EBOOK_LOADED, listener);
+  },
+
   // ── 学习模块 ──
 
   lookupWord: (word: string) =>

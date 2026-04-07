@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import type { WorkModeRegistration } from '../../shared/types';
+import type { WorkModeRegistration, NavSideRegistration } from '../../shared/types';
+import { EBookPanel } from './EBookPanel';
 
 // ── 数据类型 ──
 
@@ -47,6 +48,16 @@ declare const navSideAPI: {
   resizeStart: (screenX: number) => void;
   resizeMove: (screenX: number) => void;
   resizeEnd: () => void;
+  // NavSide 注册制
+  getNavSideRegistration: (workModeId: string) => Promise<NavSideRegistration | null>;
+  // eBook 书架
+  ebookBookshelfList: () => Promise<unknown[]>;
+  ebookPickFile: () => Promise<{ filePath: string; fileName: string; fileType: string } | null>;
+  ebookBookshelfAdd: (filePath: string, fileType: string, storage: 'managed' | 'link') => Promise<unknown>;
+  ebookBookshelfOpen: (id: string) => Promise<{ success: boolean; error?: string }>;
+  ebookBookshelfRemove: (id: string) => Promise<void>;
+  ebookBookshelfRename: (id: string, displayName: string) => Promise<void>;
+  onEbookBookshelfChanged: (callback: (list: unknown[]) => void) => () => void;
 };
 
 // ── 相对时间 ──
@@ -70,6 +81,8 @@ function relativeTime(ts: number): string {
 export function NavSide() {
   const [modes, setModes] = useState<WorkModeRegistration[]>([]);
   const [activeWorkModeId, setActiveWorkModeId] = useState<string>('');
+  const [registration, setRegistration] = useState<NavSideRegistration | null>(null);
+  const [activeBookId, setActiveBookId] = useState<string | null>(null);
   const [noteList, setNoteList] = useState<NoteListItem[]>([]);
   const [folderList, setFolderList] = useState<FolderRecord[]>([]);
   const [dbReady, setDbReady] = useState(false);
@@ -150,6 +163,14 @@ export function NavSide() {
     return () => { unsubState(); unsubNoteList(); unsubDB(); unsubRestore(); };
   }, [fetchAll]);
 
+  // 查询当前 WorkMode 的 NavSide 注册信息
+  useEffect(() => {
+    if (!activeWorkModeId) return;
+    navSideAPI.getNavSideRegistration(activeWorkModeId).then((reg) => {
+      setRegistration(reg);
+    });
+  }, [activeWorkModeId]);
+
   // 同步 expandedFolders 到 Workspace
   useEffect(() => {
     navSideAPI.setExpandedFolders(Array.from(expandedFolders));
@@ -198,6 +219,21 @@ export function NavSide() {
       }
     });
   }, []);
+
+  // ActionBar 按钮路由（注册制）
+  const handleActionBarClick = useCallback((actionId: string) => {
+    switch (actionId) {
+      case 'create-folder': handleCreateFolder(); break;
+      case 'create-note': handleCreateNote(); break;
+      case 'create-ebook-folder':
+        // 通知 EBookPanel 创建文件夹
+        window.dispatchEvent(new CustomEvent('ebook:create-folder'));
+        break;
+      case 'import-ebook':
+        window.dispatchEvent(new CustomEvent('ebook:import'));
+        break;
+    }
+  }, [handleCreateFolder, handleCreateNote]);
 
   // 构建扁平可见项列表（用于 Shift+Click 范围选择）
   const buildVisibleKeys = useCallback((): string[] => {
@@ -682,44 +718,64 @@ export function NavSide() {
         ))}
       </div>
 
-      {/* Action Bar */}
+      {/* Action Bar（注册制驱动） */}
       <div style={styles.actionBar}>
-        <span style={styles.actionTitle}>笔记目录</span>
+        <span style={styles.actionTitle}>{registration?.actionBar.title ?? ''}</span>
         <div style={styles.actionButtons}>
-          <button style={styles.actionButton} title="新建文件夹" onClick={() => handleCreateFolder()}>+ 文件夹</button>
-          <button style={styles.actionButton} title="新建笔记" onClick={() => handleCreateNote()}>+ 新建</button>
+          {registration?.actionBar.actions.map((action) => (
+            <button
+              key={action.id}
+              style={styles.actionButton}
+              onClick={() => handleActionBarClick(action.id)}
+            >
+              {action.label}
+            </button>
+          ))}
         </div>
       </div>
 
       {/* Search（占位） */}
       <div style={styles.search}>
-        <input style={styles.searchInput} placeholder="搜索笔记..." readOnly />
+        <input
+          style={styles.searchInput}
+          placeholder={registration?.contentType === 'ebook-bookshelf' ? '搜索书架...' : '搜索笔记...'}
+          readOnly
+        />
       </div>
 
-      {/* Content List — 树形列表 */}
-      <div
-        style={{
-          ...styles.contentList,
-          ...(dropTargetId === 'root' ? styles.dropTargetRoot : {}),
-        }}
-        onClick={(e) => {
-          // 只在点击空白区域时清除多选（不是点击子项冒泡上来的）
-          if (e.target === e.currentTarget) setSelectedItems(new Set());
-        }}
-        onDragOver={(e) => handleDragOver(e, 'root')}
-        onDragLeave={(e) => handleDragLeave(e, 'root')}
-        onDrop={(e) => handleDrop(e, null)}
-      >
-        {!dbReady ? (
-          <div style={styles.placeholder}>数据库启动中...</div>
-        ) : noteList.length === 0 && folderList.length === 0 ? (
-          <div style={styles.placeholder}>暂无笔记</div>
-        ) : (
-          buildTree(null, 0)
-        )}
-      </div>
+      {/* Content — 根据 contentType 分发面板 */}
+      {registration?.contentType === 'note-list' && (
+        <>
+          <div
+            style={{
+              ...styles.contentList,
+              ...(dropTargetId === 'root' ? styles.dropTargetRoot : {}),
+            }}
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setSelectedItems(new Set());
+            }}
+            onDragOver={(e) => handleDragOver(e, 'root')}
+            onDragLeave={(e) => handleDragLeave(e, 'root')}
+            onDrop={(e) => handleDrop(e, null)}
+          >
+            {!dbReady ? (
+              <div style={styles.placeholder}>数据库启动中...</div>
+            ) : noteList.length === 0 && folderList.length === 0 ? (
+              <div style={styles.placeholder}>暂无笔记</div>
+            ) : (
+              buildTree(null, 0)
+            )}
+          </div>
+          {renderContextMenu()}
+        </>
+      )}
 
-      {renderContextMenu()}
+      {registration?.contentType === 'ebook-bookshelf' && (
+        <EBookPanel
+          activeBookId={activeBookId}
+          onActiveBookChange={setActiveBookId}
+        />
+      )}
     </div>
   );
 }

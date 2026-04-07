@@ -60,6 +60,10 @@ const config: ForgeConfig = {
           name: 'note_view',
           config: 'vite.note.config.mts',
         },
+        {
+          name: 'ebook_view',
+          config: 'vite.ebook.config.mts',
+        },
       ],
     }),
   ],

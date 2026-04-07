@@ -1,7 +1,7 @@
 // ─── L3: View 基础类型 ───
 
 /** View 的基础类型分类（插件注册） */
-export type ViewType = 'note' | 'pdf' | 'web' | 'graph';
+export type ViewType = 'note' | 'ebook' | 'web' | 'graph';
 
 /** View 实例 ID（格式: '{type}-{workspaceId}-{counter}'） */
 export type ViewInstanceId = string;
@@ -94,6 +94,16 @@ export interface WorkModeRegistration {
   icon: string;
   label: string;
   order: number;
+}
+
+/** NavSide 内容注册（按 WorkMode 驱动） */
+export interface NavSideRegistration {
+  workModeId: string;
+  actionBar: {
+    title: string;
+    actions: { id: string; label: string }[];
+  };
+  contentType: string;
 }
 
 /** 协同协议匹配条件 */
@@ -211,6 +221,31 @@ export const IPC = {
 
   // YouTube 字幕
   YOUTUBE_TRANSCRIPT: 'youtube:fetch-transcript',  // 获取 YouTube 字幕
+
+  // NavSide 注册制
+  NAVSIDE_GET_REGISTRATION: 'navside:get-registration',
+
+  // eBook 书架（NavSide 用）
+  EBOOK_BOOKSHELF_LIST: 'ebook:bookshelf-list',
+  EBOOK_PICK_FILE: 'ebook:pick-file',              // 弹文件对话框，返回路径
+  EBOOK_BOOKSHELF_ADD: 'ebook:bookshelf-add',       // 按指定模式（managed/link）导入
+  EBOOK_BOOKSHELF_OPEN: 'ebook:bookshelf-open',
+  EBOOK_BOOKSHELF_REMOVE: 'ebook:bookshelf-remove',
+  EBOOK_BOOKSHELF_RENAME: 'ebook:bookshelf-rename',
+  EBOOK_BOOKSHELF_MOVE: 'ebook:bookshelf-move',
+  EBOOK_BOOKSHELF_CHANGED: 'ebook:bookshelf-changed',
+
+  // eBook 文件夹
+  EBOOK_FOLDER_CREATE: 'ebook:folder-create',
+  EBOOK_FOLDER_RENAME: 'ebook:folder-rename',
+  EBOOK_FOLDER_DELETE: 'ebook:folder-delete',
+  EBOOK_FOLDER_MOVE: 'ebook:folder-move',
+  EBOOK_FOLDER_LIST: 'ebook:folder-list',
+
+  // eBook 数据传输（EBookView 用）
+  EBOOK_GET_DATA: 'ebook:get-data',
+  EBOOK_LOADED: 'ebook:loaded',
+  EBOOK_CLOSE: 'ebook:close',
 
   // yt-dlp
   YTDLP_CHECK_STATUS: 'ytdlp:check-status',

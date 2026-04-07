@@ -23,6 +23,9 @@ import { vocabStore } from '../learning/vocabulary-store';
 import { mediaStore } from '../media/media-store';
 import { checkStatus as ytdlpCheckStatus, install as ytdlpInstall } from '../ytdlp/binary-manager';
 import { downloadVideo, getVideoInfo, saveTranslationSubtitle } from '../ytdlp/downloader';
+import { loadEBook, getEBookData, closeEBook } from '../ebook/file-loader';
+import { bookshelfStore } from '../ebook/bookshelf-store';
+import { navSideRegistry } from '../navside/registry';
 
 export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): void {
   // ── Workspace 操作 ──
@@ -311,6 +314,122 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
         (view as any).webContents.send(IPC.NOTE_OPEN_IN_EDITOR, noteId);
       }
     }
+  });
+
+  // ── NavSide 注册制 ──
+
+  ipcMain.handle(IPC.NAVSIDE_GET_REGISTRATION, (_event, workModeId: string) => {
+    return navSideRegistry.get(workModeId) ?? null;
+  });
+
+  // ── eBook 书架操作 ──
+
+  ipcMain.handle(IPC.EBOOK_BOOKSHELF_LIST, () => {
+    return bookshelfStore.list();
+  });
+
+  // 弹文件对话框（只选文件，不导入）
+  ipcMain.handle(IPC.EBOOK_PICK_FILE, async () => {
+    const mainWindow = getMainWindow();
+    const result = await dialog.showOpenDialog(mainWindow as any, {
+      title: 'Import eBook',
+      filters: [
+        { name: 'eBook Files', extensions: ['pdf', 'epub', 'djvu', 'cbz'] },
+        { name: 'PDF', extensions: ['pdf'] },
+      ],
+      properties: ['openFile'],
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+
+    const filePath = result.filePaths[0];
+    const ext = filePath.split('.').pop()?.toLowerCase() ?? 'pdf';
+    const fileType = (['pdf', 'epub', 'djvu', 'cbz'].includes(ext) ? ext : 'pdf') as 'pdf' | 'epub' | 'djvu' | 'cbz';
+    const fileName = filePath.split('/').pop() ?? filePath;
+
+    return { filePath, fileName, fileType };
+  });
+
+  // 按指定模式导入（managed 或 link）
+  ipcMain.handle(IPC.EBOOK_BOOKSHELF_ADD, async (_event, filePath: string, fileType: string, storage: 'managed' | 'link') => {
+    const ft = fileType as 'pdf' | 'epub' | 'djvu' | 'cbz';
+    const entry = storage === 'managed'
+      ? bookshelfStore.addManaged(filePath, ft)
+      : bookshelfStore.addLinked(filePath, ft);
+
+    broadcastBookshelfChanged(getMainWindow());
+
+    // 加载文件并通知 EBookView
+    await loadEBook(entry.filePath);
+    broadcastEBookLoaded(getMainWindow(), { fileName: entry.displayName, fileType: entry.fileType });
+
+    return entry;
+  });
+
+  ipcMain.handle(IPC.EBOOK_BOOKSHELF_OPEN, async (_event, id: string) => {
+    const entry = bookshelfStore.get(id);
+    if (!entry) return { success: false, error: 'Entry not found' };
+
+    const exists = await bookshelfStore.checkExists(id);
+    if (!exists) return { success: false, error: 'File not found' };
+
+    bookshelfStore.updateOpened(id);
+    await loadEBook(entry.filePath);
+    broadcastEBookLoaded(getMainWindow(), { fileName: entry.displayName, fileType: entry.fileType });
+    broadcastBookshelfChanged(getMainWindow());
+
+    return { success: true };
+  });
+
+  ipcMain.handle(IPC.EBOOK_BOOKSHELF_REMOVE, (_event, id: string) => {
+    bookshelfStore.remove(id);
+    broadcastBookshelfChanged(getMainWindow());
+  });
+
+  ipcMain.handle(IPC.EBOOK_BOOKSHELF_RENAME, (_event, id: string, displayName: string) => {
+    bookshelfStore.rename(id, displayName);
+    broadcastBookshelfChanged(getMainWindow());
+  });
+
+  ipcMain.handle(IPC.EBOOK_BOOKSHELF_MOVE, (_event, id: string, folderId: string | null) => {
+    bookshelfStore.moveToFolder(id, folderId);
+    broadcastBookshelfChanged(getMainWindow());
+  });
+
+  // ── eBook 文件夹操作 ──
+
+  ipcMain.handle(IPC.EBOOK_FOLDER_LIST, () => {
+    return bookshelfStore.folderList();
+  });
+
+  ipcMain.handle(IPC.EBOOK_FOLDER_CREATE, (_event, title: string, parentId?: string | null) => {
+    const folder = bookshelfStore.folderCreate(title, parentId);
+    broadcastBookshelfChanged(getMainWindow());
+    return folder;
+  });
+
+  ipcMain.handle(IPC.EBOOK_FOLDER_RENAME, (_event, id: string, title: string) => {
+    bookshelfStore.folderRename(id, title);
+    broadcastBookshelfChanged(getMainWindow());
+  });
+
+  ipcMain.handle(IPC.EBOOK_FOLDER_DELETE, (_event, id: string) => {
+    bookshelfStore.folderDelete(id);
+    broadcastBookshelfChanged(getMainWindow());
+  });
+
+  ipcMain.handle(IPC.EBOOK_FOLDER_MOVE, (_event, id: string, parentId: string | null) => {
+    bookshelfStore.folderMove(id, parentId);
+    broadcastBookshelfChanged(getMainWindow());
+  });
+
+  // ── eBook 数据传输 ──
+
+  ipcMain.handle(IPC.EBOOK_GET_DATA, () => {
+    return getEBookData();
+  });
+
+  ipcMain.handle(IPC.EBOOK_CLOSE, () => {
+    closeEBook();
   });
 
   // ── 文件保存对话框 ──
@@ -691,6 +810,27 @@ const EXTRACT_TWEET_JS = `
 `;
 
 /** 广播生词本变更 */
+/** 广播书架变更（→ NavSide） */
+function broadcastBookshelfChanged(mainWindow: BaseWindow | null): void {
+  if (!mainWindow) return;
+  const list = bookshelfStore.list();
+  for (const view of mainWindow.contentView.children) {
+    if ('webContents' in view) {
+      (view as any).webContents.send(IPC.EBOOK_BOOKSHELF_CHANGED, list);
+    }
+  }
+}
+
+/** 通知 EBookView 文件已加载 */
+function broadcastEBookLoaded(mainWindow: BaseWindow | null, info: { fileName: string; fileType: string }): void {
+  if (!mainWindow) return;
+  for (const view of mainWindow.contentView.children) {
+    if ('webContents' in view) {
+      (view as any).webContents.send(IPC.EBOOK_LOADED, info);
+    }
+  }
+}
+
 function broadcastVocabChanged(mainWindow: BaseWindow | null): void {
   if (!mainWindow) return;
   vocabStore.list().then((entries) => {

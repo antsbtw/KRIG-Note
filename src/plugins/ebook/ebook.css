@@ -1,0 +1,191 @@
+/* EBookView 暗色主题样式 */
+
+.ebook-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: #1e1e1e;
+  color: #e8eaed;
+}
+
+/* ── Toolbar ── */
+
+.ebook-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 36px;
+  padding: 0 12px;
+  border-bottom: 1px solid #333;
+  background: #252525;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.ebook-toolbar__section {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ebook-toolbar__section--left {
+  flex: 1;
+  min-width: 0;
+}
+
+.ebook-toolbar__section--center {
+  flex-shrink: 0;
+}
+
+.ebook-toolbar__section--right {
+  flex: 1;
+  min-width: 0;
+  justify-content: flex-end;
+}
+
+.ebook-toolbar__filename {
+  font-size: 13px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-left: 4px;
+}
+
+.ebook-toolbar__btn {
+  width: 24px;
+  height: 24px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: #e8eaed;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.ebook-toolbar__btn:hover:not(:disabled) {
+  background: #3a3a3a;
+}
+
+.ebook-toolbar__btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.ebook-toolbar__page-input {
+  width: 40px;
+  height: 22px;
+  background: #333;
+  border: 1px solid #555;
+  border-radius: 3px;
+  color: #e8eaed;
+  font-size: 12px;
+  text-align: center;
+  outline: none;
+}
+
+.ebook-toolbar__page-input:focus {
+  border-color: #6b9fff;
+}
+
+.ebook-toolbar__page-info {
+  font-size: 12px;
+  color: #999;
+  white-space: nowrap;
+}
+
+.ebook-toolbar__zoom-select {
+  height: 22px;
+  background: #333;
+  border: 1px solid #555;
+  border-radius: 3px;
+  color: #e8eaed;
+  font-size: 12px;
+  outline: none;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+/* ── Content ── */
+
+.ebook-content {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: #2a2a2a;
+  position: relative;
+}
+
+.ebook-content__pages {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 16px 0;
+}
+
+.ebook-content__page-wrapper {
+  margin-bottom: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  background: #fff;
+  position: relative;
+}
+
+.ebook-content__page-wrapper canvas {
+  display: block;
+}
+
+/* ── Empty State ── */
+
+.ebook-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  color: #666;
+}
+
+.ebook-empty__icon {
+  font-size: 48px;
+  opacity: 0.4;
+}
+
+.ebook-empty__text {
+  font-size: 14px;
+}
+
+/* ── Loading ── */
+
+.ebook-loading {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #999;
+  font-size: 14px;
+}
+
+/* ── Scrollbar ── */
+
+.ebook-content::-webkit-scrollbar {
+  width: 8px;
+}
+
+.ebook-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.ebook-content::-webkit-scrollbar-thumb {
+  background: #555;
+  border-radius: 4px;
+}
+
+.ebook-content::-webkit-scrollbar-thumb:hover {
+  background: #666;
+}

@@ -1,0 +1,150 @@
+import { useState, useCallback, KeyboardEvent } from 'react';
+
+interface EBookToolbarProps {
+  fileName: string;
+  currentPage: number;
+  pageCount: number;
+  scale: number;
+  onPageChange: (page: number) => void;
+  onScaleChange: (scale: number) => void;
+}
+
+const ZOOM_PRESETS = [
+  { label: '50%', value: 0.5 },
+  { label: '75%', value: 0.75 },
+  { label: '100%', value: 1.0 },
+  { label: '125%', value: 1.25 },
+  { label: '150%', value: 1.5 },
+  { label: '200%', value: 2.0 },
+];
+
+export function EBookToolbar({
+  fileName,
+  currentPage,
+  pageCount,
+  scale,
+  onPageChange,
+  onScaleChange,
+}: EBookToolbarProps) {
+  const [pageInput, setPageInput] = useState('');
+  const [editingPage, setEditingPage] = useState(false);
+
+  const handlePrevPage = useCallback(() => {
+    if (currentPage > 1) {
+      onPageChange(currentPage - 1);
+      window.dispatchEvent(new CustomEvent('ebook:goto-page', { detail: currentPage - 1 }));
+    }
+  }, [currentPage, onPageChange]);
+
+  const handleNextPage = useCallback(() => {
+    if (currentPage < pageCount) {
+      onPageChange(currentPage + 1);
+      window.dispatchEvent(new CustomEvent('ebook:goto-page', { detail: currentPage + 1 }));
+    }
+  }, [currentPage, pageCount, onPageChange]);
+
+  const handlePageInputFocus = useCallback(() => {
+    setPageInput(String(currentPage));
+    setEditingPage(true);
+  }, [currentPage]);
+
+  const handlePageInputBlur = useCallback(() => {
+    setEditingPage(false);
+    const page = parseInt(pageInput, 10);
+    if (!isNaN(page) && page >= 1 && page <= pageCount) {
+      onPageChange(page);
+      window.dispatchEvent(new CustomEvent('ebook:goto-page', { detail: page }));
+    }
+  }, [pageInput, pageCount, onPageChange]);
+
+  const handlePageInputKey = useCallback((e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      (e.target as HTMLInputElement).blur();
+    } else if (e.key === 'Escape') {
+      setEditingPage(false);
+      setPageInput('');
+    }
+  }, []);
+
+  const handleZoomChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
+    onScaleChange(parseFloat(e.target.value));
+  }, [onScaleChange]);
+
+  const handleZoomIn = useCallback(() => {
+    const next = Math.min(scale + 0.25, 3.0);
+    onScaleChange(Math.round(next * 100) / 100);
+  }, [scale, onScaleChange]);
+
+  const handleZoomOut = useCallback(() => {
+    const next = Math.max(scale - 0.25, 0.25);
+    onScaleChange(Math.round(next * 100) / 100);
+  }, [scale, onScaleChange]);
+
+  return (
+    <div className="ebook-toolbar">
+      {/* Left: file name */}
+      <div className="ebook-toolbar__section ebook-toolbar__section--left">
+        {fileName && (
+          <span className="ebook-toolbar__filename">{fileName}</span>
+        )}
+      </div>
+
+      {/* Center: page navigation */}
+      {pageCount > 0 && (
+        <div className="ebook-toolbar__section ebook-toolbar__section--center">
+          <button
+            className="ebook-toolbar__btn"
+            onClick={handlePrevPage}
+            disabled={currentPage <= 1}
+            title="Previous page"
+          >
+            ‹
+          </button>
+          <input
+            className="ebook-toolbar__page-input"
+            value={editingPage ? pageInput : String(currentPage)}
+            onChange={(e) => setPageInput(e.target.value)}
+            onFocus={handlePageInputFocus}
+            onBlur={handlePageInputBlur}
+            onKeyDown={handlePageInputKey}
+          />
+          <span className="ebook-toolbar__page-info">of {pageCount}</span>
+          <button
+            className="ebook-toolbar__btn"
+            onClick={handleNextPage}
+            disabled={currentPage >= pageCount}
+            title="Next page"
+          >
+            ›
+          </button>
+        </div>
+      )}
+
+      {/* Right: zoom controls */}
+      {pageCount > 0 && (
+        <div className="ebook-toolbar__section ebook-toolbar__section--right">
+          <button className="ebook-toolbar__btn" onClick={handleZoomOut} title="Zoom out">
+            −
+          </button>
+          <select
+            className="ebook-toolbar__zoom-select"
+            value={scale}
+            onChange={handleZoomChange}
+          >
+            {ZOOM_PRESETS.map((p) => (
+              <option key={p.value} value={p.value}>
+                {p.label}
+              </option>
+            ))}
+            {!ZOOM_PRESETS.some((p) => p.value === scale) && (
+              <option value={scale}>{Math.round(scale * 100)}%</option>
+            )}
+          </select>
+          <button className="ebook-toolbar__btn" onClick={handleZoomIn} title="Zoom in">
+            +
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}

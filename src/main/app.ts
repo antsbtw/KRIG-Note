@@ -6,6 +6,7 @@ import { getNavSideWidth, setNavSideWidth } from './slot/layout';
 import { workspaceManager } from './workspace/manager';
 import { workModeRegistry } from './workmode/registry';
 import { protocolRegistry } from './protocol/registry';
+import { navSideRegistry } from './navside/registry';
 import { menuRegistry } from './menu/registry';
 import { loadSession, saveSession, buildSession } from './storage/session-store';
 import { initSurrealDB, shutdownSurrealDB, isDBReady } from './storage/client';
@@ -40,9 +41,9 @@ function registerPlugins(): void {
 
   workModeRegistry.register({
     id: 'demo-b',
-    viewType: 'pdf',
+    viewType: 'ebook',
     icon: '📕',
-    label: 'PDF',
+    label: 'eBook',
     order: 2,
   });
 
@@ -54,15 +55,34 @@ function registerPlugins(): void {
     order: 3,
   });
 
+  // NavSide 内容注册
+  navSideRegistry.register({
+    workModeId: 'demo-a',
+    actionBar: { title: '笔记目录', actions: [
+      { id: 'create-folder', label: '+ 文件夹' },
+      { id: 'create-note', label: '+ 新建' },
+    ]},
+    contentType: 'note-list',
+  });
+
+  navSideRegistry.register({
+    workModeId: 'demo-b',
+    actionBar: { title: '书架', actions: [
+      { id: 'create-ebook-folder', label: '+ 文件夹' },
+      { id: 'import-ebook', label: '+ 导入' },
+    ]},
+    contentType: 'ebook-bookshelf',
+  });
+
   // 协同协议注册
   protocolRegistry.register({
     id: 'demo-sync',
-    match: { left: { type: 'note' }, right: { type: 'pdf' } },
+    match: { left: { type: 'note' }, right: { type: 'ebook' } },
   });
 
   protocolRegistry.register({
     id: 'demo-sync-reverse',
-    match: { left: { type: 'pdf' }, right: { type: 'note' } },
+    match: { left: { type: 'ebook' }, right: { type: 'note' } },
   });
 
   // ── DevTools 辅助函数 ──
@@ -100,6 +120,9 @@ function registerPlugins(): void {
       { id: 'devtools-note', label: 'DevTools (Note)', accelerator: 'CmdOrCtrl+Alt+N', handler: () => {
         openDevToolsByName('note');
       }},
+      { id: 'devtools-ebook', label: 'DevTools (eBook)', accelerator: 'CmdOrCtrl+Alt+F', handler: () => {
+        openDevToolsByName('ebook');
+      }},
       { id: 'devtools-navside', label: 'DevTools (NavSide)', accelerator: 'CmdOrCtrl+Alt+S', handler: () => {
         openDevToolsByName('navside');
       }},
@@ -133,11 +156,52 @@ function registerPlugins(): void {
   });
 
   menuRegistry.register({
-    id: 'pdf-menu',
-    label: 'PDF',
+    id: 'ebook-menu',
+    label: 'eBook',
     order: 11,
     items: [
-      { id: 'open-pdf', label: 'Open PDF...', accelerator: 'CmdOrCtrl+O', handler: () => console.log('Open PDF') },
+      { id: 'open-ebook', label: 'Open eBook...', accelerator: 'CmdOrCtrl+O', handler: async () => {
+        // 复用 IMPORT 逻辑：弹对话框 → 导入书架 → 加载 → 通知
+        const { dialog } = await import('electron');
+        const win = getMainWindow();
+        const result = await dialog.showOpenDialog(win as any, {
+          title: 'Open eBook',
+          filters: [
+            { name: 'eBook Files', extensions: ['pdf', 'epub', 'djvu', 'cbz'] },
+            { name: 'PDF', extensions: ['pdf'] },
+          ],
+          properties: ['openFile'],
+        });
+        if (result.canceled || result.filePaths.length === 0) return;
+
+        const filePath = result.filePaths[0];
+        const ext = filePath.split('.').pop()?.toLowerCase() ?? 'pdf';
+        const fileType = (['pdf', 'epub', 'djvu', 'cbz'].includes(ext) ? ext : 'pdf') as 'pdf' | 'epub' | 'djvu' | 'cbz';
+
+        const { bookshelfStore: store } = await import('./ebook/bookshelf-store');
+        const entry = store.addManaged(filePath, fileType);
+
+        // 广播书架变更
+        if (win) {
+          const list = store.list();
+          for (const child of win.contentView.children) {
+            if ('webContents' in child) {
+              (child as any).webContents.send('ebook:bookshelf-changed', list);
+            }
+          }
+        }
+
+        // 加载文件并通知 EBookView
+        const { loadEBook } = await import('./ebook/file-loader');
+        await loadEBook(entry.filePath);
+        if (win) {
+          for (const child of win.contentView.children) {
+            if ('webContents' in child) {
+              (child as any).webContents.send('ebook:loaded', { fileName: entry.displayName, fileType: entry.fileType });
+            }
+          }
+        }
+      }},
       { id: 'sep1', label: '', separator: true, handler: () => {} },
       { id: 'bookmark', label: 'Add Bookmark', accelerator: 'CmdOrCtrl+D', handler: () => console.log('Bookmark') },
     ],

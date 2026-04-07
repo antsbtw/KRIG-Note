@@ -72,6 +72,18 @@ function createViewForWorkMode(workModeId: string): WebContentsView {
         { query: { workModeId } },
       );
     }
+  } else if (viewType === 'ebook') {
+    // EBookView — 电子书阅读器
+    if (EBOOK_VIEW_VITE_DEV_SERVER_URL) {
+      view.webContents.loadURL(
+        `${EBOOK_VIEW_VITE_DEV_SERVER_URL}/ebook.html?workModeId=${workModeId}`,
+      );
+    } else {
+      view.webContents.loadFile(
+        path.join(__dirname, `../renderer/ebook_view/ebook.html`),
+        { query: { workModeId } },
+      );
+    }
   } else {
     // 其他类型用 DemoView
     if (DEMO_VIEW_VITE_DEV_SERVER_URL) {
@@ -532,3 +544,4 @@ declare const SHELL_VITE_DEV_SERVER_URL: string | undefined;
 declare const NAVSIDE_VITE_DEV_SERVER_URL: string | undefined;
 declare const DEMO_VIEW_VITE_DEV_SERVER_URL: string | undefined;
 declare const NOTE_VIEW_VITE_DEV_SERVER_URL: string | undefined;
+declare const EBOOK_VIEW_VITE_DEV_SERVER_URL: string | undefined;
