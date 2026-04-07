@@ -14,6 +14,7 @@ import { canGoBack, canGoForward, goBack, goForward } from '../plugins/link-clic
  */
 
 declare const viewAPI: {
+  noteLoad: (id: string) => Promise<{ title?: string } | null>;
   onNoteOpenInEditor: (callback: (noteId: string) => void) => () => void;
   onNoteTitleChanged: (callback: (data: { noteId: string; title: string }) => void) => () => void;
 };
@@ -21,21 +22,47 @@ declare const viewAPI: {
 export function NoteView() {
   const [noteTitle, setNoteTitle] = useState('');
   const [navState, setNavState] = useState({ back: false, forward: false });
+  const [dirty, setDirty] = useState(false);
 
   const refreshNav = useCallback(() => {
     setNavState({ back: canGoBack(), forward: canGoForward() });
   }, []);
 
   useEffect(() => {
-    const unsubOpen = viewAPI.onNoteOpenInEditor(() => {
+    const unsubOpen = viewAPI.onNoteOpenInEditor(async (noteId) => {
       refreshNav();
+      // 加载笔记标题
+      try {
+        const record = await viewAPI.noteLoad(noteId);
+        if (record?.title) setNoteTitle(record.title);
+      } catch { /* ignore */ }
     });
 
     const unsubTitle = viewAPI.onNoteTitleChanged((data) => {
       setNoteTitle(data.title);
     });
 
-    return () => { unsubOpen(); unsubTitle(); };
+    // Cmd+S 手动保存
+    const keyHandler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent('note:save'));
+      }
+    };
+    window.addEventListener('keydown', keyHandler);
+
+    // 监听 dirty / saved 状态
+    const onDirty = () => setDirty(true);
+    const onSaved = () => setDirty(false);
+    window.addEventListener('note:dirty', onDirty);
+    window.addEventListener('note:saved', onSaved);
+
+    return () => {
+      unsubOpen(); unsubTitle();
+      window.removeEventListener('keydown', keyHandler);
+      window.removeEventListener('note:dirty', onDirty);
+      window.removeEventListener('note:saved', onSaved);
+    };
   }, [refreshNav]);
 
   return (
@@ -59,6 +86,15 @@ export function NoteView() {
           ›
         </button>
         <span style={styles.toolbarTitle}>{noteTitle || 'Note'}</span>
+        <div style={{ flex: 1 }} />
+        <button
+          style={{ ...styles.saveBtn, opacity: dirty ? 1 : 0.3 }}
+          disabled={!dirty}
+          onClick={() => window.dispatchEvent(new CustomEvent('note:save'))}
+          title="保存 (⌘S)"
+        >
+          {dirty ? '保存' : '已保存'}
+        </button>
       </div>
 
       {/* Content */}
@@ -106,5 +142,15 @@ const styles: Record<string, React.CSSProperties> = {
     overflow: 'hidden',
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap' as const,
+  },
+  saveBtn: {
+    background: 'transparent',
+    border: '1px solid #555',
+    borderRadius: 4,
+    color: '#e8eaed',
+    fontSize: 12,
+    padding: '2px 10px',
+    cursor: 'pointer',
+    flexShrink: 0,
   },
 };

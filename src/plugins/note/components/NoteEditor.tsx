@@ -238,7 +238,13 @@ export function NoteEditor() {
   // 防抖自动保存（1秒）
   const scheduleSave = useCallback(() => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(saveNote, 1000);
+    saveTimerRef.current = setTimeout(() => {
+      saveNote();
+      // 保存完成后通知 NoteView（dirty → saved）
+      window.dispatchEvent(new CustomEvent('note:saved'));
+    }, 1000);
+    // 通知 NoteView 有未保存的修改
+    window.dispatchEvent(new CustomEvent('note:dirty'));
   }, [saveNote]);
 
   // 初始化
@@ -305,12 +311,21 @@ export function NoteEditor() {
       }
     });
 
+    // 监听手动保存事件（来自 NoteView Toolbar 的 Save 按钮）
+    const manualSaveHandler = () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      saveNote();
+      window.dispatchEvent(new CustomEvent('note:saved'));
+    };
+    window.addEventListener('note:save', manualSaveHandler);
+
     return () => {
       unsubOpen();
       unsubRestore();
       unsubTestDoc();
       unsubTitle();
       unsubVocab();
+      window.removeEventListener('note:save', manualSaveHandler);
       if (saveTimerRef.current) {
         clearTimeout(saveTimerRef.current);
         saveNote(); // 关闭前保存
