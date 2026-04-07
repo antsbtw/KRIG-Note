@@ -18,6 +18,7 @@ interface EBookToolbarProps {
   onFitWidthToggle: () => void;
   onAnnotationModeChange: (mode: AnnotationMode) => void;
   onSidebarToggle: () => void;
+  epubProgress?: { chapter: string; percentage: number } | null;
   onPrevChapter?: () => void;
   onNextChapter?: () => void;
   onFontSizeChange?: (delta: number) => void;
@@ -48,6 +49,7 @@ export function EBookToolbar({
   onAnnotationModeChange,
   onSidebarToggle,
   renderMode,
+  epubProgress,
   onPrevChapter,
   onNextChapter,
   onFontSizeChange,
@@ -164,8 +166,13 @@ export function EBookToolbar({
 
       {renderMode === 'reflowable' && (
         <div className="ebook-toolbar__section ebook-toolbar__section--center">
-          <button className="ebook-toolbar__btn" onClick={onPrevChapter} title="上一页">‹</button>
-          <button className="ebook-toolbar__btn" onClick={onNextChapter} title="下一页">›</button>
+          <button className="ebook-toolbar__btn" onClick={onPrevChapter} title="上一页 (←)">‹</button>
+          {epubProgress && (
+            <span className="ebook-toolbar__page-info" style={{ margin: '0 8px', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {epubProgress.chapter || ''} · {Math.round(epubProgress.percentage * 100)}%
+            </span>
+          )}
+          <button className="ebook-toolbar__btn" onClick={onNextChapter} title="下一页 (→)">›</button>
         </div>
       )}
 

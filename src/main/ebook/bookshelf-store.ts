@@ -28,6 +28,7 @@ export interface EBookEntry {
   lastPage?: number;
   lastScale?: number;
   lastFitWidth?: boolean;
+  lastCFI?: string;
   bookmarks?: number[];
 }
 
@@ -196,13 +197,14 @@ class BookshelfStore {
     return entry?.bookmarks ?? [];
   }
 
-  updateProgress(id: string, lastPage: number, lastScale?: number, lastFitWidth?: boolean): void {
+  updateProgress(id: string, lastPage: number, lastScale?: number, lastFitWidth?: boolean, lastCFI?: string): void {
     this.load();
     const entry = this.data.entries.find((e) => e.id === id);
     if (entry) {
       entry.lastPage = lastPage;
       if (lastScale !== undefined) entry.lastScale = lastScale;
       if (lastFitWidth !== undefined) entry.lastFitWidth = lastFitWidth;
+      if (lastCFI !== undefined) entry.lastCFI = lastCFI;
       this.save();
     }
   }

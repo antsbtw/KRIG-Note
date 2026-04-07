@@ -15,7 +15,10 @@ export class EPUBRenderer implements IReflowableRenderer {
   private fileData: ArrayBuffer | null = null;
   private fontSize = 100;
   private currentProgress = { chapter: '', percentage: 0 };
+  private lastCFI: string | null = null;
+  private lastLocationToRestore: string | null = null;
   private tocItems: TOCItem[] = [];
+  private relocateCallbacks: Array<(progress: { chapter: string; percentage: number }) => void> = [];
   private readyResolve: (() => void) | null = null;
   private readyPromise: Promise<void> = new Promise((r) => { this.readyResolve = r; });
 
@@ -62,8 +65,11 @@ export class EPUBRenderer implements IReflowableRenderer {
         this.view.renderer.setAttribute('max-inline-size', '720');
       }
 
-      // 显示第一节
-      await this.view.init({ lastLocation: null, showTextStart: true });
+      // 显示内容（恢复上次位置或从头开始）
+      await this.view.init({
+        lastLocation: this.lastLocationToRestore ?? null,
+        showTextStart: !this.lastLocationToRestore,
+      });
 
       // 应用缩放
       this.applyZoom();
@@ -76,6 +82,8 @@ export class EPUBRenderer implements IReflowableRenderer {
             chapter: detail.tocItem?.label ?? '',
             percentage: detail.fraction ?? 0,
           };
+          if (detail.cfi) this.lastCFI = detail.cfi;
+          this.relocateCallbacks.forEach((cb) => cb(this.currentProgress));
         }
       });
 
@@ -178,5 +186,19 @@ export class EPUBRenderer implements IReflowableRenderer {
 
   onResize(): void {
     // foliate-js 的 View 通过 ResizeObserver 自动处理
+  }
+
+  // ── 进度保存/恢复 ──
+
+  getLastCFI(): string | null {
+    return this.lastCFI;
+  }
+
+  setRestoreLocation(cfi: string): void {
+    this.lastLocationToRestore = cfi;
+  }
+
+  onRelocate(callback: (progress: { chapter: string; percentage: number }) => void): void {
+    this.relocateCallbacks.push(callback);
   }
 }

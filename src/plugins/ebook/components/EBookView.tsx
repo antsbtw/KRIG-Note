@@ -15,6 +15,7 @@ interface EBookLoadedInfo {
   fileName: string;
   fileType: string;
   lastPage?: number;
+  lastCFI?: string;
   lastScale?: number;
   lastFitWidth?: boolean;
 }
@@ -24,7 +25,7 @@ declare const viewAPI: {
   ebookClose: () => Promise<void>;
   ebookRestore: () => Promise<EBookLoadedInfo | null>;
   ebookSetActiveBook: (bookId: string | null) => Promise<void>;
-  ebookSaveProgress: (bookId: string, page: number, scale?: number, fitWidth?: boolean) => Promise<void>;
+  ebookSaveProgress: (bookId: string, page: number, scale?: number, fitWidth?: boolean, lastCFI?: string) => Promise<void>;
   ebookBookmarkToggle: (bookId: string, page: number) => Promise<number[]>;
   ebookBookmarkList: (bookId: string) => Promise<number[]>;
   onEbookLoaded: (callback: (info: EBookLoadedInfo) => void) => () => void;
@@ -50,6 +51,7 @@ export function EBookView() {
   const scaleRef = useRef(1.0);
   const [fileName, setFileName] = useState('');
   const [bookId, setBookId] = useState<string | null>(null);
+  const [epubProgress, setEpubProgress] = useState<{ chapter: string; percentage: number } | null>(null);
   const [loading, setLoading] = useState(false);
   const [restorePage, setRestorePage] = useState<number | null>(null);
   const [annotationMode, setAnnotationMode] = useState<'off' | 'rect' | 'underline'>('off');
@@ -84,6 +86,11 @@ export function EBookView() {
       const renderer = createRenderer(fileType);
       await renderer.load(result.data);
 
+      // EPUB: 设置恢复位置（在 renderTo 之前，因为 renderTo 触发 initView）
+      if (isReflowable(renderer) && info.lastCFI) {
+        renderer.setRestoreLocation(info.lastCFI);
+      }
+
       rendererRef.current = renderer;
 
       // 恢复缩放模式
@@ -108,6 +115,14 @@ export function EBookView() {
 
       // 加载书签
       viewAPI.ebookBookmarkList(info.bookId).then(setBookmarks);
+
+      // EPUB: 注册进度变化回调
+      if (isReflowable(renderer)) {
+        renderer.onRelocate((progress) => {
+          setEpubProgress(progress);
+          handlePageChange(0); // 触发 debounced 保存
+        });
+      }
 
       // 适应宽度：等 DOM 更新后计算
       if (shouldFitWidth && isFixedPage(renderer)) {
@@ -170,7 +185,9 @@ export function EBookView() {
     if (progressTimerRef.current) clearTimeout(progressTimerRef.current);
     progressTimerRef.current = setTimeout(() => {
       const bookId = bookIdRef.current;
-      if (bookId) viewAPI.ebookSaveProgress(bookId, page, scaleRef.current, fitWidthRef.current);
+      const r = rendererRef.current;
+      const cfi = (r && isReflowable(r)) ? r.getLastCFI?.() : undefined;
+      if (bookId) viewAPI.ebookSaveProgress(bookId, page, scaleRef.current, fitWidthRef.current, cfi ?? undefined);
     }, 500);
   }, []);
 
@@ -213,6 +230,13 @@ export function EBookView() {
         const bookId = bookIdRef.current;
         if (bookId && currentPage > 0) {
           viewAPI.ebookBookmarkToggle(bookId, currentPage).then(setBookmarks);
+        }
+      } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        const r = rendererRef.current;
+        if (r && isReflowable(r)) {
+          e.preventDefault();
+          if (e.key === 'ArrowLeft') r.prevChapter();
+          else r.nextChapter();
         }
       }
     };
@@ -273,6 +297,7 @@ export function EBookView() {
         annotationMode={annotationMode}
         sidebarOpen={sidebarOpen}
         renderMode={renderer?.renderMode ?? 'fixed-page'}
+        epubProgress={epubProgress}
         onPageChange={handlePageChange}
         onScaleChange={handleScaleChange}
         onFitWidthToggle={handleFitWidthToggle}

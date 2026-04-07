@@ -162,6 +162,13 @@ export interface IReflowableRenderer extends IBookRenderer {
 
   // 视口变化时重排
   onResize(): void;
+
+  // 进度保存/恢复
+  getLastCFI(): string | null;
+  setRestoreLocation(cfi: string): void;
+
+  // 进度变化回调
+  onRelocate(callback: (progress: { chapter: string; percentage: number }) => void): void;
 }
 
 // ── 类型守卫 ──
