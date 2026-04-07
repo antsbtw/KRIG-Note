@@ -25,6 +25,8 @@ declare const viewAPI: {
   ebookRestore: () => Promise<EBookLoadedInfo | null>;
   ebookSetActiveBook: (bookId: string | null) => Promise<void>;
   ebookSaveProgress: (bookId: string, page: number, scale?: number, fitWidth?: boolean) => Promise<void>;
+  ebookBookmarkToggle: (bookId: string, page: number) => Promise<number[]>;
+  ebookBookmarkList: (bookId: string) => Promise<number[]>;
   onEbookLoaded: (callback: (info: EBookLoadedInfo) => void) => () => void;
 };
 
@@ -54,6 +56,7 @@ export function EBookView() {
   const [searchVisible, setSearchVisible] = useState(false);
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [searchIndex, setSearchIndex] = useState(0);
+  const [bookmarks, setBookmarks] = useState<number[]>([]);
 
   // 同步 ref
   useEffect(() => { fitWidthRef.current = fitWidth; }, [fitWidth]);
@@ -99,6 +102,9 @@ export function EBookView() {
       setRestorePage(info.lastPage && info.lastPage > 1 ? info.lastPage : null);
       setRendererReady(true);
       setLoading(false);
+
+      // 加载书签
+      viewAPI.ebookBookmarkList(info.bookId).then(setBookmarks);
 
       // 适应宽度：等 DOM 更新后计算
       if (shouldFitWidth && isFixedPage(renderer)) {
@@ -193,17 +199,23 @@ export function EBookView() {
     });
   }, []);
 
-  // Cmd+F 搜索
+  // Cmd+F 搜索 / Cmd+D 书签
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
         e.preventDefault();
         setSearchVisible(true);
+      } else if ((e.metaKey || e.ctrlKey) && e.key === 'd') {
+        e.preventDefault();
+        const bookId = bookIdRef.current;
+        if (bookId && currentPage > 0) {
+          viewAPI.ebookBookmarkToggle(bookId, currentPage).then(setBookmarks);
+        }
       }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, []);
+  }, [currentPage]);
 
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -262,6 +274,11 @@ export function EBookView() {
         onFitWidthToggle={handleFitWidthToggle}
         onAnnotationModeChange={setAnnotationMode}
         onSidebarToggle={() => setSidebarOpen((p) => !p)}
+        isBookmarked={bookmarks.includes(currentPage)}
+        onBookmarkToggle={() => {
+          const bookId = bookIdRef.current;
+          if (bookId) viewAPI.ebookBookmarkToggle(bookId, currentPage).then(setBookmarks);
+        }}
       />
 
       <SearchBar

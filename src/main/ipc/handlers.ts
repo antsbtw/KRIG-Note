@@ -466,6 +466,16 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
     };
   });
 
+  // ── eBook 书签 ──
+
+  ipcMain.handle(IPC.EBOOK_BOOKMARK_TOGGLE, (_event, bookId: string, page: number) => {
+    return bookshelfStore.toggleBookmark(bookId, page);
+  });
+
+  ipcMain.handle(IPC.EBOOK_BOOKMARK_LIST, (_event, bookId: string) => {
+    return bookshelfStore.getBookmarks(bookId);
+  });
+
   // ── eBook 标注 ──
 
   ipcMain.handle(IPC.EBOOK_ANNOTATION_LIST, (_event, bookId: string) => {

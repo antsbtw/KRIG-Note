@@ -95,6 +95,8 @@ contextBridge.exposeInMainWorld('viewAPI', {
   ebookClose: () => ipcRenderer.invoke(IPC.EBOOK_CLOSE),
 
   ebookRestore: () => ipcRenderer.invoke(IPC.EBOOK_RESTORE),
+  ebookBookmarkToggle: (bookId: string, page: number) => ipcRenderer.invoke(IPC.EBOOK_BOOKMARK_TOGGLE, bookId, page),
+  ebookBookmarkList: (bookId: string) => ipcRenderer.invoke(IPC.EBOOK_BOOKMARK_LIST, bookId),
   ebookAnnotationList: (bookId: string) => ipcRenderer.invoke(IPC.EBOOK_ANNOTATION_LIST, bookId),
   ebookAnnotationAdd: (bookId: string, ann: unknown) => ipcRenderer.invoke(IPC.EBOOK_ANNOTATION_ADD, bookId, ann),
   ebookAnnotationRemove: (bookId: string, annotationId: string) => ipcRenderer.invoke(IPC.EBOOK_ANNOTATION_REMOVE, bookId, annotationId),

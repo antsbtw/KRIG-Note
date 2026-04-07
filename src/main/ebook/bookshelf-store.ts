@@ -28,6 +28,7 @@ export interface EBookEntry {
   lastPage?: number;
   lastScale?: number;
   lastFitWidth?: boolean;
+  bookmarks?: number[];
 }
 
 export interface EBookFolder {
@@ -171,6 +172,28 @@ class BookshelfStore {
     this.load();
     const entry = this.data.entries.find((e) => e.id === id);
     if (entry) { entry.lastOpenedAt = Date.now(); this.save(); }
+  }
+
+  toggleBookmark(id: string, page: number): number[] {
+    this.load();
+    const entry = this.data.entries.find((e) => e.id === id);
+    if (!entry) return [];
+    if (!entry.bookmarks) entry.bookmarks = [];
+    const idx = entry.bookmarks.indexOf(page);
+    if (idx >= 0) {
+      entry.bookmarks.splice(idx, 1);
+    } else {
+      entry.bookmarks.push(page);
+      entry.bookmarks.sort((a, b) => a - b);
+    }
+    this.save();
+    return entry.bookmarks;
+  }
+
+  getBookmarks(id: string): number[] {
+    this.load();
+    const entry = this.data.entries.find((e) => e.id === id);
+    return entry?.bookmarks ?? [];
   }
 
   updateProgress(id: string, lastPage: number, lastScale?: number, lastFitWidth?: boolean): void {

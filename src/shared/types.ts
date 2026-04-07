@@ -249,6 +249,10 @@ export const IPC = {
   EBOOK_LOADED: 'ebook:loaded',
   EBOOK_CLOSE: 'ebook:close',
 
+  // eBook 书签
+  EBOOK_BOOKMARK_TOGGLE: 'ebook:bookmark-toggle',
+  EBOOK_BOOKMARK_LIST: 'ebook:bookmark-list',
+
   // eBook 标注
   EBOOK_ANNOTATION_LIST: 'ebook:annotation-list',
   EBOOK_ANNOTATION_ADD: 'ebook:annotation-add',

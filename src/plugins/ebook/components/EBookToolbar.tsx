@@ -15,6 +15,8 @@ interface EBookToolbarProps {
   onFitWidthToggle: () => void;
   onAnnotationModeChange: (mode: AnnotationMode) => void;
   onSidebarToggle: () => void;
+  isBookmarked?: boolean;
+  onBookmarkToggle?: () => void;
 }
 
 const ZOOM_PRESETS = [
@@ -39,6 +41,8 @@ export function EBookToolbar({
   onFitWidthToggle,
   onAnnotationModeChange,
   onSidebarToggle,
+  isBookmarked,
+  onBookmarkToggle,
 }: EBookToolbarProps) {
   const [pageInput, setPageInput] = useState('');
   const [editingPage, setEditingPage] = useState(false);
@@ -164,6 +168,14 @@ export function EBookToolbar({
             title="横线标注"
           >
             ▁
+          </button>
+          <button
+            className="ebook-toolbar__btn"
+            onClick={onBookmarkToggle}
+            title={isBookmarked ? '移除书签 (⌘D)' : '添加书签 (⌘D)'}
+            style={{ color: isBookmarked ? '#ffd43b' : undefined }}
+          >
+            {isBookmarked ? '★' : '☆'}
           </button>
         </div>
       )}
