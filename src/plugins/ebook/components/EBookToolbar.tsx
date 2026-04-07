@@ -1,14 +1,18 @@
 import { useState, useCallback, KeyboardEvent } from 'react';
 
+type AnnotationMode = 'off' | 'rect' | 'underline';
+
 interface EBookToolbarProps {
   fileName: string;
   currentPage: number;
   pageCount: number;
   scale: number;
   fitWidth: boolean;
+  annotationMode: AnnotationMode;
   onPageChange: (page: number) => void;
   onScaleChange: (scale: number) => void;
   onFitWidthToggle: () => void;
+  onAnnotationModeChange: (mode: AnnotationMode) => void;
 }
 
 const ZOOM_PRESETS = [
@@ -26,9 +30,11 @@ export function EBookToolbar({
   pageCount,
   scale,
   fitWidth,
+  annotationMode,
   onPageChange,
   onScaleChange,
   onFitWidthToggle,
+  onAnnotationModeChange,
 }: EBookToolbarProps) {
   const [pageInput, setPageInput] = useState('');
   const [editingPage, setEditingPage] = useState(false);
@@ -125,6 +131,26 @@ export function EBookToolbar({
             title="Next page"
           >
             ›
+          </button>
+        </div>
+      )}
+
+      {/* Annotation mode */}
+      {pageCount > 0 && (
+        <div className="ebook-toolbar__section" style={{ gap: 2 }}>
+          <button
+            className={`ebook-toolbar__btn ${annotationMode === 'rect' ? 'ebook-toolbar__btn--active' : ''}`}
+            onClick={() => onAnnotationModeChange(annotationMode === 'rect' ? 'off' : 'rect')}
+            title="线框标注"
+          >
+            ▢
+          </button>
+          <button
+            className={`ebook-toolbar__btn ${annotationMode === 'underline' ? 'ebook-toolbar__btn--active' : ''}`}
+            onClick={() => onAnnotationModeChange(annotationMode === 'underline' ? 'off' : 'underline')}
+            title="横线标注"
+          >
+            ▁
           </button>
         </div>
       )}

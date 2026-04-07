@@ -249,6 +249,11 @@ export const IPC = {
   EBOOK_LOADED: 'ebook:loaded',
   EBOOK_CLOSE: 'ebook:close',
 
+  // eBook 标注
+  EBOOK_ANNOTATION_LIST: 'ebook:annotation-list',
+  EBOOK_ANNOTATION_ADD: 'ebook:annotation-add',
+  EBOOK_ANNOTATION_REMOVE: 'ebook:annotation-remove',
+
   // eBook Workspace 状态同步
   EBOOK_SET_ACTIVE_BOOK: 'ebook:set-active-book',
   EBOOK_SAVE_PROGRESS: 'ebook:save-progress',

@@ -25,6 +25,7 @@ import { checkStatus as ytdlpCheckStatus, install as ytdlpInstall } from '../ytd
 import { downloadVideo, getVideoInfo, saveTranslationSubtitle } from '../ytdlp/downloader';
 import { loadEBook, getEBookData, closeEBook } from '../ebook/file-loader';
 import { bookshelfStore } from '../ebook/bookshelf-store';
+import { annotationStore } from '../ebook/annotation-store';
 import { navSideRegistry } from '../navside/registry';
 
 export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): void {
@@ -463,6 +464,20 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
       lastScale: entry.lastScale,
       lastFitWidth: entry.lastFitWidth,
     };
+  });
+
+  // ── eBook 标注 ──
+
+  ipcMain.handle(IPC.EBOOK_ANNOTATION_LIST, (_event, bookId: string) => {
+    return annotationStore.list(bookId);
+  });
+
+  ipcMain.handle(IPC.EBOOK_ANNOTATION_ADD, (_event, bookId: string, ann: any) => {
+    return annotationStore.add(bookId, ann);
+  });
+
+  ipcMain.handle(IPC.EBOOK_ANNOTATION_REMOVE, (_event, bookId: string, annotationId: string) => {
+    annotationStore.remove(bookId, annotationId);
   });
 
   // NavSide 保存书架文件夹展开状态

@@ -77,6 +77,11 @@
   cursor: default;
 }
 
+.ebook-toolbar__btn--active {
+  background: #4a9eff !important;
+  color: #fff !important;
+}
+
 .ebook-toolbar__page-input {
   width: 40px;
   height: 22px;
@@ -172,6 +177,84 @@
 
 .ebook-content__page-wrapper .textLayer.selecting .endOfContent {
   top: 0;
+}
+
+/* ── Annotation Layer ── */
+
+.annotation-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+}
+
+.annotation {
+  position: absolute;
+  pointer-events: auto;
+}
+
+.annotation--rect {
+  border: 2px solid;
+  border-radius: 2px;
+}
+
+.annotation--underline {
+  border-radius: 1px;
+  opacity: 0.6;
+}
+
+.annotation--preview {
+  background: rgba(255, 212, 59, 0.2);
+  border: 2px dashed rgba(255, 212, 59, 0.6);
+  pointer-events: none;
+}
+
+.annotation--preview.annotation--underline {
+  background: rgba(255, 212, 59, 0.5);
+  border: none;
+}
+
+.annotation-color-picker {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: #2a2a2a;
+  border: 1px solid #444;
+  border-radius: 8px;
+  padding: 4px 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  z-index: 10;
+}
+
+.annotation-color-picker__btn {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+}
+
+.annotation-color-picker__btn:hover {
+  border-color: #fff;
+  transform: scale(1.2);
+}
+
+.annotation-color-picker__cancel {
+  width: 20px;
+  height: 20px;
+  background: transparent;
+  border: none;
+  color: #888;
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 4px;
+}
+
+.annotation-color-picker__cancel:hover {
+  color: #fff;
 }
 
 /* ── Empty State ── */

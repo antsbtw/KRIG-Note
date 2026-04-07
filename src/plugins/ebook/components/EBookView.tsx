@@ -46,6 +46,7 @@ export function EBookView() {
   const [fileName, setFileName] = useState('');
   const [loading, setLoading] = useState(false);
   const [restorePage, setRestorePage] = useState<number | null>(null);
+  const [annotationMode, setAnnotationMode] = useState<'off' | 'rect' | 'underline'>('off');
 
   // 同步 ref
   useEffect(() => { fitWidthRef.current = fitWidth; }, [fitWidth]);
@@ -195,9 +196,11 @@ export function EBookView() {
         pageCount={pageCount}
         scale={scale}
         fitWidth={fitWidth}
+        annotationMode={annotationMode}
         onPageChange={handlePageChange}
         onScaleChange={handleScaleChange}
         onFitWidthToggle={handleFitWidthToggle}
+        onAnnotationModeChange={setAnnotationMode}
       />
 
       {loading && (
@@ -216,6 +219,8 @@ export function EBookView() {
           renderer={renderer}
           scale={scale}
           initialPage={restorePage}
+          annotationMode={annotationMode}
+          bookId={bookIdRef.current}
           onPageChange={handlePageChange}
           onScaleChange={handleScaleChange}
         />

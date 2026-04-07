@@ -1,10 +1,20 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
 import type { IFixedPageRenderer, PageDimension } from '../types';
+import { AnnotationLayer } from './AnnotationLayer';
+import type { Annotation } from './AnnotationLayer';
+
+declare const viewAPI: {
+  ebookAnnotationList: (bookId: string) => Promise<any[]>;
+  ebookAnnotationAdd: (bookId: string, ann: unknown) => Promise<any>;
+  ebookAnnotationRemove: (bookId: string, annotationId: string) => Promise<void>;
+};
 
 interface FixedPageContentProps {
   renderer: IFixedPageRenderer;
   scale: number;
   initialPage?: number | null;
+  annotationMode?: 'off' | 'rect' | 'underline';
+  bookId?: string | null;
   onPageChange: (page: number) => void;
   onScaleChange: (scale: number) => void;
 }
@@ -18,10 +28,11 @@ const BUFFER_PAGES = 1;
  * 通过 IFixedPageRenderer 接口渲染页面，不直接依赖任何格式的库。
  * 适用于 PDF、DjVu、CBZ 等固定页面格式。
  */
-export function FixedPageContent({ renderer, scale, initialPage, onPageChange, onScaleChange }: FixedPageContentProps) {
+export function FixedPageContent({ renderer, scale, initialPage, annotationMode = 'off', bookId, onPageChange, onScaleChange }: FixedPageContentProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const pageRefsRef = useRef<Map<number, HTMLCanvasElement>>(new Map());
   const textLayerRefsRef = useRef<Map<number, HTMLDivElement>>(new Map());
+  const [annotations, setAnnotations] = useState<any[]>([]);
   const [pageDimensions, setPageDimensions] = useState<PageDimension[]>([]);
   const [visiblePages, setVisiblePages] = useState<Set<number>>(new Set());
   const prevScaleRef = useRef(scale);
@@ -32,6 +43,12 @@ export function FixedPageContent({ renderer, scale, initialPage, onPageChange, o
   useEffect(() => {
     setPageDimensions(renderer.getPageDimensions());
   }, [renderer]);
+
+  // 加载标注数据
+  useEffect(() => {
+    if (!bookId) return;
+    viewAPI.ebookAnnotationList(bookId).then(setAnnotations);
+  }, [bookId]);
 
   // IntersectionObserver 检测可见页面
   useEffect(() => {
@@ -113,6 +130,19 @@ export function FixedPageContent({ renderer, scale, initialPage, onPageChange, o
       }
     }
   }, [visiblePages, scale, pageDimensions, totalPages, renderer]);
+
+  // 标注操作
+  const handleAnnotationCreate = useCallback(async (pageNum: number, ann: Omit<Annotation, 'id'>) => {
+    if (!bookId) return;
+    const stored = await viewAPI.ebookAnnotationAdd(bookId, { ...ann, pageNum });
+    setAnnotations((prev) => [...prev, stored]);
+  }, [bookId]);
+
+  const handleAnnotationDelete = useCallback(async (annId: string) => {
+    if (!bookId) return;
+    await viewAPI.ebookAnnotationRemove(bookId, annId);
+    setAnnotations((prev) => prev.filter((a) => a.id !== annId));
+  }, [bookId]);
 
   // 滚动到指定页
   const scrollToPage = useCallback((pageNum: number) => {
@@ -212,6 +242,16 @@ export function FixedPageContent({ renderer, scale, initialPage, onPageChange, o
                   if (el) textLayerRefsRef.current.set(pageNum, el);
                   else textLayerRefsRef.current.delete(pageNum);
                 }}
+              />
+              <AnnotationLayer
+                pageNum={pageNum}
+                scale={scale}
+                pageWidth={dim.width}
+                pageHeight={dim.height}
+                mode={annotationMode}
+                annotations={annotations.filter((a) => a.pageNum === pageNum)}
+                onAnnotationCreate={handleAnnotationCreate}
+                onAnnotationDelete={handleAnnotationDelete}
               />
             </div>
           );
