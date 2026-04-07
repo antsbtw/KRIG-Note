@@ -185,6 +185,35 @@ export class PDFRenderer implements IFixedPageRenderer {
     this.textLayers.set(pageNum, textLayer);
   }
 
+  async searchText(query: string): Promise<Array<{ pageNum: number; index: number; text: string }>> {
+    if (!this.doc || !query) return [];
+    const results: Array<{ pageNum: number; index: number; text: string }> = [];
+    const lowerQuery = query.toLowerCase();
+
+    for (let i = 1; i <= this.doc.numPages; i++) {
+      const page = await this.getPage(i);
+      const textContent = await page.getTextContent();
+      const pageText = textContent.items
+        .map((item: any) => item.str || '')
+        .join('');
+      const lowerText = pageText.toLowerCase();
+
+      let pos = 0;
+      while ((pos = lowerText.indexOf(lowerQuery, pos)) !== -1) {
+        // 提取上下文（前后各 20 字符）
+        const start = Math.max(0, pos - 20);
+        const end = Math.min(pageText.length, pos + query.length + 20);
+        results.push({
+          pageNum: i,
+          index: pos,
+          text: pageText.slice(start, end),
+        });
+        pos += query.length;
+      }
+    }
+    return results;
+  }
+
   clearTextLayer(pageNum: number): void {
     const existing = this.textLayers.get(pageNum);
     if (existing) {

@@ -129,6 +129,9 @@ export interface IFixedPageRenderer extends IBookRenderer {
   // Text Layer（文本选择 + 复制）
   renderTextLayer(pageNum: number, container: HTMLElement, scale: number): Promise<void>;
   clearTextLayer(pageNum: number): void;
+
+  // 文本搜索
+  searchText(query: string): Promise<Array<{ pageNum: number; index: number; text: string }>>;
 }
 
 /**

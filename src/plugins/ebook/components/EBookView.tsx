@@ -3,6 +3,8 @@ import { EBookToolbar } from './EBookToolbar';
 import { FixedPageContent } from './FixedPageContent';
 import { ReflowableContent } from './ReflowableContent';
 import { OutlinePanel } from './OutlinePanel';
+import { SearchBar } from './SearchBar';
+import type { SearchResult } from './SearchBar';
 import { createRenderer } from '../renderers';
 import { detectFileType, isFixedPage, isReflowable } from '../types';
 import type { IBookRenderer, EBookFileType } from '../types';
@@ -49,6 +51,9 @@ export function EBookView() {
   const [restorePage, setRestorePage] = useState<number | null>(null);
   const [annotationMode, setAnnotationMode] = useState<'off' | 'rect' | 'underline'>('off');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [searchVisible, setSearchVisible] = useState(false);
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [searchIndex, setSearchIndex] = useState(0);
 
   // 同步 ref
   useEffect(() => { fitWidthRef.current = fitWidth; }, [fitWidth]);
@@ -188,6 +193,58 @@ export function EBookView() {
     });
   }, []);
 
+  // Cmd+F 搜索
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
+        e.preventDefault();
+        setSearchVisible(true);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
+
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleSearch = useCallback((query: string) => {
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    searchTimerRef.current = setTimeout(async () => {
+      const r = rendererRef.current;
+      if (!r || !isFixedPage(r) || !query.trim()) {
+        setSearchResults([]);
+        setSearchIndex(0);
+        return;
+      }
+      const results = await r.searchText(query.trim());
+      setSearchResults(results);
+      setSearchIndex(0);
+      if (results.length > 0) {
+        window.dispatchEvent(new CustomEvent('ebook:goto-page', { detail: results[0].pageNum }));
+      }
+    }, 300);
+  }, []);
+
+  const handleSearchNext = useCallback(() => {
+    if (searchResults.length === 0) return;
+    const next = (searchIndex + 1) % searchResults.length;
+    setSearchIndex(next);
+    window.dispatchEvent(new CustomEvent('ebook:goto-page', { detail: searchResults[next].pageNum }));
+  }, [searchResults, searchIndex]);
+
+  const handleSearchPrev = useCallback(() => {
+    if (searchResults.length === 0) return;
+    const prev = (searchIndex - 1 + searchResults.length) % searchResults.length;
+    setSearchIndex(prev);
+    window.dispatchEvent(new CustomEvent('ebook:goto-page', { detail: searchResults[prev].pageNum }));
+  }, [searchResults, searchIndex]);
+
+  const handleSearchClose = useCallback(() => {
+    setSearchVisible(false);
+    setSearchResults([]);
+    setSearchIndex(0);
+  }, []);
+
   const renderer = rendererRef.current;
 
   return (
@@ -205,6 +262,16 @@ export function EBookView() {
         onFitWidthToggle={handleFitWidthToggle}
         onAnnotationModeChange={setAnnotationMode}
         onSidebarToggle={() => setSidebarOpen((p) => !p)}
+      />
+
+      <SearchBar
+        visible={searchVisible}
+        results={searchResults}
+        currentIndex={searchIndex}
+        onSearch={handleSearch}
+        onNext={handleSearchNext}
+        onPrev={handleSearchPrev}
+        onClose={handleSearchClose}
       />
 
       <div className="ebook-body">
