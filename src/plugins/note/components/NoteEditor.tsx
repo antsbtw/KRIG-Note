@@ -28,6 +28,7 @@ import { vocabHighlightPlugin, updateVocabDefs, dispatchVocabUpdate } from '../l
 import { updateVocabList } from '../learning';
 import { buildTestDocument } from '../test-content';
 import { createTocIndicator } from '../toc/toc-indicator';
+import { headingCollapsePlugin } from '../plugins/heading-collapse';
 import '../note.css';
 
 /**
@@ -128,6 +129,7 @@ function buildPlugins(s: ReturnType<typeof getSchema>) {
     blockHandlePlugin(),
     pasteMediaPlugin(),
     renderBlockFocusPlugin(),
+    headingCollapsePlugin(),
     vocabHighlightPlugin(),
     history(),
     dropCursor({ color: '#8ab4f8', width: 2 }),

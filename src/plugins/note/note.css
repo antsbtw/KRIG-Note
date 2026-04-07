@@ -39,9 +39,9 @@
 }
 
 /* ── Heading ── */
-.ProseMirror h1 { font-size: 40px; font-weight: 700; margin: 1px 0; padding: 3px 2px; }
-.ProseMirror h2 { font-size: 30px; font-weight: 600; margin: 1px 0; padding: 3px 2px; }
-.ProseMirror h3 { font-size: 24px; font-weight: 600; margin: 1px 0; padding: 3px 2px; }
+.ProseMirror h1 { font-size: 38px; font-weight: 700; margin: 1px 0; padding: 3px 2px; }
+.ProseMirror h2 { font-size: 28px; font-weight: 600; margin: 1px 0; padding: 3px 2px; }
+.ProseMirror h3 { font-size: 22px; font-weight: 600; margin: 1px 0; padding: 3px 2px; }
 
 /* ── Inline marks ── */
 .ProseMirror code {
@@ -1268,6 +1268,15 @@
 }
 .ProseMirror a[href]:hover {
   text-decoration: underline;
+}
+
+/* ── Heading Collapse ── */
+.heading-collapsed-hidden {
+  display: none !important;
+}
+.heading-collapsed {
+  border-bottom: 1px dashed #444;
+  padding-bottom: 4px;
 }
 
 /* ── Block Selection ── */

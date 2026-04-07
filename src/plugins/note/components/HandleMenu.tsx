@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import type { EditorView } from 'prosemirror-view';
 import { TextSelection } from 'prosemirror-state';
 import { blockRegistry } from '../registry';
+import { toggleHeadingCollapse } from '../plugins/heading-collapse';
 
 /**
  * HandleMenu — 手柄点击后的操作菜单
@@ -334,6 +335,30 @@ export function HandleMenu({ view }: HandleMenuProps) {
           <span style={{ flex: 1 }}>Color</span>
           <span style={styles.arrow}>▸</span>
         </div>
+
+        {/* Collapse/Expand — only for headings */}
+        {(() => {
+          const node = view.state.doc.nodeAt(menu.pos);
+          if (node?.type.name === 'textBlock' && node.attrs.level) {
+            const isOpen = node.attrs.open !== false;
+            return (
+              <div
+                style={styles.item}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  toggleHeadingCollapse(view, menu.pos);
+                  close();
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = '#3a3a3a'; setSubMenu(null); }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+              >
+                <span style={styles.icon}>{isOpen ? '⌃' : '⌄'}</span>
+                <span>{isOpen ? '折叠' : '展开'}</span>
+              </div>
+            );
+          }
+          return null;
+        })()}
 
         <div style={styles.separator} />
 

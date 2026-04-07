@@ -66,10 +66,11 @@
   background: #2a2a2a;
   border: 1px solid #3c3c3c;
   border-radius: 8px;
-  padding: 6px 0;
+  padding: 6px 0 0 0;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
   z-index: 100;
   font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  overflow: hidden;
 }
 
 .toc-menu__item {
@@ -113,4 +114,34 @@
 .toc-menu__item[data-level="3"] {
   padding-left: 42px;
   font-weight: 400;
+}
+
+/* 展开级别按钮 */
+.toc-menu__levels {
+  display: flex;
+  padding: 0;
+}
+
+.toc-menu__level-btn {
+  flex: 1;
+  height: 28px;
+  background: none;
+  border: none;
+  border-top: 1px solid #3c3c3c;
+  color: #666;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.1s;
+}
+
+.toc-menu__level-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: #e8eaed;
+  border-color: #555;
+}
+
+.toc-menu__level-btn--active {
+  color: #8ab4f8;
+  border-color: #8ab4f8;
+  background: rgba(138, 180, 248, 0.1);
 }

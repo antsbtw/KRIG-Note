@@ -8,6 +8,7 @@
 
 import type { EditorView } from 'prosemirror-view';
 import { Selection } from 'prosemirror-state';
+import { ensureHeadingVisible, expandToLevel, getCurrentExpandLevel } from '../plugins/heading-collapse';
 import './toc.css';
 
 // ─── Types ────────────────────────────────────────────────
@@ -216,6 +217,7 @@ export function createTocIndicator(
     if (!menuEl) return;
     menuEl.innerHTML = '';
 
+    // 目录条目
     for (let i = 0; i < entries.length; i++) {
       const entry = entries[i];
       const btn = document.createElement('button');
@@ -235,6 +237,37 @@ export function createTocIndicator(
 
       menuEl.appendChild(btn);
     }
+
+    // 展开级别按钮：1 2 3 *
+    const currentLevel = getCurrentExpandLevel(view);
+    const levels: { label: string; value: number }[] = [
+      { label: 'h1', value: 1 },
+      { label: 'h2', value: 2 },
+      { label: 'h3', value: 3 },
+      { label: '📖', value: Infinity },
+    ];
+
+    const levelBar = document.createElement('div');
+    levelBar.classList.add('toc-menu__levels');
+
+    for (const lv of levels) {
+      const btn = document.createElement('button');
+      btn.classList.add('toc-menu__level-btn');
+      btn.textContent = lv.label;
+      btn.title = lv.value === Infinity ? '全部展开' : `展开到 H${lv.value}`;
+      if (currentLevel === lv.value) {
+        btn.classList.add('toc-menu__level-btn--active');
+      }
+      btn.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        expandToLevel(view, lv.value);
+        hideMenu();
+      });
+      levelBar.appendChild(btn);
+    }
+
+    menuEl.appendChild(levelBar);
   }
 
   function positionMenu() {
@@ -258,29 +291,33 @@ export function createTocIndicator(
     const entry = entries[index];
     if (!entry) return;
 
-    try {
-      const domPos = view.domAtPos(entry.pos + 1);
-      const el = domPos.node instanceof HTMLElement
-        ? domPos.node
-        : domPos.node.parentElement;
-      const blockEl = el?.closest('h1, h2, h3') as HTMLElement | null;
-      if (blockEl) {
-        blockEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }
+    // 先确保目标 heading 可见（展开它自身 + 隐藏它的上级）
+    ensureHeadingVisible(view, entry.pos);
 
-      // 设置光标到 heading 开头
-      const tr = view.state.tr.setSelection(
-        Selection.near(view.state.doc.resolve(entry.pos + 1)),
-      );
-      view.dispatch(tr);
-    } catch {
-      // fallback: 用 ProseMirror 的 scrollIntoView
-      const tr = view.state.tr.setSelection(
-        Selection.near(view.state.doc.resolve(entry.pos + 1)),
-      );
-      tr.scrollIntoView();
-      view.dispatch(tr);
-    }
+    // ensureHeadingVisible 可能改变了文档，需要等 DOM 更新后再滚动
+    requestAnimationFrame(() => {
+      try {
+        const domPos = view.domAtPos(entry.pos + 1);
+        const el = domPos.node instanceof HTMLElement
+          ? domPos.node
+          : domPos.node.parentElement;
+        const blockEl = el?.closest('h1, h2, h3') as HTMLElement | null;
+        if (blockEl) {
+          blockEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+
+        const tr = view.state.tr.setSelection(
+          Selection.near(view.state.doc.resolve(entry.pos + 1)),
+        );
+        view.dispatch(tr);
+      } catch {
+        const tr = view.state.tr.setSelection(
+          Selection.near(view.state.doc.resolve(entry.pos + 1)),
+        );
+        tr.scrollIntoView();
+        view.dispatch(tr);
+      }
+    });
   }
 
   // ── Hover 事件 ──
