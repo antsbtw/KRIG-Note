@@ -435,7 +435,7 @@ export function EBookPanel({ activeBookId, initialExpandedFolders, onActiveBookC
             onDrop={(e) => handleDrop(e, folder.id)}
           >
             <span style={styles.folderToggle}>{isExpanded ? '▾' : '▸'}</span>
-            <span style={styles.folderIcon}>{isExpanded ? '📂' : '📁'}</span>
+            <span style={styles.folderIcon}>{(isExpanded || dropTargetId === folder.id) ? '📂' : '📁'}</span>
             {renamingId === folder.id ? (
               <input
                 ref={renameInputRef}
@@ -638,14 +638,14 @@ const styles: Record<string, React.CSSProperties> = {
     opacity: 0.35,
   },
   dropTarget: {
-    background: 'rgba(74, 158, 255, 0.2)',
-    outline: '2px solid #4a9eff',
-    outlineOffset: '-2px',
+    background: 'rgba(74, 158, 255, 0.25)',
+    borderLeft: '3px solid #4a9eff',
     borderRadius: '4px',
+    boxShadow: 'inset 0 0 0 1px rgba(74, 158, 255, 0.4)',
   },
   dropTargetRoot: {
-    background: 'rgba(74, 158, 255, 0.08)',
-    outline: '2px dashed rgba(74, 158, 255, 0.3)',
+    background: 'rgba(74, 158, 255, 0.1)',
+    outline: '2px dashed rgba(74, 158, 255, 0.4)',
     outlineOffset: '-4px',
   },
   // ── Empty ──
