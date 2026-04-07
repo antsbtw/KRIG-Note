@@ -392,11 +392,17 @@ export function NavSide() {
     setDragItem({ type, id });
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/plain', `${type}:${id}`);
-    // 半透明拖拽预览
-    if (e.currentTarget instanceof HTMLElement) {
-      e.dataTransfer.setDragImage(e.currentTarget, 10, 10);
-    }
-  }, []);
+    // 紧凑的自定义拖拽预览
+    const ghost = document.createElement('div');
+    ghost.style.cssText = 'position:fixed;top:-1000px;left:-1000px;padding:4px 12px;background:#264f78;color:#e8eaed;font-size:12px;border-radius:4px;white-space:nowrap;max-width:200px;overflow:hidden;text-overflow:ellipsis;';
+    const name = type === 'note'
+      ? noteList.find((n) => n.id === id)?.title
+      : folderList.find((f) => f.id === id)?.title;
+    ghost.textContent = name || '';
+    document.body.appendChild(ghost);
+    e.dataTransfer.setDragImage(ghost, 10, 10);
+    requestAnimationFrame(() => document.body.removeChild(ghost));
+  }, [noteList, folderList]);
 
   const handleDragEnd = useCallback(() => {
     setDragItem(null);
