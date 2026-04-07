@@ -13,9 +13,11 @@ export class EPUBRenderer implements IReflowableRenderer {
   private view: any = null;
   private container: HTMLElement | null = null;
   private fileData: ArrayBuffer | null = null;
-  private fontSize = 100;  // 百分比缩放（100 = 100%）
+  private fontSize = 100;
   private currentProgress = { chapter: '', percentage: 0 };
   private tocItems: TOCItem[] = [];
+  private readyResolve: (() => void) | null = null;
+  private readyPromise: Promise<void> = new Promise((r) => { this.readyResolve = r; });
 
   async load(data: ArrayBuffer): Promise<void> {
     this.fileData = data;
@@ -81,8 +83,12 @@ export class EPUBRenderer implements IReflowableRenderer {
       if (this.view.book?.toc) {
         this.tocItems = this.convertTOC(this.view.book.toc);
       }
+
+      // 标记初始化完成
+      this.readyResolve?.();
     } catch (err) {
       console.error('[EPUBRenderer] initView failed:', err);
+      this.readyResolve?.(); // 即使失败也 resolve，避免永远挂起
     }
   }
 
@@ -121,15 +127,16 @@ export class EPUBRenderer implements IReflowableRenderer {
     };
   }
 
-  goTo(position: BookPosition): void {
+  async goTo(position: BookPosition): Promise<void> {
+    await this.readyPromise;
     if (!this.view) return;
     if (position.type === 'cfi' && position.cfi) {
-      // view.goTo() 内部自动处理 href/cfi/index 的 resolve
-      this.view.goTo(position.cfi);
+      await this.view.goTo(position.cfi);
     }
   }
 
   async getTOC(): Promise<TOCItem[]> {
+    await this.readyPromise;
     return this.tocItems;
   }
 

@@ -19,13 +19,16 @@ export function OutlinePanel({ renderer, onNavigate, onClose }: OutlinePanelProp
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    setLoading(true);
+    setToc([]);
     renderer.getTOC().then((items) => {
       setToc(items);
       setLoading(false);
-      // 默认展开第一层
       const firstLevel = new Set<string>();
       items.forEach((_, i) => firstLevel.add(String(i)));
       setExpanded(firstLevel);
+    }).catch(() => {
+      setLoading(false);
     });
   }, [renderer]);
 
