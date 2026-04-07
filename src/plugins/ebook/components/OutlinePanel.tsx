@@ -9,11 +9,11 @@ import type { IBookRenderer, TOCItem } from '../types';
 
 interface OutlinePanelProps {
   renderer: IBookRenderer;
-  onGoToPage: (page: number) => void;
+  onNavigate: (position: TOCItem['position']) => void;
   onClose: () => void;
 }
 
-export function OutlinePanel({ renderer, onGoToPage, onClose }: OutlinePanelProps) {
+export function OutlinePanel({ renderer, onNavigate, onClose }: OutlinePanelProps) {
   const [toc, setToc] = useState<TOCItem[]>([]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
@@ -38,10 +38,8 @@ export function OutlinePanel({ renderer, onGoToPage, onClose }: OutlinePanelProp
   }, []);
 
   const handleClick = useCallback((item: TOCItem) => {
-    if (item.position.type === 'page') {
-      onGoToPage(item.position.page);
-    }
-  }, [onGoToPage]);
+    onNavigate(item.position);
+  }, [onNavigate]);
 
   const renderItems = (items: TOCItem[], depth: number, parentKey: string): React.ReactNode[] => {
     return items.map((item, index) => {

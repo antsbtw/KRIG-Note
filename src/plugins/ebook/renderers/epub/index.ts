@@ -124,8 +124,8 @@ export class EPUBRenderer implements IReflowableRenderer {
   goTo(position: BookPosition): void {
     if (!this.view) return;
     if (position.type === 'cfi' && position.cfi) {
-      const resolved = this.view.resolveNavigation?.(position.cfi);
-      if (resolved) this.view.renderer?.goTo?.(resolved);
+      // view.goTo() 内部自动处理 href/cfi/index 的 resolve
+      this.view.goTo(position.cfi);
     }
   }
 

@@ -49,6 +49,7 @@ export function EBookView() {
   const fitWidthRef = useRef(true);
   const scaleRef = useRef(1.0);
   const [fileName, setFileName] = useState('');
+  const [bookId, setBookId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [restorePage, setRestorePage] = useState<number | null>(null);
   const [annotationMode, setAnnotationMode] = useState<'off' | 'rect' | 'underline'>('off');
@@ -67,7 +68,9 @@ export function EBookView() {
   const loadBook = useCallback(async (info: EBookLoadedInfo) => {
     try {
       setLoading(true);
+      setRendererReady(false);
       setFileName(info.fileName);
+      setBookId(info.bookId);
       bookIdRef.current = info.bookId;
 
       viewAPI.ebookSetActiveBook(info.bookId);
@@ -309,10 +312,16 @@ export function EBookView() {
         {/* Sidebar */}
         {sidebarOpen && rendererReady && renderer && (
           <OutlinePanel
+            key={bookId}
             renderer={renderer}
-            onGoToPage={(page) => {
-              handlePageChange(page);
-              window.dispatchEvent(new CustomEvent('ebook:goto-page', { detail: page }));
+            onNavigate={(position) => {
+              if (position.type === 'page') {
+                handlePageChange(position.page);
+                window.dispatchEvent(new CustomEvent('ebook:goto-page', { detail: position.page }));
+              } else if (position.type === 'cfi') {
+                // EPUB: 用 renderer.goTo() 导航到 href/cfi
+                renderer.goTo(position);
+              }
             }}
             onClose={() => setSidebarOpen(false)}
           />
