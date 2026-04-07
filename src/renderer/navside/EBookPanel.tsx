@@ -644,8 +644,7 @@ const styles: Record<string, React.CSSProperties> = {
     boxShadow: 'inset 0 0 0 1px rgba(74, 158, 255, 0.4)',
   },
   dropTargetRoot: {
-    background: 'rgba(74, 158, 255, 0.1)',
-    outline: '2px dashed rgba(74, 158, 255, 0.4)',
+    // 根目录拖放不需要高亮整个区域
     outlineOffset: '-4px',
   },
   // ── Empty ──
