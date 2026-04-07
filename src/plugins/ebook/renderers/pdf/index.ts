@@ -1,4 +1,5 @@
 import * as pdfjsLib from 'pdfjs-dist';
+import { TextLayer } from 'pdfjs-dist';
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
 import type { RenderTask } from 'pdfjs-dist/types/src/display/api';
 import type { IFixedPageRenderer, BookPosition, PageDimension, ToolbarConfig, TOCItem } from '../../types';
@@ -133,6 +134,41 @@ export class PDFRenderer implements IFixedPageRenderer {
     this.queue.forEach((t) => t.resolve());
     this.queue = [];
     this.rendering = false;
+  }
+
+  // ── Text Layer ──
+
+  private textLayers = new Map<number, TextLayer>();
+
+  async renderTextLayer(pageNum: number, container: HTMLElement, scale: number): Promise<void> {
+    if (!this.doc) return;
+
+    // 清除旧的 text layer
+    this.clearTextLayer(pageNum);
+
+    const page = await this.getPage(pageNum);
+    const textContent = await page.getTextContent();
+    const viewport = page.getViewport({ scale });
+
+    // 清空容器
+    container.innerHTML = '';
+
+    const textLayer = new TextLayer({
+      textContentSource: textContent,
+      container,
+      viewport,
+    });
+
+    await textLayer.render();
+    this.textLayers.set(pageNum, textLayer);
+  }
+
+  clearTextLayer(pageNum: number): void {
+    const existing = this.textLayers.get(pageNum);
+    if (existing) {
+      existing.cancel();
+      this.textLayers.delete(pageNum);
+    }
   }
 
   // ── Private ──

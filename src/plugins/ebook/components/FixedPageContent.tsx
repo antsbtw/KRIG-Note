@@ -21,6 +21,7 @@ const BUFFER_PAGES = 1;
 export function FixedPageContent({ renderer, scale, initialPage, onPageChange, onScaleChange }: FixedPageContentProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const pageRefsRef = useRef<Map<number, HTMLCanvasElement>>(new Map());
+  const textLayerRefsRef = useRef<Map<number, HTMLDivElement>>(new Map());
   const [pageDimensions, setPageDimensions] = useState<PageDimension[]>([]);
   const [visiblePages, setVisiblePages] = useState<Set<number>>(new Set());
   const prevScaleRef = useRef(scale);
@@ -104,6 +105,11 @@ export function FixedPageContent({ renderer, scale, initialPage, onPageChange, o
       const canvas = pageRefsRef.current.get(pageNum);
       if (canvas) {
         renderer.renderPage(pageNum, canvas, scale);
+      }
+      // 渲染文本覆盖层
+      const textDiv = textLayerRefsRef.current.get(pageNum);
+      if (textDiv) {
+        renderer.renderTextLayer(pageNum, textDiv, scale);
       }
     }
   }, [visiblePages, scale, pageDimensions, totalPages, renderer]);
@@ -198,6 +204,13 @@ export function FixedPageContent({ renderer, scale, initialPage, onPageChange, o
                 ref={(el) => {
                   if (el) pageRefsRef.current.set(pageNum, el);
                   else pageRefsRef.current.delete(pageNum);
+                }}
+              />
+              <div
+                className="textLayer"
+                ref={(el) => {
+                  if (el) textLayerRefsRef.current.set(pageNum, el);
+                  else textLayerRefsRef.current.delete(pageNum);
                 }}
               />
             </div>

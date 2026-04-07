@@ -125,6 +125,10 @@ export interface IFixedPageRenderer extends IBookRenderer {
   // Canvas 渲染
   renderPage(pageNum: number, canvas: HTMLCanvasElement, scale: number): Promise<void>;
   invalidateAll(): void;
+
+  // Text Layer（文本选择 + 复制）
+  renderTextLayer(pageNum: number, container: HTMLElement, scale: number): Promise<void>;
+  clearTextLayer(pageNum: number): void;
 }
 
 /**
