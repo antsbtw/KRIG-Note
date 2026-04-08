@@ -167,10 +167,17 @@ export function NoteEditor() {
   const currentNoteIdRef = useRef<string | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tocRef = useRef<ReturnType<typeof createTocIndicator> | null>(null);
+  const loadSeqRef = useRef(0); // 竞态取消：每次 loadNote 递增
 
   // 创建/重建编辑器
   const createEditor = useCallback((doc: PMNode) => {
     if (!editorRef.current) return;
+
+    // 清除旧编辑器的 pending save，防止保存到错误文档
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
 
     // 销毁旧编辑器
     if (viewRef.current) {
@@ -190,6 +197,7 @@ export function NoteEditor() {
       state,
       nodeViews: nodeViews as any,
       dispatchTransaction(tr) {
+        if (view.isDestroyed) return;
         const newState = view.state.apply(tr);
         view.updateState(newState);
         // 文档变化时触发自动保存
@@ -208,11 +216,13 @@ export function NoteEditor() {
     tocRef.current = createTocIndicator(editorRef.current, view);
   }, []);
 
-  // 加载文档
+  // 加载文档（带竞态取消：快速切换时丢弃过期的异步结果）
   const loadNote = useCallback(async (noteId: string) => {
+    const seq = ++loadSeqRef.current;
     const s = getSchema();
     try {
       const record = await viewAPI.noteLoad(noteId);
+      if (seq !== loadSeqRef.current) return; // 已被更新的 loadNote 取代
       if (!record || !record.doc_content || record.doc_content.length === 0) {
         createEditor(createEmptyDoc(s));
       } else {
@@ -222,6 +232,7 @@ export function NoteEditor() {
       setCurrentNote(noteId);
       viewAPI.setActiveNote(noteId, record?.title);
     } catch (err) {
+      if (seq !== loadSeqRef.current) return;
       console.error('[NoteEditor] Failed to load note:', err);
       createEditor(createEmptyDoc(s));
       currentNoteIdRef.current = noteId;

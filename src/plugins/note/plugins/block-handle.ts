@@ -250,7 +250,10 @@ export function blockHandlePlugin(): Plugin {
     view(editorView) {
       handleDOM = createHandleDOM(editorView);
       return {
-        destroy() { handleDOM?.remove(); handleDOM = null; },
+        destroy() {
+          if (hideTimeout) { clearTimeout(hideTimeout); hideTimeout = null; }
+          handleDOM?.remove(); handleDOM = null;
+        },
       };
     },
 
