@@ -11,6 +11,7 @@
 import { Schema, type NodeSpec, type MarkSpec } from 'prosemirror-model';
 import type { Plugin } from 'prosemirror-state';
 import type { BlockDef, SlashItemDef, NodeViewFactory } from './types';
+import { converterRegistry } from './converters/registry';
 
 class BlockRegistry {
   private blocks = new Map<string, BlockDef>();
@@ -154,6 +155,13 @@ class BlockRegistry {
       }
     }
     return rules;
+  }
+
+  // ── Converter 注册 ──
+
+  /** 初始化 ConverterRegistry，从所有已注册的 BlockDef 收集 converter */
+  initConverters(): void {
+    converterRegistry.init(Array.from(this.blocks.values()));
   }
 }
 

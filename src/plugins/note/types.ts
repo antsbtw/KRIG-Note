@@ -8,6 +8,7 @@ import type { NodeSpec, MarkSpec } from 'prosemirror-model';
 import type { Plugin } from 'prosemirror-state';
 import type { EditorView } from 'prosemirror-view';
 import type { Node as PMNode } from 'prosemirror-model';
+import type { AtomConverter } from './converters/converter-types';
 type Command = (state: import('prosemirror-state').EditorState, dispatch?: (tr: import('prosemirror-state').Transaction) => void, view?: import('prosemirror-view').EditorView) => boolean;
 
 // ── NodeView ──
@@ -91,6 +92,9 @@ export interface BlockDef {
 
   plugin?: () => Plugin;
   containerRule?: ContainerRule;
+
+  // ── 数据层 ──
+  converter?: AtomConverter;    // Atom ↔ ProseMirror 转换器
 }
 
 // ── SlashMenu 注册项（用于 heading 等 attrs 变体） ──
