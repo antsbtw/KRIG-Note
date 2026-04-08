@@ -240,9 +240,9 @@ export class EPUBRenderer implements IReflowableRenderer {
   private setupSelectionListener(): void {
     if (!this.view) return;
 
-    this.view.addEventListener('load', (e: any) => {
-      const { doc, index } = e.detail;
-      if (!doc) return;
+    const attachMouseup = (doc: any, index: number) => {
+      if (!doc || doc.__ebookMouseupAttached) return;
+      doc.__ebookMouseupAttached = true;
 
       doc.addEventListener('mouseup', () => {
         const sel = doc.getSelection();
@@ -257,6 +257,20 @@ export class EPUBRenderer implements IReflowableRenderer {
           this.annotationCallback({ cfi, text });
         }
       });
+    };
+
+    // 给已加载的 section 绑定
+    const contents = this.view.renderer?.getContents?.();
+    if (contents) {
+      for (const { doc, index } of contents) {
+        attachMouseup(doc, index);
+      }
+    }
+
+    // 给后续加载的 section 绑定
+    this.view.addEventListener('load', (e: any) => {
+      const { doc, index } = e.detail;
+      attachMouseup(doc, index);
     });
   }
 
