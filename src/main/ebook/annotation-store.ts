@@ -15,7 +15,9 @@ export interface StoredAnnotation {
   color: string;
   pageNum: number;
   rect: { x: number; y: number; w: number; h: number };
-  ocrText?: string;
+  cfi?: string;           // EPUB 标注的 CFI 锚点
+  textContent?: string;   // EPUB 标注的文本内容
+  ocrText?: string;       // PDF 空间标注的 OCR 文本
   createdAt: number;
 }
 
@@ -70,6 +72,8 @@ class AnnotationStore {
     color: string;
     pageNum: number;
     rect: { x: number; y: number; w: number; h: number };
+    cfi?: string;
+    textContent?: string;
   }): StoredAnnotation {
     const annotations = this.load(bookId);
     const stored: StoredAnnotation = {

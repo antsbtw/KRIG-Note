@@ -150,11 +150,11 @@ export function EBookView() {
         }
         // 加载已有标注
         if (info.bookId) {
-          viewAPI.ebookAnnotationList(info.bookId).then((anns) => {
+          viewAPI.ebookAnnotationList(info.bookId).then(async (anns: any[]) => {
             setEpubAnnotations(anns);
-            // 恢复高亮显示
+            await renderer.getTOC(); // 等待 renderer 就绪
             for (const ann of anns) {
-              renderer.addHighlight(ann.cfi || ann.rect?.cfi, ann.color);
+              if (ann.cfi) renderer.addHighlight(ann.cfi, ann.color);
             }
           });
         }
@@ -346,18 +346,19 @@ export function EBookView() {
     const r = rendererRef.current;
     if (!r || !isReflowable(r)) return;
 
-    const stored = await viewAPI.ebookAnnotationAdd(bookIdRef.current, {
-      type: 'underline',
-      color,
-      pageNum: 0,
-      rect: { x: 0, y: 0, w: 0, h: 0 },
-      cfi: epubSelection.cfi,
-      textContent: epubSelection.text,
-    });
-
-    r.addHighlight(epubSelection.cfi, color);
-    setEpubAnnotations((prev) => [...prev, { ...stored, cfi: epubSelection.cfi }]);
-    setEpubSelection(null);
+    try {
+      const stored = await viewAPI.ebookAnnotationAdd(bookIdRef.current, {
+        type: 'underline',
+        color,
+        pageNum: 0,
+        rect: { x: 0, y: 0, w: 0, h: 0 },
+        cfi: epubSelection.cfi,
+        textContent: epubSelection.text,
+      });
+      r.addHighlight(epubSelection.cfi, color);
+      setEpubAnnotations((prev) => [...prev, { ...stored, cfi: epubSelection.cfi }]);
+      setEpubSelection(null);
+    } catch { /* ignore */ }
   }, [epubSelection]);
 
   const EPUB_COLORS = ['#ffd43b', '#69db7c', '#74c0fc', '#b197fc', '#ff6b6b'];

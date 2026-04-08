@@ -292,9 +292,12 @@ export class EPUBRenderer implements IReflowableRenderer {
     });
   }
 
-  addHighlight(cfi: string, color: string): void {
+  async addHighlight(cfi: string, color: string): Promise<void> {
+    await this.readyPromise;
     if (!this.view) return;
-    this.view.addAnnotation({ value: cfi, color });
+    try {
+      await this.view.addAnnotation({ value: cfi, color });
+    } catch { /* ignore */ }
   }
 
   removeHighlight(cfi: string): void {
