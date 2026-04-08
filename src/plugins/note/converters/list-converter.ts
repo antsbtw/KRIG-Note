@@ -92,6 +92,9 @@ export const taskItemConverter: AtomConverter = {
     return {
       type: 'taskItem',
       attrs: { checked: c.checked ?? false },
+      content: c.children.length > 0
+        ? [{ type: 'textBlock', content: atomInlinesToPM(c.children) }]
+        : [{ type: 'textBlock' }],
     };
   },
 };
