@@ -62,7 +62,6 @@ export class EPUBRenderer implements IReflowableRenderer {
       // 设置单栏布局 + 默认字体大小
       if (this.view.renderer) {
         this.view.renderer.setAttribute('max-column-count', '1');
-        this.view.renderer.setAttribute('max-inline-size', '720');
       }
 
       // 显示内容（恢复上次位置或从头开始）

@@ -218,10 +218,14 @@
   overflow: hidden;
   position: relative;
   background: #2a2a2a;
+  display: flex;
+  justify-content: center;
 }
 
 .ebook-content--reflowable foliate-view {
-  width: 100%;
+  width: 60%;
+  min-width: 400px;
+  max-width: 800px;
   height: 100%;
   background: #f5f5f5;
 }
