@@ -2,7 +2,15 @@
 
 > **目标**：NoteFile 保存/加载 + 操作记录 + 状态记录
 > **存储引擎**：SurrealDB（Sidecar + WebSocket）
-> **状态**：设计中
+> **状态**：已实施（SurrealDB Sidecar + note/activity/session 三表）
+>
+> **注意**：本文档的 Schema 定义（§三）和 NoteRecord 类型（§四）已被取代。
+> 权威数据模型见：
+> - `docs/Ai-Design/KRIG-Atom体系设计文档.md`（Atom 类型体系）
+> - `docs/Ai-Design/KRIG-SurrealDB-Schema设计文档.md`（统一 Schema）
+>
+> 本文档保留价值：SurrealDB Sidecar 启动流程（§二）、LOCK 清理、IPC 通道（§六）、
+> 异步初始化流程（§八）、mirro-desktop 经验（§九）。
 
 ---
 

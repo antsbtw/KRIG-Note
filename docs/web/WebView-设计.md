@@ -331,16 +331,17 @@ interface ExtractedBlock {
 ### 7.3 AI Bridge：SSE 拦截架构
 
 > **已在 mirro-desktop 验证**：`src/modules/ai-bridge/` 完整实现了三服务 SSE 拦截 + 双向交互。
-> KRIG-Note 应直接复用此架构，不需要重新设计。
+> KRIG-Note 中这些能力**收归 WebBridge 模块**（`src/plugins/web-bridge/capabilities/`），
+> 不再作为独立的 AIBridge 模块。详见 `WebBridge-设计.md` §十二 决策 9。
 
-#### 核心组件
+#### 核心组件（WebBridge L3 能力层）
 
 ```
-AIBridge
-  ├── LLMServiceDetector     ← URL 匹配 → 识别当前 AI 服务
-  ├── SSECaptureManager      ← 拦截 AI 响应流 → 缓存 Markdown
-  ├── ContentSender          ← 粘贴文本/图片到 AI 输入框
-  └── AIInteraction          ← 统一交互：send / request / batch
+WebBridge.capabilities/
+  ├── ai-service-detector.ts   ← URL 匹配 → 识别当前 AI 服务
+  ├── interceptor.ts           ← 拦截 AI 响应流 → 缓存 Markdown
+  ├── content-sender.ts        ← 粘贴文本/图片到 AI 输入框
+  └── ai-interaction.ts        ← 统一交互：send / request / batch
 ```
 
 #### 每个服务的拦截策略（mirro-desktop 已验证）
@@ -577,8 +578,11 @@ src/plugins/web/                     ← Web 插件（自包含模块）
 
 ## 十三、Automation Layer（AI Agent 操控层）
 
-> Batch: 5+（不影响 Batch 1-4，但架构上需从 Batch 1 开始预留扩展点）
-> 动机: 引入本地 AI 模型（如 Gemma 4）后，需要 AI Agent 程序化操控浏览器——输入、点击、搜索、读取页面结果
+> **实现归属**：Automation 能力由 **WebBridge** 模块实现（`src/plugins/web-bridge/automation/`）。
+> WebView 通过 WebBridge 暴露 AI Agent 通道，自身不实现 Automation 逻辑。
+> 详见 `WebBridge-设计.md` §八 模块结构。
+>
+> 本节记录架构设计和安全策略。Batch 5 实现时代码写入 WebBridge 模块。
 
 ### 13.1 问题：当前设计只有"人操控"通道
 
@@ -586,16 +590,25 @@ Batch 1-4 的所有交互链路都是 **人 → UI → webview**：
 
 ```
 用户 → Toolbar 输入 URL → webview.loadURL()
-用户 → 点击提取按钮 → Readability → Note
+用户 → 点击提取按钮 → WebBridge.extractFullPage() → Note
 ```
 
-AI Agent 需要的是 **程序 → API → webview** 通道，当前完全没有。
+AI Agent 需要的是 **程序 → API → webview** 通道。
 
 ### 13.2 双通道架构
 
-Automation Layer 与 UI Layer 并行，共享同一个 webview 实例：
+WebView 提供 webview 实例，WebBridge 提供操控能力：
 
 ```
+WebView（View 层 — 呈现）
+  ├── UI Layer（人操作，Batch 1-4）
+  │     Toolbar 按钮 / 键盘快捷键 → webview
+  │
+  └── attach(webview) → WebBridge（通信层 — 操控）
+        ├── L3 能力层（读取 + 写入 + 拦截）← Batch 2-4
+        └── automation/（IBrowserAutomation 封装）← Batch 5
+              ↑ Module 5 Orchestrator 调用
+
 WebView
   ├── UI Layer（人操作，Batch 1-4）
   │     Toolbar 按钮 / 键盘快捷键 → webview

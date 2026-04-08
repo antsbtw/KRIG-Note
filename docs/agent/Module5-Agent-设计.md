@@ -7,11 +7,11 @@
 > **文档目的**：记录 Module 5 Agent 的架构设计、核心分工和实现路径。
 > 作为后续模板库设计、接口规范、实现开发的起点。
 >
-> **v0.3 变更说明**：
-> - 通信层（Module 5A）明确复用 WebView §7.3 的 AIBridge 架构，不另起炉灶
-> - KRIG-Note 工具接口补充 AIInteraction 四个方法
-> - 安全设计补充与 WebView 域名白名单机制的分工关系
-> - 新增与 WebView Automation Layer 的接口对接说明
+> **v0.4 变更说明**：
+> - 通信层：AIBridge 已收归 WebBridge（`WebBridge-设计.md` 决策 9），Module 5 通过 WebBridge IPC Server 调用
+> - §3 更新：复用 WebBridge L3 能力层，不再引用独立 AIBridge
+> - §6 工具接口：注明 `krig.ai.*` 和 `krig.browser.*` 是 IWebBridge 的 Module 5 视角封装
+> - §9 待设计：新增 IBrowserAutomation 接口定义位置（`src/shared/types/automation-types.ts`）
 > - §5.2 补充 Level 0 任务的操作约束矩阵和域名声明机制
 
 ---
@@ -59,21 +59,30 @@ Orchestrator 是整个系统里**唯一同时懂两种语言的角色**：
 - KRIG-Note 永远不需要理解用户意图，它只执行标准接口调用
 - 所有"理解"集中在 Orchestrator 一层
 
-### 1.4 与 WebView 模块的分工
+### 1.4 与 WebView / WebBridge 的分工
 
-Module 5 和 WebView（Module 1）的职责边界清晰：
+Module 5、WebView、WebBridge 三个模块的职责边界清晰：
 
 ```
-WebView（Module 1）
-  ├── Automation Layer（IBrowserAutomation）← 执行：怎么操控浏览器
-  └── AIBridge（AIInteraction）             ← 通信：怎么和 Web AI 对话
+WebView（View 层 — 呈现）
+  └── attach(webview) → WebBridge
 
-Module 5（Agent）
-  └── Orchestrator                          ← 决策：做什么、结果是否满足要求
+WebBridge（通信层 — 操控）
+  ├── L3 capabilities/   ← 原子能力：读取、写入、拦截
+  ├── ai-interaction.ts  ← 编排能力：send/request/batch
+  └── automation/        ← IBrowserAutomation 实现 + 安全策略
 
-Module 5 调用 WebView 暴露的接口，不关心底层实现。
-WebView 不知道 Module 5 的存在。
+Module 5（Agent — 决策）
+  └── Orchestrator       ← 做什么、结果是否满足要求
+        ↓ IPC 调用
+        web:bridge:*     ← WebBridge 的 IPC Server
 ```
+
+> **AIBridge 已收归 WebBridge**（`WebBridge-设计.md` 决策 9）。
+> SSE 拦截、AI 输入框粘贴、双向交互都是 WebBridge L3 能力层的实现，不再作为独立模块。
+>
+> Module 5 通过 IPC（`web:bridge:*` 命名空间）调用 WebBridge，不直接访问 webview 实例。
+> `IBrowserAutomation` 接口定义在 `src/shared/types/automation-types.ts`，Module 5 import 共享类型，不 import WebBridge 内部文件。
 
 ---
 
@@ -150,19 +159,20 @@ WorkingMemory {
 
 ## 三、Web AI 通信层（Module 5A）
 
-### 3.1 复用 AIBridge，不另起炉灶
+### 3.1 复用 WebBridge L3 能力层
 
-> **已在 mirro-desktop 验证**：`src/modules/ai-bridge/` 完整实现了三服务双向交互。
-> Module 5 直接复用此架构，不重新设计通信层。
+> **已在 mirro-desktop 验证**：三服务双向交互的完整实现。
+> KRIG-Note 中这些能力**收归 WebBridge 模块**（`WebBridge-设计.md` 决策 9），不再作为独立的 AIBridge。
+> Module 5 通过 IPC（`web:bridge:*`）调用 WebBridge，不重新设计通信层。
 
-WebView §7.3 已验证的 AIBridge 架构：
+WebBridge L3 能力层（原 AIBridge 收归后的结构）：
 
 ```
-AIBridge
-  ├── LLMServiceDetector    ← URL 匹配，识别当前 AI 服务
-  ├── SSECaptureManager     ← 拦截 AI 响应流，缓存 Markdown
-  ├── ContentSender         ← 粘贴文本/图片到 AI 输入框
-  └── AIInteraction         ← 统一交互接口（Orchestrator 直接调用）
+WebBridge.capabilities/
+  ├── ai-service-detector.ts   ← URL 匹配，识别当前 AI 服务
+  ├── interceptor.ts           ← 拦截 AI 响应流，缓存 Markdown
+  ├── writer.ts                ← 写入能力（含 AI 输入框粘贴）
+  └── ai-interaction.ts        ← 编排能力（Orchestrator 通过 IPC 调用）
 ```
 
 **三服务拦截策略（mirro-desktop 已验证稳定）：**
@@ -175,11 +185,12 @@ AIBridge
 
 ### 3.2 Orchestrator 调用的通信接口
 
-Orchestrator 通过 AIInteraction 与 Web AI 交互，不关心底层拦截实现：
+Orchestrator 通过 WebBridge 的 ai-interaction 编排能力与 Web AI 交互，不关心底层拦截实现。
+调用路径：`Orchestrator → IPC(web:bridge:*) → WebBridge.ai-interaction → L3 writer + interceptor`
 
 ```typescript
 // Orchestrator 视角的通信接口
-// 实现由 WebView AIBridge 提供
+// 实现由 WebBridge L3 ai-interaction.ts 提供，通过 IPC 调用
 
 // 单向发送（不等待回复）
 send(text: string): Promise<void>
@@ -606,14 +617,17 @@ krig.diagram.renderTimeline(data: TimelineData): Promise<void>
 krig.graph.render(data: GraphData, config: GraphConfig): Promise<void>
 krig.graph.addCandidateNode(node: CandidateNode): Promise<void>
 
-// ── Web AI 交互（复用 AIBridge）──
+// ── Web AI 交互（WebBridge L3 ai-interaction，通过 IPC 调用）──
+// krig.ai.* 是 IWebBridge 接口的 Module 5 视角封装，底层由 WebBridge 实现
 krig.ai.send(target: AITarget, text: string): Promise<void>
 krig.ai.request(target: AITarget, prompt: string): Promise<string>
 krig.ai.requestWithFile(opts: AIFileRequest): Promise<string>
 krig.ai.batch(target: AITarget, pages: string[]): Promise<string[]>
 krig.ai.newSession(target: AITarget): Promise<void>
 
-// ── 浏览器自动化（复用 IBrowserAutomation）──
+// ── 浏览器操控（WebBridge L3 capabilities，通过 IPC 调用）──
+// krig.browser.* 是 IWebBridge 接口的 Module 5 视角封装
+// IBrowserAutomation 接口定义在 src/shared/types/automation-types.ts
 krig.browser.navigate(url: string): Promise<void>
 krig.browser.getTextContent(): Promise<string>
 krig.browser.querySelectorAll(selector: string): Promise<ElementInfo[]>
@@ -621,7 +635,7 @@ krig.browser.click(selector: string): Promise<void>
 krig.browser.type(selector: string, text: string): Promise<void>
 krig.browser.screenshot(): Promise<Buffer>  // fallback，优先使用 DOM
 
-// ── 任务约束（传给 WebView Automation Layer）──
+// ── 任务约束（传给 WebBridge automation-policy）──
 krig.browser.setTaskConstraints(constraints: TaskConstraints): void
 ```
 
@@ -703,6 +717,7 @@ Module 5 不被其他模块调用。
 □  无本地模型时的降级方案（纯手动模式的 UX）
 □  用户自定义模板的 allowed_domains 验证 UI
 □  Level 0 任务的执行日志查看界面
+□  IBrowserAutomation 接口定义（src/shared/types/automation-types.ts）
 ```
 
 ---
