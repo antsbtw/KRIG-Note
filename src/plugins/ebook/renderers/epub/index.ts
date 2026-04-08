@@ -231,9 +231,9 @@ export class EPUBRenderer implements IReflowableRenderer {
 
   // ── 标注 ──
 
-  private annotationCallback: ((info: { cfi: string; text: string }) => void) | null = null;
+  private annotationCallback: ((info: { cfi: string; text: string; x: number; y: number }) => void) | null = null;
 
-  onTextSelected(callback: (info: { cfi: string; text: string }) => void): void {
+  onTextSelected(callback: (info: { cfi: string; text: string; x: number; y: number }) => void): void {
     this.annotationCallback = callback;
   }
 
@@ -244,7 +244,7 @@ export class EPUBRenderer implements IReflowableRenderer {
       if (!doc || doc.__ebookMouseupAttached) return;
       doc.__ebookMouseupAttached = true;
 
-      doc.addEventListener('mouseup', () => {
+      doc.addEventListener('mouseup', (e: MouseEvent) => {
         const sel = doc.getSelection();
         if (!sel || sel.isCollapsed || !sel.rangeCount) return;
 
@@ -254,7 +254,12 @@ export class EPUBRenderer implements IReflowableRenderer {
 
         const cfi = this.view.getCFI(index, range);
         if (cfi && this.annotationCallback) {
-          this.annotationCallback({ cfi, text });
+          // 获取选区末尾坐标（相对于 eBook view 容器）
+          const rect = range.getBoundingClientRect();
+          const viewRect = this.container?.getBoundingClientRect();
+          const x = rect.left + rect.width / 2 - (viewRect?.left ?? 0);
+          const y = rect.bottom - (viewRect?.top ?? 0);
+          this.annotationCallback({ cfi, text, x, y });
         }
       });
     };

@@ -63,7 +63,7 @@ export function EBookView() {
   const [annotationMode, setAnnotationMode] = useState<'off' | 'rect' | 'underline'>('off');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [searchVisible, setSearchVisible] = useState(false);
-  const [epubSelection, setEpubSelection] = useState<{ cfi: string; text: string } | null>(null);
+  const [epubSelection, setEpubSelection] = useState<{ cfi: string; text: string; x: number; y: number } | null>(null);
   const [epubAnnotations, setEpubAnnotations] = useState<Array<{ id: string; cfi: string; color: string; text: string }>>([]);
   const [cfiBookmarks, setCfiBookmarks] = useState<Array<{ cfi: string; label: string }>>([]);
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
@@ -472,12 +472,18 @@ export function EBookView() {
             />
           )}
 
-          {/* EPUB 标注：文本选中后的颜色选择器 */}
+          {/* EPUB 标注：文本选中后的颜色选择器（跟随选区位置） */}
           {epubSelection && (
-            <div className="epub-annotation-picker">
-              <span className="epub-annotation-picker__text">
-                "{epubSelection.text.length > 30 ? epubSelection.text.slice(0, 30) + '...' : epubSelection.text}"
-              </span>
+            <div
+              className="epub-annotation-picker"
+              style={{
+                position: 'absolute',
+                left: Math.max(20, Math.min(epubSelection.x - 100, (contentRef.current?.clientWidth ?? 400) - 220)),
+                top: epubSelection.y + 8,
+                bottom: 'auto',
+                transform: 'none',
+              }}
+            >
               <div className="epub-annotation-picker__colors">
                 {EPUB_COLORS.map((c) => (
                   <button

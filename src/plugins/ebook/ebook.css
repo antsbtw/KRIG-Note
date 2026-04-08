@@ -162,10 +162,6 @@
 /* ── EPUB Annotation Picker ── */
 
 .epub-annotation-picker {
-  position: absolute;
-  bottom: 20px;
-  left: 50%;
-  transform: translateX(-50%);
   background: #2a2a2a;
   border: 1px solid #444;
   border-radius: 10px;
