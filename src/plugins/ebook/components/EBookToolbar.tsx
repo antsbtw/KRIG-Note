@@ -62,14 +62,12 @@ export function EBookToolbar({
   const handlePrevPage = useCallback(() => {
     if (currentPage > 1) {
       onPageChange(currentPage - 1);
-      window.dispatchEvent(new CustomEvent('ebook:goto-page', { detail: currentPage - 1 }));
     }
   }, [currentPage, onPageChange]);
 
   const handleNextPage = useCallback(() => {
     if (currentPage < pageCount) {
       onPageChange(currentPage + 1);
-      window.dispatchEvent(new CustomEvent('ebook:goto-page', { detail: currentPage + 1 }));
     }
   }, [currentPage, pageCount, onPageChange]);
 
@@ -83,7 +81,6 @@ export function EBookToolbar({
     const page = parseInt(pageInput, 10);
     if (!isNaN(page) && page >= 1 && page <= pageCount) {
       onPageChange(page);
-      window.dispatchEvent(new CustomEvent('ebook:goto-page', { detail: page }));
     }
   }, [pageInput, pageCount, onPageChange]);
 
@@ -168,7 +165,7 @@ export function EBookToolbar({
         <div className="ebook-toolbar__section ebook-toolbar__section--center">
           <button className="ebook-toolbar__btn" onClick={onPrevChapter} title="上一页 (←)">‹</button>
           {epubProgress && (
-            <span className="ebook-toolbar__page-info" style={{ margin: '0 8px', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <span className="ebook-toolbar__epub-progress">
               {epubProgress.chapter || ''} · {Math.round(epubProgress.percentage * 100)}%
             </span>
           )}
@@ -180,10 +177,9 @@ export function EBookToolbar({
       {renderMode === 'reflowable' && (
         <div className="ebook-toolbar__section ebook-toolbar__section--right">
           <button
-            className="ebook-toolbar__btn"
+            className={`ebook-toolbar__btn ${isBookmarked ? 'ebook-toolbar__btn--bookmark-active' : ''}`}
             onClick={onBookmarkToggle}
             title={isBookmarked ? '移除书签 (⌘D)' : '添加书签 (⌘D)'}
-            style={{ color: isBookmarked ? '#ffd43b' : undefined }}
           >
             {isBookmarked ? '★' : '☆'}
           </button>
@@ -194,7 +190,7 @@ export function EBookToolbar({
 
       {/* Annotation mode + bookmark (fixed-page only) */}
       {renderMode === 'fixed-page' && pageCount > 0 && (
-        <div className="ebook-toolbar__section" style={{ gap: 2 }}>
+        <div className="ebook-toolbar__section ebook-toolbar__section--annotation">
           <button
             className={`ebook-toolbar__btn ${annotationMode === 'rect' ? 'ebook-toolbar__btn--active' : ''}`}
             onClick={() => onAnnotationModeChange(annotationMode === 'rect' ? 'off' : 'rect')}
@@ -210,10 +206,9 @@ export function EBookToolbar({
             ▁
           </button>
           <button
-            className="ebook-toolbar__btn"
+            className={`ebook-toolbar__btn ${isBookmarked ? 'ebook-toolbar__btn--bookmark-active' : ''}`}
             onClick={onBookmarkToggle}
             title={isBookmarked ? '移除书签 (⌘D)' : '添加书签 (⌘D)'}
-            style={{ color: isBookmarked ? '#ffd43b' : undefined }}
           >
             {isBookmarked ? '★' : '☆'}
           </button>

@@ -3,12 +3,6 @@ import type { IFixedPageRenderer, PageDimension } from '../types';
 import { AnnotationLayer } from './AnnotationLayer';
 import type { Annotation } from './AnnotationLayer';
 
-declare const viewAPI: {
-  ebookAnnotationList: (bookId: string) => Promise<any[]>;
-  ebookAnnotationAdd: (bookId: string, ann: unknown) => Promise<any>;
-  ebookAnnotationRemove: (bookId: string, annotationId: string) => Promise<void>;
-};
-
 interface FixedPageContentProps {
   renderer: IFixedPageRenderer;
   scale: number;
@@ -17,6 +11,8 @@ interface FixedPageContentProps {
   bookId?: string | null;
   onPageChange: (page: number) => void;
   onScaleChange: (scale: number) => void;
+  /** 注册跳转回调，替代 CustomEvent 通信 */
+  onRegisterGotoPage: (fn: (page: number) => void) => void;
 }
 
 const PAGE_GAP = 8;
@@ -29,7 +25,7 @@ const DOM_BUFFER = 5; // 可见区域外多渲染 5 页的 DOM
  * DOM 虚拟化：只创建可见区域 ± DOM_BUFFER 页的 DOM 元素，
  * 其余用 spacer div 占位。大幅减少 DOM 节点数量。
  */
-export function FixedPageContent({ renderer, scale, initialPage, annotationMode = 'off', bookId, onPageChange, onScaleChange }: FixedPageContentProps) {
+export function FixedPageContent({ renderer, scale, initialPage, annotationMode = 'off', bookId, onPageChange, onScaleChange, onRegisterGotoPage }: FixedPageContentProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const pageRefsRef = useRef<Map<number, HTMLCanvasElement>>(new Map());
   const textLayerRefsRef = useRef<Map<number, HTMLDivElement>>(new Map());
@@ -172,6 +168,11 @@ export function FixedPageContent({ renderer, scale, initialPage, annotationMode 
     container.scrollTo({ top: pageOffsets[idx] * scale });
   }, [pageOffsets, scale]);
 
+  // 注册跳转回调（替代 CustomEvent 监听）
+  useEffect(() => {
+    onRegisterGotoPage(scrollToPage);
+  }, [scrollToPage, onRegisterGotoPage]);
+
   // 恢复阅读位置（首次加载时）
   const restoredRef = useRef(false);
   useEffect(() => {
@@ -179,16 +180,6 @@ export function FixedPageContent({ renderer, scale, initialPage, annotationMode 
     restoredRef.current = true;
     requestAnimationFrame(() => scrollToPage(initialPage));
   }, [initialPage, pageDimensions, scrollToPage]);
-
-  // 监听 Toolbar 页码跳转
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const page = (e as CustomEvent<number>).detail;
-      scrollToPage(page);
-    };
-    window.addEventListener('ebook:goto-page', handler);
-    return () => window.removeEventListener('ebook:goto-page', handler);
-  }, [scrollToPage]);
 
   // 键盘缩放
   useEffect(() => {

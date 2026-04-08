@@ -383,10 +383,7 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
       bookId: entry.id,
       fileName: entry.displayName,
       fileType: entry.fileType,
-      lastPage: entry.lastPage,
-      lastScale: entry.lastScale,
-      lastFitWidth: entry.lastFitWidth,
-      lastCFI: entry.lastCFI,
+      lastPosition: entry.lastPosition,
     });
     broadcastBookshelfChanged(getMainWindow());
 
@@ -461,10 +458,7 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
       bookId: entry.id,
       fileName: entry.displayName,
       fileType: entry.fileType,
-      lastPage: entry.lastPage,
-      lastScale: entry.lastScale,
-      lastFitWidth: entry.lastFitWidth,
-      lastCFI: entry.lastCFI,
+      lastPosition: entry.lastPosition,
     };
   });
 
@@ -524,8 +518,8 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
   });
 
   // EBookView 保存阅读进度
-  ipcMain.handle(IPC.EBOOK_SAVE_PROGRESS, (_event, bookId: string, page: number, scale?: number, fitWidth?: boolean, lastCFI?: string) => {
-    bookshelfStore.updateProgress(bookId, page, scale, fitWidth, lastCFI);
+  ipcMain.handle(IPC.EBOOK_SAVE_PROGRESS, (_event, bookId: string, position: { page?: number; scale?: number; fitWidth?: boolean; cfi?: string }) => {
+    bookshelfStore.updateProgress(bookId, position);
   });
 
   // ── 文件保存对话框 ──
@@ -920,7 +914,7 @@ function broadcastBookshelfChanged(mainWindow: BaseWindow | null): void {
 /** 通知 EBookView 文件已加载 */
 function broadcastEBookLoaded(mainWindow: BaseWindow | null, info: {
   bookId: string; fileName: string; fileType: string;
-  lastPage?: number; lastScale?: number; lastFitWidth?: boolean; lastCFI?: string;
+  lastPosition?: { page?: number; scale?: number; fitWidth?: boolean; cfi?: string };
 }): void {
   if (!mainWindow) return;
   for (const view of mainWindow.contentView.children) {

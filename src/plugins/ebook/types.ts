@@ -176,6 +176,7 @@ export interface IReflowableRenderer extends IBookRenderer {
 
   // 标注
   onTextSelected(callback: (info: { cfi: string; text: string; x: number; y: number }) => void): void;
+  onSelectionDismiss(callback: () => void): void;
   onAnnotationClick(callback: (cfi: string) => void): void;
   addHighlight(cfi: string, color: string): void;
   removeHighlight(cfi: string): void;

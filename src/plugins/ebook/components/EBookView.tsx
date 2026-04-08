@@ -4,40 +4,16 @@ import { FixedPageContent } from './FixedPageContent';
 import { ReflowableContent } from './ReflowableContent';
 import { OutlinePanel } from './OutlinePanel';
 import { SearchBar } from './SearchBar';
-import type { SearchResult } from './SearchBar';
 import { createRenderer } from '../renderers';
 import { detectFileType, isFixedPage, isReflowable } from '../types';
+import { useBookmarks } from '../hooks/useBookmarks';
+import { useSearch } from '../hooks/useSearch';
+import { useEpubAnnotation } from '../hooks/useEpubAnnotation';
 import type { IBookRenderer, EBookFileType } from '../types';
 import '../ebook.css';
 
-interface EBookLoadedInfo {
-  bookId: string;
-  fileName: string;
-  fileType: string;
-  lastPage?: number;
-  lastCFI?: string;
-  lastScale?: number;
-  lastFitWidth?: boolean;
-}
-
-declare const viewAPI: {
-  ebookGetData: () => Promise<{ filePath: string; fileName: string; data: ArrayBuffer } | null>;
-  ebookClose: () => Promise<void>;
-  ebookRestore: () => Promise<EBookLoadedInfo | null>;
-  ebookSetActiveBook: (bookId: string | null) => Promise<void>;
-  ebookSaveProgress: (bookId: string, page: number, scale?: number, fitWidth?: boolean, lastCFI?: string) => Promise<void>;
-  ebookBookmarkToggle: (bookId: string, page: number) => Promise<number[]>;
-  ebookBookmarkList: (bookId: string) => Promise<number[]>;
-  ebookCFIBookmarkAdd: (bookId: string, cfi: string, label: string) => Promise<Array<{ cfi: string; label: string }>>;
-  ebookCFIBookmarkRemove: (bookId: string, cfi: string) => Promise<Array<{ cfi: string; label: string }>>;
-  ebookCFIBookmarkList: (bookId: string) => Promise<Array<{ cfi: string; label: string }>>;
-  ebookAnnotationList: (bookId: string) => Promise<any[]>;
-  ebookAnnotationAdd: (bookId: string, ann: unknown) => Promise<any>;
-  ebookAnnotationRemove: (bookId: string, annotationId: string) => Promise<void>;
-  onEbookLoaded: (callback: (info: EBookLoadedInfo) => void) => () => void;
-};
-
 const FIT_WIDTH_PADDING = 40;
+const EPUB_COLORS = ['#ffd43b', '#69db7c', '#74c0fc', '#b197fc', '#ff6b6b'];
 
 /**
  * EBookView — L3 View 组件
@@ -62,19 +38,53 @@ export function EBookView() {
   const [restorePage, setRestorePage] = useState<number | null>(null);
   const [annotationMode, setAnnotationMode] = useState<'off' | 'rect' | 'underline'>('off');
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [searchVisible, setSearchVisible] = useState(false);
-  const [epubSelection, setEpubSelection] = useState<{ cfi: string; text: string; x: number; y: number } | null>(null);
-  const [epubAnnotations, setEpubAnnotations] = useState<Array<{ id: string; cfi: string; color: string; text: string }>>([]);
-  const epubAnnotationsRef = useRef(epubAnnotations);
-  const [cfiBookmarks, setCfiBookmarks] = useState<Array<{ cfi: string; label: string }>>([]);
-  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
-  const [searchIndex, setSearchIndex] = useState(0);
-  const [bookmarks, setBookmarks] = useState<number[]>([]);
+
+  // FixedPageContent 跳转回调（替代 CustomEvent）
+  const gotoPageRef = useRef<((page: number) => void) | null>(null);
+  const registerGotoPage = useCallback((fn: (page: number) => void) => {
+    gotoPageRef.current = fn;
+  }, []);
+  const gotoPage = useCallback((page: number) => {
+    gotoPageRef.current?.(page);
+  }, []);
+
+  // EPUB 跳转
+  const gotoCFI = useCallback((cfi: string) => {
+    const r = rendererRef.current;
+    if (r && isReflowable(r)) {
+      r.goTo({ type: 'cfi', cfi });
+    }
+  }, []);
 
   // 同步 ref
   useEffect(() => { fitWidthRef.current = fitWidth; }, [fitWidth]);
   useEffect(() => { scaleRef.current = scale; }, [scale]);
-  useEffect(() => { epubAnnotationsRef.current = epubAnnotations; }, [epubAnnotations]);
+
+  // ── Hooks ──
+
+  const { bookmarks, cfiBookmarks, loadBookmarks, loadCfiBookmarks, toggleBookmark, isBookmarked } =
+    useBookmarks({ bookIdRef, rendererRef, epubProgress });
+
+  const { searchVisible, searchResults, searchIndex, openSearch, handleSearch, handleSearchNext, handleSearchPrev, handleSearchClose } =
+    useSearch({ rendererRef, onGotoPage: gotoPage, onGotoCFI: gotoCFI });
+
+  const { epubSelection, registerCallbacks: registerAnnotationCallbacks, loadAnnotations, createAnnotation, dismissSelection } =
+    useEpubAnnotation({ bookIdRef, rendererRef });
+
+  // ── 保存进度（debounce 500ms）──
+
+  const progressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handlePageChange = useCallback((page: number) => {
+    setCurrentPage(page);
+    if (progressTimerRef.current) clearTimeout(progressTimerRef.current);
+    progressTimerRef.current = setTimeout(() => {
+      const bookId = bookIdRef.current;
+      const r = rendererRef.current;
+      const cfi = (r && isReflowable(r)) ? r.getLastCFI?.() : undefined;
+      if (bookId) viewAPI.ebookSaveProgress(bookId, { page, scale: scaleRef.current, fitWidth: fitWidthRef.current, cfi: cfi ?? undefined });
+    }, 500);
+  }, []);
 
   // ── 核心加载逻辑 ──
 
@@ -97,67 +107,47 @@ export function EBookView() {
       const renderer = createRenderer(fileType);
       await renderer.load(result.data);
 
+      const pos = info.lastPosition;
+
       // EPUB: 设置恢复位置（在 renderTo 之前，因为 renderTo 触发 initView）
-      if (isReflowable(renderer) && info.lastCFI) {
-        renderer.setRestoreLocation(info.lastCFI);
+      if (isReflowable(renderer) && pos?.cfi) {
+        renderer.setRestoreLocation(pos.cfi);
       }
 
       rendererRef.current = renderer;
 
       // 恢复缩放模式
-      const shouldFitWidth = info.lastFitWidth !== undefined ? info.lastFitWidth : true;
+      const shouldFitWidth = pos?.fitWidth !== undefined ? pos.fitWidth : true;
       setFitWidth(shouldFitWidth);
 
       if (isFixedPage(renderer)) {
         setPageCount(renderer.getTotalPages());
-        if (!shouldFitWidth && info.lastScale) {
-          setScale(info.lastScale);
-          renderer.setScale(info.lastScale);
+        if (!shouldFitWidth && pos?.scale) {
+          setScale(pos.scale);
+          renderer.setScale(pos.scale);
         }
       } else {
         setPageCount(0);
         setScale(1.0);
       }
 
-      setCurrentPage(info.lastPage ?? 1);
-      setRestorePage(info.lastPage && info.lastPage > 1 ? info.lastPage : null);
+      setCurrentPage(pos?.page ?? 1);
+      setRestorePage(pos?.page && pos.page > 1 ? pos.page : null);
       setRendererReady(true);
       setLoading(false);
 
       // 加载书签
-      viewAPI.ebookBookmarkList(info.bookId).then(setBookmarks);
+      loadBookmarks(info.bookId);
 
-      // EPUB: 注册进度变化回调 + 文本选择回调
+      // EPUB: 注册进度变化回调 + 标注回调
       if (isReflowable(renderer)) {
         renderer.onRelocate((progress) => {
           setEpubProgress(progress);
           handlePageChange(0);
         });
-        renderer.onTextSelected((selection) => {
-          setEpubSelection(selection);
-        });
-        renderer.onAnnotationClick((cfi) => {
-          const ann = epubAnnotationsRef.current.find((a) => a.cfi === cfi);
-          if (ann && bookIdRef.current) {
-            viewAPI.ebookAnnotationRemove(bookIdRef.current, ann.id);
-            renderer.removeHighlight(cfi);
-            setEpubAnnotations((prev) => prev.filter((a) => a.cfi !== cfi));
-          }
-        });
-        // 加载 CFI 书签
-        if (info.bookId) {
-          viewAPI.ebookCFIBookmarkList(info.bookId).then(setCfiBookmarks);
-        }
-        // 加载已有标注
-        if (info.bookId) {
-          viewAPI.ebookAnnotationList(info.bookId).then(async (anns: any[]) => {
-            setEpubAnnotations(anns);
-            await renderer.getTOC(); // 等待 renderer 就绪
-            for (const ann of anns) {
-              if (ann.cfi) renderer.addHighlight(ann.cfi, ann.color);
-            }
-          });
-        }
+        registerAnnotationCallbacks(renderer);
+        loadCfiBookmarks(info.bookId);
+        loadAnnotations(info.bookId, renderer);
       }
 
       // 适应宽度：等 DOM 更新后计算
@@ -177,7 +167,7 @@ export function EBookView() {
       console.error('[EBookView] Failed to load:', err);
       setLoading(false);
     }
-  }, []);
+  }, [loadBookmarks, loadCfiBookmarks, loadAnnotations, registerAnnotationCallbacks, handlePageChange]);
 
   // ── 启动时恢复上次打开的文档 ──
 
@@ -212,21 +202,6 @@ export function EBookView() {
     return () => window.removeEventListener('resize', handle);
   }, [fitWidth, rendererReady]);
 
-  // ── 保存进度（debounce 500ms）──
-
-  const progressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const handlePageChange = useCallback((page: number) => {
-    setCurrentPage(page);
-    if (progressTimerRef.current) clearTimeout(progressTimerRef.current);
-    progressTimerRef.current = setTimeout(() => {
-      const bookId = bookIdRef.current;
-      const r = rendererRef.current;
-      const cfi = (r && isReflowable(r)) ? r.getLastCFI?.() : undefined;
-      if (bookId) viewAPI.ebookSaveProgress(bookId, page, scaleRef.current, fitWidthRef.current, cfi ?? undefined);
-    }, 500);
-  }, []);
-
   const handleScaleChange = useCallback((newScale: number) => {
     setFitWidth(false);
     setScale(newScale);
@@ -255,31 +230,27 @@ export function EBookView() {
     });
   }, []);
 
-  // Cmd+F 搜索 / Cmd+D 书签
+  // 点击 picker 外部时关闭（主窗口层面的点击）
+  useEffect(() => {
+    if (!epubSelection) return;
+    const handler = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.closest('.epub-annotation-picker')) return;
+      dismissSelection();
+    };
+    window.addEventListener('mousedown', handler);
+    return () => window.removeEventListener('mousedown', handler);
+  }, [epubSelection, dismissSelection]);
+
+  // Cmd+F 搜索 / Cmd+D 书签 / Arrow 章节导航
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
         e.preventDefault();
-        setSearchVisible(true);
+        openSearch();
       } else if ((e.metaKey || e.ctrlKey) && e.key === 'd') {
         e.preventDefault();
-        const bookId = bookIdRef.current;
-        const r = rendererRef.current;
-        if (bookId && r && isFixedPage(r) && currentPage > 0) {
-          viewAPI.ebookBookmarkToggle(bookId, currentPage).then(setBookmarks);
-        } else if (bookId && r && isReflowable(r)) {
-          const cfi = r.getLastCFI();
-          const label = epubProgress?.chapter || '';
-          if (cfi) {
-            // Toggle: 如果已有则删除，否则添加
-            const existing = cfiBookmarks.find((b) => b.cfi === cfi);
-            if (existing) {
-              viewAPI.ebookCFIBookmarkRemove(bookId, cfi).then(setCfiBookmarks);
-            } else {
-              viewAPI.ebookCFIBookmarkAdd(bookId, cfi, label).then(setCfiBookmarks);
-            }
-          }
-        }
+        toggleBookmark(currentPage);
       } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         const r = rendererRef.current;
         if (r && isReflowable(r)) {
@@ -291,77 +262,7 @@ export function EBookView() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [currentPage]);
-
-  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const handleSearch = useCallback((query: string) => {
-    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
-    searchTimerRef.current = setTimeout(async () => {
-      const r = rendererRef.current;
-      if (!r || !query.trim()) {
-        setSearchResults([]);
-        setSearchIndex(0);
-        if (r && isReflowable(r)) r.clearSearch?.();
-        return;
-      }
-      const results = isFixedPage(r)
-        ? await r.searchText(query.trim())
-        : isReflowable(r) && r.searchText
-          ? await r.searchText(query.trim())
-          : [];
-      setSearchResults(results);
-      setSearchIndex(0);
-      if (results.length > 0 && isFixedPage(r)) {
-        window.dispatchEvent(new CustomEvent('ebook:goto-page', { detail: results[0].pageNum }));
-      }
-    }, 300);
-  }, []);
-
-  const handleSearchNext = useCallback(() => {
-    if (searchResults.length === 0) return;
-    const next = (searchIndex + 1) % searchResults.length;
-    setSearchIndex(next);
-    window.dispatchEvent(new CustomEvent('ebook:goto-page', { detail: searchResults[next].pageNum }));
-  }, [searchResults, searchIndex]);
-
-  const handleSearchPrev = useCallback(() => {
-    if (searchResults.length === 0) return;
-    const prev = (searchIndex - 1 + searchResults.length) % searchResults.length;
-    setSearchIndex(prev);
-    window.dispatchEvent(new CustomEvent('ebook:goto-page', { detail: searchResults[prev].pageNum }));
-  }, [searchResults, searchIndex]);
-
-  const handleSearchClose = useCallback(() => {
-    setSearchVisible(false);
-    setSearchResults([]);
-    setSearchIndex(0);
-    const r = rendererRef.current;
-    if (r && isReflowable(r)) r.clearSearch?.();
-  }, []);
-
-  // EPUB 标注：选择颜色后创建高亮
-  const handleEpubAnnotationCreate = useCallback(async (color: string) => {
-    if (!epubSelection || !bookIdRef.current) return;
-    const r = rendererRef.current;
-    if (!r || !isReflowable(r)) return;
-
-    try {
-      const stored = await viewAPI.ebookAnnotationAdd(bookIdRef.current, {
-        type: 'underline',
-        color,
-        pageNum: 0,
-        rect: { x: 0, y: 0, w: 0, h: 0 },
-        cfi: epubSelection.cfi,
-        textContent: epubSelection.text,
-      });
-      r.addHighlight(epubSelection.cfi, color);
-      setEpubAnnotations((prev) => [...prev, { ...stored, cfi: epubSelection.cfi }]);
-      setEpubSelection(null);
-    } catch { /* ignore */ }
-  }, [epubSelection]);
-
-  const EPUB_COLORS = ['#ffd43b', '#69db7c', '#74c0fc', '#b197fc', '#ff6b6b'];
+  }, [currentPage, openSearch, toggleBookmark]);
 
   const renderer = rendererRef.current;
 
@@ -377,7 +278,7 @@ export function EBookView() {
         sidebarOpen={sidebarOpen}
         renderMode={renderer?.renderMode ?? 'fixed-page'}
         epubProgress={epubProgress}
-        onPageChange={handlePageChange}
+        onPageChange={(page) => { handlePageChange(page); gotoPage(page); }}
         onScaleChange={handleScaleChange}
         onFitWidthToggle={handleFitWidthToggle}
         onAnnotationModeChange={setAnnotationMode}
@@ -395,29 +296,8 @@ export function EBookView() {
             renderer.setFontSize(next);
           }
         }}
-        isBookmarked={
-          renderer?.renderMode === 'reflowable'
-            ? cfiBookmarks.some((b) => b.cfi === (renderer && isReflowable(renderer) ? renderer.getLastCFI() : null))
-            : bookmarks.includes(currentPage)
-        }
-        onBookmarkToggle={() => {
-          const bookId = bookIdRef.current;
-          const r = rendererRef.current;
-          if (bookId && r && isFixedPage(r)) {
-            viewAPI.ebookBookmarkToggle(bookId, currentPage).then(setBookmarks);
-          } else if (bookId && r && isReflowable(r)) {
-            const cfi = r.getLastCFI();
-            const label = epubProgress?.chapter || '';
-            if (cfi) {
-              const existing = cfiBookmarks.find((b) => b.cfi === cfi);
-              if (existing) {
-                viewAPI.ebookCFIBookmarkRemove(bookId, cfi).then(setCfiBookmarks);
-              } else {
-                viewAPI.ebookCFIBookmarkAdd(bookId, cfi, label).then(setCfiBookmarks);
-              }
-            }
-          }
-        }}
+        isBookmarked={isBookmarked(currentPage)}
+        onBookmarkToggle={() => toggleBookmark(currentPage)}
       />
 
       <SearchBar
@@ -441,9 +321,8 @@ export function EBookView() {
             onNavigate={(position) => {
               if (position.type === 'page') {
                 handlePageChange(position.page);
-                window.dispatchEvent(new CustomEvent('ebook:goto-page', { detail: position.page }));
+                gotoPage(position.page);
               } else if (position.type === 'cfi') {
-                // EPUB: 用 renderer.goTo() 导航到 href/cfi
                 renderer.goTo(position);
               }
             }}
@@ -473,6 +352,7 @@ export function EBookView() {
               bookId={bookIdRef.current}
               onPageChange={handlePageChange}
               onScaleChange={handleScaleChange}
+              onRegisterGotoPage={registerGotoPage}
             />
           )}
 
@@ -483,7 +363,7 @@ export function EBookView() {
             />
           )}
 
-          {/* EPUB 标注：文本选中后的颜色选择器（跟随选区位置） */}
+          {/* EPUB 标注：文本选中后的颜色选择器 */}
           {epubSelection && (
             <div
               className="epub-annotation-picker"
@@ -501,12 +381,12 @@ export function EBookView() {
                     key={c}
                     className="epub-annotation-picker__color"
                     style={{ backgroundColor: c }}
-                    onClick={() => handleEpubAnnotationCreate(c)}
+                    onClick={() => createAnnotation(c)}
                   />
                 ))}
                 <button
                   className="epub-annotation-picker__cancel"
-                  onClick={() => setEpubSelection(null)}
+                  onClick={dismissSelection}
                 >✕</button>
               </div>
             </div>

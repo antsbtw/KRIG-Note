@@ -13,6 +13,14 @@ import { randomUUID } from 'node:crypto';
 
 // ── 数据模型 ──
 
+/** 统一的阅读位置/视图状态 */
+export interface ReadingPosition {
+  page?: number;
+  scale?: number;
+  fitWidth?: boolean;
+  cfi?: string;
+}
+
 export interface EBookEntry {
   id: string;
   fileType: 'pdf' | 'epub' | 'djvu' | 'cbz';
@@ -25,10 +33,8 @@ export interface EBookEntry {
   folderId: string | null;
   addedAt: number;
   lastOpenedAt: number;
-  lastPage?: number;
-  lastScale?: number;
-  lastFitWidth?: boolean;
-  lastCFI?: string;
+  /** 统一位置对象（取代原来分散的 lastPage/lastScale/lastFitWidth/lastCFI） */
+  lastPosition?: ReadingPosition;
   bookmarks?: number[];
   cfiBookmarks?: Array<{ cfi: string; label: string }>;
 }
@@ -81,6 +87,25 @@ class BookshelfStore {
         } else {
           this.data = { entries: raw.entries ?? [], folders: raw.folders ?? [] };
         }
+        // 迁移：将分散的 lastPage/lastScale/lastFitWidth/lastCFI 合并到 lastPosition
+        let migrated = false;
+        for (const entry of this.data.entries) {
+          const e = entry as any;
+          if (e.lastPage !== undefined || e.lastScale !== undefined || e.lastFitWidth !== undefined || e.lastCFI !== undefined) {
+            entry.lastPosition = {
+              page: e.lastPage,
+              scale: e.lastScale,
+              fitWidth: e.lastFitWidth,
+              cfi: e.lastCFI,
+            };
+            delete e.lastPage;
+            delete e.lastScale;
+            delete e.lastFitWidth;
+            delete e.lastCFI;
+            migrated = true;
+          }
+        }
+        if (migrated) this.save();
       } catch {
         this.data = { entries: [], folders: [] };
       }
@@ -224,14 +249,11 @@ class BookshelfStore {
     return this.data.entries.find((e) => e.id === id)?.cfiBookmarks ?? [];
   }
 
-  updateProgress(id: string, lastPage: number, lastScale?: number, lastFitWidth?: boolean, lastCFI?: string): void {
+  updateProgress(id: string, position: ReadingPosition): void {
     this.load();
     const entry = this.data.entries.find((e) => e.id === id);
     if (entry) {
-      entry.lastPage = lastPage;
-      if (lastScale !== undefined) entry.lastScale = lastScale;
-      if (lastFitWidth !== undefined) entry.lastFitWidth = lastFitWidth;
-      if (lastCFI !== undefined) entry.lastCFI = lastCFI;
+      entry.lastPosition = { ...entry.lastPosition, ...position };
       this.save();
     }
   }

@@ -105,8 +105,8 @@ contextBridge.exposeInMainWorld('viewAPI', {
   ebookAnnotationRemove: (bookId: string, annotationId: string) => ipcRenderer.invoke(IPC.EBOOK_ANNOTATION_REMOVE, bookId, annotationId),
   ebookSetActiveBook: (bookId: string | null) =>
     ipcRenderer.invoke(IPC.EBOOK_SET_ACTIVE_BOOK, bookId),
-  ebookSaveProgress: (bookId: string, page: number, scale?: number, fitWidth?: boolean, lastCFI?: string) =>
-    ipcRenderer.invoke(IPC.EBOOK_SAVE_PROGRESS, bookId, page, scale, fitWidth, lastCFI),
+  ebookSaveProgress: (bookId: string, position: { page?: number; scale?: number; fitWidth?: boolean; cfi?: string }) =>
+    ipcRenderer.invoke(IPC.EBOOK_SAVE_PROGRESS, bookId, position),
 
   onEbookLoaded: (callback: (info: { fileName: string; fileType: string }) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, info: { fileName: string; fileType: string }) => callback(info);
