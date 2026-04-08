@@ -30,6 +30,7 @@ export interface EBookEntry {
   lastFitWidth?: boolean;
   lastCFI?: string;
   bookmarks?: number[];
+  cfiBookmarks?: Array<{ cfi: string; label: string }>;
 }
 
 export interface EBookFolder {
@@ -195,6 +196,32 @@ class BookshelfStore {
     this.load();
     const entry = this.data.entries.find((e) => e.id === id);
     return entry?.bookmarks ?? [];
+  }
+
+  addCFIBookmark(id: string, cfi: string, label: string): Array<{ cfi: string; label: string }> {
+    this.load();
+    const entry = this.data.entries.find((e) => e.id === id);
+    if (!entry) return [];
+    if (!entry.cfiBookmarks) entry.cfiBookmarks = [];
+    // 去重
+    if (entry.cfiBookmarks.some((b) => b.cfi === cfi)) return entry.cfiBookmarks;
+    entry.cfiBookmarks.push({ cfi, label });
+    this.save();
+    return entry.cfiBookmarks;
+  }
+
+  removeCFIBookmark(id: string, cfi: string): Array<{ cfi: string; label: string }> {
+    this.load();
+    const entry = this.data.entries.find((e) => e.id === id);
+    if (!entry || !entry.cfiBookmarks) return [];
+    entry.cfiBookmarks = entry.cfiBookmarks.filter((b) => b.cfi !== cfi);
+    this.save();
+    return entry.cfiBookmarks;
+  }
+
+  getCFIBookmarks(id: string): Array<{ cfi: string; label: string }> {
+    this.load();
+    return this.data.entries.find((e) => e.id === id)?.cfiBookmarks ?? [];
   }
 
   updateProgress(id: string, lastPage: number, lastScale?: number, lastFitWidth?: boolean, lastCFI?: string): void {

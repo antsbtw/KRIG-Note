@@ -176,9 +176,17 @@ export function EBookToolbar({
         </div>
       )}
 
-      {/* Font size (reflowable only) */}
+      {/* Font size + bookmark (reflowable only) */}
       {renderMode === 'reflowable' && (
         <div className="ebook-toolbar__section ebook-toolbar__section--right">
+          <button
+            className="ebook-toolbar__btn"
+            onClick={onBookmarkToggle}
+            title={isBookmarked ? '移除书签 (⌘D)' : '添加书签 (⌘D)'}
+            style={{ color: isBookmarked ? '#ffd43b' : undefined }}
+          >
+            {isBookmarked ? '★' : '☆'}
+          </button>
           <button className="ebook-toolbar__btn" onClick={() => onFontSizeChange?.(-10)} title="缩小">A−</button>
           <button className="ebook-toolbar__btn" onClick={() => onFontSizeChange?.(10)} title="放大">A+</button>
         </div>

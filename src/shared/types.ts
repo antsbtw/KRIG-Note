@@ -249,9 +249,13 @@ export const IPC = {
   EBOOK_LOADED: 'ebook:loaded',
   EBOOK_CLOSE: 'ebook:close',
 
-  // eBook 书签
+  // eBook 书签（PDF 页码）
   EBOOK_BOOKMARK_TOGGLE: 'ebook:bookmark-toggle',
   EBOOK_BOOKMARK_LIST: 'ebook:bookmark-list',
+  // eBook 书签（EPUB CFI）
+  EBOOK_CFI_BOOKMARK_ADD: 'ebook:cfi-bookmark-add',
+  EBOOK_CFI_BOOKMARK_REMOVE: 'ebook:cfi-bookmark-remove',
+  EBOOK_CFI_BOOKMARK_LIST: 'ebook:cfi-bookmark-list',
 
   // eBook 标注
   EBOOK_ANNOTATION_LIST: 'ebook:annotation-list',

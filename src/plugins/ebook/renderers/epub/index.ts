@@ -87,6 +87,33 @@ export class EPUBRenderer implements IReflowableRenderer {
         }
       });
 
+      // 设置文本选择监听（标注入口）
+      this.setupSelectionListener();
+
+      // 高亮绘制：根据 annotation.color 自定义颜色
+      this.view.addEventListener('draw-annotation', (e: any) => {
+        const { draw, annotation } = e.detail;
+        const color = annotation?.color || '#ffd43b';
+        draw((range: any, options: any) => {
+          // 使用 foliate-js Overlayer.highlight
+          const { Overlayer } = (self as any).__foliateOverlayer || {};
+          if (Overlayer) return Overlayer.highlight(range, { ...options, color });
+          // fallback: 简单矩形
+          const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+          g.setAttribute('fill', color);
+          g.style.opacity = '0.3';
+          for (const { left, top, height, width } of range) {
+            const el = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+            el.setAttribute('x', String(left));
+            el.setAttribute('y', String(top));
+            el.setAttribute('height', String(height));
+            el.setAttribute('width', String(width));
+            g.append(el);
+          }
+          return g;
+        }, { color });
+      });
+
       // 提取 TOC
       if (this.view.book?.toc) {
         this.tocItems = this.convertTOC(this.view.book.toc);
@@ -200,6 +227,46 @@ export class EPUBRenderer implements IReflowableRenderer {
 
   onRelocate(callback: (progress: { chapter: string; percentage: number }) => void): void {
     this.relocateCallbacks.push(callback);
+  }
+
+  // ── 标注 ──
+
+  private annotationCallback: ((info: { cfi: string; text: string }) => void) | null = null;
+
+  onTextSelected(callback: (info: { cfi: string; text: string }) => void): void {
+    this.annotationCallback = callback;
+  }
+
+  private setupSelectionListener(): void {
+    if (!this.view) return;
+
+    this.view.addEventListener('load', (e: any) => {
+      const { doc, index } = e.detail;
+      if (!doc) return;
+
+      doc.addEventListener('mouseup', () => {
+        const sel = doc.getSelection();
+        if (!sel || sel.isCollapsed || !sel.rangeCount) return;
+
+        const range = sel.getRangeAt(0);
+        const text = sel.toString().trim();
+        if (!text) return;
+
+        const cfi = this.view.getCFI(index, range);
+        if (cfi && this.annotationCallback) {
+          this.annotationCallback({ cfi, text });
+        }
+      });
+    });
+  }
+
+  addHighlight(cfi: string, color: string): void {
+    if (!this.view) return;
+    this.view.addAnnotation({ value: cfi, color });
+  }
+
+  removeHighlight(cfi: string): void {
+    this.view?.deleteAnnotation({ value: cfi });
   }
 
   // ── 搜索 ──

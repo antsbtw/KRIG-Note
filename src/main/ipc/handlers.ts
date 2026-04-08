@@ -478,6 +478,20 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
     return bookshelfStore.getBookmarks(bookId);
   });
 
+  // ── eBook CFI 书签（EPUB）──
+
+  ipcMain.handle(IPC.EBOOK_CFI_BOOKMARK_ADD, (_event, bookId: string, cfi: string, label: string) => {
+    return bookshelfStore.addCFIBookmark(bookId, cfi, label);
+  });
+
+  ipcMain.handle(IPC.EBOOK_CFI_BOOKMARK_REMOVE, (_event, bookId: string, cfi: string) => {
+    return bookshelfStore.removeCFIBookmark(bookId, cfi);
+  });
+
+  ipcMain.handle(IPC.EBOOK_CFI_BOOKMARK_LIST, (_event, bookId: string) => {
+    return bookshelfStore.getCFIBookmarks(bookId);
+  });
+
   // ── eBook 标注 ──
 
   ipcMain.handle(IPC.EBOOK_ANNOTATION_LIST, (_event, bookId: string) => {

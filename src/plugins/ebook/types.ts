@@ -173,6 +173,11 @@ export interface IReflowableRenderer extends IBookRenderer {
   // 搜索
   searchText(query: string): Promise<Array<{ pageNum: number; index: number; text: string }>>;
   clearSearch(): void;
+
+  // 标注
+  onTextSelected(callback: (info: { cfi: string; text: string }) => void): void;
+  addHighlight(cfi: string, color: string): void;
+  removeHighlight(cfi: string): void;
 }
 
 // ── 类型守卫 ──

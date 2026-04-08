@@ -159,6 +159,62 @@
   display: block;
 }
 
+/* ── EPUB Annotation Picker ── */
+
+.epub-annotation-picker {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #2a2a2a;
+  border: 1px solid #444;
+  border-radius: 10px;
+  padding: 8px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  z-index: 100;
+}
+
+.epub-annotation-picker__text {
+  font-size: 12px;
+  color: #999;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.epub-annotation-picker__colors {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.epub-annotation-picker__color {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+}
+
+.epub-annotation-picker__color:hover {
+  border-color: #fff;
+  transform: scale(1.15);
+}
+
+.epub-annotation-picker__cancel {
+  width: 22px;
+  height: 22px;
+  background: transparent;
+  border: none;
+  color: #888;
+  font-size: 14px;
+  cursor: pointer;
+}
+
 /* ── Reflowable Content (EPUB) ── */
 
 .ebook-content--reflowable {
