@@ -15,6 +15,7 @@ import { containerKeyboardPlugin } from '../plugins/container-keyboard';
 import { slashCommandPlugin } from '../plugins/slash-command';
 import { linkClickPlugin, setCurrentNote } from '../plugins/link-click';
 import { tableKeymapPlugin } from '../blocks/table';
+import { columnResizing } from 'prosemirror-tables';
 import { SlashMenu } from './SlashMenu';
 import { FloatingToolbar } from './FloatingToolbar';
 import { HandleMenu } from './HandleMenu';
@@ -119,6 +120,7 @@ function buildPlugins(s: ReturnType<typeof getSchema>) {
   const blockPlugins = blockRegistry.buildBlockPlugins();
 
   return [
+    columnResizing({ cellMinWidth: 80, View: null as any }),  // 列宽拖拽
     blockSelectionPlugin(),
     indentPlugin(),              // Tab/Shift+Tab — 在 baseKeymap 之前拦截
     slashCommandPlugin(),

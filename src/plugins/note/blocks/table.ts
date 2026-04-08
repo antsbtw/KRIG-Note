@@ -1,6 +1,7 @@
 import type { BlockDef } from '../types';
 import { keymap } from 'prosemirror-keymap';
-import { tableEditing, goToNextCell } from 'prosemirror-tables';
+import { tableEditing, goToNextCell, columnResizing, addRowAfter } from 'prosemirror-tables';
+import { tableNodeView } from './table/view';
 
 /**
  * Table — 表格系统（4 个节点）
@@ -19,9 +20,15 @@ export const tableBlock: BlockDef = {
     tableRole: 'table',
     isolating: true,
     parseDOM: [{ tag: 'table' }],
-    toDOM() { return ['table', ['tbody', 0]]; },
+    toDOM() { return ['table', { class: 'pm-table' }, ['tbody', 0]]; },
   },
-  capabilities: { canDelete: true, canDrag: true },
+  nodeView: tableNodeView,
+  capabilities: {
+    turnInto: [],
+    canDuplicate: true,
+    canDelete: true,
+    canDrag: true,
+  },
   containerRule: {},
   plugin: () => tableEditing(),
   slashMenu: { label: 'Table', icon: '▦', group: 'basic', keywords: ['table', 'grid', '表格'], order: 12 },
@@ -45,20 +52,35 @@ export const tableCellBlock: BlockDef = {
   group: '',
   nodeSpec: {
     content: 'block+',
-    attrs: { colspan: { default: 1 }, rowspan: { default: 1 } },
+    attrs: {
+      colspan: { default: 1 },
+      rowspan: { default: 1 },
+      colwidth: { default: null },
+    },
     tableRole: 'cell',
     isolating: true,
     parseDOM: [{ tag: 'td', getAttrs(dom: HTMLElement) {
-      return { colspan: Number(dom.getAttribute('colspan') || 1), rowspan: Number(dom.getAttribute('rowspan') || 1) };
+      const widthAttr = dom.getAttribute('data-colwidth');
+      const colwidth = widthAttr ? widthAttr.split(',').map(Number) : null;
+      return {
+        colspan: Number(dom.getAttribute('colspan') || 1),
+        rowspan: Number(dom.getAttribute('rowspan') || 1),
+        colwidth,
+      };
     }}],
     toDOM(node) {
       const attrs: Record<string, string> = {};
-      if (node.attrs.colspan !== 1) attrs.colspan = String(node.attrs.colspan);
-      if (node.attrs.rowspan !== 1) attrs.rowspan = String(node.attrs.rowspan);
+      if (node.attrs.colspan > 1) attrs.colspan = String(node.attrs.colspan);
+      if (node.attrs.rowspan > 1) attrs.rowspan = String(node.attrs.rowspan);
+      if (node.attrs.colwidth) {
+        attrs['data-colwidth'] = (node.attrs.colwidth as number[]).join(',');
+        attrs.style = `width: ${(node.attrs.colwidth as number[])[0]}px`;
+      }
       return ['td', attrs, 0];
     },
   },
   capabilities: {},
+  containerRule: { requiredFirstChildType: undefined },
   slashMenu: null,
 };
 
@@ -67,23 +89,46 @@ export const tableHeaderBlock: BlockDef = {
   group: '',
   nodeSpec: {
     content: 'block+',
-    attrs: { colspan: { default: 1 }, rowspan: { default: 1 } },
+    attrs: {
+      colspan: { default: 1 },
+      rowspan: { default: 1 },
+      colwidth: { default: null },
+    },
     tableRole: 'header_cell',
     isolating: true,
     parseDOM: [{ tag: 'th', getAttrs(dom: HTMLElement) {
-      return { colspan: Number(dom.getAttribute('colspan') || 1), rowspan: Number(dom.getAttribute('rowspan') || 1) };
+      const widthAttr = dom.getAttribute('data-colwidth');
+      const colwidth = widthAttr ? widthAttr.split(',').map(Number) : null;
+      return {
+        colspan: Number(dom.getAttribute('colspan') || 1),
+        rowspan: Number(dom.getAttribute('rowspan') || 1),
+        colwidth,
+      };
     }}],
     toDOM(node) {
       const attrs: Record<string, string> = {};
-      if (node.attrs.colspan !== 1) attrs.colspan = String(node.attrs.colspan);
-      if (node.attrs.rowspan !== 1) attrs.rowspan = String(node.attrs.rowspan);
+      if (node.attrs.colspan > 1) attrs.colspan = String(node.attrs.colspan);
+      if (node.attrs.rowspan > 1) attrs.rowspan = String(node.attrs.rowspan);
+      if (node.attrs.colwidth) {
+        attrs['data-colwidth'] = (node.attrs.colwidth as number[]).join(',');
+        attrs.style = `width: ${(node.attrs.colwidth as number[])[0]}px`;
+      }
       return ['th', attrs, 0];
     },
   },
   capabilities: {},
+  containerRule: { requiredFirstChildType: undefined },
   slashMenu: null,
 };
 
 export function tableKeymapPlugin() {
-  return keymap({ 'Tab': goToNextCell(1), 'Shift-Tab': goToNextCell(-1) });
+  return keymap({
+    'Tab': (state, dispatch, view) => {
+      // Tab → next cell; at last cell → add new row
+      if (goToNextCell(1)(state, dispatch)) return true;
+      if (dispatch) addRowAfter(state, dispatch);
+      return true;
+    },
+    'Shift-Tab': goToNextCell(-1),
+  });
 }
