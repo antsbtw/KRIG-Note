@@ -73,6 +73,17 @@ export class EPUBRenderer implements IReflowableRenderer {
       // 应用缩放
       this.applyZoom();
 
+      // 暗色模式：注入样式到 EPUB 内容
+      if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        this.view.renderer?.setStyles?.(`
+          html, body {
+            background: #1e1e1e !important;
+            color: #e0e0e0 !important;
+          }
+          a { color: #6baaff !important; }
+        `);
+      }
+
       // 监听位置变化
       this.view.addEventListener('relocate', (e: any) => {
         const detail = e.detail;
