@@ -90,6 +90,14 @@ export class EPUBRenderer implements IReflowableRenderer {
       // 设置文本选择监听（标注入口）
       this.setupSelectionListener();
 
+      // 点击已有标注 → 触发回调（用于删除）
+      this.view.addEventListener('show-annotation', (e: any) => {
+        const cfi = e.detail?.value;
+        if (cfi && this.annotationClickCallback) {
+          this.annotationClickCallback(cfi);
+        }
+      });
+
       // 高亮绘制：根据 annotation.color 自定义颜色
       this.view.addEventListener('draw-annotation', (e: any) => {
         const { draw, annotation } = e.detail;
@@ -232,9 +240,14 @@ export class EPUBRenderer implements IReflowableRenderer {
   // ── 标注 ──
 
   private annotationCallback: ((info: { cfi: string; text: string; x: number; y: number }) => void) | null = null;
+  private annotationClickCallback: ((cfi: string) => void) | null = null;
 
   onTextSelected(callback: (info: { cfi: string; text: string; x: number; y: number }) => void): void {
     this.annotationCallback = callback;
+  }
+
+  onAnnotationClick(callback: (cfi: string) => void): void {
+    this.annotationClickCallback = callback;
   }
 
   private setupSelectionListener(): void {

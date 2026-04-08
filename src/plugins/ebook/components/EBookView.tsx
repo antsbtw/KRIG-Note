@@ -65,6 +65,7 @@ export function EBookView() {
   const [searchVisible, setSearchVisible] = useState(false);
   const [epubSelection, setEpubSelection] = useState<{ cfi: string; text: string; x: number; y: number } | null>(null);
   const [epubAnnotations, setEpubAnnotations] = useState<Array<{ id: string; cfi: string; color: string; text: string }>>([]);
+  const epubAnnotationsRef = useRef(epubAnnotations);
   const [cfiBookmarks, setCfiBookmarks] = useState<Array<{ cfi: string; label: string }>>([]);
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [searchIndex, setSearchIndex] = useState(0);
@@ -73,6 +74,7 @@ export function EBookView() {
   // 同步 ref
   useEffect(() => { fitWidthRef.current = fitWidth; }, [fitWidth]);
   useEffect(() => { scaleRef.current = scale; }, [scale]);
+  useEffect(() => { epubAnnotationsRef.current = epubAnnotations; }, [epubAnnotations]);
 
   // ── 核心加载逻辑 ──
 
@@ -133,6 +135,14 @@ export function EBookView() {
         });
         renderer.onTextSelected((selection) => {
           setEpubSelection(selection);
+        });
+        renderer.onAnnotationClick((cfi) => {
+          const ann = epubAnnotationsRef.current.find((a) => a.cfi === cfi);
+          if (ann && bookIdRef.current) {
+            viewAPI.ebookAnnotationRemove(bookIdRef.current, ann.id);
+            renderer.removeHighlight(cfi);
+            setEpubAnnotations((prev) => prev.filter((a) => a.cfi !== cfi));
+          }
         });
         // 加载 CFI 书签
         if (info.bookId) {
