@@ -1077,10 +1077,7 @@
 .ProseMirror .table-block-wrapper {
   position: relative;
   margin: 12px 0;
-  margin-top: 28px;
-  padding-left: 24px;
-  padding-right: 24px;
-  padding-bottom: 24px;
+  margin-bottom: 28px;   /* space for +row button below */
 }
 
 .ProseMirror .table-block__scroll {
@@ -1127,12 +1124,12 @@
   z-index: 1;
 }
 
-/* +Column button (right side) */
+/* +Column button — Notion style: narrow strip right of table */
 .ProseMirror .table-block__add-col-btn {
   position: absolute;
-  right: 0;
+  right: -24px;
   top: 0;
-  bottom: 24px;
+  bottom: 0;
   width: 20px;
   display: flex;
   align-items: center;
@@ -1157,12 +1154,12 @@
   color: #8ab4f8;
 }
 
-/* +Row button (bottom) */
+/* +Row button — Notion style: narrow strip below table */
 .ProseMirror .table-block__add-row-btn {
   position: absolute;
-  left: 24px;
-  bottom: 0;
-  right: 24px;
+  left: 0;
+  bottom: -24px;
+  right: 0;
   height: 20px;
   display: flex;
   align-items: center;
@@ -1187,13 +1184,13 @@
   color: #8ab4f8;
 }
 
-/* Column indicators (top) */
+/* Column indicators — edge-attached above table header */
 .ProseMirror .table-col-indicators {
   position: absolute;
-  top: -22px;
+  top: -14px;
   left: 0;
   right: 0;
-  height: 18px;
+  height: 12px;
   opacity: 0;
   transition: opacity 0.15s;
   z-index: 2;
@@ -1206,30 +1203,29 @@
 
 .ProseMirror .table-col-indicator {
   position: absolute;
-  height: 18px;
+  height: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #2a2a2a;
-  border: 1px solid #3c3c3c;
-  border-radius: 3px;
+  background: #333;
+  border-radius: 3px 3px 0 0;
   cursor: pointer;
   box-sizing: border-box;
   pointer-events: auto;
+  transition: background 0.1s;
 }
 
 .ProseMirror .table-col-indicator:hover {
-  background: #383838;
-  border-color: #8ab4f8;
+  background: #8ab4f8;
 }
 
-/* Row indicators (left) */
+/* Row indicators — edge-attached left of table rows */
 .ProseMirror .table-row-indicators {
   position: absolute;
-  left: 0;
+  left: -14px;
   top: 0;
   bottom: 0;
-  width: 20px;
+  width: 12px;
   opacity: 0;
   transition: opacity 0.15s;
   z-index: 2;
@@ -1243,21 +1239,20 @@
 .ProseMirror .table-row-indicator {
   position: absolute;
   left: 0;
-  width: 18px;
+  width: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #2a2a2a;
-  border: 1px solid #3c3c3c;
-  border-radius: 3px;
+  background: #333;
+  border-radius: 3px 0 0 3px;
   cursor: pointer;
   box-sizing: border-box;
   pointer-events: auto;
+  transition: background 0.1s;
 }
 
 .ProseMirror .table-row-indicator:hover {
-  background: #383838;
-  border-color: #8ab4f8;
+  background: #8ab4f8;
 }
 
 /* Context menu for table operations */
