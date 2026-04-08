@@ -50,8 +50,9 @@ export const mathBlockConverter: AtomConverter = {
   pmType: 'mathBlock',
 
   toAtom(node: PMNode, parentId?: string): Atom {
+    // mathBlock content: 'text*' — LaTeX 存在 textContent 中
     return createAtom('mathBlock', {
-      latex: node.attrs.latex || node.textContent || '',
+      latex: node.textContent || '',
     } as MathBlockContent, parentId);
   },
 
@@ -59,7 +60,7 @@ export const mathBlockConverter: AtomConverter = {
     const c = atom.content as MathBlockContent;
     return {
       type: 'mathBlock',
-      attrs: { latex: c.latex },
+      content: c.latex ? [{ type: 'text', text: c.latex }] : [],
     };
   },
 };

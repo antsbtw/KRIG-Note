@@ -29,6 +29,7 @@ import { updateVocabList } from '../learning';
 import { buildTestDocument } from '../test-content';
 import { createTocIndicator } from '../toc/toc-indicator';
 import { headingCollapsePlugin } from '../plugins/heading-collapse';
+import { registerConverterTest } from '../converters/converter-test';
 import '../note.css';
 
 /**
@@ -264,6 +265,9 @@ export function NoteEditor() {
 
     // 先创建空编辑器
     createEditor(createEmptyDoc(s));
+
+    // 注册 Converter 测试（DevTools console: __testConverters()）
+    registerConverterTest(s);
 
     // 监听打开笔记事件
     const unsubOpen = viewAPI.onNoteOpenInEditor((noteId) => {
