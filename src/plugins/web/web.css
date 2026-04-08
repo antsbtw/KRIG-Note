@@ -1,0 +1,124 @@
+/* WebView 暗色主题样式 */
+
+.web-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: #1e1e1e;
+  color: #e8eaed;
+}
+
+/* ── Toolbar ── */
+
+.web-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 36px;
+  padding: 0 8px;
+  border-bottom: 1px solid #333;
+  background: #252525;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.web-toolbar__section {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.web-toolbar__section--nav {
+  flex-shrink: 0;
+}
+
+.web-toolbar__section--url {
+  flex: 1;
+  min-width: 0;
+  margin: 0 8px;
+}
+
+.web-toolbar__section--actions {
+  flex-shrink: 0;
+}
+
+.web-toolbar__btn {
+  width: 28px;
+  height: 28px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: #e8eaed;
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.web-toolbar__btn:hover:not(:disabled) {
+  background: #3a3a3a;
+}
+
+.web-toolbar__btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.web-toolbar__url-input {
+  width: 100%;
+  height: 26px;
+  background: #333;
+  border: 1px solid #444;
+  border-radius: 13px;
+  color: #e8eaed;
+  font-size: 12px;
+  padding: 0 12px;
+  outline: none;
+}
+
+.web-toolbar__url-input:focus {
+  border-color: #6b9fff;
+  background: #2a2a2a;
+}
+
+.web-toolbar__url-input::placeholder {
+  color: #666;
+}
+
+/* ── Content (webview container) ── */
+
+.web-view__content {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+
+.web-view__webview {
+  width: 100%;
+  height: 100%;
+  border: none;
+}
+
+/* ── Empty / Loading ── */
+
+.web-view__empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  color: #666;
+}
+
+.web-view__empty-icon {
+  font-size: 48px;
+  opacity: 0.4;
+}
+
+.web-view__empty-text {
+  font-size: 14px;
+}

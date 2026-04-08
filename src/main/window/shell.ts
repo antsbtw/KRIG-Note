@@ -48,18 +48,19 @@ function getViewPool(workspaceId: WorkspaceId): WorkspaceViewPool {
 
 /** 懒创建 View 实例 — 根据 WorkMode 的 viewType 选择 renderer */
 function createViewForWorkMode(workModeId: string): WebContentsView {
+  // 根据 WorkMode 的 viewType 选择对应的 renderer
+  const mode = workModeRegistry.get(workModeId);
+  const viewType = mode?.viewType ?? 'note';
+
   const view = new WebContentsView({
     webPreferences: {
       preload: path.join(__dirname, 'view.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      webviewTag: viewType === 'web',  // WebView 需要 webview 标签支持
     },
   });
   view.setBackgroundColor('#1e1e1e');
-
-  // 根据 WorkMode 的 viewType 选择对应的 renderer
-  const mode = workModeRegistry.get(workModeId);
-  const viewType = mode?.viewType ?? 'note';
 
   if (viewType === 'note') {
     // NoteView — ProseMirror 编辑器
@@ -84,6 +85,37 @@ function createViewForWorkMode(workModeId: string): WebContentsView {
         { query: { workModeId } },
       );
     }
+  } else if (viewType === 'web') {
+    // WebView — 网页浏览器
+    if (WEB_VIEW_VITE_DEV_SERVER_URL) {
+      view.webContents.loadURL(
+        `${WEB_VIEW_VITE_DEV_SERVER_URL}/web.html?workModeId=${workModeId}`,
+      );
+    } else {
+      view.webContents.loadFile(
+        path.join(__dirname, `../renderer/web_view/web.html`),
+        { query: { workModeId } },
+      );
+    }
+
+    // 拦截 webview guest 的弹窗
+    // 策略：
+    //   target=_blank 普通链接 → webview 内导航
+    //   OAuth/登录弹窗 → 允许 Electron 创建子窗口（认证完成后自动关闭）
+    view.webContents.on('did-attach-webview', (_event, guestWebContents) => {
+      guestWebContents.setWindowOpenHandler(({ url, disposition }) => {
+        if (!url || url === 'about:blank') return { action: 'allow' };
+
+        // foreground-tab / background-tab = target=_blank 链接 → webview 内导航
+        if (disposition === 'foreground-tab' || disposition === 'background-tab') {
+          guestWebContents.loadURL(url);
+          return { action: 'deny' };
+        }
+
+        // new-window / other = OAuth 弹窗等 → 允许 Electron 创建子窗口
+        return { action: 'allow' };
+      });
+    });
   } else {
     // 其他类型用 DemoView
     if (DEMO_VIEW_VITE_DEV_SERVER_URL) {

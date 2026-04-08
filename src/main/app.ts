@@ -1,4 +1,4 @@
-import { app } from 'electron';
+import { app, nativeTheme } from 'electron';
 import { createShell, getMainWindow } from './window/shell';
 import { registerIpcHandlers } from './ipc/handlers';
 import { setupDividerController } from './slot/divider';
@@ -74,6 +74,15 @@ function registerPlugins(): void {
     contentType: 'ebook-bookshelf',
   });
 
+  navSideRegistry.register({
+    workModeId: 'demo-c',
+    actionBar: { title: '网页', actions: [
+      { id: 'create-web-folder', label: '+ 文件夹' },
+      { id: 'add-web-bookmark', label: '+ 书签' },
+    ]},
+    contentType: 'web-bookmarks',
+  });
+
   // 协同协议注册
   protocolRegistry.register({
     id: 'demo-sync',
@@ -123,10 +132,13 @@ function registerPlugins(): void {
       { id: 'devtools-ebook', label: 'DevTools (eBook)', accelerator: 'CmdOrCtrl+Alt+F', handler: () => {
         openDevToolsByName('ebook');
       }},
+      { id: 'devtools-web', label: 'DevTools (Web)', accelerator: 'CmdOrCtrl+Alt+W', handler: () => {
+        openDevToolsByName('web');
+      }},
       { id: 'devtools-navside', label: 'DevTools (NavSide)', accelerator: 'CmdOrCtrl+Alt+S', handler: () => {
         openDevToolsByName('navside');
       }},
-      { id: 'devtools-shell', label: 'DevTools (Shell)', accelerator: 'CmdOrCtrl+Alt+W', handler: () => {
+      { id: 'devtools-shell', label: 'DevTools (Shell)', accelerator: 'CmdOrCtrl+Alt+H', handler: () => {
         openDevToolsByName('shell');
       }},
       { id: 'devtools-focused', label: 'DevTools (Focused)', accelerator: 'CmdOrCtrl+Alt+I', handler: () => {
@@ -307,7 +319,10 @@ function registerPlugins(): void {
 // ── 应用生命周期 ──
 
 app.whenReady().then(() => {
-  // 0. 注册自定义协议（必须在 app.whenReady 后）
+  // 0. 暗色主题（确保 webview 内的网页识别 prefers-color-scheme: dark）
+  nativeTheme.themeSource = 'dark';
+
+  // 0b. 注册自定义协议（必须在 app.whenReady 后）
   mediaStore.registerProtocol();
 
   // 1. 插件注册

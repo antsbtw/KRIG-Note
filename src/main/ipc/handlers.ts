@@ -27,6 +27,8 @@ import { loadEBook, getEBookData, closeEBook } from '../ebook/file-loader';
 import { bookshelfStore } from '../ebook/bookshelf-store';
 import { annotationStore } from '../ebook/annotation-store';
 import { navSideRegistry } from '../navside/registry';
+import { bookmarkStore as webBookmarkStore } from '../../plugins/web/main/bookmark-store';
+import { historyStore as webHistoryStore } from '../../plugins/web/main/history-store';
 
 export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): void {
   // ── Workspace 操作 ──
@@ -673,6 +675,62 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
     } catch (err) {
       return { success: false, error: String(err) };
     }
+  });
+
+  // ── Web 书签 ──
+
+  ipcMain.handle(IPC.WEB_BOOKMARK_LIST, () => {
+    return webBookmarkStore.list();
+  });
+
+  ipcMain.handle(IPC.WEB_BOOKMARK_ADD, (_event, url: string, title: string, favicon?: string) => {
+    return webBookmarkStore.add(url, title, favicon);
+  });
+
+  ipcMain.handle(IPC.WEB_BOOKMARK_REMOVE, (_event, id: string) => {
+    webBookmarkStore.remove(id);
+  });
+
+  ipcMain.handle(IPC.WEB_BOOKMARK_UPDATE, (_event, id: string, fields: { title?: string; url?: string; favicon?: string }) => {
+    webBookmarkStore.update(id, fields);
+  });
+
+  ipcMain.handle(IPC.WEB_BOOKMARK_MOVE, (_event, id: string, folderId: string | null) => {
+    webBookmarkStore.move(id, folderId);
+  });
+
+  ipcMain.handle('web:bookmark-find-by-url', (_event, url: string) => {
+    return webBookmarkStore.findByUrl(url);
+  });
+
+  // Web 书签文件夹
+  ipcMain.handle(IPC.WEB_FOLDER_CREATE, (_event, title: string) => {
+    return webBookmarkStore.folderCreate(title);
+  });
+
+  ipcMain.handle(IPC.WEB_FOLDER_RENAME, (_event, id: string, title: string) => {
+    webBookmarkStore.folderRename(id, title);
+  });
+
+  ipcMain.handle(IPC.WEB_FOLDER_DELETE, (_event, id: string) => {
+    webBookmarkStore.folderDelete(id);
+  });
+
+  ipcMain.handle(IPC.WEB_FOLDER_LIST, () => {
+    return webBookmarkStore.folderList();
+  });
+
+  // Web 浏览历史
+  ipcMain.handle(IPC.WEB_HISTORY_ADD, (_event, url: string, title: string, favicon?: string) => {
+    return webHistoryStore.add(url, title, favicon);
+  });
+
+  ipcMain.handle(IPC.WEB_HISTORY_LIST, (_event, limit?: number) => {
+    return webHistoryStore.list(limit);
+  });
+
+  ipcMain.handle(IPC.WEB_HISTORY_CLEAR, () => {
+    webHistoryStore.clear();
   });
 }
 

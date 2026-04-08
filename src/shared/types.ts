@@ -268,6 +268,24 @@ export const IPC = {
   EBOOK_RESTORE: 'ebook:restore',
   EBOOK_SET_EXPANDED_FOLDERS: 'ebook:set-expanded-folders',
 
+  // Web 书签
+  WEB_BOOKMARK_LIST: 'web:bookmark-list',
+  WEB_BOOKMARK_ADD: 'web:bookmark-add',
+  WEB_BOOKMARK_REMOVE: 'web:bookmark-remove',
+  WEB_BOOKMARK_UPDATE: 'web:bookmark-update',
+  WEB_BOOKMARK_MOVE: 'web:bookmark-move',
+
+  // Web 书签文件夹
+  WEB_FOLDER_CREATE: 'web:folder-create',
+  WEB_FOLDER_RENAME: 'web:folder-rename',
+  WEB_FOLDER_DELETE: 'web:folder-delete',
+  WEB_FOLDER_LIST: 'web:folder-list',
+
+  // Web 浏览历史
+  WEB_HISTORY_ADD: 'web:history-add',
+  WEB_HISTORY_LIST: 'web:history-list',
+  WEB_HISTORY_CLEAR: 'web:history-clear',
+
   // yt-dlp
   YTDLP_CHECK_STATUS: 'ytdlp:check-status',
   YTDLP_INSTALL: 'ytdlp:install',

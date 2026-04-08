@@ -186,4 +186,17 @@ contextBridge.exposeInMainWorld('viewAPI', {
     ipcRenderer.on(IPC.YTDLP_PROGRESS, listener);
     return () => ipcRenderer.removeListener(IPC.YTDLP_PROGRESS, listener);
   },
+
+  // ── Web 书签（WebView 用）──
+
+  webBookmarkAdd: (url: string, title: string, favicon?: string) =>
+    ipcRenderer.invoke(IPC.WEB_BOOKMARK_ADD, url, title, favicon),
+  webBookmarkRemove: (id: string) =>
+    ipcRenderer.invoke(IPC.WEB_BOOKMARK_REMOVE, id),
+  webBookmarkList: () =>
+    ipcRenderer.invoke(IPC.WEB_BOOKMARK_LIST),
+  webBookmarkFindByUrl: (url: string) =>
+    ipcRenderer.invoke('web:bookmark-find-by-url', url),
+  webHistoryAdd: (url: string, title: string, favicon?: string) =>
+    ipcRenderer.invoke(IPC.WEB_HISTORY_ADD, url, title, favicon),
 });

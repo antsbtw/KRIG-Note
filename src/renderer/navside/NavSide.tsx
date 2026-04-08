@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { WorkModeRegistration, NavSideRegistration } from '../../shared/types';
 import { EBookPanel } from './EBookPanel';
+import { WebPanel } from '../../plugins/web/navside/WebPanel';
 
 // ── 数据类型 ──
 
@@ -752,7 +753,11 @@ export function NavSide() {
       <div style={styles.search}>
         <input
           style={styles.searchInput}
-          placeholder={registration?.contentType === 'ebook-bookshelf' ? '搜索书架...' : '搜索笔记...'}
+          placeholder={
+            registration?.contentType === 'ebook-bookshelf' ? '搜索书架...'
+            : registration?.contentType === 'web-bookmarks' ? '搜索书签...'
+            : '搜索笔记...'
+          }
           readOnly
         />
       </div>
@@ -790,6 +795,10 @@ export function NavSide() {
           initialExpandedFolders={ebookExpandedFolders}
           onActiveBookChange={setActiveBookId}
         />
+      )}
+
+      {registration?.contentType === 'web-bookmarks' && (
+        <WebPanel />
       )}
     </div>
   );
