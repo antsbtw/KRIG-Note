@@ -9,11 +9,13 @@ import type { IBookRenderer, TOCItem } from '../types';
 
 interface OutlinePanelProps {
   renderer: IBookRenderer;
+  currentChapter?: string;
+  currentPage?: number;
   onNavigate: (position: TOCItem['position']) => void;
   onClose: () => void;
 }
 
-export function OutlinePanel({ renderer, onNavigate, onClose }: OutlinePanelProps) {
+export function OutlinePanel({ renderer, currentChapter, currentPage, onNavigate, onClose }: OutlinePanelProps) {
   const [toc, setToc] = useState<TOCItem[]>([]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
@@ -50,6 +52,9 @@ export function OutlinePanel({ renderer, onNavigate, onClose }: OutlinePanelProp
       const hasChildren = item.children && item.children.length > 0;
       const isExpanded = expanded.has(key);
       const page = item.position.type === 'page' ? item.position.page : null;
+      const isCurrent = currentChapter
+        ? item.label === currentChapter
+        : currentPage && page ? page === currentPage : false;
 
       return (
         <div key={key}>
@@ -57,10 +62,11 @@ export function OutlinePanel({ renderer, onNavigate, onClose }: OutlinePanelProp
             style={{
               ...styles.item,
               paddingLeft: 12 + depth * 16,
+              ...(isCurrent ? styles.itemCurrent : {}),
             }}
             onClick={() => handleClick(item)}
-            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = '#333'; }}
-            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
+            onMouseEnter={(e) => { if (!isCurrent) (e.currentTarget as HTMLElement).style.background = '#333'; }}
+            onMouseLeave={(e) => { if (!isCurrent) (e.currentTarget as HTMLElement).style.background = ''; }}
           >
             {hasChildren ? (
               <span
@@ -139,6 +145,11 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 12,
     color: '#ccc',
     userSelect: 'none' as const,
+  },
+  itemCurrent: {
+    background: '#264f78',
+    color: '#fff',
+    borderRadius: 3,
   },
   toggle: {
     width: 16,

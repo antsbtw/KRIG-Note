@@ -169,6 +169,10 @@ export interface IReflowableRenderer extends IBookRenderer {
 
   // 进度变化回调
   onRelocate(callback: (progress: { chapter: string; percentage: number }) => void): void;
+
+  // 搜索
+  searchText(query: string): Promise<Array<{ pageNum: number; index: number; text: string }>>;
+  clearSearch(): void;
 }
 
 // ── 类型守卫 ──

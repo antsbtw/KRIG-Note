@@ -201,4 +201,40 @@ export class EPUBRenderer implements IReflowableRenderer {
   onRelocate(callback: (progress: { chapter: string; percentage: number }) => void): void {
     this.relocateCallbacks.push(callback);
   }
+
+  // ── 搜索 ──
+
+  async searchText(query: string): Promise<Array<{ pageNum: number; index: number; text: string }>> {
+    await this.readyPromise;
+    if (!this.view || !query) return [];
+
+    const results: Array<{ pageNum: number; index: number; text: string }> = [];
+    try {
+      for await (const result of this.view.search({ query })) {
+        if (result === 'done') break;
+        if (result.subitems) {
+          for (const sub of result.subitems) {
+            results.push({
+              pageNum: sub.index ?? 0,
+              index: results.length,
+              text: sub.excerpt ?? query,
+            });
+          }
+        } else if (result.excerpt) {
+          results.push({
+            pageNum: result.index ?? 0,
+            index: results.length,
+            text: result.excerpt,
+          });
+        }
+      }
+    } catch {
+      // 搜索可能被中断
+    }
+    return results;
+  }
+
+  clearSearch(): void {
+    this.view?.clearSearch?.();
+  }
 }

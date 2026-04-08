@@ -250,15 +250,20 @@ export function EBookView() {
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
     searchTimerRef.current = setTimeout(async () => {
       const r = rendererRef.current;
-      if (!r || !isFixedPage(r) || !query.trim()) {
+      if (!r || !query.trim()) {
         setSearchResults([]);
         setSearchIndex(0);
+        if (r && isReflowable(r)) r.clearSearch?.();
         return;
       }
-      const results = await r.searchText(query.trim());
+      const results = isFixedPage(r)
+        ? await r.searchText(query.trim())
+        : isReflowable(r) && r.searchText
+          ? await r.searchText(query.trim())
+          : [];
       setSearchResults(results);
       setSearchIndex(0);
-      if (results.length > 0) {
+      if (results.length > 0 && isFixedPage(r)) {
         window.dispatchEvent(new CustomEvent('ebook:goto-page', { detail: results[0].pageNum }));
       }
     }, 300);
@@ -282,6 +287,8 @@ export function EBookView() {
     setSearchVisible(false);
     setSearchResults([]);
     setSearchIndex(0);
+    const r = rendererRef.current;
+    if (r && isReflowable(r)) r.clearSearch?.();
   }, []);
 
   const renderer = rendererRef.current;
@@ -339,6 +346,8 @@ export function EBookView() {
           <OutlinePanel
             key={bookId}
             renderer={renderer}
+            currentChapter={epubProgress?.chapter}
+            currentPage={currentPage}
             onNavigate={(position) => {
               if (position.type === 'page') {
                 handlePageChange(position.page);
