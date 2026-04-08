@@ -26,12 +26,19 @@ export class ConverterRegistry {
 
     for (const block of blocks) {
       if (block.converter) {
-        for (const atomType of block.converter.atomTypes) {
-          this.byAtomType.set(atomType, block.converter);
-        }
-        this.byPMType.set(block.converter.pmType, block.converter);
+        this.registerConverter(block.converter);
       }
     }
+  }
+
+  /**
+   * 直接注册一个 converter（不依赖 BlockDef）
+   */
+  registerConverter(converter: AtomConverter): void {
+    for (const atomType of converter.atomTypes) {
+      this.byAtomType.set(atomType, converter);
+    }
+    this.byPMType.set(converter.pmType, converter);
   }
 
   /**

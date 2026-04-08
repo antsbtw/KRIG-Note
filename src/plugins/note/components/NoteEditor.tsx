@@ -30,6 +30,8 @@ import { buildTestDocument } from '../test-content';
 import { createTocIndicator } from '../toc/toc-indicator';
 import { headingCollapsePlugin } from '../plugins/heading-collapse';
 import { registerConverterTest } from '../converters/converter-test';
+import { converterRegistry } from '../converters/registry';
+import type { Atom } from '../../../shared/types/atom-types';
 import '../note.css';
 
 /**
@@ -58,6 +60,7 @@ let registered = false;
 function ensureRegistered() {
   if (registered) return;
   registerAllBlocks();
+  blockRegistry.initConverters();
   registered = true;
 }
 
@@ -138,13 +141,13 @@ function buildPlugins(s: ReturnType<typeof getSchema>) {
   ];
 }
 
-/** 从 doc_content JSON 构建 ProseMirror doc */
-function docFromJSON(s: ReturnType<typeof getSchema>, docContent: unknown[]): PMNode {
+/** 从 doc_content（Atom[]）构建 ProseMirror doc */
+function docFromContent(s: ReturnType<typeof getSchema>, docContent: unknown[]): PMNode {
   try {
-    return PMNode.fromJSON(s, { type: 'doc', content: docContent });
+    const docJson = converterRegistry.atomsToDoc(docContent as Atom[]);
+    return PMNode.fromJSON(s, docJson);
   } catch (err) {
     console.error('[NoteEditor] Failed to parse doc_content:', err);
-    // 回退到空文档
     return createEmptyDoc(s);
   }
 }
@@ -213,7 +216,7 @@ export function NoteEditor() {
       if (!record || !record.doc_content || record.doc_content.length === 0) {
         createEditor(createEmptyDoc(s));
       } else {
-        createEditor(docFromJSON(s, record.doc_content));
+        createEditor(docFromContent(s, record.doc_content));
       }
       currentNoteIdRef.current = noteId;
       setCurrentNote(noteId);
@@ -233,8 +236,6 @@ export function NoteEditor() {
     if (!noteId || !view) return;
 
     const doc = view.state.doc;
-    const docJSON = doc.toJSON();
-    const docContent = docJSON.content || [];
 
     // 提取标题
     let title = 'Untitled';
@@ -244,7 +245,9 @@ export function NoteEditor() {
       }
     });
 
-    viewAPI.noteSave(noteId, docContent, title);
+    // PM Doc → Atom[]（renderer 端转换，存储 Atom 格式）
+    const atoms = converterRegistry.docToAtoms(doc);
+    viewAPI.noteSave(noteId, atoms, title);
   }, []);
 
   // 防抖自动保存（1秒）

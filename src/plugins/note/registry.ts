@@ -12,6 +12,10 @@ import { Schema, type NodeSpec, type MarkSpec } from 'prosemirror-model';
 import type { Plugin } from 'prosemirror-state';
 import type { BlockDef, SlashItemDef, NodeViewFactory } from './types';
 import { converterRegistry } from './converters/registry';
+import { textBlockConverter } from './converters/text-block-converter';
+import { bulletListConverter, orderedListConverter, taskListConverter, taskItemConverter } from './converters/list-converter';
+import { codeBlockConverter, mathBlockConverter, imageConverter, videoConverter, audioConverter, tweetConverter, horizontalRuleConverter } from './converters/render-block-converters';
+import { blockquoteConverter, calloutConverter, toggleListConverter, frameBlockConverter, tableConverter, tableRowConverter, tableCellConverter, tableHeaderConverter, columnListConverter, columnConverter } from './converters/container-converters';
 
 class BlockRegistry {
   private blocks = new Map<string, BlockDef>();
@@ -159,9 +163,26 @@ class BlockRegistry {
 
   // ── Converter 注册 ──
 
-  /** 初始化 ConverterRegistry，从所有已注册的 BlockDef 收集 converter */
+  /** 初始化 ConverterRegistry：注册所有 Converter */
   initConverters(): void {
+    // 先从 BlockDef.converter 收集（如果有挂上的话）
     converterRegistry.init(Array.from(this.blocks.values()));
+
+    // 直接注册所有已实现的 Converter
+    const converters = [
+      textBlockConverter,
+      bulletListConverter, orderedListConverter, taskListConverter, taskItemConverter,
+      codeBlockConverter, mathBlockConverter, imageConverter,
+      videoConverter, audioConverter, tweetConverter, horizontalRuleConverter,
+      blockquoteConverter, calloutConverter, toggleListConverter, frameBlockConverter,
+      tableConverter, tableRowConverter, tableCellConverter, tableHeaderConverter,
+      columnListConverter, columnConverter,
+    ];
+    for (const c of converters) {
+      converterRegistry.registerConverter(c);
+    }
+
+    console.log(`[BlockRegistry] Converters initialized: ${converters.length} registered`);
   }
 }
 
