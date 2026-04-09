@@ -122,6 +122,13 @@ export function NoteView() {
         >
           {dirty ? '保存' : '已保存'}
         </button>
+        <button
+          style={styles.closeSlotBtn}
+          onClick={() => (window as any).viewAPI.closeSlot()}
+          title="关闭此面板"
+        >
+          ×
+        </button>
       </div>
 
       {/* Content */}
@@ -179,5 +186,16 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '2px 10px',
     cursor: 'pointer',
     flexShrink: 0,
+  },
+  closeSlotBtn: {
+    background: 'transparent',
+    border: 'none',
+    borderRadius: 4,
+    color: '#888',
+    fontSize: 16,
+    padding: '0 6px',
+    cursor: 'pointer',
+    flexShrink: 0,
+    lineHeight: '24px',
   },
 };

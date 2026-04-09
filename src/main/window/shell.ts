@@ -356,6 +356,55 @@ export function closeWorkspaceViews(workspaceId: WorkspaceId): void {
   workspaceViewPools.delete(workspaceId);
 }
 
+/** 根据 webContentsId 判断 View 在哪个 slot（用于 SLOT_CLOSE 自动检测） */
+export function getSlotBySenderId(senderId: number): 'left' | 'right' | null {
+  const active = workspaceManager.getActive();
+  if (!active) return null;
+  const pool = workspaceViewPools.get(active.id);
+  if (!pool) return null;
+  if (pool.activeLeftId) {
+    const leftView = pool.leftViews.get(pool.activeLeftId);
+    if (leftView?.webContents.id === senderId) return 'left';
+  }
+  if (pool.rightView?.webContents.id === senderId) return 'right';
+  return null;
+}
+
+/** 关闭指定 side 的 slot — 对面 View 自动全屏 */
+export function closeSlot(side: 'left' | 'right'): void {
+  if (side === 'right') {
+    closeRightSlot();
+    return;
+  }
+  // 关闭 left → right 晋升为 left
+  if (!mainWindow) return;
+  const active = workspaceManager.getActive();
+  if (!active) return;
+  const pool = getViewPool(active.id);
+  if (!pool.rightView || !pool.rightWorkModeId) return;
+
+  // 销毁 left view
+  if (pool.activeLeftId) {
+    const leftView = pool.leftViews.get(pool.activeLeftId);
+    if (leftView) {
+      leftView.setVisible(false);
+      mainWindow.contentView.removeChildView(leftView);
+      leftView.webContents.close();
+    }
+    pool.leftViews.delete(pool.activeLeftId);
+  }
+  // right 晋升为 left
+  const promotedView = pool.rightView;
+  const promotedModeId = pool.rightWorkModeId;
+  pool.leftViews.set(promotedModeId, promotedView);
+  pool.activeLeftId = promotedModeId;
+  pool.rightView = null;
+  pool.rightWorkModeId = null;
+  workspaceManager.update(active.id, { workModeId: promotedModeId });
+  dividerView?.setVisible(false);
+  updateLayout();
+}
+
 /** 获取当前 Workspace 是否有 Right Slot */
 export function hasRightSlot(): boolean {
   const active = workspaceManager.getActive();

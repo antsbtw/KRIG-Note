@@ -96,6 +96,7 @@ export interface WorkModeRegistration {
   icon: string;
   label: string;
   order: number;
+  hidden?: boolean;            // true = 不在 NavSide tab 中显示（仅作为 right slot 使用）
 }
 
 /** NavSide 内容注册（按 WorkMode 驱动） */
@@ -148,6 +149,7 @@ export const IPC = {
   // Slot 操作
   SLOT_OPEN_RIGHT: 'slot:open-right',
   SLOT_CLOSE_RIGHT: 'slot:close-right',
+  SLOT_CLOSE: 'slot:close',             // View 关闭自己所在的 slot
   SLOT_DIVIDER_CHANGED: 'slot:divider-changed',
 
   // Divider 拖拽

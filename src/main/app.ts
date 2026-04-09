@@ -62,6 +62,7 @@ function registerPlugins(): void {
     icon: '📤',
     label: 'Extraction',
     order: 4,
+    hidden: true,   // 仅作为 right slot，不在 NavSide tab 中显示
   });
 
   // NavSide 内容注册

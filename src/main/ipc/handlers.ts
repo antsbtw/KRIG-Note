@@ -9,6 +9,8 @@ import {
   closeWorkspaceViews,
   openRightSlot,
   closeRightSlot,
+  closeSlot,
+  getSlotBySenderId,
   getActiveViewWebContentsIds,
   getActiveProtocol,
 } from '../window/shell';
@@ -137,6 +139,14 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
 
   ipcMain.handle(IPC.SLOT_CLOSE_RIGHT, () => {
     closeRightSlot();
+    broadcastWorkspaceState(getMainWindow());
+  });
+
+  // View 关闭自己所在的 slot（自动检测 sender 在哪个 slot）
+  ipcMain.handle(IPC.SLOT_CLOSE, (event) => {
+    const side = getSlotBySenderId(event.sender.id);
+    if (!side) return;
+    closeSlot(side);
     broadcastWorkspaceState(getMainWindow());
   });
 

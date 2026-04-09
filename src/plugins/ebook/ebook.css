@@ -117,6 +117,10 @@
   color: var(--ebook-bookmark-active);
 }
 
+.ebook-toolbar__section--close { flex-shrink: 0; }
+.ebook-toolbar__btn--close-slot { color: #888; font-size: 16px; }
+.ebook-toolbar__btn--close-slot:hover { color: #fff; }
+
 .ebook-toolbar__epub-progress {
   margin: 0 8px;
   max-width: 200px;

@@ -19,9 +19,10 @@ contextBridge.exposeInMainWorld('viewAPI', {
     return () => ipcRenderer.removeListener(IPC.VIEW_MESSAGE_RECEIVE, listener);
   },
 
-  // Right Slot 操作
+  // Slot 操作
   openRightSlot: (workModeId: string) => ipcRenderer.invoke(IPC.SLOT_OPEN_RIGHT, workModeId),
   closeRightSlot: () => ipcRenderer.invoke(IPC.SLOT_CLOSE_RIGHT),
+  closeSlot: () => ipcRenderer.invoke(IPC.SLOT_CLOSE),  // 关闭自己所在的 slot
 
   // NoteFile 操作
   noteCreate: (title?: string) => ipcRenderer.invoke(IPC.NOTE_CREATE, title),

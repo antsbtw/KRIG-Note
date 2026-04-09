@@ -11,6 +11,7 @@ interface WebToolbarProps {
   onGoForward: () => void;
   onReload: () => void;
   onBookmarkToggle: () => void;
+  onCloseSlot?: () => void;
 }
 
 /**
@@ -29,6 +30,7 @@ export function WebToolbar({
   onGoForward,
   onReload,
   onBookmarkToggle,
+  onCloseSlot,
 }: WebToolbarProps) {
   const [editing, setEditing] = useState(false);
   const [inputValue, setInputValue] = useState('');
@@ -109,6 +111,11 @@ export function WebToolbar({
         >
           {isBookmarked ? '★' : '☆'}
         </button>
+        {onCloseSlot && (
+          <button className="web-toolbar__btn web-toolbar__btn--close-slot" onClick={onCloseSlot} title="关闭此面板">
+            ×
+          </button>
+        )}
       </div>
     </div>
   );

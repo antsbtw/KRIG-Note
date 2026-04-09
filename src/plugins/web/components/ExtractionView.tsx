@@ -93,6 +93,10 @@ export function ExtractionView() {
           {loading ? '⏳' : '📤'} {pageTitle}
         </span>
         <span className="extraction-toolbar__url">{currentUrl}</span>
+        <span style={{ flex: 1 }} />
+        <button className="extraction-toolbar__close" onClick={() => (window as any).viewAPI.closeSlot()} title="关闭此面板">
+          ×
+        </button>
       </div>
       <div className="web-view__content">
         <webview

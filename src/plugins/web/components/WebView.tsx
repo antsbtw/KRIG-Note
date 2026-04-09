@@ -130,6 +130,7 @@ export function WebView() {
         onGoForward={handleGoForward}
         onReload={handleReload}
         onBookmarkToggle={handleBookmarkToggle}
+        onCloseSlot={() => (viewAPI as any).closeSlot()}
       />
       <div className="web-view__content">
         <webview

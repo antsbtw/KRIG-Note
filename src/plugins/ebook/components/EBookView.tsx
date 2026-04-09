@@ -311,6 +311,7 @@ export function EBookView() {
         isBookmarked={isBookmarked(currentPage)}
         onBookmarkToggle={() => toggleBookmark(currentPage)}
         onExtract={handleExtract}
+        onCloseSlot={() => (viewAPI as any).closeSlot()}
       />
 
       <SearchBar

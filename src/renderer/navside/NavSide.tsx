@@ -123,7 +123,7 @@ export function NavSide() {
   }, []);
 
   useEffect(() => {
-    navSideAPI.listWorkModes().then(setModes);
+    navSideAPI.listWorkModes().then(all => setModes(all.filter(m => !m.hidden)));
 
     navSideAPI.getActiveState().then((data) => {
       if (data.active) {

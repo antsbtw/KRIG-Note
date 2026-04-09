@@ -25,6 +25,7 @@ interface EBookToolbarProps {
   isBookmarked?: boolean;
   onBookmarkToggle?: () => void;
   onExtract?: () => void;
+  onCloseSlot?: () => void;
 }
 
 const ZOOM_PRESETS = [
@@ -57,6 +58,7 @@ export function EBookToolbar({
   isBookmarked,
   onBookmarkToggle,
   onExtract,
+  onCloseSlot,
 }: EBookToolbarProps) {
   const [pageInput, setPageInput] = useState('');
   const [editingPage, setEditingPage] = useState(false);
@@ -249,6 +251,15 @@ export function EBookToolbar({
           </select>
           <button className="ebook-toolbar__btn" onClick={handleZoomIn} title="Zoom in">
             +
+          </button>
+        </div>
+      )}
+
+      {/* Close slot */}
+      {onCloseSlot && (
+        <div className="ebook-toolbar__section ebook-toolbar__section--close">
+          <button className="ebook-toolbar__btn ebook-toolbar__btn--close-slot" onClick={onCloseSlot} title="关闭此面板">
+            ×
           </button>
         </div>
       )}
