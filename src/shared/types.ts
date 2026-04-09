@@ -179,6 +179,7 @@ export const IPC = {
 
   // NoteFile 编辑器操作
   NOTE_OPEN_IN_EDITOR: 'note:open-in-editor',
+  NOTE_PENDING_OPEN: 'note:pending-open',    // NoteEditor ready 后拉取待打开的 noteId
   NOTE_TITLE_CHANGED: 'note:title-changed',  // NavSide → NoteView: 文件名变更同步到 noteTitle
 
   // Folder 操作
@@ -285,6 +286,10 @@ export const IPC = {
   WEB_HISTORY_ADD: 'web:history-add',
   WEB_HISTORY_LIST: 'web:history-list',
   WEB_HISTORY_CLEAR: 'web:history-clear',
+
+  // PDF Extraction (Platform)
+  EXTRACTION_OPEN: 'extraction:open',              // 打开 ExtractionView + 上传当前 PDF
+  EXTRACTION_IMPORT: 'extraction:import',           // 导入 JSON 数据 → 创建文件夹+Note → 切换到 NoteView
 
   // yt-dlp
   YTDLP_CHECK_STATUS: 'ytdlp:check-status',

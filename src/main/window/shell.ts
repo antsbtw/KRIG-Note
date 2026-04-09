@@ -1,11 +1,15 @@
 import { BaseWindow, WebContentsView } from 'electron';
 import path from 'node:path';
+import fs from 'node:fs';
 import { calculateLayout } from '../slot/layout';
 import { workspaceManager } from '../workspace/manager';
 import { workModeRegistry } from '../workmode/registry';
 import { protocolRegistry } from '../protocol/registry';
 import { DIVIDER_HTML } from '../slot/divider';
+import { IPC } from '../../shared/types';
 import type { WorkspaceId } from '../../shared/types';
+import { setPendingNoteId } from '../ipc/handlers';
+import { importExtractionData } from '../extraction/import-service';
 
 /**
  * Shell — 应用的主窗口
@@ -86,15 +90,16 @@ function createViewForWorkMode(workModeId: string): WebContentsView {
       );
     }
   } else if (viewType === 'web') {
-    // WebView — 网页浏览器
+    // WebView — 网页浏览器（含变种：extraction 等）
+    const variant = mode?.variant ?? '';
     if (WEB_VIEW_VITE_DEV_SERVER_URL) {
       view.webContents.loadURL(
-        `${WEB_VIEW_VITE_DEV_SERVER_URL}/web.html?workModeId=${workModeId}`,
+        `${WEB_VIEW_VITE_DEV_SERVER_URL}/web.html?workModeId=${workModeId}&variant=${variant}`,
       );
     } else {
       view.webContents.loadFile(
         path.join(__dirname, `../renderer/web_view/web.html`),
-        { query: { workModeId } },
+        { query: { workModeId, variant } },
       );
     }
 
@@ -115,6 +120,62 @@ function createViewForWorkMode(workModeId: string): WebContentsView {
         // new-window / other = OAuth 弹窗等 → 允许 Electron 创建子窗口
         return { action: 'allow' };
       });
+
+      // Extraction 变种：拦截 JSON 下载 → 导入到 Note
+      if (variant === 'extraction') {
+        guestWebContents.session.on('will-download', (_event, item) => {
+          const fileName = item.getFilename();
+          console.log('[Extraction] Download intercepted:', fileName, item.getURL());
+
+          // 只拦截 JSON 文件（Atom 提取结果）
+          if (!fileName.endsWith('.json')) return;
+
+          // 保存到临时文件，读取后导入 Note
+          const { app } = require('electron');
+          const tmpPath = path.join(
+            app.getPath('temp'),
+            `krig-extraction-${Date.now()}.json`,
+          );
+          item.setSavePath(tmpPath);
+
+          item.on('done', async (_e, state) => {
+            if (state !== 'completed') {
+              console.error('[Extraction] Download failed:', state);
+              return;
+            }
+
+            try {
+              const jsonStr = fs.readFileSync(tmpPath, 'utf-8');
+              const data = JSON.parse(jsonStr);
+              // 从文件名解析书名和页码范围
+              // 格式: "BookName.pdf_p20-20.json"
+              let bookName = fileName.replace(/\.json$/, '');
+              const pageMatch = bookName.match(/_p(\d+-\d+)$/);
+              const pageRange = pageMatch ? pageMatch[1] : '';
+              bookName = bookName.replace(/\.pdf_p\d+-\d+$/, '').replace(/\.pdf$/, '');
+
+              // 注入解析的元数据到 data 对象
+              if (!data.bookName) data.bookName = bookName;
+              if (!data.pageRange) data.pageRange = pageRange;
+
+              console.log('[Extraction] Downloaded JSON:', bookName, 'pages:', pageRange, '- importing...');
+
+              // 导入（创建文件夹 + Note）
+              const result = await importExtractionData(data);
+              // 设置 pending noteId（NoteEditor 初始化完成后会拉取）
+              setPendingNoteId(result.noteId);
+
+              // Right Slot 切换为 NoteView
+              openRightSlot('demo-a');
+
+              // 清理临时文件
+              fs.unlinkSync(tmpPath);
+            } catch (err) {
+              console.error('[Extraction] Import failed:', err);
+            }
+          });
+        });
+      }
     });
   } else {
     // 其他类型用 DemoView
@@ -168,17 +229,17 @@ export function switchLeftSlotView(workModeId: string): void {
 }
 
 /** 打开 Right Slot */
-export function openRightSlot(workModeId: string): void {
-  if (!mainWindow) return;
+export function openRightSlot(workModeId: string): WebContentsView | null {
+  if (!mainWindow) return null;
   const active = workspaceManager.getActive();
-  if (!active) return;
+  if (!active) return null;
 
   const pool = getViewPool(active.id);
 
   // 如果已有 Right View 且是同一个 workModeId，关闭它（toggle 行为）
   if (pool.rightView && pool.rightWorkModeId === workModeId) {
     closeRightSlot();
-    return;
+    return null;
   }
 
   // 关闭旧的 Right View
@@ -193,11 +254,23 @@ export function openRightSlot(workModeId: string): void {
   pool.rightWorkModeId = workModeId;
   pool.rightView.setVisible(true);
 
+  // 诊断：监听 renderer 崩溃
+  pool.rightView.webContents.on('render-process-gone', (_e, details) => {
+    console.error('[RightSlot] Renderer process gone:', details.reason, details.exitCode);
+  });
+  pool.rightView.webContents.on('unresponsive', () => {
+    console.error('[RightSlot] Renderer became unresponsive');
+  });
+  pool.rightView.webContents.on('responsive', () => {
+    console.log('[RightSlot] Renderer became responsive again');
+  });
+
   // 显示 Divider
   ensureDivider();
   dividerView?.setVisible(true);
 
   updateLayout();
+  return pool.rightView;
 }
 
 /** 关闭 Right Slot */
@@ -577,3 +650,4 @@ declare const NAVSIDE_VITE_DEV_SERVER_URL: string | undefined;
 declare const DEMO_VIEW_VITE_DEV_SERVER_URL: string | undefined;
 declare const NOTE_VIEW_VITE_DEV_SERVER_URL: string | undefined;
 declare const EBOOK_VIEW_VITE_DEV_SERVER_URL: string | undefined;
+declare const WEB_VIEW_VITE_DEV_SERVER_URL: string | undefined;

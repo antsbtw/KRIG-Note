@@ -71,6 +71,18 @@ export function EBookView() {
   const { epubSelection, registerCallbacks: registerAnnotationCallbacks, loadAnnotations, createAnnotation, dismissSelection } =
     useEpubAnnotation({ bookIdRef, rendererRef });
 
+  // ── PDF 提取 ──
+
+  const handleExtract = useCallback(async () => {
+    console.log('[EBookView] Extract clicked — opening Right Slot + uploading PDF...');
+    try {
+      const result = await (viewAPI as any).extractionOpen();
+      console.log('[EBookView] Extract result:', JSON.stringify(result));
+    } catch (err) {
+      console.error('[EBookView] Extract error:', err);
+    }
+  }, []);
+
   // ── 保存进度（debounce 500ms）──
 
   const progressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -298,6 +310,7 @@ export function EBookView() {
         }}
         isBookmarked={isBookmarked(currentPage)}
         onBookmarkToggle={() => toggleBookmark(currentPage)}
+        onExtract={handleExtract}
       />
 
       <SearchBar

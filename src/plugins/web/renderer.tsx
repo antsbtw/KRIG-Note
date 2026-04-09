@@ -1,15 +1,24 @@
 import { createRoot } from 'react-dom/client';
 import { WebView } from './components/WebView';
+import { ExtractionView } from './components/ExtractionView';
 
 /**
  * WebView 渲染入口
  *
- * renderer.tsx 只负责挂载，WebView 组件包含完整的
- * Toolbar + webview 容器结构。
+ * 根据 URL query 中的 variant 参数选择渲染组件：
+ * - 无 variant → WebView（网页浏览器）
+ * - variant=extraction → ExtractionView（PDF 提取服务）
  */
+
+const params = new URLSearchParams(window.location.search);
+const variant = params.get('variant') || '';
 
 const rootEl = document.getElementById('root');
 if (rootEl) {
   const root = createRoot(rootEl);
-  root.render(<WebView />);
+  if (variant === 'extraction') {
+    root.render(<ExtractionView />);
+  } else {
+    root.render(<WebView />);
+  }
 }

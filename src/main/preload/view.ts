@@ -30,6 +30,7 @@ contextBridge.exposeInMainWorld('viewAPI', {
   noteDelete: (id: string) => ipcRenderer.invoke(IPC.NOTE_DELETE, id),
   noteList: () => ipcRenderer.invoke(IPC.NOTE_LIST),
   noteOpenInEditor: (id: string) => ipcRenderer.invoke(IPC.NOTE_OPEN_IN_EDITOR, id),
+  notePendingOpen: () => ipcRenderer.invoke(IPC.NOTE_PENDING_OPEN),
 
   // NoteFile 列表变更监听
   onNoteListChanged: (callback: (list: unknown[]) => void) => {
@@ -185,6 +186,26 @@ contextBridge.exposeInMainWorld('viewAPI', {
     const listener = (_event: Electron.IpcRendererEvent, progress: { url: string; status: string; percent: number }) => callback(progress);
     ipcRenderer.on(IPC.YTDLP_PROGRESS, listener);
     return () => ipcRenderer.removeListener(IPC.YTDLP_PROGRESS, listener);
+  },
+
+  // ── PDF Extraction ──
+
+  extractionOpen: () =>
+    ipcRenderer.invoke(IPC.EXTRACTION_OPEN),
+
+  extractionImport: (data: unknown) =>
+    ipcRenderer.invoke(IPC.EXTRACTION_IMPORT, data),
+
+  onExtractionNavigate: (callback: (md5: string) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, md5: string) => callback(md5);
+    ipcRenderer.on('extraction:navigate', listener);
+    return () => ipcRenderer.removeListener('extraction:navigate', listener);
+  },
+
+  onExtractionImport: (callback: (data: unknown) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data);
+    ipcRenderer.on('extraction:import', listener);
+    return () => ipcRenderer.removeListener('extraction:import', listener);
   },
 
   // ── Web 书签（WebView 用）──

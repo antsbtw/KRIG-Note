@@ -55,6 +55,15 @@ function registerPlugins(): void {
     order: 3,
   });
 
+  workModeRegistry.register({
+    id: 'extraction',
+    viewType: 'web',
+    variant: 'extraction',
+    icon: '📤',
+    label: 'Extraction',
+    order: 4,
+  });
+
   // NavSide 内容注册
   navSideRegistry.register({
     workModeId: 'demo-a',
@@ -92,6 +101,11 @@ function registerPlugins(): void {
   protocolRegistry.register({
     id: 'demo-sync-reverse',
     match: { left: { type: 'ebook' }, right: { type: 'note' } },
+  });
+
+  protocolRegistry.register({
+    id: 'ebook-extraction',
+    match: { left: { type: 'ebook' }, right: { type: 'web', variant: 'extraction' } },
   });
 
   // ── DevTools 辅助函数 ──

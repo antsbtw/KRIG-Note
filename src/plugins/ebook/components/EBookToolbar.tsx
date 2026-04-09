@@ -24,6 +24,7 @@ interface EBookToolbarProps {
   onFontSizeChange?: (delta: number) => void;
   isBookmarked?: boolean;
   onBookmarkToggle?: () => void;
+  onExtract?: () => void;
 }
 
 const ZOOM_PRESETS = [
@@ -55,6 +56,7 @@ export function EBookToolbar({
   onFontSizeChange,
   isBookmarked,
   onBookmarkToggle,
+  onExtract,
 }: EBookToolbarProps) {
   const [pageInput, setPageInput] = useState('');
   const [editingPage, setEditingPage] = useState(false);
@@ -212,6 +214,15 @@ export function EBookToolbar({
           >
             {isBookmarked ? '★' : '☆'}
           </button>
+          {onExtract && (
+            <button
+              className="ebook-toolbar__btn"
+              onClick={onExtract}
+              title="提取到 Note (上传 PDF 到 Platform)"
+            >
+              📤
+            </button>
+          )}
         </div>
       )}
 

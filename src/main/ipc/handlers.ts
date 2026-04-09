@@ -30,7 +30,22 @@ import { navSideRegistry } from '../navside/registry';
 import { bookmarkStore as webBookmarkStore } from '../../plugins/web/main/bookmark-store';
 import { historyStore as webHistoryStore } from '../../plugins/web/main/history-store';
 
+// 待打开的 noteId（导入完成后设置，NoteEditor ready 后拉取）
+let pendingNoteId: string | null = null;
+
+export function setPendingNoteId(noteId: string): void {
+  pendingNoteId = noteId;
+}
+
 export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): void {
+  // NoteEditor ready 后拉取待打开的 noteId
+  ipcMain.handle(IPC.NOTE_PENDING_OPEN, () => {
+    const id = pendingNoteId;
+    pendingNoteId = null;
+    console.log('[IPC] NOTE_PENDING_OPEN:', id ?? '(none)');
+    return id;
+  });
+
   // ── Workspace 操作 ──
 
   ipcMain.handle(IPC.WORKSPACE_LIST, () => {
@@ -731,6 +746,67 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
 
   ipcMain.handle(IPC.WEB_HISTORY_CLEAR, () => {
     webHistoryStore.clear();
+  });
+
+  // ── PDF Extraction (Platform) ──
+
+  ipcMain.handle(IPC.EXTRACTION_OPEN, async () => {
+    console.log('[Extraction] EXTRACTION_OPEN handler triggered');
+
+    // 1. 打开 ExtractionView 到 Right Slot（加载 Platform Web UI）
+    openRightSlot('extraction');
+
+    // 2. 并行上传当前 PDF 到 Platform
+    const ebookData = getEBookData();
+    if (!ebookData) {
+      return { uploaded: false, reason: 'no-file' };
+    }
+    if (!ebookData.filePath.toLowerCase().endsWith('.pdf')) {
+      return { uploaded: false, reason: 'not-pdf' };
+    }
+
+    // 从书架获取显示名（而非 UUID 文件名）
+    const entry = bookshelfStore.list().find((e) => e.filePath === ebookData.filePath);
+    const displayName = entry?.displayName || ebookData.fileName.replace(/\.pdf$/i, '');
+    console.log('[Extraction] Uploading:', displayName, `(${ebookData.filePath})`);
+
+    try {
+      const { uploadPdfToPlatform } = await import('../extraction/upload-service');
+      const result = await uploadPdfToPlatform(ebookData.filePath, displayName);
+
+      // 上传完成后，通知 ExtractionView 导航到书籍详情页
+      const mainWindow = getMainWindow();
+      if (mainWindow) {
+        for (const view of mainWindow.contentView.children) {
+          if ('webContents' in view) {
+            (view as any).webContents.send('extraction:navigate', result.md5);
+          }
+        }
+      }
+
+      return { uploaded: true, md5: result.md5, alreadyExists: result.alreadyExists };
+    } catch (err) {
+      console.error('[Extraction] Upload failed:', err);
+      return { uploaded: false, reason: String(err) };
+    }
+  });
+
+  ipcMain.handle(IPC.EXTRACTION_IMPORT, async (_event, data: any) => {
+    try {
+      const { importExtractionData } = await import('../extraction/import-service');
+      const result = await importExtractionData(data);
+
+      // 设置 pending noteId（NoteEditor 初始化完成后会拉取）
+      setPendingNoteId(result.noteId);
+
+      // Right Slot 切换为 NoteView
+      openRightSlot('demo-a');
+
+      return { success: true, ...result };
+    } catch (err) {
+      console.error('[Extraction] Import failed:', err);
+      return { success: false, error: String(err) };
+    }
   });
 }
 

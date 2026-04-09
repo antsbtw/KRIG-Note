@@ -36,7 +36,15 @@ export const blockquoteConverter: AtomConverter = {
   },
 
   toPM(atom: Atom): PMNodeJSON {
-    // blockquote 的内容由子 Atom 填充（ConverterRegistry 处理）
+    const c = atom.content as BlockquoteContent;
+    // 如果有 inline children（PDF 提取的单段 blockquote），包裹在 textBlock 中
+    if (c.children && c.children.length > 0) {
+      return {
+        type: 'blockquote',
+        content: [{ type: 'textBlock', content: atomInlinesToPM(c.children) }],
+      };
+    }
+    // 否则由 ConverterRegistry 用子 Atom 填充 content
     return { type: 'blockquote' };
   },
 };
@@ -120,9 +128,21 @@ export const tableConverter: AtomConverter = {
     return createAtom('table', { colCount } as TableContent, parentId);
   },
 
-  toPM(atom: Atom): PMNodeJSON {
-    // table 的内容由子 Atom（tableRow → tableCell）填充
-    return { type: 'table' };
+  toPM(atom: Atom, children?: Atom[]): PMNodeJSON {
+    const c = atom.content as Record<string, unknown>;
+    // PDF 提取的 table：内容在 tiptapContent 中，映射 paragraph → textBlock
+    if (Array.isArray(c.tiptapContent) && c.tiptapContent.length > 0) {
+      return {
+        type: 'table',
+        content: fixTiptapNodeTypes(c.tiptapContent as PMNodeJSON[]),
+      };
+    }
+    // 子 Atom 模式（编辑器内部保存的 table）
+    if (children && children.length > 0) {
+      return { type: 'table' };
+    }
+    // 无内容 → 降级为占位段落（避免空 table 崩溃）
+    return { type: 'textBlock', content: [{ type: 'text', text: '[empty table]' }] };
   },
 };
 
@@ -229,3 +249,18 @@ export const columnConverter: AtomConverter = {
     return { type: 'column' };
   },
 };
+
+// ── tiptapContent 节点类型修正 ──
+
+/** 递归修正 tiptapContent 中与 KRIG-Note schema 不一致的节点类型名 */
+function fixTiptapNodeTypes(nodes: PMNodeJSON[]): PMNodeJSON[] {
+  return nodes.map(node => {
+    const type = node.type === 'paragraph' ? 'textBlock' : node.type;
+    const result: PMNodeJSON = { ...node, type };
+    if (Array.isArray(result.content)) {
+      result.content = fixTiptapNodeTypes(result.content);
+    }
+    return result;
+  });
+}
+

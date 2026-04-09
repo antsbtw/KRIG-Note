@@ -32,7 +32,9 @@ import { createTocIndicator } from '../toc/toc-indicator';
 import { headingCollapsePlugin } from '../plugins/heading-collapse';
 import { registerConverterTest } from '../converters/converter-test';
 import { converterRegistry } from '../converters/registry';
-import type { Atom } from '../../../shared/types/atom-types';
+import type { Atom, NoteTitleContent } from '../../../shared/types/atom-types';
+import { createAtom } from '../../../shared/types/atom-types';
+import { sanitizeAtoms } from '../../../shared/sanitize-atoms';
 import '../note.css';
 
 /**
@@ -46,6 +48,7 @@ declare const viewAPI: {
   noteLoad: (id: string) => Promise<any>;
   noteSave: (id: string, docContent: unknown[], title: string) => Promise<void>;
   onNoteOpenInEditor: (callback: (noteId: string) => void) => () => void;
+  notePendingOpen: () => Promise<string | null>;
   setActiveNote: (noteId: string | null, noteTitle?: string) => Promise<void>;
   onRestoreWorkspaceState: (callback: (state: { activeNoteId: string | null }) => void) => () => void;
   onNoteTitleChanged: (callback: (data: { noteId: string; title: string }) => void) => () => void;
@@ -147,9 +150,13 @@ function buildPlugins(s: ReturnType<typeof getSchema>) {
 function docFromContent(s: ReturnType<typeof getSchema>, docContent: unknown[]): PMNode {
   try {
     const docJson = converterRegistry.atomsToDoc(docContent as Atom[]);
-    return PMNode.fromJSON(s, docJson);
+    console.log('[NoteEditor] atomsToDoc result:', docJson.content?.length, 'nodes, types:', docJson.content?.slice(0, 5).map((n: any) => n.type));
+    const pmDoc = PMNode.fromJSON(s, docJson);
+    console.log('[NoteEditor] PMNode.fromJSON success:', pmDoc.content.childCount, 'children');
+    return pmDoc;
   } catch (err) {
     console.error('[NoteEditor] Failed to parse doc_content:', err);
+    console.error('[NoteEditor] docContent sample:', JSON.stringify(docContent.slice(0, 3)).substring(0, 500));
     return createEmptyDoc(s);
   }
 }
@@ -220,14 +227,18 @@ export function NoteEditor() {
 
   // 加载文档（带竞态取消：快速切换时丢弃过期的异步结果）
   const loadNote = useCallback(async (noteId: string) => {
+    console.log('[NoteEditor] loadNote called:', noteId);
     const seq = ++loadSeqRef.current;
     const s = getSchema();
     try {
       const record = await viewAPI.noteLoad(noteId);
-      if (seq !== loadSeqRef.current) return; // 已被更新的 loadNote 取代
+      console.log('[NoteEditor] noteLoad returned:', record ? `title="${record.title}", doc_content=${record.doc_content?.length ?? 0} atoms` : 'null');
+      if (seq !== loadSeqRef.current) { console.log('[NoteEditor] Stale load, discarding'); return; }
       if (!record || !record.doc_content || record.doc_content.length === 0) {
+        console.log('[NoteEditor] Empty content, creating empty doc');
         createEditor(createEmptyDoc(s));
       } else {
+        console.log('[NoteEditor] Building doc from', record.doc_content.length, 'atoms, first types:', record.doc_content.slice(0, 5).map((a: any) => a.type));
         createEditor(docFromContent(s, record.doc_content));
       }
       currentNoteIdRef.current = noteId;
@@ -290,10 +301,43 @@ export function NoteEditor() {
       loadNote(noteId);
     });
 
+    // 测试用：直接导入 JSON 文件到编辑器（不走 IPC）
+    const onImportJson = (e: Event) => {
+      const data = (e as CustomEvent).detail;
+      try {
+        const pages = data.pages || [];
+        const allAtoms: Atom[] = [];
+        allAtoms.push(createAtom('noteTitle', {
+          children: [{ type: 'text', text: data.bookName || 'Imported' }],
+        } as NoteTitleContent));
+        for (const page of pages) {
+          for (const atom of page.atoms) {
+            if (atom.type === 'document') continue;
+            allAtoms.push(atom);
+          }
+        }
+        console.log('[NoteEditor] Import JSON: raw atoms:', allAtoms.length, 'types:', allAtoms.map((a: Atom) => a.type));
+        const cleaned = sanitizeAtoms(allAtoms);
+        console.log('[NoteEditor] After sanitize:', cleaned.length, 'types:', cleaned.map((a: Atom) => a.type));
+        createEditor(docFromContent(s, cleaned));
+      } catch (err) {
+        console.error('[NoteEditor] Import JSON failed:', err);
+      }
+    };
+    window.addEventListener('note:import-json', onImportJson);
+
     // 恢复上次打开的笔记
     const unsubRestore = viewAPI.onRestoreWorkspaceState((state) => {
       if (state.activeNoteId) {
         loadNote(state.activeNoteId);
+      }
+    });
+
+    // 拉取导入时设置的 pending noteId（解决 NoteView 未 ready 时事件丢失）
+    viewAPI.notePendingOpen().then((noteId) => {
+      if (noteId) {
+        console.log('[NoteEditor] Pending note found:', noteId);
+        loadNote(noteId);
       }
     });
 
@@ -356,6 +400,7 @@ export function NoteEditor() {
       unsubTestDoc();
       unsubTitle();
       unsubVocab();
+      window.removeEventListener('note:import-json', onImportJson);
       window.removeEventListener('note:save', manualSaveHandler);
       if (saveTimerRef.current) {
         clearTimeout(saveTimerRef.current);

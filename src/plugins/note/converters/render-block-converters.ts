@@ -83,9 +83,14 @@ export const imageConverter: AtomConverter = {
 
   toPM(atom: Atom): PMNodeJSON {
     const c = atom.content as ImageContent;
+    // image schema 要求 content: 'textBlock'（caption 子节点）
+    const captionContent = c.caption
+      ? [{ type: 'text', text: c.caption }]
+      : [];
     return {
       type: 'image',
-      attrs: { src: c.src, alt: c.alt, width: c.width, height: c.height, caption: c.caption },
+      attrs: { src: c.src, alt: c.alt, width: c.width, height: c.height },
+      content: [{ type: 'textBlock', content: captionContent }],
     };
   },
 };

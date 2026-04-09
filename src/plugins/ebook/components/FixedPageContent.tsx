@@ -104,9 +104,29 @@ export function FixedPageContent({ renderer, scale, initialPage, annotationMode 
     const onScroll = () => {
       cancelAnimationFrame(rafId);
       rafId = requestAnimationFrame(() => {
-        const { first } = getVisibleRange();
-        setCurrentPage(first);
-        onPageChange(first);
+        const { first, last } = getVisibleRange();
+        // 取占可视区域最多的页面作为当前页（而非第一个可见页）
+        let dominant = first;
+        if (last > first && pageDimensions.length > 0) {
+          const viewTop = container.scrollTop / scale;
+          const viewBottom = viewTop + container.clientHeight / scale;
+          let maxVisible = 0;
+          for (let p = first; p <= last; p++) {
+            const idx = p - 1;
+            if (idx < 0 || idx >= pageOffsets.length) continue;
+            const pTop = pageOffsets[idx];
+            const pBottom = pTop + pageDimensions[idx].height;
+            const visibleTop = Math.max(pTop, viewTop);
+            const visibleBottom = Math.min(pBottom, viewBottom);
+            const visible = Math.max(0, visibleBottom - visibleTop);
+            if (visible > maxVisible) {
+              maxVisible = visible;
+              dominant = p;
+            }
+          }
+        }
+        setCurrentPage(dominant);
+        onPageChange(dominant);
       });
     };
 
