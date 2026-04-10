@@ -1,5 +1,12 @@
 import { useState, useCallback, KeyboardEvent } from 'react';
 import { SlotToggle } from '../../../shared/components/SlotToggle';
+import { OpenFilePopup } from '../../../shared/components/OpenFilePopup';
+import type { FileItem } from '../../../shared/components/OpenFilePopup';
+
+declare const viewAPI: {
+  ebookBookshelfList: () => Promise<Array<{ id: string; displayName: string }>>;
+  ebookBookshelfOpen: (id: string) => Promise<unknown>;
+};
 
 type AnnotationMode = 'off' | 'rect' | 'underline';
 
@@ -116,6 +123,15 @@ export function EBookToolbar({
     const next = Math.max(scale - 0.25, 0.25);
     onScaleChange(Math.round(next * 100) / 100);
   }, [scale, onScaleChange]);
+
+  const loadBookList = useCallback(async (): Promise<FileItem[]> => {
+    const list = await viewAPI.ebookBookshelfList();
+    return list.map((b: any) => ({ id: b.id, title: b.displayName || b.display_name || b.fileName || '' }));
+  }, []);
+
+  const handleOpenBook = useCallback((bookId: string) => {
+    viewAPI.ebookBookshelfOpen(bookId);
+  }, []);
 
   return (
     <div className="ebook-toolbar">
@@ -256,8 +272,14 @@ export function EBookToolbar({
         </div>
       )}
 
-      {/* SlotToggle + Close slot */}
+      {/* Open + SlotToggle + Close slot */}
       <div className="ebook-toolbar__section ebook-toolbar__section--close" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+        <OpenFilePopup
+          label="Open"
+          placeholder="搜索书籍..."
+          loadItems={loadBookList}
+          onSelect={handleOpenBook}
+        />
         <SlotToggle />
         {onCloseSlot && (
           <button className="ebook-toolbar__btn ebook-toolbar__btn--close-slot" onClick={onCloseSlot} title="关闭此面板">

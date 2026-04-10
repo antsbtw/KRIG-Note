@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { NoteEditor } from './NoteEditor';
 import { SlotToggle } from '../../../shared/components/SlotToggle';
+import { OpenFilePopup } from '../../../shared/components/OpenFilePopup';
+import type { FileItem } from '../../../shared/components/OpenFilePopup';
 import { canGoBack, canGoForward, goBack, goForward } from '../plugins/link-click';
 
 /**
@@ -16,6 +18,8 @@ import { canGoBack, canGoForward, goBack, goForward } from '../plugins/link-clic
 
 declare const viewAPI: {
   noteLoad: (id: string) => Promise<{ title?: string } | null>;
+  noteList: () => Promise<Array<{ id: string; title: string }>>;
+  noteOpenInEditor: (id: string) => Promise<void>;
   onNoteOpenInEditor: (callback: (noteId: string) => void) => () => void;
   onNoteTitleChanged: (callback: (data: { noteId: string; title: string }) => void) => () => void;
 };
@@ -27,6 +31,15 @@ export function NoteView() {
 
   const refreshNav = useCallback(() => {
     setNavState({ back: canGoBack(), forward: canGoForward() });
+  }, []);
+
+  const loadNoteList = useCallback(async (): Promise<FileItem[]> => {
+    const list = await viewAPI.noteList();
+    return list.map((n) => ({ id: n.id, title: n.title }));
+  }, []);
+
+  const handleOpenNote = useCallback((noteId: string) => {
+    viewAPI.noteOpenInEditor(noteId);
   }, []);
 
   useEffect(() => {
@@ -130,6 +143,12 @@ export function NoteView() {
         >
           {dirty ? '保存' : '已保存'}
         </button>
+        <OpenFilePopup
+          label="Open"
+          placeholder="搜索笔记..."
+          loadItems={loadNoteList}
+          onSelect={handleOpenNote}
+        />
         <SlotToggle />
         <button
           style={styles.closeSlotBtn}
