@@ -22,15 +22,15 @@ import { isDBReady } from '../storage/client';
 import { lookupWord } from '../learning/dictionary-service';
 import { googleTranslate, googleTTS } from '../learning/providers/google-translate';
 import { vocabStore } from '../learning/vocabulary-store';
-import { mediaStore } from '../media/media-store';
+import { mediaSurrealStore as mediaStore } from '../media/media-surreal-store';
 import { checkStatus as ytdlpCheckStatus, install as ytdlpInstall } from '../ytdlp/binary-manager';
 import { downloadVideo, getVideoInfo, saveTranslationSubtitle } from '../ytdlp/downloader';
 import { loadEBook, getEBookData, closeEBook } from '../ebook/file-loader';
-import { bookshelfStore } from '../ebook/bookshelf-store';
-import { annotationStore } from '../ebook/annotation-store';
+import { ebookStore as bookshelfStore } from '../ebook/bookshelf-surreal-store';
+import { annotationSurrealStore as annotationStore } from '../ebook/annotation-surreal-store';
 import { navSideRegistry } from '../navside/registry';
-import { bookmarkStore as webBookmarkStore } from '../../plugins/web/main/bookmark-store';
-import { historyStore as webHistoryStore } from '../../plugins/web/main/history-store';
+import { bookmarkSurrealStore as webBookmarkStore } from '../../plugins/web/main/bookmark-surreal-store';
+import { historySurrealStore as webHistoryStore } from '../../plugins/web/main/history-surreal-store';
 
 // 待打开的 noteId（导入完成后设置，NoteEditor ready 后拉取）
 let pendingNoteId: string | null = null;
@@ -358,7 +358,7 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
 
   // ── eBook 书架操作 ──
 
-  ipcMain.handle(IPC.EBOOK_BOOKSHELF_LIST, () => {
+  ipcMain.handle(IPC.EBOOK_BOOKSHELF_LIST, async () => {
     return bookshelfStore.list();
   });
 
@@ -387,8 +387,8 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
   ipcMain.handle(IPC.EBOOK_BOOKSHELF_ADD, async (_event, filePath: string, fileType: string, storage: 'managed' | 'link') => {
     const ft = fileType as 'pdf' | 'epub' | 'djvu' | 'cbz';
     const entry = storage === 'managed'
-      ? bookshelfStore.addManaged(filePath, ft)
-      : bookshelfStore.addLinked(filePath, ft);
+      ? await bookshelfStore.addManaged(filePath, ft)
+      : await bookshelfStore.addLinked(filePath, ft);
 
     broadcastBookshelfChanged(getMainWindow());
 
@@ -404,13 +404,13 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
   });
 
   ipcMain.handle(IPC.EBOOK_BOOKSHELF_OPEN, async (_event, id: string) => {
-    const entry = bookshelfStore.get(id);
+    const entry = await bookshelfStore.get(id);
     if (!entry) return { success: false, error: 'Entry not found' };
 
     const exists = await bookshelfStore.checkExists(id);
     if (!exists) return { success: false, error: 'File not found' };
 
-    bookshelfStore.updateOpened(id);
+    await bookshelfStore.updateOpened(id);
     await loadEBook(entry.filePath);
     broadcastEBookLoaded(getMainWindow(), {
       bookId: entry.id,
@@ -423,45 +423,45 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
     return { success: true };
   });
 
-  ipcMain.handle(IPC.EBOOK_BOOKSHELF_REMOVE, (_event, id: string) => {
-    bookshelfStore.remove(id);
+  ipcMain.handle(IPC.EBOOK_BOOKSHELF_REMOVE, async (_event, id: string) => {
+    await bookshelfStore.remove(id);
     broadcastBookshelfChanged(getMainWindow());
   });
 
-  ipcMain.handle(IPC.EBOOK_BOOKSHELF_RENAME, (_event, id: string, displayName: string) => {
-    bookshelfStore.rename(id, displayName);
+  ipcMain.handle(IPC.EBOOK_BOOKSHELF_RENAME, async (_event, id: string, displayName: string) => {
+    await bookshelfStore.rename(id, displayName);
     broadcastBookshelfChanged(getMainWindow());
   });
 
-  ipcMain.handle(IPC.EBOOK_BOOKSHELF_MOVE, (_event, id: string, folderId: string | null) => {
-    bookshelfStore.moveToFolder(id, folderId);
+  ipcMain.handle(IPC.EBOOK_BOOKSHELF_MOVE, async (_event, id: string, folderId: string | null) => {
+    await bookshelfStore.moveToFolder(id, folderId);
     broadcastBookshelfChanged(getMainWindow());
   });
 
   // ── eBook 文件夹操作 ──
 
-  ipcMain.handle(IPC.EBOOK_FOLDER_LIST, () => {
+  ipcMain.handle(IPC.EBOOK_FOLDER_LIST, async () => {
     return bookshelfStore.folderList();
   });
 
-  ipcMain.handle(IPC.EBOOK_FOLDER_CREATE, (_event, title: string, parentId?: string | null) => {
-    const folder = bookshelfStore.folderCreate(title, parentId);
+  ipcMain.handle(IPC.EBOOK_FOLDER_CREATE, async (_event, title: string, parentId?: string | null) => {
+    const folder = await bookshelfStore.folderCreate(title, parentId);
     broadcastBookshelfChanged(getMainWindow());
     return folder;
   });
 
-  ipcMain.handle(IPC.EBOOK_FOLDER_RENAME, (_event, id: string, title: string) => {
-    bookshelfStore.folderRename(id, title);
+  ipcMain.handle(IPC.EBOOK_FOLDER_RENAME, async (_event, id: string, title: string) => {
+    await bookshelfStore.folderRename(id, title);
     broadcastBookshelfChanged(getMainWindow());
   });
 
-  ipcMain.handle(IPC.EBOOK_FOLDER_DELETE, (_event, id: string) => {
-    bookshelfStore.folderDelete(id);
+  ipcMain.handle(IPC.EBOOK_FOLDER_DELETE, async (_event, id: string) => {
+    await bookshelfStore.folderDelete(id);
     broadcastBookshelfChanged(getMainWindow());
   });
 
-  ipcMain.handle(IPC.EBOOK_FOLDER_MOVE, (_event, id: string, parentId: string | null) => {
-    bookshelfStore.folderMove(id, parentId);
+  ipcMain.handle(IPC.EBOOK_FOLDER_MOVE, async (_event, id: string, parentId: string | null) => {
+    await bookshelfStore.folderMove(id, parentId);
     broadcastBookshelfChanged(getMainWindow());
   });
 
@@ -480,7 +480,7 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
     const active = workspaceManager.getActive();
     if (!active?.activeBookId) return null;
 
-    const entry = bookshelfStore.get(active.activeBookId);
+    const entry = await bookshelfStore.get(active.activeBookId);
     if (!entry) return null;
 
     const exists = await bookshelfStore.checkExists(entry.id);
@@ -497,40 +497,40 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
 
   // ── eBook 书签 ──
 
-  ipcMain.handle(IPC.EBOOK_BOOKMARK_TOGGLE, (_event, bookId: string, page: number) => {
+  ipcMain.handle(IPC.EBOOK_BOOKMARK_TOGGLE, async (_event, bookId: string, page: number) => {
     return bookshelfStore.toggleBookmark(bookId, page);
   });
 
-  ipcMain.handle(IPC.EBOOK_BOOKMARK_LIST, (_event, bookId: string) => {
+  ipcMain.handle(IPC.EBOOK_BOOKMARK_LIST, async (_event, bookId: string) => {
     return bookshelfStore.getBookmarks(bookId);
   });
 
   // ── eBook CFI 书签（EPUB）──
 
-  ipcMain.handle(IPC.EBOOK_CFI_BOOKMARK_ADD, (_event, bookId: string, cfi: string, label: string) => {
+  ipcMain.handle(IPC.EBOOK_CFI_BOOKMARK_ADD, async (_event, bookId: string, cfi: string, label: string) => {
     return bookshelfStore.addCFIBookmark(bookId, cfi, label);
   });
 
-  ipcMain.handle(IPC.EBOOK_CFI_BOOKMARK_REMOVE, (_event, bookId: string, cfi: string) => {
+  ipcMain.handle(IPC.EBOOK_CFI_BOOKMARK_REMOVE, async (_event, bookId: string, cfi: string) => {
     return bookshelfStore.removeCFIBookmark(bookId, cfi);
   });
 
-  ipcMain.handle(IPC.EBOOK_CFI_BOOKMARK_LIST, (_event, bookId: string) => {
+  ipcMain.handle(IPC.EBOOK_CFI_BOOKMARK_LIST, async (_event, bookId: string) => {
     return bookshelfStore.getCFIBookmarks(bookId);
   });
 
   // ── eBook 标注 ──
 
-  ipcMain.handle(IPC.EBOOK_ANNOTATION_LIST, (_event, bookId: string) => {
+  ipcMain.handle(IPC.EBOOK_ANNOTATION_LIST, async (_event, bookId: string) => {
     return annotationStore.list(bookId);
   });
 
-  ipcMain.handle(IPC.EBOOK_ANNOTATION_ADD, (_event, bookId: string, ann: any) => {
+  ipcMain.handle(IPC.EBOOK_ANNOTATION_ADD, async (_event, bookId: string, ann: any) => {
     return annotationStore.add(bookId, ann);
   });
 
-  ipcMain.handle(IPC.EBOOK_ANNOTATION_REMOVE, (_event, bookId: string, annotationId: string) => {
-    annotationStore.remove(bookId, annotationId);
+  ipcMain.handle(IPC.EBOOK_ANNOTATION_REMOVE, async (_event, bookId: string, annotationId: string) => {
+    await annotationStore.remove(bookId, annotationId);
   });
 
   // NavSide 保存书架文件夹展开状态
@@ -551,8 +551,8 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
   });
 
   // EBookView 保存阅读进度
-  ipcMain.handle(IPC.EBOOK_SAVE_PROGRESS, (_event, bookId: string, position: { page?: number; scale?: number; fitWidth?: boolean; cfi?: string }) => {
-    bookshelfStore.updateProgress(bookId, position);
+  ipcMain.handle(IPC.EBOOK_SAVE_PROGRESS, async (_event, bookId: string, position: { page?: number; scale?: number; fitWidth?: boolean; cfi?: string }) => {
+    await bookshelfStore.updateProgress(bookId, position);
   });
 
   // ── 文件保存对话框 ──
@@ -710,58 +710,58 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
 
   // ── Web 书签 ──
 
-  ipcMain.handle(IPC.WEB_BOOKMARK_LIST, () => {
+  ipcMain.handle(IPC.WEB_BOOKMARK_LIST, async () => {
     return webBookmarkStore.list();
   });
 
-  ipcMain.handle(IPC.WEB_BOOKMARK_ADD, (_event, url: string, title: string, favicon?: string) => {
+  ipcMain.handle(IPC.WEB_BOOKMARK_ADD, async (_event, url: string, title: string, favicon?: string) => {
     return webBookmarkStore.add(url, title, favicon);
   });
 
-  ipcMain.handle(IPC.WEB_BOOKMARK_REMOVE, (_event, id: string) => {
-    webBookmarkStore.remove(id);
+  ipcMain.handle(IPC.WEB_BOOKMARK_REMOVE, async (_event, id: string) => {
+    await webBookmarkStore.remove(id);
   });
 
-  ipcMain.handle(IPC.WEB_BOOKMARK_UPDATE, (_event, id: string, fields: { title?: string; url?: string; favicon?: string }) => {
-    webBookmarkStore.update(id, fields);
+  ipcMain.handle(IPC.WEB_BOOKMARK_UPDATE, async (_event, id: string, fields: { title?: string; url?: string; favicon?: string }) => {
+    await webBookmarkStore.update(id, fields);
   });
 
-  ipcMain.handle(IPC.WEB_BOOKMARK_MOVE, (_event, id: string, folderId: string | null) => {
-    webBookmarkStore.move(id, folderId);
+  ipcMain.handle(IPC.WEB_BOOKMARK_MOVE, async (_event, id: string, folderId: string | null) => {
+    await webBookmarkStore.move(id, folderId);
   });
 
-  ipcMain.handle('web:bookmark-find-by-url', (_event, url: string) => {
+  ipcMain.handle('web:bookmark-find-by-url', async (_event, url: string) => {
     return webBookmarkStore.findByUrl(url);
   });
 
   // Web 书签文件夹
-  ipcMain.handle(IPC.WEB_FOLDER_CREATE, (_event, title: string) => {
+  ipcMain.handle(IPC.WEB_FOLDER_CREATE, async (_event, title: string) => {
     return webBookmarkStore.folderCreate(title);
   });
 
-  ipcMain.handle(IPC.WEB_FOLDER_RENAME, (_event, id: string, title: string) => {
-    webBookmarkStore.folderRename(id, title);
+  ipcMain.handle(IPC.WEB_FOLDER_RENAME, async (_event, id: string, title: string) => {
+    await webBookmarkStore.folderRename(id, title);
   });
 
-  ipcMain.handle(IPC.WEB_FOLDER_DELETE, (_event, id: string) => {
-    webBookmarkStore.folderDelete(id);
+  ipcMain.handle(IPC.WEB_FOLDER_DELETE, async (_event, id: string) => {
+    await webBookmarkStore.folderDelete(id);
   });
 
-  ipcMain.handle(IPC.WEB_FOLDER_LIST, () => {
+  ipcMain.handle(IPC.WEB_FOLDER_LIST, async () => {
     return webBookmarkStore.folderList();
   });
 
   // Web 浏览历史
-  ipcMain.handle(IPC.WEB_HISTORY_ADD, (_event, url: string, title: string, favicon?: string) => {
+  ipcMain.handle(IPC.WEB_HISTORY_ADD, async (_event, url: string, title: string, favicon?: string) => {
     return webHistoryStore.add(url, title, favicon);
   });
 
-  ipcMain.handle(IPC.WEB_HISTORY_LIST, (_event, limit?: number) => {
+  ipcMain.handle(IPC.WEB_HISTORY_LIST, async (_event, limit?: number) => {
     return webHistoryStore.list(limit);
   });
 
-  ipcMain.handle(IPC.WEB_HISTORY_CLEAR, () => {
-    webHistoryStore.clear();
+  ipcMain.handle(IPC.WEB_HISTORY_CLEAR, async () => {
+    await webHistoryStore.clear();
   });
 
   // ── PDF Extraction (Platform) ──
@@ -782,7 +782,8 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
     }
 
     // 从书架获取显示名（而非 UUID 文件名）
-    const entry = bookshelfStore.list().find((e) => e.filePath === ebookData.filePath);
+    const allEntries = await bookshelfStore.list();
+    const entry = allEntries.find((e) => e.filePath === ebookData.filePath);
     const displayName = entry?.displayName || ebookData.fileName.replace(/\.pdf$/i, '');
     console.log('[Extraction] Uploading:', displayName, `(${ebookData.filePath})`);
 
@@ -815,6 +816,12 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
       // 从第一个 chapter 提取 bookName
       if (data.type === 'batch' && !data.bookName && data.chapters?.[0]?.bookName) {
         data.bookName = data.chapters[0].bookName;
+      }
+
+      // 附加当前打开的 bookId（用于建立 Graph 关系）
+      const active = workspaceManager.getActive();
+      if (active?.activeBookId && !data.bookId) {
+        data.bookId = active.activeBookId;
       }
 
       const result = await importExtractionData(data);
@@ -1065,12 +1072,15 @@ const EXTRACT_TWEET_JS = `
 /** 广播书架变更（→ NavSide） */
 function broadcastBookshelfChanged(mainWindow: BaseWindow | null): void {
   if (!mainWindow) return;
-  const list = bookshelfStore.list();
-  for (const view of mainWindow.contentView.children) {
-    if ('webContents' in view) {
-      (view as any).webContents.send(IPC.EBOOK_BOOKSHELF_CHANGED, list);
+  bookshelfStore.list().then((list) => {
+    for (const view of mainWindow.contentView.children) {
+      if ('webContents' in view) {
+        (view as any).webContents.send(IPC.EBOOK_BOOKSHELF_CHANGED, list);
+      }
     }
-  }
+  }).catch((err) => {
+    console.warn('[IPC] Failed to broadcast bookshelf list:', err);
+  });
 }
 
 /** 通知 EBookView 文件已加载 */

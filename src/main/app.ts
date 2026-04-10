@@ -10,10 +10,11 @@ import { menuRegistry } from './menu/registry';
 import { loadSession, saveSession, buildSession } from './storage/session-store';
 import { initSurrealDB, shutdownSurrealDB, isDBReady } from './storage/client';
 import { initSchema } from './storage/schema';
+import { migrateJsonToSurreal } from './storage/migrate-json-to-surreal';
 import { surrealSessionStore } from './storage/surreal-session-store';
 import { activityStore } from './storage/activity-store';
 import { initKrigNoteDocs, createBlockTaskDoc, reimportTestDocs } from './storage/init-docs';
-import { mediaStore } from './media/media-store';
+import { mediaSurrealStore as mediaStore } from './media/media-surreal-store';
 import { setupExtractionInterceptor } from '../plugins/web/main/extraction-handler';
 
 /**
@@ -111,6 +112,15 @@ function registerPlugins(): void {
     id: 'ebook-extraction',
     match: { left: { type: 'ebook' }, right: { type: 'web', variant: 'extraction' } },
   });
+
+  // Cross-View Toggle 协议：允许任意 View 组合通信
+  protocolRegistry.register({ id: 'note-web',    match: { left: { type: 'note' },  right: { type: 'web' } } });
+  protocolRegistry.register({ id: 'web-note',    match: { left: { type: 'web' },   right: { type: 'note' } } });
+  protocolRegistry.register({ id: 'web-ebook',   match: { left: { type: 'web' },   right: { type: 'ebook' } } });
+  protocolRegistry.register({ id: 'ebook-web',   match: { left: { type: 'ebook' }, right: { type: 'web' } } });
+  protocolRegistry.register({ id: 'note-note',   match: { left: { type: 'note' },  right: { type: 'note' } } });
+  protocolRegistry.register({ id: 'ebook-ebook', match: { left: { type: 'ebook' }, right: { type: 'ebook' } } });
+  protocolRegistry.register({ id: 'web-web',     match: { left: { type: 'web' },   right: { type: 'web' } } });
 
   // ── DevTools 辅助函数 ──
   function openDevToolsByName(name: string): void {
@@ -389,6 +399,7 @@ app.whenReady().then(() => {
   // 6. 异步启动 SurrealDB（不阻塞窗口）
   initSurrealDB()
     .then(() => initSchema())
+    .then(() => migrateJsonToSurreal())
     .then(() => {
       console.log('[KRIG] SurrealDB ready');
       activityStore.log('app.start');

@@ -1,4 +1,5 @@
 import { useState, useCallback, KeyboardEvent } from 'react';
+import { SlotToggle } from '../../../shared/components/SlotToggle';
 
 interface WebToolbarProps {
   url: string;
@@ -115,6 +116,7 @@ export function WebToolbar({
         >
           {isBookmarked ? '★' : '☆'}
         </button>
+        <SlotToggle />
         {onCloseSlot && (
           <button className="web-toolbar__btn web-toolbar__btn--close-slot" onClick={onCloseSlot} title="关闭此面板" aria-label="关闭此面板">
             ×

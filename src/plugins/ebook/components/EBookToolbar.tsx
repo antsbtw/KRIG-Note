@@ -1,4 +1,5 @@
 import { useState, useCallback, KeyboardEvent } from 'react';
+import { SlotToggle } from '../../../shared/components/SlotToggle';
 
 type AnnotationMode = 'off' | 'rect' | 'underline';
 
@@ -255,14 +256,15 @@ export function EBookToolbar({
         </div>
       )}
 
-      {/* Close slot */}
-      {onCloseSlot && (
-        <div className="ebook-toolbar__section ebook-toolbar__section--close">
+      {/* SlotToggle + Close slot */}
+      <div className="ebook-toolbar__section ebook-toolbar__section--close" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+        <SlotToggle />
+        {onCloseSlot && (
           <button className="ebook-toolbar__btn ebook-toolbar__btn--close-slot" onClick={onCloseSlot} title="关闭此面板">
             ×
           </button>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { NoteEditor } from './NoteEditor';
+import { SlotToggle } from '../../../shared/components/SlotToggle';
 import { canGoBack, canGoForward, goBack, goForward } from '../plugins/link-click';
 
 /**
@@ -129,6 +130,7 @@ export function NoteView() {
         >
           {dirty ? '保存' : '已保存'}
         </button>
+        <SlotToggle />
         <button
           style={styles.closeSlotBtn}
           onClick={() => (window as any).viewAPI.closeSlot()}

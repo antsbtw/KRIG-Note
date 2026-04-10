@@ -1,5 +1,6 @@
 import { noteStore } from '../storage/note-store';
 import { folderStore } from '../storage/folder-store';
+import { graphStore } from '../association/graph-store';
 import { createAtom, generateAtomId } from '../../shared/types/atom-types';
 import { sanitizeAtoms } from '../../shared/sanitize-atoms';
 import type { Atom, NoteTitleContent, ParagraphContent } from '../../shared/types/atom-types';
@@ -79,6 +80,19 @@ async function importChapters(data: any): Promise<ChapterImportResult> {
     const note = await noteStore.create(chapterTitle, folderId);
     await noteStore.save(note.id, docContent, chapterTitle);
     existingTitlesInFolder.add(chapterTitle); // 防止同批次内重复
+
+    // 建立 Graph 关系：note → sourced_from → ebook
+    const ebookId = data.bookId;
+    if (ebookId) {
+      await graphStore.relateNoteToEBook(note.id, ebookId, {
+        extraction_type: 'pdf',
+        page_start: chapter.pageStart,
+        page_end: chapter.pageEnd,
+        chapter_title: chapterTitle,
+        created_at: Date.now(),
+      });
+      console.log(`[Import] RELATE note:${note.id} -> sourced_from -> ebook:${ebookId}`);
+    }
 
     console.log(`[Import] Chapter: "${chapterTitle}" (${docContent.length} atoms, pages ${chapter.pageStart}-${chapter.pageEnd})`);
 
