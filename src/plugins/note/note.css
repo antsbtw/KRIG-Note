@@ -32,6 +32,9 @@
   padding: 0;
   margin: 0;
 }
+.note-title.is-empty .note-title__content {
+  min-height: 1.2em;         /* 空状态保留可点击区域 */
+}
 .note-title.is-empty .note-title__content::before {
   content: 'Untitled';
   color: #555;

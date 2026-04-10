@@ -84,6 +84,15 @@ export class ConverterRegistry {
       if (json) content.push(json);
     }
 
+    // 兜底：确保第一个节点是 noteTitle
+    if (
+      content.length === 0 ||
+      content[0].type !== 'textBlock' ||
+      !content[0].attrs?.isTitle
+    ) {
+      content.unshift({ type: 'textBlock', attrs: { isTitle: true } });
+    }
+
     return { type: 'doc', content };
   }
 
@@ -125,6 +134,15 @@ export class ConverterRegistry {
     };
 
     const initialContent = convertBatch(chunkSize);
+
+    // 兜底：确保第一个节点是 noteTitle
+    if (
+      initialContent.length === 0 ||
+      initialContent[0].type !== 'textBlock' ||
+      !initialContent[0].attrs?.isTitle
+    ) {
+      initialContent.unshift({ type: 'textBlock', attrs: { isTitle: true } });
+    }
 
     return {
       doc: { type: 'doc', content: initialContent },

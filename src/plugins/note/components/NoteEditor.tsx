@@ -30,6 +30,7 @@ import { updateVocabList } from '../learning';
 import { buildTestDocument } from '../test-content';
 import { createTocIndicator } from '../toc/toc-indicator';
 import { headingCollapsePlugin } from '../plugins/heading-collapse';
+import { titleGuardPlugin } from '../plugins/title-guard';
 import { registerConverterTest } from '../converters/converter-test';
 import { converterRegistry } from '../converters/registry';
 import type { Atom, NoteTitleContent } from '../../../shared/types/atom-types';
@@ -137,6 +138,7 @@ function buildPlugins(s: ReturnType<typeof getSchema>) {
     keymap(baseKeymap),
     tableKeymapPlugin(),
     blockHandlePlugin(),
+    titleGuardPlugin(),
     pasteMediaPlugin(),
     renderBlockFocusPlugin(),
     headingCollapsePlugin(),
