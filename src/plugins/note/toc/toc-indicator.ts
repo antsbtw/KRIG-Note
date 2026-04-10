@@ -53,7 +53,7 @@ export function createTocIndicator(
   function scanHeadings(): TocEntry[] {
     const result: TocEntry[] = [];
     const doc = view.state.doc;
-    doc.forEach((node, offset) => {
+    doc.descendants((node, pos) => {
       if (
         node.type.name === 'textBlock' &&
         !node.attrs.isTitle &&
@@ -64,9 +64,11 @@ export function createTocIndicator(
         result.push({
           level: node.attrs.level as 1 | 2 | 3,
           text: node.textContent || `Heading ${node.attrs.level}`,
-          pos: offset,
+          pos,
         });
+        return false; // 不需要进入 textBlock 内部
       }
+      return true; // 继续遍历子节点（进入 columnList/column 等）
     });
     return result;
   }

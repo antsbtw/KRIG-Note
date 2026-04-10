@@ -29,7 +29,76 @@ export function findTopBlockPos(doc: PMNode, pos: number): number | null {
   return result;
 }
 
-/** 将 block 从 fromPos 移动到 targetPos */
+/**
+ * 解析 drop 目标：判断是顶层还是 column 内部。
+ * 返回 { type: 'top', pos } 或 { type: 'column', insertPos } 。
+ * insertPos 是 column 内精确的插入位置（某个子 block 之前）。
+ */
+function resolveDropTarget(doc: PMNode, pos: number): { type: 'top'; pos: number } | { type: 'column'; insertPos: number } | null {
+  try {
+    const $pos = doc.resolve(pos);
+    // 向上查找是否在 column 内
+    for (let d = $pos.depth; d >= 1; d--) {
+      if ($pos.node(d).type.name === 'column') {
+        // 找到 column，计算 column 内子 block 层级的插入位置
+        // column 的子 block 在 depth = d + 1
+        const childDepth = d + 1;
+        if ($pos.depth >= childDepth) {
+          // 光标在某个子 block 内部，插入到该子 block 之前
+          return { type: 'column', insertPos: $pos.before(childDepth) };
+        } else {
+          // 光标在 column 层但不在子 block 内，插入到 column 末尾
+          return { type: 'column', insertPos: $pos.end(d) };
+        }
+      }
+    }
+  } catch { /* fall through */ }
+  // 不在 column 内，回退到顶层
+  const topPos = findTopBlockPos(doc, pos);
+  if (topPos === null) return null;
+  return { type: 'top', pos: topPos };
+}
+
+/**
+ * 将 block 从 fromPos（任意层级）移动到 insertPos（任意层级）。
+ * 通用版本：直接删除源节点，插入到目标位置。
+ */
+function relocateBlockGeneral(view: EditorView, fromPos: number, insertPos: number): boolean {
+  const { state } = view;
+  const node = state.doc.nodeAt(fromPos);
+  if (!node) return false;
+
+  // 不能自己移到自己内部
+  if (insertPos > fromPos && insertPos < fromPos + node.nodeSize) return false;
+
+  // 检查目标位置的 parent 是否允许此节点类型
+  try {
+    const $insert = state.doc.resolve(insertPos);
+    const parentNode = $insert.parent;
+    if (!parentNode.type.contentMatch.matchType(node.type)) return false;
+  } catch { return false; }
+
+  // 检查是否原位（紧挨着源节点前后）
+  if (insertPos === fromPos || insertPos === fromPos + node.nodeSize) return false;
+
+  const tr = state.tr;
+  if (insertPos < fromPos) {
+    // 先插后删（避免位置偏移）
+    tr.insert(insertPos, node);
+    const mappedFrom = tr.mapping.map(fromPos);
+    const mappedNode = tr.doc.nodeAt(mappedFrom);
+    if (mappedNode) tr.delete(mappedFrom, mappedFrom + mappedNode.nodeSize);
+  } else {
+    // 先删后插
+    tr.delete(fromPos, fromPos + node.nodeSize);
+    const mappedInsert = tr.mapping.map(insertPos);
+    tr.insert(mappedInsert, node);
+  }
+  view.dispatch(tr);
+  return true;
+}
+
+/** 将 block 从 fromPos 移动到 targetPos（仅顶层 block 之间） */
 function relocateBlock(view: EditorView, fromPos: number, targetPos: number): boolean {
   const { state } = view;
   const node = state.doc.nodeAt(fromPos);
@@ -69,7 +138,7 @@ function relocateBlocks(view: EditorView, positions: number[], targetPos: number
   state.doc.forEach((_n: PMNode, offset: number) => allPositions.push(offset));
 
   // 去重排序
-  const sorted = [...new Set(positions)].sort((a, b) => a - b);
+  const sorted = Array.from(new Set(positions)).sort((a, b) => a - b);
 
   // 不能移到自己内部
   for (const pos of sorted) {
@@ -429,8 +498,9 @@ export function blockHandlePlugin(): Plugin {
       handleDrop(view, event) {
         const dropResult = view.posAtCoords({ left: event.clientX, top: event.clientY });
         if (!dropResult) return false;
-        const targetPos = findTopBlockPos(view.state.doc, dropResult.pos);
-        if (targetPos === null) return false;
+
+        const target = resolveDropTarget(view.state.doc, dropResult.pos);
+        if (!target) return false;
 
         // 多 block 拖拽
         const multiData = event.dataTransfer?.getData('application/krig-multi-block');
@@ -439,7 +509,16 @@ export function blockHandlePlugin(): Plugin {
           try {
             const positions: number[] = JSON.parse(multiData);
             if (Array.isArray(positions) && positions.length > 0) {
-              return relocateBlocks(view, positions, targetPos);
+              if (target.type === 'column') {
+                // 多 block 拖入 column：逐个移入（从后往前以保持顺序）
+                let success = false;
+                const sorted = [...positions].sort((a, b) => a - b);
+                for (let i = sorted.length - 1; i >= 0; i--) {
+                  if (relocateBlockGeneral(view, sorted[i], target.insertPos)) success = true;
+                }
+                return success;
+              }
+              return relocateBlocks(view, positions, target.pos);
             }
           } catch {}
           return false;
@@ -452,7 +531,20 @@ export function blockHandlePlugin(): Plugin {
         const fromPos = parseInt(posData, 10);
         if (isNaN(fromPos)) return false;
 
-        return relocateBlock(view, fromPos, targetPos);
+        if (target.type === 'column') {
+          return relocateBlockGeneral(view, fromPos, target.insertPos);
+        }
+        // 源 block 可能在 column 内部（嵌套位置），此时用通用版本
+        const isSourceNested = (() => {
+          try {
+            const $from = view.state.doc.resolve(fromPos);
+            return $from.depth > 1;
+          } catch { return false; }
+        })();
+        if (isSourceNested) {
+          return relocateBlockGeneral(view, fromPos, target.pos);
+        }
+        return relocateBlock(view, fromPos, target.pos);
       },
     },
   });

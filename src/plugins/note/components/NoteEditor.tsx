@@ -47,6 +47,7 @@ import '../note.css';
 declare const viewAPI: {
   noteLoad: (id: string) => Promise<any>;
   noteSave: (id: string, docContent: unknown[], title: string) => Promise<void>;
+  noteRename: (id: string, title: string) => Promise<void>;
   onNoteOpenInEditor: (callback: (noteId: string) => void) => () => void;
   notePendingOpen: () => Promise<string | null>;
   setActiveNote: (noteId: string | null, noteTitle?: string) => Promise<void>;
@@ -206,6 +207,7 @@ export function NoteEditor() {
   const sentinelObserverRef = useRef<IntersectionObserver | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const fullAtomsRef = useRef<Atom[] | null>(null); // 完整 atoms（分片加载时用于保存未加载部分）
+  const scheduleSaveRef = useRef<() => void>(() => {});
 
   // 追加更多内容到编辑器末尾
   const appendMoreContent = useCallback(() => {
@@ -270,8 +272,14 @@ export function NoteEditor() {
         view.updateState(newState);
         // 文档变化时触发自动保存（排除分片追加的 addToHistory=false 事务）
         if (tr.docChanged && tr.getMeta('addToHistory') !== false) {
-          scheduleSave();
+          scheduleSaveRef.current();
           tocRef.current?.update();
+          // noteTitle 变化时实时同步到 NoteView toolbar
+          const titleNode = newState.doc.firstChild;
+          if (titleNode?.type.name === 'textBlock' && titleNode.attrs.isTitle) {
+            const newTitle = titleNode.textContent || 'Untitled';
+            window.dispatchEvent(new CustomEvent('note:title-changed', { detail: newTitle }));
+          }
         }
       },
     });
@@ -325,7 +333,21 @@ export function NoteEditor() {
       }
       currentNoteIdRef.current = noteId;
       setCurrentNote(noteId);
-      viewAPI.setActiveNote(noteId, record?.title);
+
+      // 从 doc 中提取 noteTitle 实际文本，同步到 toolbar 和文件名
+      const v = viewRef.current;
+      const firstNode = v?.state.doc.firstChild;
+      if (firstNode?.type.name === 'textBlock' && firstNode.attrs.isTitle) {
+        const docTitle = firstNode.textContent || 'Untitled';
+        window.dispatchEvent(new CustomEvent('note:title-changed', { detail: docTitle }));
+        viewAPI.setActiveNote(noteId, docTitle);
+        // 如果 DB title 与文档标题不一致，仅修正 title 字段（不重新保存全部内容）
+        if (record?.title !== docTitle) {
+          viewAPI.noteRename(noteId, docTitle);
+        }
+      } else {
+        viewAPI.setActiveNote(noteId, record?.title);
+      }
     } catch (err) {
       if (seq !== loadSeqRef.current) return;
       console.error('[NoteEditor] Failed to load note:', err);
@@ -398,6 +420,7 @@ export function NoteEditor() {
     // 通知 NoteView 有未保存的修改
     window.dispatchEvent(new CustomEvent('note:dirty'));
   }, [saveNote]);
+  scheduleSaveRef.current = scheduleSave;
 
   // 初始化
   useEffect(() => {

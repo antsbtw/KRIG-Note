@@ -28,6 +28,7 @@ contextBridge.exposeInMainWorld('viewAPI', {
   noteCreate: (title?: string) => ipcRenderer.invoke(IPC.NOTE_CREATE, title),
   noteSave: (id: string, docContent: unknown[], title: string) => ipcRenderer.invoke(IPC.NOTE_SAVE, id, docContent, title),
   noteLoad: (id: string) => ipcRenderer.invoke(IPC.NOTE_LOAD, id),
+  noteRename: (id: string, title: string) => ipcRenderer.invoke(IPC.NOTE_RENAME, id, title),
   noteDelete: (id: string) => ipcRenderer.invoke(IPC.NOTE_DELETE, id),
   noteList: () => ipcRenderer.invoke(IPC.NOTE_LIST),
   noteOpenInEditor: (id: string) => ipcRenderer.invoke(IPC.NOTE_OPEN_IN_EDITOR, id),

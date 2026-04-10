@@ -51,6 +51,12 @@ export function NoteView() {
     };
     window.addEventListener('keydown', keyHandler);
 
+    // 监听编辑器内 noteTitle 实时变化
+    const onTitleChanged = (e: Event) => {
+      setNoteTitle((e as CustomEvent).detail);
+    };
+    window.addEventListener('note:title-changed', onTitleChanged);
+
     // 监听 dirty / saved 状态
     const onDirty = () => setDirty(true);
     const onSaved = () => setDirty(false);
@@ -60,6 +66,7 @@ export function NoteView() {
     return () => {
       unsubOpen(); unsubTitle();
       window.removeEventListener('keydown', keyHandler);
+      window.removeEventListener('note:title-changed', onTitleChanged);
       window.removeEventListener('note:dirty', onDirty);
       window.removeEventListener('note:saved', onSaved);
     };

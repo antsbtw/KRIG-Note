@@ -12,10 +12,6 @@
 
 import type { Schema, Node as PMNode } from 'prosemirror-model';
 import { converterRegistry } from './registry';
-import { textBlockConverter } from './text-block-converter';
-import { bulletListConverter, orderedListConverter, taskListConverter, taskItemConverter } from './list-converter';
-import { codeBlockConverter, mathBlockConverter, imageConverter, horizontalRuleConverter } from './render-block-converters';
-import { blockquoteConverter, calloutConverter, tableConverter, tableRowConverter, tableCellConverter, tableHeaderConverter } from './container-converters';
 import type { Atom } from '../../../shared/types/atom-types';
 
 // ─── 测试工具 ───
@@ -255,8 +251,6 @@ function runRoundTrip(
 // ─── 注册到 window（供 DevTools console 调用）───
 
 export function registerConverterTest(schema: Schema): void {
-  // 初始化 converter registry
-  initTestConverters();
 
   (window as any).__testConverters = () => {
     const tests = [
@@ -301,25 +295,3 @@ export function registerConverterTest(schema: Schema): void {
   console.log('[ConverterTest] Registered. Run __testConverters() in console.');
 }
 
-// ─── 初始化测试用 converter ───
-
-function initTestConverters(): void {
-  // 手动构建一个临时 BlockDef 列表，只包含 converter
-  converterRegistry.init([
-    { converter: textBlockConverter } as any,
-    { converter: bulletListConverter } as any,
-    { converter: orderedListConverter } as any,
-    { converter: taskListConverter } as any,
-    { converter: taskItemConverter } as any,
-    { converter: codeBlockConverter } as any,
-    { converter: mathBlockConverter } as any,
-    { converter: imageConverter } as any,
-    { converter: horizontalRuleConverter } as any,
-    { converter: blockquoteConverter } as any,
-    { converter: calloutConverter } as any,
-    { converter: tableConverter } as any,
-    { converter: tableRowConverter } as any,
-    { converter: tableCellConverter } as any,
-    { converter: tableHeaderConverter } as any,
-  ]);
-}
