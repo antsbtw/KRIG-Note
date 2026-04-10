@@ -123,7 +123,8 @@ export type RenderAtomType =
 export type SpecialAtomType =
   | 'horizontalRule'
   | 'hardBreak'
-  | 'document';
+  | 'document'
+  | 'pageAnchor';
 
 // ── 完整联合类型 ──
 export type AtomType =
@@ -249,7 +250,14 @@ export interface TweetContent {
   media?: Array<{ type: 'image' | 'video'; url: string }>;
 }
 
-// ── 4.4 完整联合类型 ──
+// ── 4.5 页面锚点 ──
+
+export interface PageAnchorContent {
+  pdfPage: number;
+  label?: string;  // 如 "第 20 页"
+}
+
+// ── 4.6 完整联合类型 ──
 
 export type AtomContent =
   | ParagraphContent
@@ -270,7 +278,8 @@ export type AtomContent =
   | FigureContent
   | VideoContent
   | AudioContent
-  | TweetContent;
+  | TweetContent
+  | PageAnchorContent;
 
 // ═══════════════════════════════════════════════════════
 // §5  InlineElement + Mark

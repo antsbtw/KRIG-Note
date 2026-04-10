@@ -16,6 +16,7 @@ import type {
   VideoContent,
   AudioContent,
   TweetContent,
+  PageAnchorContent,
 } from '../../../shared/types/atom-types';
 import { createAtom } from '../../../shared/types/atom-types';
 import type { AtomConverter, PMNodeJSON } from './converter-types';
@@ -178,5 +179,27 @@ export const horizontalRuleConverter: AtomConverter = {
 
   toPM(): PMNodeJSON {
     return { type: 'horizontalRule' };
+  },
+};
+
+// ── pageAnchor ──
+
+export const pageAnchorConverter: AtomConverter = {
+  atomTypes: ['pageAnchor'],
+  pmType: 'pageAnchor',
+
+  toAtom(node: PMNode, parentId?: string): Atom {
+    return createAtom('pageAnchor', {
+      pdfPage: node.attrs.pdfPage || 0,
+      label: node.attrs.label || '',
+    } as PageAnchorContent, parentId);
+  },
+
+  toPM(atom: Atom): PMNodeJSON {
+    const c = atom.content as PageAnchorContent;
+    return {
+      type: 'pageAnchor',
+      attrs: { pdfPage: c.pdfPage, label: c.label || '' },
+    };
   },
 };

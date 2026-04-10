@@ -36,12 +36,20 @@ export const blockquoteConverter: AtomConverter = {
   },
 
   toPM(atom: Atom): PMNodeJSON {
-    const c = atom.content as BlockquoteContent;
-    // 如果有 inline children（PDF 提取的单段 blockquote），包裹在 textBlock 中
-    if (c.children && c.children.length > 0) {
+    const c = atom.content as Record<string, unknown>;
+    // PDF 提取的多段 blockquote：内容在 tiptapContent 中
+    if (Array.isArray(c.tiptapContent) && c.tiptapContent.length > 0) {
       return {
         type: 'blockquote',
-        content: [{ type: 'textBlock', content: atomInlinesToPM(c.children) }],
+        content: fixTiptapNodeTypes(c.tiptapContent as PMNodeJSON[]),
+      };
+    }
+    // 单段 blockquote：inline children 包裹在 textBlock 中
+    const bq = c as unknown as BlockquoteContent;
+    if (bq.children && bq.children.length > 0) {
+      return {
+        type: 'blockquote',
+        content: [{ type: 'textBlock', content: atomInlinesToPM(bq.children) }],
       };
     }
     // 否则由 ConverterRegistry 用子 Atom 填充 content
@@ -64,10 +72,19 @@ export const calloutConverter: AtomConverter = {
   },
 
   toPM(atom: Atom): PMNodeJSON {
-    const c = atom.content as CalloutContent;
+    const c = atom.content as Record<string, unknown>;
+    const emoji = (c as unknown as CalloutContent).emoji || '💡';
+    // PDF 提取的 callout：内容在 tiptapContent 中
+    if (Array.isArray(c.tiptapContent) && c.tiptapContent.length > 0) {
+      return {
+        type: 'callout',
+        attrs: { emoji },
+        content: fixTiptapNodeTypes(c.tiptapContent as PMNodeJSON[]),
+      };
+    }
     return {
       type: 'callout',
-      attrs: { calloutType: c.calloutType, emoji: c.emoji, title: c.title },
+      attrs: { emoji },
     };
   },
 };
@@ -227,10 +244,19 @@ export const columnListConverter: AtomConverter = {
   },
 
   toPM(atom: Atom): PMNodeJSON {
-    const c = atom.content as ColumnListContent;
+    const c = atom.content as Record<string, unknown>;
+    const columns = (c as unknown as ColumnListContent).columns || 2;
+    // PDF 提取的 columnList：内容在 tiptapContent 中
+    if (Array.isArray(c.tiptapContent) && c.tiptapContent.length > 0) {
+      return {
+        type: 'columnList',
+        attrs: { columns },
+        content: fixTiptapNodeTypes(c.tiptapContent as PMNodeJSON[]),
+      };
+    }
     return {
       type: 'columnList',
-      attrs: { columns: c.columns },
+      attrs: { columns },
     };
   },
 };

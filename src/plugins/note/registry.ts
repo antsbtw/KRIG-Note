@@ -14,7 +14,7 @@ import type { BlockDef, SlashItemDef, NodeViewFactory } from './types';
 import { converterRegistry } from './converters/registry';
 import { textBlockConverter } from './converters/text-block-converter';
 import { bulletListConverter, orderedListConverter, taskListConverter, taskItemConverter } from './converters/list-converter';
-import { codeBlockConverter, mathBlockConverter, imageConverter, videoConverter, audioConverter, tweetConverter, horizontalRuleConverter } from './converters/render-block-converters';
+import { codeBlockConverter, mathBlockConverter, imageConverter, videoConverter, audioConverter, tweetConverter, horizontalRuleConverter, pageAnchorConverter } from './converters/render-block-converters';
 import { blockquoteConverter, calloutConverter, toggleListConverter, frameBlockConverter, tableConverter, tableRowConverter, tableCellConverter, tableHeaderConverter, columnListConverter, columnConverter } from './converters/container-converters';
 
 class BlockRegistry {
@@ -173,7 +173,7 @@ class BlockRegistry {
       textBlockConverter,
       bulletListConverter, orderedListConverter, taskListConverter, taskItemConverter,
       codeBlockConverter, mathBlockConverter, imageConverter,
-      videoConverter, audioConverter, tweetConverter, horizontalRuleConverter,
+      videoConverter, audioConverter, tweetConverter, horizontalRuleConverter, pageAnchorConverter,
       blockquoteConverter, calloutConverter, toggleListConverter, frameBlockConverter,
       tableConverter, tableRowConverter, tableCellConverter, tableHeaderConverter,
       columnListConverter, columnConverter,

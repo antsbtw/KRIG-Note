@@ -32,6 +32,7 @@ import { mathInlineBlock } from './math-inline';
 
 // ── 特殊 ──
 import { horizontalRuleBlock } from './horizontal-rule';
+import { pageAnchorBlock } from './page-anchor';
 
 export function registerAllBlocks(): void {
   // ── TextBlock ──
@@ -79,6 +80,7 @@ export function registerAllBlocks(): void {
 
   // ── 特殊 ──
   blockRegistry.register(horizontalRuleBlock);
+  blockRegistry.register(pageAnchorBlock);
 
   // ── 额外 SlashMenu ──
   blockRegistry.registerSlashItem({

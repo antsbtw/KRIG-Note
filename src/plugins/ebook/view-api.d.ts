@@ -34,4 +34,8 @@ declare const viewAPI: {
   ebookAnnotationAdd: (bookId: string, ann: unknown) => Promise<any>;
   ebookAnnotationRemove: (bookId: string, annotationId: string) => Promise<void>;
   onEbookLoaded: (callback: (info: EBookLoadedInfo) => void) => () => void;
+
+  // View 间消息（双工）
+  sendToOtherSlot: (message: { protocol: string; action: string; payload: any }) => void;
+  onMessage: (callback: (message: { protocol: string; action: string; payload: any }) => void) => () => void;
 };

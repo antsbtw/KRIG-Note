@@ -37,13 +37,13 @@ export function ExtractionView() {
     el.addEventListener('did-navigate', (e: any) => setCurrentUrl(e.url));
     el.addEventListener('page-title-updated', (e: any) => setPageTitle(e.title || 'PDF Extraction'));
 
-    // 拦截 Platform "导入到 KRIG" 操作
-    // Platform Web UI 通过 console.log('KRIG_IMPORT:' + JSON.stringify(data)) 发送导入请求
+    // 拦截 KRIG_IMPORT 消息（来自注入的下载拦截脚本或 Platform 原生支持）
     el.addEventListener('console-message', async (e: any) => {
       const msg = e.message as string;
       if (msg.startsWith('KRIG_IMPORT:')) {
         try {
           const data = JSON.parse(msg.slice('KRIG_IMPORT:'.length));
+          console.log('[ExtractionView] KRIG_IMPORT received:', data.type || 'unknown', data.chapters?.length || 0, 'chapters');
           await handleImport(data);
         } catch (err) {
           console.error('[ExtractionView] Import failed:', err);

@@ -1036,6 +1036,31 @@
   border: none; border-top: 1px solid #444; margin: 1.5em 0;
 }
 
+/* ── pageAnchor — PDF 页码锚点 ── */
+.ProseMirror .page-anchor {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0.5em 0;
+  font-size: 11px;
+  color: #666;
+  user-select: none;
+  cursor: pointer;
+}
+.ProseMirror .page-anchor::before,
+.ProseMirror .page-anchor::after {
+  content: '';
+  flex: 1;
+  border-top: 1px dashed #333;
+}
+.ProseMirror .page-anchor:hover {
+  color: #8ab4f8;
+}
+.ProseMirror .page-anchor:hover::before,
+.ProseMirror .page-anchor:hover::after {
+  border-color: #8ab4f8;
+}
+
 /* ═══════════════════════════════════════════════════════════
    Phase 7 — toggleList / frameBlock / table / columnList / inline
    ═══════════════════════════════════════════════════════════ */

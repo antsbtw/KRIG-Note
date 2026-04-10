@@ -810,13 +810,23 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
   ipcMain.handle(IPC.EXTRACTION_IMPORT, async (_event, data: any) => {
     try {
       const { importExtractionData } = await import('../extraction/import-service');
+
+      // 批次格式：{ type: 'batch', chapters: [{ bookName, title, pageStart, pageEnd, pages }] }
+      // 从第一个 chapter 提取 bookName
+      if (data.type === 'batch' && !data.bookName && data.chapters?.[0]?.bookName) {
+        data.bookName = data.chapters[0].bookName;
+      }
+
       const result = await importExtractionData(data);
 
-      // 设置 pending noteId（NoteEditor 初始化完成后会拉取）
-      setPendingNoteId(result.noteId);
+      // 广播列表变更（让 NavSide 立即刷新文件夹/笔记树）
+      broadcastContentTree(getMainWindow());
 
-      // Right Slot 切换为 NoteView
-      openRightSlot('demo-a');
+      // 有新笔记时，跳转到最新导入的笔记
+      if (result.noteId) {
+        setPendingNoteId(result.noteId);
+        openRightSlot('demo-a');
+      }
 
       return { success: true, ...result };
     } catch (err) {
