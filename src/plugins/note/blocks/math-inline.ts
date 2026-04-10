@@ -14,9 +14,12 @@ import 'katex/dist/katex.min.css';
 const mathInlineNodeView: NodeViewFactory = (node, view, getPos) => {
   const dom = document.createElement('span');
   dom.classList.add('math-inline');
+  let lastLatex: string | null = null;  // 缓存上次渲染的 LaTeX
 
   function render() {
     const latex = (node.attrs.latex as string).trim();
+    if (latex === lastLatex) return;
+    lastLatex = latex;
     if (!latex) {
       dom.innerHTML = '';
       dom.classList.add('math-inline--empty');
@@ -27,7 +30,7 @@ const mathInlineNodeView: NodeViewFactory = (node, view, getPos) => {
         dom.innerHTML = katex.renderToString(latex, {
           throwOnError: false,
           displayMode: false,
-          output: 'htmlAndMathml',
+          strict: false,
         });
       } catch {
         dom.textContent = latex;
@@ -88,7 +91,7 @@ const mathInlineNodeView: NodeViewFactory = (node, view, getPos) => {
         katex.render(t, previewEl, {
           throwOnError: false,
           displayMode: true,
-          output: 'htmlAndMathml',
+          strict: false,
         });
       } catch {
         previewEl.innerHTML = '<span class="math-inline-editor__hint">Invalid LaTeX</span>';

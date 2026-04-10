@@ -63,19 +63,77 @@ export class ConverterRegistry {
    * 从扁平 Atom 数组重建嵌套的 PM Doc 结构。
    */
   atomsToDoc(atoms: Atom[]): PMNodeJSON {
-    // 找出顶层 Atom（没有 parentId 的）
-    const topLevel = atoms
-      .filter(a => !a.parentId)
-      .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    // 预构建 parentId → children 索引（O(N) 代替每次 O(N) 的 filter）
+    const childrenIndex = new Map<string | undefined, Atom[]>();
+    for (const atom of atoms) {
+      const key = atom.parentId ?? undefined;
+      let list = childrenIndex.get(key);
+      if (!list) { list = []; childrenIndex.set(key, list); }
+      list.push(atom);
+    }
+    // 各组内按 order 排序
+    for (const list of childrenIndex.values()) {
+      list.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    }
 
+    const topLevel = childrenIndex.get(undefined) ?? [];
     const content: PMNodeJSON[] = [];
 
     for (const atom of topLevel) {
-      const json = this.atomToPMNode(atom, atoms);
+      const json = this.atomToPMNodeIndexed(atom, childrenIndex);
       if (json) content.push(json);
     }
 
     return { type: 'doc', content };
+  }
+
+  /**
+   * 分片版 atomsToDoc — 初始只转换前 chunkSize 个顶层 block，
+   * 返回 { doc, loadMore } 供增量追加。
+   */
+  atomsToDocChunked(atoms: Atom[], chunkSize: number): {
+    doc: PMNodeJSON;
+    /** 是否还有更多未加载的内容 */
+    hasMore: boolean;
+    /** 加载下一批顶层 block（返回 PM 节点 JSON 数组） */
+    loadMore: (count: number) => { nodes: PMNodeJSON[]; hasMore: boolean };
+  } {
+    // 预构建索引
+    const childrenIndex = new Map<string | undefined, Atom[]>();
+    for (const atom of atoms) {
+      const key = atom.parentId ?? undefined;
+      let list = childrenIndex.get(key);
+      if (!list) { list = []; childrenIndex.set(key, list); }
+      list.push(atom);
+    }
+    for (const list of childrenIndex.values()) {
+      list.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    }
+
+    const topLevel = childrenIndex.get(undefined) ?? [];
+    let cursor = 0;
+
+    const convertBatch = (count: number): PMNodeJSON[] => {
+      const batch: PMNodeJSON[] = [];
+      const end = Math.min(cursor + count, topLevel.length);
+      for (let i = cursor; i < end; i++) {
+        const json = this.atomToPMNodeIndexed(topLevel[i], childrenIndex);
+        if (json) batch.push(json);
+      }
+      cursor = end;
+      return batch;
+    };
+
+    const initialContent = convertBatch(chunkSize);
+
+    return {
+      doc: { type: 'doc', content: initialContent },
+      hasMore: cursor < topLevel.length,
+      loadMore(count: number) {
+        const nodes = convertBatch(count);
+        return { nodes, hasMore: cursor < topLevel.length };
+      },
+    };
   }
 
   /**
@@ -141,18 +199,36 @@ export class ConverterRegistry {
     }
   }
 
+  /** 使用预构建索引的快速版本（atomsToDoc 专用） */
+  private atomToPMNodeIndexed(atom: Atom, childrenIndex: Map<string | undefined, Atom[]>): PMNodeJSON | null {
+    const converter = this.byAtomType.get(atom.type);
+    if (!converter) return null;
+
+    const children = childrenIndex.get(atom.id) ?? [];
+    const json = converter.toPM(atom, children);
+
+    if (children.length > 0 && !json.content) {
+      json.content = [];
+      for (const child of children) {
+        const childJson = this.atomToPMNodeIndexed(child, childrenIndex);
+        if (childJson) json.content.push(childJson);
+      }
+    }
+
+    return json;
+  }
+
+  /** 兼容版本（pmJsonToAtoms 等场景使用） */
   private atomToPMNode(atom: Atom, allAtoms: Atom[]): PMNodeJSON | null {
     const converter = this.byAtomType.get(atom.type);
     if (!converter) return null;
 
-    // 找出此 Atom 的子 Atom
     const children = allAtoms
       .filter(a => a.parentId === atom.id)
       .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
 
     const json = converter.toPM(atom, children);
 
-    // 如果有子 Atom，递归构建 content
     if (children.length > 0 && !json.content) {
       json.content = [];
       for (const child of children) {

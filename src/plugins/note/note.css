@@ -2,6 +2,7 @@
    Note 编辑器样式（暗色主题）
    重建版 — 三基类架构
    ═══════════════════════════════════════════════════════════ */
+@import '../../shared/theme/tokens.css';
 
 /* ── ProseMirror 基础 ── */
 .ProseMirror {

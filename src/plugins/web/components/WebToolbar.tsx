@@ -67,6 +67,7 @@ export function WebToolbar({
           onClick={onGoBack}
           disabled={!canGoBack}
           title="后退 (⌘[)"
+          aria-label="后退"
         >
           ‹
         </button>
@@ -75,6 +76,7 @@ export function WebToolbar({
           onClick={onGoForward}
           disabled={!canGoForward}
           title="前进 (⌘])"
+          aria-label="前进"
         >
           ›
         </button>
@@ -82,6 +84,7 @@ export function WebToolbar({
           className="web-toolbar__btn"
           onClick={onReload}
           title="刷新 (⌘R)"
+          aria-label={loading ? '停止加载' : '刷新'}
         >
           {loading ? '✕' : '↻'}
         </button>
@@ -107,12 +110,13 @@ export function WebToolbar({
           className="web-toolbar__btn"
           onClick={onBookmarkToggle}
           title={isBookmarked ? '移除书签' : '添加书签'}
+          aria-label={isBookmarked ? '移除书签' : '添加书签'}
           style={{ color: isBookmarked ? '#ffd43b' : undefined }}
         >
           {isBookmarked ? '★' : '☆'}
         </button>
         {onCloseSlot && (
-          <button className="web-toolbar__btn web-toolbar__btn--close-slot" onClick={onCloseSlot} title="关闭此面板">
+          <button className="web-toolbar__btn web-toolbar__btn--close-slot" onClick={onCloseSlot} title="关闭此面板" aria-label="关闭此面板">
             ×
           </button>
         )}

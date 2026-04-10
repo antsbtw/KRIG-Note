@@ -146,18 +146,43 @@ function buildPlugins(s: ReturnType<typeof getSchema>) {
   ];
 }
 
-/** 从 doc_content（Atom[]）构建 ProseMirror doc */
-function docFromContent(s: ReturnType<typeof getSchema>, docContent: unknown[]): PMNode {
+/** 初始加载的顶层 block 数量（约 10 页内容） */
+const INITIAL_CHUNK_SIZE = 200;
+/** 每次追加的顶层 block 数量 */
+const LOAD_MORE_CHUNK_SIZE = 150;
+
+/** 从 doc_content（Atom[]）构建 ProseMirror doc（分片加载） */
+function docFromContentChunked(s: ReturnType<typeof getSchema>, docContent: unknown[]): {
+  doc: PMNode;
+  loadMore: ((count: number) => { nodes: PMNode[]; hasMore: boolean }) | null;
+} {
+  const atoms = docContent as Atom[];
+  // 小文档直接全量加载
+  if (atoms.filter(a => !a.parentId).length <= INITIAL_CHUNK_SIZE) {
+    try {
+      const docJson = converterRegistry.atomsToDoc(atoms);
+      return { doc: PMNode.fromJSON(s, docJson), loadMore: null };
+    } catch (err) {
+      console.error('[NoteEditor] Failed to parse doc_content:', err);
+      return { doc: createEmptyDoc(s), loadMore: null };
+    }
+  }
+
+  // 大文档分片加载
   try {
-    const docJson = converterRegistry.atomsToDoc(docContent as Atom[]);
-    console.log('[NoteEditor] atomsToDoc result:', docJson.content?.length, 'nodes, types:', docJson.content?.slice(0, 5).map((n: any) => n.type));
-    const pmDoc = PMNode.fromJSON(s, docJson);
-    console.log('[NoteEditor] PMNode.fromJSON success:', pmDoc.content.childCount, 'children');
-    return pmDoc;
+    const chunked = converterRegistry.atomsToDocChunked(atoms, INITIAL_CHUNK_SIZE);
+    const doc = PMNode.fromJSON(s, chunked.doc);
+
+    const loadMore = chunked.hasMore ? (count: number) => {
+      const { nodes: jsonNodes, hasMore } = chunked.loadMore(count);
+      const pmNodes = jsonNodes.map(n => PMNode.fromJSON(s, n));
+      return { nodes: pmNodes, hasMore };
+    } : null;
+
+    return { doc, loadMore };
   } catch (err) {
-    console.error('[NoteEditor] Failed to parse doc_content:', err);
-    console.error('[NoteEditor] docContent sample:', JSON.stringify(docContent.slice(0, 3)).substring(0, 500));
-    return createEmptyDoc(s);
+    console.error('[NoteEditor] Failed to parse doc_content (chunked):', err);
+    return { doc: createEmptyDoc(s), loadMore: null };
   }
 }
 
@@ -177,6 +202,36 @@ export function NoteEditor() {
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tocRef = useRef<ReturnType<typeof createTocIndicator> | null>(null);
   const loadSeqRef = useRef(0); // 竞态取消：每次 loadNote 递增
+  const loadMoreRef = useRef<((count: number) => { nodes: PMNode[]; hasMore: boolean }) | null>(null);
+  const sentinelObserverRef = useRef<IntersectionObserver | null>(null);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const fullAtomsRef = useRef<Atom[] | null>(null); // 完整 atoms（分片加载时用于保存未加载部分）
+
+  // 追加更多内容到编辑器末尾
+  const appendMoreContent = useCallback(() => {
+    const view = viewRef.current;
+    const loadMore = loadMoreRef.current;
+    if (!view || !loadMore || view.isDestroyed) return;
+
+    const { nodes, hasMore } = loadMore(LOAD_MORE_CHUNK_SIZE);
+    if (nodes.length === 0) return;
+
+    // 在文档末尾插入新节点
+    const { tr } = view.state;
+    const insertPos = view.state.doc.content.size;
+    for (const node of nodes) {
+      tr.insert(tr.doc.content.size, node);
+    }
+    tr.setMeta('addToHistory', false); // 不计入撤销历史
+    view.dispatch(tr);
+
+    if (!hasMore) {
+      // 所有内容已加载，移除 sentinel
+      loadMoreRef.current = null;
+      sentinelObserverRef.current?.disconnect();
+      sentinelRef.current?.remove();
+    }
+  }, []);
 
   // 创建/重建编辑器
   const createEditor = useCallback((doc: PMNode) => {
@@ -187,6 +242,10 @@ export function NoteEditor() {
       clearTimeout(saveTimerRef.current);
       saveTimerRef.current = null;
     }
+
+    // 清除旧的 sentinel observer
+    sentinelObserverRef.current?.disconnect();
+    sentinelRef.current?.remove();
 
     // 销毁旧编辑器
     if (viewRef.current) {
@@ -209,8 +268,8 @@ export function NoteEditor() {
         if (view.isDestroyed) return;
         const newState = view.state.apply(tr);
         view.updateState(newState);
-        // 文档变化时触发自动保存
-        if (tr.docChanged) {
+        // 文档变化时触发自动保存（排除分片追加的 addToHistory=false 事务）
+        if (tr.docChanged && tr.getMeta('addToHistory') !== false) {
           scheduleSave();
           tocRef.current?.update();
         }
@@ -223,7 +282,26 @@ export function NoteEditor() {
     // TOC 指示器
     if (tocRef.current) tocRef.current.destroy();
     tocRef.current = createTocIndicator(editorRef.current, view);
-  }, []);
+
+    // 如果有更多内容待加载，设置 sentinel 元素
+    if (loadMoreRef.current) {
+      const sentinel = document.createElement('div');
+      sentinel.className = 'note-load-more-sentinel';
+      sentinel.style.cssText = 'height: 1px; margin-top: -1px;';
+      editorRef.current.appendChild(sentinel);
+      sentinelRef.current = sentinel;
+
+      const observer = new IntersectionObserver((entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            appendMoreContent();
+          }
+        }
+      }, { rootMargin: '500px' }); // 提前 500px 开始加载
+      observer.observe(sentinel);
+      sentinelObserverRef.current = observer;
+    }
+  }, [appendMoreContent]);
 
   // 加载文档（带竞态取消：快速切换时丢弃过期的异步结果）
   const loadNote = useCallback(async (noteId: string) => {
@@ -235,11 +313,15 @@ export function NoteEditor() {
       console.log('[NoteEditor] noteLoad returned:', record ? `title="${record.title}", doc_content=${record.doc_content?.length ?? 0} atoms` : 'null');
       if (seq !== loadSeqRef.current) { console.log('[NoteEditor] Stale load, discarding'); return; }
       if (!record || !record.doc_content || record.doc_content.length === 0) {
-        console.log('[NoteEditor] Empty content, creating empty doc');
+        loadMoreRef.current = null;
+        fullAtomsRef.current = null;
         createEditor(createEmptyDoc(s));
       } else {
-        console.log('[NoteEditor] Building doc from', record.doc_content.length, 'atoms, first types:', record.doc_content.slice(0, 5).map((a: any) => a.type));
-        createEditor(docFromContent(s, record.doc_content));
+        const { doc, loadMore } = docFromContentChunked(s, record.doc_content);
+        loadMoreRef.current = loadMore;
+        // 分片模式下保留原始 atoms 用于部分保存场景
+        fullAtomsRef.current = loadMore ? (record.doc_content as Atom[]) : null;
+        createEditor(doc);
       }
       currentNoteIdRef.current = noteId;
       setCurrentNote(noteId);
@@ -253,11 +335,42 @@ export function NoteEditor() {
     }
   }, [createEditor]);
 
+  // 保存前确保所有内容已加载（防止丢失未渲染的尾部数据）
+  const flushRemainingContent = useCallback(() => {
+    const view = viewRef.current;
+    const loadMore = loadMoreRef.current;
+    if (!view || !loadMore || view.isDestroyed) return;
+
+    // 一次性加载所有剩余内容
+    let hasMore = true;
+    while (hasMore) {
+      const result = loadMore(500);
+      if (result.nodes.length > 0) {
+        const { tr } = view.state;
+        for (const node of result.nodes) {
+          tr.insert(tr.doc.content.size, node);
+        }
+        tr.setMeta('addToHistory', false);
+        view.dispatch(tr);
+      }
+      hasMore = result.hasMore;
+    }
+    loadMoreRef.current = null;
+    fullAtomsRef.current = null;
+    sentinelObserverRef.current?.disconnect();
+    sentinelRef.current?.remove();
+  }, []);
+
   // 保存文档
   const saveNote = useCallback(() => {
     const noteId = currentNoteIdRef.current;
     const view = viewRef.current;
     if (!noteId || !view) return;
+
+    // 如果还有未加载的内容，先全部加载进编辑器
+    if (loadMoreRef.current) {
+      flushRemainingContent();
+    }
 
     const doc = view.state.doc;
 
@@ -272,7 +385,7 @@ export function NoteEditor() {
     // PM Doc → Atom[]（renderer 端转换，存储 Atom 格式）
     const atoms = converterRegistry.docToAtoms(doc);
     viewAPI.noteSave(noteId, atoms, title);
-  }, []);
+  }, [flushRemainingContent]);
 
   // 防抖自动保存（1秒）
   const scheduleSave = useCallback(() => {
@@ -319,7 +432,10 @@ export function NoteEditor() {
         console.log('[NoteEditor] Import JSON: raw atoms:', allAtoms.length, 'types:', allAtoms.map((a: Atom) => a.type));
         const cleaned = sanitizeAtoms(allAtoms);
         console.log('[NoteEditor] After sanitize:', cleaned.length, 'types:', cleaned.map((a: Atom) => a.type));
-        createEditor(docFromContent(s, cleaned));
+        const { doc } = docFromContentChunked(s, cleaned);
+        loadMoreRef.current = null;
+        fullAtomsRef.current = null;
+        createEditor(doc);
       } catch (err) {
         console.error('[NoteEditor] Import JSON failed:', err);
       }

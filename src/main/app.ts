@@ -2,7 +2,6 @@ import { app, nativeTheme } from 'electron';
 import { createShell, getMainWindow } from './window/shell';
 import { registerIpcHandlers } from './ipc/handlers';
 import { setupDividerController } from './slot/divider';
-import { getNavSideWidth, setNavSideWidth } from './slot/layout';
 import { workspaceManager } from './workspace/manager';
 import { workModeRegistry } from './workmode/registry';
 import { protocolRegistry } from './protocol/registry';
@@ -15,6 +14,7 @@ import { surrealSessionStore } from './storage/surreal-session-store';
 import { activityStore } from './storage/activity-store';
 import { initKrigNoteDocs, createBlockTaskDoc, reimportTestDocs } from './storage/init-docs';
 import { mediaStore } from './media/media-store';
+import { setupExtractionInterceptor } from '../plugins/web/main/extraction-handler';
 
 /**
  * KRIG Note — 应用入口
@@ -63,6 +63,9 @@ function registerPlugins(): void {
     label: 'Extraction',
     order: 4,
     hidden: true,   // 仅作为 right slot，不在 NavSide tab 中显示
+    onViewCreated: (_view, guestWebContents) => {
+      setupExtractionInterceptor(guestWebContents);
+    },
   });
 
   // NavSide 内容注册
@@ -350,30 +353,27 @@ app.whenReady().then(() => {
   // 3. 恢复 Session 或创建默认 Workspace
   const session = loadSession();
   if (session && session.workspaces.length > 0) {
-    // 恢复已有 Session
+    // 恢复已有 Session（保留原始 Workspace ID）
     for (const ws of session.workspaces) {
-      const created = workspaceManager.create(ws.label);
-      workspaceManager.update(created.id, {
+      workspaceManager.restore({
+        id: ws.id,
+        label: ws.label,
+        customLabel: ws.customLabel ?? false,
         workModeId: ws.workModeId,
         navSideVisible: ws.navSideVisible,
+        navSideWidth: ws.navSideWidth ?? session.navSideWidth ?? null,
         dividerRatio: ws.dividerRatio,
         activeNoteId: ws.activeNoteId ?? null,
         expandedFolders: ws.expandedFolders ?? [],
         activeBookId: ws.activeBookId ?? null,
         ebookExpandedFolders: ws.ebookExpandedFolders ?? [],
-        customLabel: ws.customLabel ?? false,
+        slotBinding: ws.slotBinding ?? { left: null, right: null },
       });
     }
-    // 恢复活跃 Workspace（用索引，因为 ID 会重新生成）
-    const all = workspaceManager.getAll();
-    const activeIndex = session.workspaces.findIndex(
-      (ws) => ws.id === session.activeWorkspaceId,
-    );
-    const activeWs = all[activeIndex >= 0 ? activeIndex : 0];
+    // 恢复活跃 Workspace（直接按 ID 匹配）
+    const activeWs = workspaceManager.get(session.activeWorkspaceId ?? '')
+      ?? workspaceManager.getAll()[0];
     if (activeWs) workspaceManager.setActive(activeWs.id);
-
-    // 恢复 NavSide 宽度
-    if (session.navSideWidth) setNavSideWidth(session.navSideWidth);
   } else {
     // 首次启动：创建默认 Workspace
     const defaultWorkspace = workspaceManager.create('Workspace 1');
@@ -415,7 +415,6 @@ function persistSession(): void {
   saveSession(buildSession(
     workspaceManager.getAll(),
     workspaceManager.getActiveId(),
-    getNavSideWidth(),
   ));
 }
 

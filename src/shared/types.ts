@@ -24,6 +24,7 @@ export interface WorkspaceState {
   customLabel: boolean;              // true = 用户手动命名，不自动跟随笔记标题
   workModeId: string;
   navSideVisible: boolean;
+  navSideWidth: number | null;       // 每个 Workspace 独立的 NavSide 宽度，null = 使用默认值
   dividerRatio: number;
   activeNoteId: string | null;        // NoteView 当前打开的笔记 ID
   expandedFolders: string[];          // NavSide 展开的文件夹 ID 列表
@@ -88,6 +89,16 @@ export interface ViewTypeRegistration {
   tier: LicenseTier;
 }
 
+/** ViewType 的渲染器配置 */
+export interface ViewTypeRendererConfig {
+  devServerUrl?: string;           // Vite dev server URL（开发模式）
+  htmlFile: string;                // 生产模式 HTML 文件名（相对 renderer 目录）
+  prodDir: string;                 // 生产模式子目录名（如 'note_view'）
+  webPreferences?: {
+    webviewTag?: boolean;          // 是否启用 webview 标签
+  };
+}
+
 /** WorkMode 注册 */
 export interface WorkModeRegistration {
   id: string;
@@ -97,6 +108,7 @@ export interface WorkModeRegistration {
   label: string;
   order: number;
   hidden?: boolean;            // true = 不在 NavSide tab 中显示（仅作为 right slot 使用）
+  onViewCreated?: (view: import('electron').WebContentsView, guestWebContents: import('electron').WebContents) => void;
 }
 
 /** NavSide 内容注册（按 WorkMode 驱动） */

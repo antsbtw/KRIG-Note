@@ -52,7 +52,7 @@ contextBridge.exposeInMainWorld('navSideAPI', {
 
   // Workspace 状态同步
   setExpandedFolders: (folderIds: string[]) => ipcRenderer.invoke(IPC.SET_EXPANDED_FOLDERS, folderIds),
-  onRestoreWorkspaceState: (callback: (state: { activeNoteId: string | null; expandedFolders: string[] }) => void) => {
+  onRestoreWorkspaceState: (callback: (state: { activeNoteId: string | null; expandedFolders: string[]; activeBookId?: string | null; ebookExpandedFolders?: string[] }) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, state: any) => callback(state);
     ipcRenderer.on(IPC.RESTORE_WORKSPACE_STATE, listener);
     return () => ipcRenderer.removeListener(IPC.RESTORE_WORKSPACE_STATE, listener);

@@ -14,7 +14,7 @@ import {
   getActiveViewWebContentsIds,
   getActiveProtocol,
 } from '../window/shell';
-import { getNavSideWidth, setNavSideWidth } from '../slot/layout';
+import { clampNavSideWidth, getDefaultNavSideWidth } from '../slot/layout';
 import { noteStore } from '../storage/note-store';
 import { folderStore } from '../storage/folder-store';
 import { activityStore } from '../storage/activity-store';
@@ -85,6 +85,8 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
             (child as any).webContents.send(IPC.RESTORE_WORKSPACE_STATE, {
               activeNoteId: workspace.activeNoteId,
               expandedFolders: workspace.expandedFolders,
+              activeBookId: workspace.activeBookId,
+              ebookExpandedFolders: workspace.ebookExpandedFolders,
             });
           }
         }
@@ -119,7 +121,8 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
   // ── WorkMode 操作 ──
 
   ipcMain.handle(IPC.WORKMODE_LIST, () => {
-    return workModeRegistry.getAll();
+    // 剥离 onViewCreated 等函数字段（函数无法通过 IPC 序列化）
+    return workModeRegistry.getAll().map(({ onViewCreated, ...rest }) => rest);
   });
 
   ipcMain.handle(IPC.WORKMODE_SWITCH, (_event, workModeId: string) => {
@@ -207,7 +210,10 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
     navResizeLastX = screenX;
     if (deltaX === 0) return;
 
-    setNavSideWidth(getNavSideWidth() + deltaX);
+    const active = workspaceManager.getActive();
+    if (!active) return;
+    const currentWidth = active.navSideWidth ?? getDefaultNavSideWidth();
+    workspaceManager.update(active.id, { navSideWidth: clampNavSideWidth(currentWidth + deltaX) });
     updateLayout();
   });
 
@@ -829,7 +835,9 @@ function broadcastNoteList(mainWindow: BaseWindow | null): void {
         (view as any).webContents.send(IPC.NOTE_LIST_CHANGED, list);
       }
     }
-  }).catch(() => {});
+  }).catch((err) => {
+    console.warn('[IPC] Failed to broadcast note list:', err);
+  });
 }
 
 /** 广播完整内容树（folder + note 列表同时刷新） */
@@ -1076,5 +1084,7 @@ function broadcastVocabChanged(mainWindow: BaseWindow | null): void {
         (view as any).webContents.send(IPC.LEARNING_VOCAB_CHANGED, entries);
       }
     }
-  }).catch(() => {});
+  }).catch((err) => {
+    console.warn('[IPC] Failed to broadcast vocab list:', err);
+  });
 }

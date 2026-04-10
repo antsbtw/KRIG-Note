@@ -23,6 +23,7 @@ class WorkspaceManager {
       customLabel: !!label,
       workModeId: defaultMode?.id ?? '',
       navSideVisible: true,
+      navSideWidth: null,
       dividerRatio: 0.5,
       activeNoteId: null,
       expandedFolders: [],
@@ -36,6 +37,18 @@ class WorkspaceManager {
 
     this.workspaces.set(id, workspace);
     return workspace;
+  }
+
+  /** 从 Session 恢复 Workspace（保留原始 ID） */
+  restore(state: WorkspaceState): WorkspaceState {
+    this.workspaces.set(state.id, state);
+    // 保持 counter 同步，避免新建 workspace 时 ID 冲突
+    const match = state.id.match(/^ws-(\d+)$/);
+    if (match) {
+      const num = parseInt(match[1], 10);
+      if (num > this.counter) this.counter = num;
+    }
+    return state;
   }
 
   /** 切换活跃 Workspace */

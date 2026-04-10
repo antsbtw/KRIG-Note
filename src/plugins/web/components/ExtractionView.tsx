@@ -104,7 +104,6 @@ export function ExtractionView() {
           src={PLATFORM_URL}
           className="web-view__webview"
           partition="persist:extraction"
-          allowpopups={'true' as any}
         />
       </div>
     </div>

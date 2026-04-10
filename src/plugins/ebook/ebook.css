@@ -1,32 +1,33 @@
 /* EBookView 暗色主题样式 */
+@import '../../shared/theme/tokens.css';
 
-/* ── CSS 变量（主题配置） ── */
+/* ── CSS 变量（映射全局 tokens + eBook 专属扩展） ── */
 
 .ebook-view {
-  --ebook-bg: #1e1e1e;
-  --ebook-bg-elevated: #252525;
-  --ebook-bg-surface: #2a2a2a;
-  --ebook-bg-input: #333;
-  --ebook-bg-hover: #3a3a3a;
-  --ebook-bg-active: #4a9eff;
-  --ebook-bg-current: #264f78;
-  --ebook-text-primary: #e8eaed;
-  --ebook-text-secondary: #ccc;
-  --ebook-text-muted: #999;
-  --ebook-text-dim: #888;
-  --ebook-text-faint: #666;
-  --ebook-border: #333;
-  --ebook-border-light: #444;
-  --ebook-border-input: #555;
-  --ebook-border-focus: #6b9fff;
-  --ebook-bookmark-active: #ffd43b;
-  --ebook-content-bg: #2a2a2a;
+  --ebook-bg: var(--krig-bg-base);
+  --ebook-bg-elevated: var(--krig-bg-elevated);
+  --ebook-bg-surface: var(--krig-bg-input);
+  --ebook-bg-input: var(--krig-bg-input-alt);
+  --ebook-bg-hover: var(--krig-bg-hover);
+  --ebook-bg-active: var(--krig-accent);
+  --ebook-bg-current: var(--krig-accent-bg);
+  --ebook-text-primary: var(--krig-text-primary);
+  --ebook-text-secondary: var(--krig-text-secondary);
+  --ebook-text-muted: var(--krig-text-muted);
+  --ebook-text-dim: var(--krig-text-dim);
+  --ebook-text-faint: var(--krig-text-faint);
+  --ebook-border: var(--krig-border);
+  --ebook-border-light: var(--krig-border-light);
+  --ebook-border-input: var(--krig-border-input);
+  --ebook-border-focus: var(--krig-accent-border);
+  --ebook-bookmark-active: var(--krig-bookmark-active);
+  --ebook-content-bg: var(--krig-bg-input);
   --ebook-page-shadow: rgba(0, 0, 0, 0.4);
   --ebook-selection-bg: rgba(0, 100, 255, 0.3);
   --ebook-annotation-preview: rgba(255, 212, 59, 0.2);
   --ebook-annotation-preview-border: rgba(255, 212, 59, 0.6);
   --ebook-annotation-preview-underline: rgba(255, 212, 59, 0.5);
-  --ebook-overlay-shadow: rgba(0, 0, 0, 0.5);
+  --ebook-overlay-shadow: var(--krig-shadow-overlay);
 
   display: flex;
   flex-direction: column;

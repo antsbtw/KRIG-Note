@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { existsSync, unlinkSync } from 'node:fs';
+import { existsSync, unlinkSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { app } from 'electron';
 import { Surreal } from 'surrealdb';
@@ -14,8 +15,36 @@ import { Surreal } from 'surrealdb';
 const DEFAULT_PORT = 8532;
 const NAMESPACE = 'krig';
 const DATABASE = 'krig_note';  // 独立数据库，不和 mirro-desktop 的 'main' 共享
-const USERNAME = 'root';
-const PASSWORD = 'root';
+
+/** 获取或生成 DB 凭据（首次启动时生成随机密码） */
+function getCredentials(): { username: string; password: string } {
+  const credPath = path.join(app.getPath('userData'), '.db-credentials');
+  try {
+    if (existsSync(credPath)) {
+      const data = JSON.parse(readFileSync(credPath, 'utf-8'));
+      if (data.username && data.password) return data;
+    }
+  } catch {
+    // 文件损坏，重新生成
+  }
+  // 兼容旧版本：如果已有数据库目录，使用旧默认凭据
+  const dbPath = path.join(app.getPath('userData'), 'krig-db');
+  if (existsSync(dbPath)) {
+    const credentials = { username: 'root', password: 'root' };
+    const dir = path.dirname(credPath);
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    writeFileSync(credPath, JSON.stringify(credentials), 'utf-8');
+    return credentials;
+  }
+  // 全新安装：生成随机密码
+  const credentials = { username: 'root', password: randomBytes(24).toString('hex') };
+  const dir = path.dirname(credPath);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  writeFileSync(credPath, JSON.stringify(credentials), 'utf-8');
+  return credentials;
+}
+
+const { username: USERNAME, password: PASSWORD } = getCredentials();
 const READY_TIMEOUT = 15000;
 const READY_POLL_INTERVAL = 500;
 

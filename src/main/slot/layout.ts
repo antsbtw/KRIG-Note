@@ -24,15 +24,12 @@ export interface LayoutResult {
   divider: Bounds | null;
 }
 
-/** 当前 NavSide 宽度（可拖拽调整） */
-let navSideWidth = NAVSIDE_DEFAULT_WIDTH;
-
-export function getNavSideWidth(): number {
-  return navSideWidth;
+export function getDefaultNavSideWidth(): number {
+  return NAVSIDE_DEFAULT_WIDTH;
 }
 
-export function setNavSideWidth(width: number): void {
-  navSideWidth = Math.max(NAVSIDE_MIN_WIDTH, Math.min(NAVSIDE_MAX_WIDTH, width));
+export function clampNavSideWidth(width: number): number {
+  return Math.max(NAVSIDE_MIN_WIDTH, Math.min(NAVSIDE_MAX_WIDTH, width));
 }
 
 /** macOS 红绿灯占用的宽度（非全屏时） */
@@ -45,6 +42,7 @@ export function calculateLayout(
   hasRightSlot: boolean,
   dividerRatio: number,
   isFullScreen: boolean = false,
+  navSideWidth: number = NAVSIDE_DEFAULT_WIDTH,
 ): LayoutResult {
   // 非全屏时，Toggle 在红绿灯右边；全屏时在左上角
   const toggleX = (!isFullScreen && process.platform === 'darwin') ? TRAFFIC_LIGHT_WIDTH : 0;

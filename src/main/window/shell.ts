@@ -1,15 +1,12 @@
 import { BaseWindow, WebContentsView } from 'electron';
 import path from 'node:path';
-import fs from 'node:fs';
 import { calculateLayout } from '../slot/layout';
 import { workspaceManager } from '../workspace/manager';
 import { workModeRegistry } from '../workmode/registry';
 import { protocolRegistry } from '../protocol/registry';
 import { DIVIDER_HTML } from '../slot/divider';
 import { IPC } from '../../shared/types';
-import type { WorkspaceId } from '../../shared/types';
-import { setPendingNoteId } from '../ipc/handlers';
-import { importExtractionData } from '../extraction/import-service';
+import type { WorkspaceId, ViewType, ViewTypeRendererConfig } from '../../shared/types';
 
 /**
  * Shell — 应用的主窗口
@@ -50,145 +47,63 @@ function getViewPool(workspaceId: WorkspaceId): WorkspaceViewPool {
   return pool;
 }
 
+/** ViewType → 渲染器配置映射 */
+const viewTypeRenderers: Record<ViewType | 'default', ViewTypeRendererConfig> = {
+  note:  { devServerUrl: NOTE_VIEW_VITE_DEV_SERVER_URL,  htmlFile: 'note.html',      prodDir: 'note_view' },
+  ebook: { devServerUrl: EBOOK_VIEW_VITE_DEV_SERVER_URL, htmlFile: 'ebook.html',     prodDir: 'ebook_view' },
+  web:   { devServerUrl: WEB_VIEW_VITE_DEV_SERVER_URL,   htmlFile: 'web.html',       prodDir: 'web_view',   webPreferences: { webviewTag: true } },
+  graph: { devServerUrl: DEMO_VIEW_VITE_DEV_SERVER_URL,  htmlFile: 'demo-view.html', prodDir: 'demo_view' },
+  default: { devServerUrl: DEMO_VIEW_VITE_DEV_SERVER_URL, htmlFile: 'demo-view.html', prodDir: 'demo_view' },
+};
+
 /** 懒创建 View 实例 — 根据 WorkMode 的 viewType 选择 renderer */
 function createViewForWorkMode(workModeId: string): WebContentsView {
-  // 根据 WorkMode 的 viewType 选择对应的 renderer
   const mode = workModeRegistry.get(workModeId);
   const viewType = mode?.viewType ?? 'note';
+  const config = viewTypeRenderers[viewType] ?? viewTypeRenderers.default;
 
   const view = new WebContentsView({
     webPreferences: {
       preload: path.join(__dirname, 'view.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      webviewTag: viewType === 'web',  // WebView 需要 webview 标签支持
+      webviewTag: config.webPreferences?.webviewTag ?? false,
     },
   });
   view.setBackgroundColor('#1e1e1e');
 
-  if (viewType === 'note') {
-    // NoteView — ProseMirror 编辑器
-    if (NOTE_VIEW_VITE_DEV_SERVER_URL) {
-      const url = `${NOTE_VIEW_VITE_DEV_SERVER_URL}/note.html?workModeId=${workModeId}`;
-      view.webContents.loadURL(url);
-    } else {
-      view.webContents.loadFile(
-        path.join(__dirname, `../renderer/note_view/note.html`),
-        { query: { workModeId } },
-      );
-    }
-  } else if (viewType === 'ebook') {
-    // EBookView — 电子书阅读器
-    if (EBOOK_VIEW_VITE_DEV_SERVER_URL) {
-      view.webContents.loadURL(
-        `${EBOOK_VIEW_VITE_DEV_SERVER_URL}/ebook.html?workModeId=${workModeId}`,
-      );
-    } else {
-      view.webContents.loadFile(
-        path.join(__dirname, `../renderer/ebook_view/ebook.html`),
-        { query: { workModeId } },
-      );
-    }
-  } else if (viewType === 'web') {
-    // WebView — 网页浏览器（含变种：extraction 等）
-    const variant = mode?.variant ?? '';
-    if (WEB_VIEW_VITE_DEV_SERVER_URL) {
-      view.webContents.loadURL(
-        `${WEB_VIEW_VITE_DEV_SERVER_URL}/web.html?workModeId=${workModeId}&variant=${variant}`,
-      );
-    } else {
-      view.webContents.loadFile(
-        path.join(__dirname, `../renderer/web_view/web.html`),
-        { query: { workModeId, variant } },
-      );
-    }
+  // 构建查询参数
+  const variant = mode?.variant ?? '';
+  const query: Record<string, string> = { workModeId };
+  if (variant) query.variant = variant;
 
-    // 拦截 webview guest 的弹窗
-    // 策略：
-    //   target=_blank 普通链接 → webview 内导航
-    //   OAuth/登录弹窗 → 允许 Electron 创建子窗口（认证完成后自动关闭）
+  // 加载 renderer
+  if (config.devServerUrl) {
+    const params = new URLSearchParams(query).toString();
+    view.webContents.loadURL(`${config.devServerUrl}/${config.htmlFile}?${params}`);
+  } else {
+    view.webContents.loadFile(
+      path.join(__dirname, `../renderer/${config.prodDir}/${config.htmlFile}`),
+      { query },
+    );
+  }
+
+  // webviewTag 启用时，拦截 guest 弹窗
+  if (config.webPreferences?.webviewTag) {
     view.webContents.on('did-attach-webview', (_event, guestWebContents) => {
+      // 弹窗策略：target=_blank → 内部导航，OAuth → 允许子窗口
       guestWebContents.setWindowOpenHandler(({ url, disposition }) => {
         if (!url || url === 'about:blank') return { action: 'allow' };
-
-        // foreground-tab / background-tab = target=_blank 链接 → webview 内导航
         if (disposition === 'foreground-tab' || disposition === 'background-tab') {
           guestWebContents.loadURL(url);
           return { action: 'deny' };
         }
-
-        // new-window / other = OAuth 弹窗等 → 允许 Electron 创建子窗口
         return { action: 'allow' };
       });
 
-      // Extraction 变种：拦截 JSON 下载 → 导入到 Note
-      if (variant === 'extraction') {
-        guestWebContents.session.on('will-download', (_event, item) => {
-          const fileName = item.getFilename();
-          console.log('[Extraction] Download intercepted:', fileName, item.getURL());
-
-          // 只拦截 JSON 文件（Atom 提取结果）
-          if (!fileName.endsWith('.json')) return;
-
-          // 保存到临时文件，读取后导入 Note
-          const { app } = require('electron');
-          const tmpPath = path.join(
-            app.getPath('temp'),
-            `krig-extraction-${Date.now()}.json`,
-          );
-          item.setSavePath(tmpPath);
-
-          item.on('done', async (_e, state) => {
-            if (state !== 'completed') {
-              console.error('[Extraction] Download failed:', state);
-              return;
-            }
-
-            try {
-              const jsonStr = fs.readFileSync(tmpPath, 'utf-8');
-              const data = JSON.parse(jsonStr);
-              // 从文件名解析书名和页码范围
-              // 格式: "BookName.pdf_p20-20.json"
-              let bookName = fileName.replace(/\.json$/, '');
-              const pageMatch = bookName.match(/_p(\d+-\d+)$/);
-              const pageRange = pageMatch ? pageMatch[1] : '';
-              bookName = bookName.replace(/\.pdf_p\d+-\d+$/, '').replace(/\.pdf$/, '');
-
-              // 注入解析的元数据到 data 对象
-              if (!data.bookName) data.bookName = bookName;
-              if (!data.pageRange) data.pageRange = pageRange;
-
-              console.log('[Extraction] Downloaded JSON:', bookName, 'pages:', pageRange, '- importing...');
-
-              // 导入（创建文件夹 + Note）
-              const result = await importExtractionData(data);
-              // 设置 pending noteId（NoteEditor 初始化完成后会拉取）
-              setPendingNoteId(result.noteId);
-
-              // Right Slot 切换为 NoteView
-              openRightSlot('demo-a');
-
-              // 清理临时文件
-              fs.unlinkSync(tmpPath);
-            } catch (err) {
-              console.error('[Extraction] Import failed:', err);
-            }
-          });
-        });
-      }
+      // 调用插件注册的 onViewCreated hook
+      mode?.onViewCreated?.(view, guestWebContents);
     });
-  } else {
-    // 其他类型用 DemoView
-    if (DEMO_VIEW_VITE_DEV_SERVER_URL) {
-      view.webContents.loadURL(
-        `${DEMO_VIEW_VITE_DEV_SERVER_URL}/demo-view.html?workModeId=${workModeId}`,
-      );
-    } else {
-      view.webContents.loadFile(
-        path.join(__dirname, `../renderer/demo_view/demo-view.html`),
-        { query: { workModeId } },
-      );
-    }
   }
 
   mainWindow?.contentView.addChildView(view);
@@ -225,6 +140,11 @@ export function switchLeftSlotView(workModeId: string): void {
   newView.setVisible(true);
   pool.activeLeftId = workModeId;
 
+  // 同步 slotBinding.left 到 WorkspaceState
+  workspaceManager.update(active.id, {
+    slotBinding: { ...active.slotBinding, left: workModeId },
+  });
+
   updateLayout();
 }
 
@@ -253,6 +173,11 @@ export function openRightSlot(workModeId: string): WebContentsView | null {
   pool.rightView = createViewForWorkMode(workModeId);
   pool.rightWorkModeId = workModeId;
   pool.rightView.setVisible(true);
+
+  // 同步 slotBinding.right 到 WorkspaceState
+  workspaceManager.update(active.id, {
+    slotBinding: { ...active.slotBinding, right: workModeId },
+  });
 
   // 诊断：监听 renderer 崩溃
   pool.rightView.webContents.on('render-process-gone', (_e, details) => {
@@ -288,6 +213,11 @@ export function closeRightSlot(): void {
     pool.rightView = null;
     pool.rightWorkModeId = null;
   }
+
+  // 同步 slotBinding.right 到 WorkspaceState
+  workspaceManager.update(active.id, {
+    slotBinding: { ...active.slotBinding, right: null },
+  });
 
   // 隐藏 Divider
   dividerView?.setVisible(false);
@@ -327,6 +257,12 @@ export function switchWorkspace(oldId: WorkspaceId | null, newId: WorkspaceId): 
       pool.rightView.setVisible(true);
       ensureDivider();
       dividerView?.setVisible(true);
+    } else if (newWorkspace.slotBinding?.right) {
+      // 首次切换到此 workspace，从 slotBinding 恢复右槽
+      const rightModeId = newWorkspace.slotBinding.right;
+      if (workModeRegistry.get(rightModeId)) {
+        openRightSlot(rightModeId);
+      }
     }
   }
 
@@ -551,6 +487,14 @@ export function createShell(): BaseWindow {
     switchLeftSlotView(workModeId);
   }
 
+  // 恢复 Right Slot（如果 Session 中有 slotBinding.right）
+  if (active?.slotBinding?.right) {
+    const rightModeId = active.slotBinding.right;
+    if (workModeRegistry.get(rightModeId)) {
+      openRightSlot(rightModeId);
+    }
+  }
+
   mainWindow.on('resize', () => updateLayout());
   mainWindow.on('enter-full-screen', () => updateLayout());
   mainWindow.on('leave-full-screen', () => updateLayout());
@@ -580,7 +524,8 @@ export function updateLayout(): void {
   const dividerRatio = active?.dividerRatio ?? 0.5;
 
   const isFullScreen = mainWindow.isFullScreen();
-  const layout = calculateLayout(windowWidth, windowHeight, navSideVisible, rightSlotOpen, dividerRatio, isFullScreen);
+  const wsNavSideWidth = active?.navSideWidth ?? undefined;
+  const layout = calculateLayout(windowWidth, windowHeight, navSideVisible, rightSlotOpen, dividerRatio, isFullScreen, wsNavSideWidth);
 
   toggleView.setBounds(layout.toggle);
   shellView.setBounds(layout.workspaceBar);

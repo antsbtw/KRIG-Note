@@ -58,7 +58,9 @@ export function WebView() {
       // 记录浏览历史
       const url = el.getURL();
       if (url && !url.startsWith('about:') && e.title) {
-        viewAPI.webHistoryAdd(url, e.title).catch(() => {});
+        viewAPI.webHistoryAdd(url, e.title).catch((err: unknown) => {
+          console.warn('[WebView] Failed to add history:', err);
+        });
       }
     });
 
@@ -138,7 +140,6 @@ export function WebView() {
           src={DEFAULT_URL}
           className="web-view__webview"
           partition="persist:web"
-          allowpopups={'true' as any}
         />
       </div>
     </div>
