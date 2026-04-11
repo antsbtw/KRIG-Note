@@ -95,6 +95,11 @@ export function createTocIndicator(
   }
 
   // ── IntersectionObserver：跟踪当前可见 heading ──
+
+  // 用 WeakMap 存储 heading DOM → toc index 映射，
+  // 避免修改 ProseMirror 管理的 DOM 属性（dataset 变更会触发 DOMObserver → 全量 NodeView 重建）
+  const tocIdxMap = new WeakMap<Element, number>();
+
   function setupObserver() {
     if (observer) observer.disconnect();
 
@@ -110,10 +115,7 @@ export function createTocIndicator(
 
         for (const ioEntry of ioEntries) {
           if (!ioEntry.isIntersecting) continue;
-          const idx = parseInt(
-            (ioEntry.target as HTMLElement).dataset.tocIdx || '-1',
-            10,
-          );
+          const idx = tocIdxMap.get(ioEntry.target) ?? -1;
           if (idx >= 0 && ioEntry.boundingClientRect.top < bestTop) {
             bestTop = ioEntry.boundingClientRect.top;
             bestIdx = idx;
@@ -133,7 +135,6 @@ export function createTocIndicator(
       },
     );
 
-    // 给每个 heading DOM 元素打上 data-toc-idx，然后 observe
     observeHeadings();
   }
 
@@ -150,7 +151,7 @@ export function createTocIndicator(
         // 向上找到 block 级元素（h1/h2/h3）
         const blockEl = el?.closest('h1, h2, h3') as HTMLElement | null;
         if (blockEl) {
-          blockEl.dataset.tocIdx = String(i);
+          tocIdxMap.set(blockEl, i);
           observer.observe(blockEl);
         }
       } catch {
