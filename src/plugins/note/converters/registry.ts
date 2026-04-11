@@ -205,6 +205,15 @@ export class ConverterRegistry {
 
     for (const atom of atoms) {
       atom.order = order;
+      // 恢复 fromPage → atom.from.pdfPage（round-trip 保留）
+      const fromPage = node.attrs?.fromPage;
+      if (fromPage != null) {
+        if (!atom.from) {
+          atom.from = { extractionType: 'pdf', pdfPage: fromPage, extractedAt: 0 };
+        } else {
+          atom.from.pdfPage = fromPage;
+        }
+      }
       result.push(atom);
     }
 
@@ -224,6 +233,9 @@ export class ConverterRegistry {
 
     const children = childrenIndex.get(atom.id) ?? [];
     const json = converter.toPM(atom, children);
+
+    // 统一注入 from.pdfPage → attrs.fromPage（用于 eBook↔Note 锚定同步）
+    this.injectFromPage(json, atom);
 
     if (children.length > 0 && !json.content) {
       json.content = [];
@@ -247,6 +259,8 @@ export class ConverterRegistry {
 
     const json = converter.toPM(atom, children);
 
+    this.injectFromPage(json, atom);
+
     if (children.length > 0 && !json.content) {
       json.content = [];
       for (const child of children) {
@@ -256,6 +270,15 @@ export class ConverterRegistry {
     }
 
     return json;
+  }
+
+  /** 将 atom.from.pdfPage 注入到 PMNodeJSON.attrs.fromPage */
+  private injectFromPage(json: PMNodeJSON, atom: Atom): void {
+    const pdfPage = atom.from?.pdfPage;
+    if (pdfPage != null) {
+      if (!json.attrs) json.attrs = {};
+      json.attrs.fromPage = pdfPage;
+    }
   }
 
   /**

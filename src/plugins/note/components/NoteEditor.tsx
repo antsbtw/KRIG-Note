@@ -26,6 +26,7 @@ import { indentPlugin } from '../plugins/indent';
 import { pasteMediaPlugin } from '../plugins/paste-media';
 import { renderBlockFocusPlugin } from '../plugins/render-block-focus';
 import { vocabHighlightPlugin, updateVocabDefs, dispatchVocabUpdate } from '../learning/vocab-highlight-plugin';
+import { fromPageDecorationPlugin } from '../plugins/from-page-decoration';
 import { updateVocabList } from '../learning';
 import { buildTestDocument } from '../test-content';
 import { createTocIndicator } from '../toc/toc-indicator';
@@ -143,6 +144,7 @@ function buildPlugins(s: ReturnType<typeof getSchema>) {
     renderBlockFocusPlugin(),
     headingCollapsePlugin(),
     vocabHighlightPlugin(),
+    fromPageDecorationPlugin,
     history(),
     dropCursor({ color: '#8ab4f8', width: 2 }),
     gapCursor(),

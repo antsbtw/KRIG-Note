@@ -22,6 +22,8 @@ declare const viewAPI: {
   noteOpenInEditor: (id: string) => Promise<void>;
   onNoteOpenInEditor: (callback: (noteId: string) => void) => () => void;
   onNoteTitleChanged: (callback: (data: { noteId: string; title: string }) => void) => () => void;
+  sendToOtherSlot: (message: any) => void;
+  onMessage: (callback: (message: any) => void) => () => void;
 };
 
 export function NoteView() {
@@ -85,6 +87,102 @@ export function NoteView() {
       window.removeEventListener('note:saved', onSaved);
     };
   }, [refreshNav]);
+
+  // ── 锚定同步：eBook↔Note ──
+  // 规则：鼠标在哪个 slot，哪个 slot 发送；另一个只接收。
+  // 用 mouseenter/mouseleave 追踪鼠标是否在本 View 内。
+
+  useEffect(() => {
+    let scrollTimer: ReturnType<typeof setTimeout> | null = null;
+    let mouseInView = true;
+    const enter = () => { mouseInView = true; };
+    const leave = () => { mouseInView = false; };
+    document.addEventListener('mouseenter', enter);
+    document.addEventListener('mouseleave', leave);
+
+    // 1) 接收来自 eBook 的 anchor-sync → 滚动到对应 fromPage
+    const unsubMessage = viewAPI.onMessage((message: any) => {
+      console.log('[NoteView:anchor] onMessage received:', JSON.stringify(message));
+      if (message?.action !== 'anchor-sync') return;
+      const { anchorType, pdfPage } = message.payload || {};
+      if (anchorType === 'pdf-page' && typeof pdfPage === 'number') {
+        const anchors = document.querySelectorAll<HTMLElement>('[data-from-page]');
+        console.log(`[NoteView:anchor] Looking for pdfPage=${pdfPage}, found ${anchors.length} fromPage elements`);
+        let target: HTMLElement | null = null;
+        let closestDist = Infinity;
+        for (const el of anchors) {
+          const p = parseInt(el.getAttribute('data-from-page') || '0', 10);
+          const dist = Math.abs(p - pdfPage);
+          if (dist < closestDist) {
+            closestDist = dist;
+            target = el;
+          }
+        }
+        if (target) {
+          console.log(`[NoteView:anchor] Scrolling to fromPage, closest dist=${closestDist}`);
+          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        } else {
+          console.log('[NoteView:anchor] No matching fromPage found');
+        }
+      }
+    });
+
+    // 2) 滚动时检测当前可见的 fromPage → 发送回 eBook
+    const handleScroll = () => {
+      if (!mouseInView) return;
+      if (scrollTimer) clearTimeout(scrollTimer);
+      scrollTimer = setTimeout(() => {
+        const anchors = document.querySelectorAll<HTMLElement>('[data-from-page]');
+        console.log(`[NoteView:anchor] scroll handler: ${anchors.length} fromPages, mouseInView=${mouseInView}`);
+        if (anchors.length === 0) return;
+
+        let bestPage = 0;
+        let bestTop = Infinity;
+        for (const el of anchors) {
+          const rect = el.getBoundingClientRect();
+          if (rect.top < window.innerHeight && rect.top > -50) {
+            if (rect.top < bestTop) {
+              bestTop = rect.top;
+              bestPage = parseInt(el.getAttribute('data-from-page') || '0', 10);
+            }
+          }
+        }
+        console.log(`[NoteView:anchor] bestPage=${bestPage}, bestTop=${bestTop}`);
+        if (bestPage > 0) {
+          console.log(`[NoteView:anchor] Sending anchor-sync pdfPage=${bestPage}`);
+          viewAPI.sendToOtherSlot({
+            protocol: '',
+            action: 'anchor-sync',
+            payload: { anchorType: 'pdf-page', pdfPage: bestPage },
+          });
+        }
+      }, 300);
+    };
+
+    // 滚动容器是 NoteEditor 的 container div（overflow: auto）
+    // 延迟绑定，等 ProseMirror 渲染完成
+    let scrollTarget: Element | null = null;
+    const bindTimer = setTimeout(() => {
+      const pm = document.querySelector('.ProseMirror');
+      scrollTarget = pm?.parentElement?.parentElement ?? null;
+      console.log('[NoteView:anchor] Binding scroll listener:', {
+        pm: !!pm,
+        scrollTarget: scrollTarget?.tagName,
+        scrollTargetClass: scrollTarget?.className,
+        overflow: scrollTarget ? getComputedStyle(scrollTarget).overflow : 'N/A',
+      });
+      scrollTarget?.addEventListener('scroll', handleScroll);
+    }, 500);
+
+    return () => {
+      clearTimeout(bindTimer);
+      unsubMessage();
+      document.removeEventListener('mouseenter', enter);
+      document.removeEventListener('mouseleave', leave);
+      scrollTarget?.removeEventListener('scroll', handleScroll);
+      if (scrollTimer) clearTimeout(scrollTimer);
+    };
+  }, []);
 
   return (
     <div style={styles.container}>

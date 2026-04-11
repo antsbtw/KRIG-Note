@@ -13,6 +13,7 @@ import type { IBookRenderer, EBookFileType } from '../types';
 import '../ebook.css';
 
 const FIT_WIDTH_PADDING = 40;
+const ANCHOR_SYNC_DEBOUNCE_MS = 300;
 const EPUB_COLORS = ['#ffd43b', '#69db7c', '#74c0fc', '#b197fc', '#ff6b6b'];
 
 /**
@@ -87,8 +88,41 @@ export function EBookView() {
 
   const progressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // ── 锚定同步（debounce）──
+  // 用 mouseenter/mouseleave 追踪鼠标是否在本 View 内，代替 document.hasFocus()
+
+  const anchorSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mouseInView = useRef(true); // EBookView 默认 true（用户正在操作的 View）
+
+  useEffect(() => {
+    const enter = () => { mouseInView.current = true; };
+    const leave = () => { mouseInView.current = false; };
+    document.addEventListener('mouseenter', enter);
+    document.addEventListener('mouseleave', leave);
+    return () => {
+      document.removeEventListener('mouseenter', enter);
+      document.removeEventListener('mouseleave', leave);
+    };
+  }, []);
+
+  const sendAnchorSync = useCallback((page: number) => {
+    const active = mouseInView.current;
+    console.log(`[EBookView:anchor] sendAnchorSync page=${page}, mouseInView=${active}`);
+    if (!active) return;
+    if (anchorSyncTimerRef.current) clearTimeout(anchorSyncTimerRef.current);
+    anchorSyncTimerRef.current = setTimeout(() => {
+      console.log(`[EBookView:anchor] Actually sending anchor-sync pdfPage=${page}`);
+      (viewAPI as any).sendToOtherSlot({
+        protocol: '',
+        action: 'anchor-sync',
+        payload: { anchorType: 'pdf-page', pdfPage: page },
+      });
+    }, ANCHOR_SYNC_DEBOUNCE_MS);
+  }, []);
+
   const handlePageChange = useCallback((page: number) => {
     setCurrentPage(page);
+    sendAnchorSync(page);
     if (progressTimerRef.current) clearTimeout(progressTimerRef.current);
     progressTimerRef.current = setTimeout(() => {
       const bookId = bookIdRef.current;
@@ -96,7 +130,7 @@ export function EBookView() {
       const cfi = (r && isReflowable(r)) ? r.getLastCFI?.() : undefined;
       if (bookId) viewAPI.ebookSaveProgress(bookId, { page, scale: scaleRef.current, fitWidth: fitWidthRef.current, cfi: cfi ?? undefined });
     }, 500);
-  }, []);
+  }, [sendAnchorSync]);
 
   // ── 核心加载逻辑 ──
 
@@ -195,6 +229,25 @@ export function EBookView() {
     const unsub = viewAPI.onEbookLoaded((info) => loadBook(info));
     return unsub;
   }, [loadBook]);
+
+  // ── 接收锚定同步消息（从 NoteView 发来的页码） ──
+
+  useEffect(() => {
+    const unsub = (viewAPI as any).onMessage((message: any) => {
+      console.log('[EBookView:anchor] onMessage received:', JSON.stringify(message));
+      if (message?.action !== 'anchor-sync') return;
+      const { anchorType, pdfPage } = message.payload || {};
+      if (anchorType === 'pdf-page' && typeof pdfPage === 'number' && pdfPage > 0) {
+        console.log(`[EBookView:anchor] Jumping to page ${pdfPage}`);
+        const renderer = rendererRef.current;
+        if (renderer && isFixedPage(renderer)) {
+          gotoPage(pdfPage);
+        }
+        setCurrentPage(pdfPage);
+      }
+    });
+    return unsub;
+  }, [gotoPage]);
 
   // ── 窗口 resize 时重新计算适应宽度 ──
 

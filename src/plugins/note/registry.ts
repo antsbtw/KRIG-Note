@@ -64,13 +64,13 @@ class BlockRegistry {
 
     for (const block of this.blocks.values()) {
       const spec = { ...block.nodeSpec };
-      // 所有 block group 节点自动注入 indent attr（视觉缩进基类能力）
-      if (spec.group === 'block' && spec.attrs) {
-        if (!('indent' in spec.attrs)) {
-          spec.attrs = { ...spec.attrs, indent: { default: 0 } };
-        }
-      } else if (spec.group === 'block' && !spec.attrs) {
-        spec.attrs = { indent: { default: 0 } };
+      // 所有 block group 节点自动注入通用 attrs
+      if (spec.group === 'block') {
+        spec.attrs = {
+          ...(spec.attrs || {}),
+          indent: spec.attrs?.indent ?? { default: 0 },
+          fromPage: { default: null },  // from.pdfPage — 来源页码，用于 eBook↔Note 锚定同步
+        };
       }
       nodes[block.name] = spec;
     }
