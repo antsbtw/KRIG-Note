@@ -262,21 +262,7 @@ export function createTocIndicator(
     const rect = indicatorEl.getBoundingClientRect();
     menuEl.style.position = 'fixed';
     menuEl.style.left = `${rect.right + 8}px`;
-
-    // 菜单垂直居中对齐指示器
-    const indicatorCenter = rect.top + rect.height / 2;
-    menuEl.style.top = '0px';
-    menuEl.style.display = 'flex'; // 先显示以获取尺寸
-
-    requestAnimationFrame(() => {
-      if (!menuEl) return;
-      const menuRect = menuEl.getBoundingClientRect();
-      let top = indicatorCenter - menuRect.height / 2;
-
-      // 限制不超出视口
-      top = Math.max(8, Math.min(top, window.innerHeight - menuRect.height - 8));
-      menuEl.style.top = `${top}px`;
-    });
+    menuEl.style.top = `${rect.top}px`;
   }
 
   // ── 跳转 ──
