@@ -229,3 +229,8 @@ contextBridge.exposeInMainWorld('viewAPI', {
   webHistoryAdd: (url: string, title: string, favicon?: string) =>
     ipcRenderer.invoke(IPC.WEB_HISTORY_ADD, url, title, favicon),
 });
+
+// Bridge: forward IPC 'note:import-json' → DOM CustomEvent (for NoteEditor)
+ipcRenderer.on('note:import-json', (_event, data) => {
+  window.dispatchEvent(new CustomEvent('note:import-json', { detail: data }));
+});

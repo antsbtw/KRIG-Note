@@ -1,4 +1,5 @@
-import { app, nativeTheme } from 'electron';
+import { app, nativeTheme, dialog } from 'electron';
+import fs from 'node:fs';
 import { createShell, getMainWindow } from './window/shell';
 import { registerIpcHandlers } from './ipc/handlers';
 import { setupDividerController } from './slot/divider';
@@ -191,6 +192,27 @@ function registerPlugins(): void {
       { id: 'new-note', label: 'New Note', accelerator: 'CmdOrCtrl+N', handler: () => console.log('New Note') },
       { id: 'save-note', label: 'Save', accelerator: 'CmdOrCtrl+S', handler: () => console.log('Save Note') },
       { id: 'sep1', label: '', separator: true, handler: () => {} },
+      { id: 'import-json', label: 'Import JSON...', handler: async () => {
+        const win = getMainWindow();
+        if (!win) return;
+        const result = await dialog.showOpenDialog(win as any, {
+          title: 'Import JSON',
+          filters: [{ name: 'JSON', extensions: ['json'] }],
+          properties: ['openFile'],
+        });
+        if (result.canceled || result.filePaths.length === 0) return;
+        try {
+          const raw = fs.readFileSync(result.filePaths[0], 'utf-8');
+          const data = JSON.parse(raw);
+          for (const child of win.contentView.children) {
+            if ('webContents' in child) {
+              (child as any).webContents.send('note:import-json', data);
+            }
+          }
+        } catch (err) {
+          console.error('[Menu] Import JSON failed:', err);
+        }
+      }},
       { id: 'export-md', label: 'Export as Markdown', handler: () => console.log('Export MD') },
     ],
   });

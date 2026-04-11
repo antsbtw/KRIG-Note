@@ -207,33 +207,6 @@ export function NoteView() {
         <span style={styles.toolbarTitle}>{noteTitle || 'Note'}</span>
         <div style={{ flex: 1 }} />
         <button
-          style={styles.saveBtn}
-          onClick={() => {
-            const input = document.createElement('input');
-            input.type = 'file';
-            input.accept = '.json';
-            input.onchange = () => {
-              const file = input.files?.[0];
-              if (!file) return;
-              const reader = new FileReader();
-              reader.onload = () => {
-                try {
-                  const data = JSON.parse(reader.result as string);
-                  console.log('[NoteView] Import JSON keys:', Object.keys(data));
-                  window.dispatchEvent(new CustomEvent('note:import-json', { detail: data }));
-                } catch (err) {
-                  console.error('[NoteView] JSON parse failed:', err);
-                }
-              };
-              reader.readAsText(file);
-            };
-            input.click();
-          }}
-          title="导入 JSON 测试"
-        >
-          Import JSON
-        </button>
-        <button
           style={{ ...styles.saveBtn, opacity: dirty ? 1 : 0.3 }}
           disabled={!dirty}
           onClick={() => window.dispatchEvent(new CustomEvent('note:save'))}
