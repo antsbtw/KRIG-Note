@@ -54,6 +54,7 @@ declare const viewAPI: {
   onNoteOpenInEditor: (callback: (noteId: string) => void) => () => void;
   notePendingOpen: () => Promise<string | null>;
   setActiveNote: (noteId: string | null, noteTitle?: string) => Promise<void>;
+  getActiveNoteId: () => Promise<string | null>;
   onRestoreWorkspaceState: (callback: (state: { activeNoteId: string | null }) => void) => () => void;
   onNoteTitleChanged: (callback: (data: { noteId: string; title: string }) => void) => () => void;
   onLoadTestDoc: (callback: () => void) => () => void;
@@ -518,11 +519,26 @@ export function NoteEditor() {
       }
     });
 
-    // 拉取导入时设置的 pending noteId（解决 NoteView 未 ready 时事件丢失）
-    viewAPI.notePendingOpen().then((noteId) => {
+    // 拉取导入时设置的 pending noteId，或恢复上次打开的笔记
+    viewAPI.notePendingOpen().then(async (noteId) => {
       if (noteId) {
         console.log('[NoteEditor] Pending note found:', noteId);
         loadNote(noteId);
+        return;
+      }
+      // No pending note — restore last opened note from workspace state
+      // Wait for DB to be ready before loading
+      const dbReady = await viewAPI.isDBReady();
+      if (!dbReady) {
+        await new Promise<void>(resolve => {
+          const unsub = viewAPI.onDBReady(() => { unsub(); resolve(); });
+        });
+      }
+      if (currentNoteIdRef.current) return; // already loaded by another path
+      const activeId = await viewAPI.getActiveNoteId();
+      if (activeId && !currentNoteIdRef.current) {
+        console.log('[NoteEditor] Restoring last note:', activeId);
+        loadNote(activeId);
       }
     });
 

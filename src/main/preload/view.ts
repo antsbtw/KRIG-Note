@@ -67,6 +67,10 @@ contextBridge.exposeInMainWorld('viewAPI', {
 
   // Workspace 状态同步
   setActiveNote: (noteId: string | null, noteTitle?: string) => ipcRenderer.invoke(IPC.SET_ACTIVE_NOTE, noteId, noteTitle),
+  getActiveNoteId: async (): Promise<string | null> => {
+    const data = await ipcRenderer.invoke(IPC.WORKSPACE_LIST);
+    return data?.active?.activeNoteId ?? null;
+  },
 
   onRestoreWorkspaceState: (callback: (state: { activeNoteId: string | null }) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, state: any) => callback(state);
