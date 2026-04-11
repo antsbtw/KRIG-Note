@@ -16,6 +16,7 @@ import { textBlockConverter } from './converters/text-block-converter';
 import { bulletListConverter, orderedListConverter, taskListConverter, taskItemConverter } from './converters/list-converter';
 import { codeBlockConverter, mathBlockConverter, imageConverter, videoConverter, audioConverter, tweetConverter, horizontalRuleConverter, pageAnchorConverter } from './converters/render-block-converters';
 import { blockquoteConverter, calloutConverter, toggleListConverter, frameBlockConverter, tableConverter, tableRowConverter, tableCellConverter, tableHeaderConverter, columnListConverter, columnConverter } from './converters/container-converters';
+import { mathVisualConverter } from './converters/math-visual-converter';
 
 class BlockRegistry {
   private blocks = new Map<string, BlockDef>();
@@ -172,7 +173,7 @@ class BlockRegistry {
     const converters = [
       textBlockConverter,
       bulletListConverter, orderedListConverter, taskListConverter, taskItemConverter,
-      codeBlockConverter, mathBlockConverter, imageConverter,
+      codeBlockConverter, mathBlockConverter, mathVisualConverter, imageConverter,
       videoConverter, audioConverter, tweetConverter, horizontalRuleConverter, pageAnchorConverter,
       blockquoteConverter, calloutConverter, toggleListConverter, frameBlockConverter,
       tableConverter, tableRowConverter, tableCellConverter, tableHeaderConverter,

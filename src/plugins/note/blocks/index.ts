@@ -25,6 +25,7 @@ import { imageBlock } from './image';
 import { videoBlockBlock } from './video-block';
 import { audioBlockBlock } from './audio-block';
 import { tweetBlockBlock } from './tweet-block';
+import { mathVisualBlock } from './math-visual';
 
 // ── Inline ──
 import { hardBreakBlock } from './hard-break';
@@ -73,6 +74,7 @@ export function registerAllBlocks(): void {
   blockRegistry.register(videoBlockBlock);
   blockRegistry.register(audioBlockBlock);
   blockRegistry.register(tweetBlockBlock);
+  blockRegistry.register(mathVisualBlock);
 
   // ── Inline ──
   blockRegistry.register(hardBreakBlock);

@@ -113,6 +113,7 @@ export type ContainerAtomType =
 export type RenderAtomType =
   | 'codeBlock'
   | 'mathBlock'
+  | 'mathVisual'
   | 'image'
   | 'figure'
   | 'video'
@@ -214,6 +215,20 @@ export interface MathBlockContent {
   latex: string;
 }
 
+export interface MathVisualContent {
+  title?: string;
+  functions: Record<string, unknown>[];
+  domain: [number, number];
+  range: [number, number];
+  parameters: Record<string, unknown>[];
+  annotations: Record<string, unknown>[];
+  canvas?: Record<string, unknown>;
+  tangentLines?: Record<string, unknown>[];
+  normalLines?: Record<string, unknown>[];
+  integralRegions?: Record<string, unknown>[];
+  featurePoints?: Record<string, unknown>[];
+}
+
 export interface ImageContent {
   src: string;
   alt?: string;
@@ -278,6 +293,7 @@ export type AtomContent =
   | ColumnListContent
   | CodeBlockContent
   | MathBlockContent
+  | MathVisualContent
   | ImageContent
   | FigureContent
   | VideoContent
