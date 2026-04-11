@@ -20,16 +20,20 @@ export const textBlockConverter: AtomConverter = {
   pmType: 'textBlock',
 
   toAtom(node: PMNode, parentId?: string): Atom {
-    const { level, isTitle } = node.attrs;
+    const { level, isTitle, textIndent, align } = node.attrs;
     const children = pmInlinesToAtom(node);
+    // Only persist non-default formatting attrs
+    const fmt: Record<string, unknown> = {};
+    if (textIndent) fmt.textIndent = true;
+    if (align && align !== 'left') fmt.align = align;
 
     if (isTitle) {
       return createAtom('noteTitle', { children } as NoteTitleContent, parentId);
     }
     if (level) {
-      return createAtom('heading', { level, children } as HeadingContent, parentId);
+      return createAtom('heading', { level, children, ...fmt } as HeadingContent, parentId);
     }
-    return createAtom('paragraph', { children } as ParagraphContent, parentId);
+    return createAtom('paragraph', { children, ...fmt } as ParagraphContent, parentId);
   },
 
   toPM(atom: Atom): PMNodeJSON {
@@ -45,13 +49,14 @@ export const textBlockConverter: AtomConverter = {
       const c = atom.content as HeadingContent;
       return {
         type: 'textBlock',
-        attrs: { level: c.level },
+        attrs: { level: c.level, textIndent: c.textIndent ?? false, align: c.align ?? 'left' },
         content: atomInlinesToPM(c.children),
       };
     }
     const c = atom.content as ParagraphContent;
     return {
       type: 'textBlock',
+      attrs: { textIndent: c.textIndent ?? false, align: c.align ?? 'left' },
       content: atomInlinesToPM(c.children),
     };
   },

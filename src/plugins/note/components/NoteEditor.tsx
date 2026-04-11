@@ -117,6 +117,17 @@ function buildPlugins(s: ReturnType<typeof getSchema>) {
     };
   }
 
+  // Shift+Cmd+I 首行缩进
+  markKeymap['Shift-Mod-i'] = (state: any, dispatch: any) => {
+    const { $from } = state.selection;
+    if ($from.depth < 1) return false;
+    const pos = $from.before(1);
+    const node = state.doc.nodeAt(pos);
+    if (!node || node.type.name !== 'textBlock' || node.attrs.isTitle) return false;
+    if (dispatch) dispatch(state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, textIndent: !node.attrs.textIndent }));
+    return true;
+  };
+
   if (s.nodes.hardBreak) {
     markKeymap['Shift-Enter'] = (state: any, dispatch: any) => {
       if (dispatch) dispatch(state.tr.replaceSelectionWith(s.nodes.hardBreak.create()));

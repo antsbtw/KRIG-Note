@@ -141,11 +141,15 @@ export type AtomType =
 
 export interface ParagraphContent {
   children: InlineElement[];
+  textIndent?: boolean;
+  align?: 'left' | 'center' | 'right';
 }
 
 export interface HeadingContent {
   level: 1 | 2 | 3;
   children: InlineElement[];
+  textIndent?: boolean;
+  align?: 'left' | 'center' | 'right';
 }
 
 export interface NoteTitleContent {
