@@ -211,6 +211,7 @@ export function NoteEditor() {
   const sentinelObserverRef = useRef<IntersectionObserver | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const fullAtomsRef = useRef<Atom[] | null>(null); // 完整 atoms（分片加载时用于保存未加载部分）
+  const loadedTopCountRef = useRef<number>(-1); // 分片加载：已加载的 topLevel atom 数量（-1 = 全量加载）
   const scheduleSaveRef = useRef<() => void>(() => {});
 
   // 追加更多内容到编辑器末尾
@@ -224,16 +225,17 @@ export function NoteEditor() {
 
     // 在文档末尾插入新节点
     const { tr } = view.state;
-    const insertPos = view.state.doc.content.size;
     for (const node of nodes) {
       tr.insert(tr.doc.content.size, node);
     }
     tr.setMeta('addToHistory', false); // 不计入撤销历史
     view.dispatch(tr);
+    loadedTopCountRef.current += nodes.length;
 
     if (!hasMore) {
       // 所有内容已加载，移除 sentinel
       loadMoreRef.current = null;
+      loadedTopCountRef.current = -1;
       sentinelObserverRef.current?.disconnect();
       sentinelRef.current?.remove();
     }
@@ -327,12 +329,15 @@ export function NoteEditor() {
       if (!record || !record.doc_content || record.doc_content.length === 0) {
         loadMoreRef.current = null;
         fullAtomsRef.current = null;
+        loadedTopCountRef.current = -1;
         createEditor(createEmptyDoc(s));
       } else {
         const { doc, loadMore } = docFromContentChunked(s, record.doc_content);
         loadMoreRef.current = loadMore;
         // 分片模式下保留原始 atoms 用于部分保存场景
         fullAtomsRef.current = loadMore ? (record.doc_content as Atom[]) : null;
+        // 记录初始加载的 topLevel atom 数量
+        loadedTopCountRef.current = loadMore ? INITIAL_CHUNK_SIZE : -1;
         createEditor(doc);
       }
       currentNoteIdRef.current = noteId;
@@ -383,6 +388,7 @@ export function NoteEditor() {
     }
     loadMoreRef.current = null;
     fullAtomsRef.current = null;
+    loadedTopCountRef.current = -1;
     sentinelObserverRef.current?.disconnect();
     sentinelRef.current?.remove();
   }, []);
@@ -392,11 +398,6 @@ export function NoteEditor() {
     const noteId = currentNoteIdRef.current;
     const view = viewRef.current;
     if (!noteId || !view) return;
-
-    // 如果还有未加载的内容，先全部加载进编辑器
-    if (loadMoreRef.current) {
-      flushRemainingContent();
-    }
 
     const doc = view.state.doc;
 
@@ -408,10 +409,37 @@ export function NoteEditor() {
       }
     });
 
-    // PM Doc → Atom[]（renderer 端转换，存储 Atom 格式）
-    const atoms = converterRegistry.docToAtoms(doc);
-    viewAPI.noteSave(noteId, atoms, title);
-  }, [flushRemainingContent]);
+    // PM Doc → Atom[]（编辑器中已加载的部分）
+    const loadedAtoms = converterRegistry.docToAtoms(doc);
+
+    // 如果还有未加载的尾部内容，从原始 atoms 中取出拼接（避免 flush 到编辑器导致卡顿）
+    const fullAtoms = fullAtomsRef.current;
+    const loadedCount = loadedTopCountRef.current;
+    if (fullAtoms && loadedCount >= 0) {
+      // 从原始 atoms 中找出未加载的 topLevel atoms
+      const topLevelAtoms = fullAtoms.filter(a => !a.parentId);
+      const unloadedTopIds = new Set(
+        topLevelAtoms.slice(loadedCount).map(a => a.id),
+      );
+      // 递归收集所有后代 atom（容器节点如 columnList > column > block 多级嵌套）
+      // 多轮扩展，直到没有新增（处理任意深度嵌套）
+      const allIds = new Set(unloadedTopIds);
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (const atom of fullAtoms) {
+          if (!allIds.has(atom.id) && atom.parentId && allIds.has(atom.parentId)) {
+            allIds.add(atom.id);
+            changed = true;
+          }
+        }
+      }
+      const tailAtoms = fullAtoms.filter(a => allIds.has(a.id));
+      loadedAtoms.push(...tailAtoms);
+    }
+
+    viewAPI.noteSave(noteId, loadedAtoms, title);
+  }, []);
 
   // 防抖自动保存（1秒）
   const scheduleSave = useCallback(() => {
@@ -462,6 +490,7 @@ export function NoteEditor() {
         const { doc } = docFromContentChunked(s, cleaned);
         loadMoreRef.current = null;
         fullAtomsRef.current = null;
+        loadedTopCountRef.current = -1;
         createEditor(doc);
       } catch (err) {
         console.error('[NoteEditor] Import JSON failed:', err);
