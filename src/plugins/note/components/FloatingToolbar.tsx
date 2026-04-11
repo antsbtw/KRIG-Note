@@ -51,6 +51,7 @@ export function FloatingToolbar({ view }: FloatingToolbarProps) {
   const [showLinkPanel, setShowLinkPanel] = useState(false);
   const [lastTextColor, setLastTextColor] = useState('');
   const [lastBgColor, setLastBgColor] = useState('');
+  const toolbarRef = useRef<HTMLDivElement>(null);
 
   const updatePosition = useCallback(() => {
     if (!view) return false;
@@ -64,10 +65,26 @@ export function FloatingToolbar({ view }: FloatingToolbarProps) {
     try {
       const fromCoords = view.coordsAtPos(from);
       const toCoords = view.coordsAtPos(to);
-      setPosition({
-        top: Math.min(fromCoords.top, toCoords.top) - 8,
-        left: (fromCoords.left + toCoords.left) / 2,
-      });
+      const centerX = (fromCoords.left + toCoords.left) / 2;
+      const top = Math.min(fromCoords.top, toCoords.top) - 8;
+
+      // 用 toolbar 实际宽度做边界检测；首次渲染前用估算值
+      const el = toolbarRef.current;
+      const toolbarW = el ? el.offsetWidth : 320;
+      const halfW = toolbarW / 2;
+      const pad = 8;
+
+      let left = centerX;
+      // 左边溢出：toolbar 中心在 centerX，左边缘 = centerX - halfW
+      if (centerX - halfW < pad) {
+        left = halfW + pad;
+      }
+      // 右边溢出：右边缘 = centerX + halfW
+      else if (centerX + halfW > window.innerWidth - pad) {
+        left = window.innerWidth - pad - halfW;
+      }
+
+      setPosition({ top, left });
       return true;
     } catch { return false; }
   }, [view]);
@@ -170,6 +187,7 @@ export function FloatingToolbar({ view }: FloatingToolbarProps) {
 
   return (
     <div
+      ref={toolbarRef}
       className="floating-toolbar"
       style={{
         position: 'fixed',

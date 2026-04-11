@@ -94,37 +94,6 @@ export function createTocIndicator(
     }
   }
 
-  // ── 计算指示器纵向位置（和正文第一行对齐）──
-  function positionIndicator() {
-    if (entries.length === 0) return;
-
-    // 找第一个 heading 的 DOM 位置，和它水平对齐
-    try {
-      const firstPos = entries[0].pos + 1;
-      const domPos = view.domAtPos(firstPos);
-      const el = domPos.node instanceof HTMLElement
-        ? domPos.node
-        : domPos.node.parentElement;
-      const blockEl = el?.closest('h1, h2, h3') as HTMLElement | null;
-      if (blockEl) {
-        const rect = blockEl.getBoundingClientRect();
-        indicatorEl.style.top = `${rect.top}px`;
-        return;
-      }
-    } catch { /* fallback below */ }
-
-    // fallback：用 ProseMirror 区域估算
-    const pmEl = editorContainer.querySelector('.ProseMirror') as HTMLElement;
-    if (pmEl) {
-      const titleEl = pmEl.querySelector('.note-title') as HTMLElement;
-      if (titleEl) {
-        indicatorEl.style.top = `${titleEl.getBoundingClientRect().bottom + 8}px`;
-      } else {
-        indicatorEl.style.top = `${pmEl.getBoundingClientRect().top + 24}px`;
-      }
-    }
-  }
-
   // ── IntersectionObserver：跟踪当前可见 heading ──
   function setupObserver() {
     if (observer) observer.disconnect();
@@ -195,6 +164,7 @@ export function createTocIndicator(
     if (entries.length === 0) return;
     if (isMenuVisible) return;
     isMenuVisible = true;
+    indicatorEl.classList.add('toc-indicator--menu-open');
 
     if (!menuEl) {
       menuEl = document.createElement('div');
@@ -206,12 +176,13 @@ export function createTocIndicator(
 
     renderMenu();
     positionMenu();
-    menuEl.style.display = 'block';
+    menuEl.style.display = 'flex';
   }
 
   function hideMenu() {
     if (!isMenuVisible) return;
     isMenuVisible = false;
+    indicatorEl.classList.remove('toc-indicator--menu-open');
     if (menuEl) menuEl.style.display = 'none';
   }
 
@@ -219,7 +190,10 @@ export function createTocIndicator(
     if (!menuEl) return;
     menuEl.innerHTML = '';
 
-    // 目录条目
+    // 可滚动的目录条目容器
+    const listEl = document.createElement('div');
+    listEl.classList.add('toc-menu__list');
+
     for (let i = 0; i < entries.length; i++) {
       const entry = entries[i];
       const btn = document.createElement('button');
@@ -237,10 +211,20 @@ export function createTocIndicator(
         hideMenu();
       });
 
-      menuEl.appendChild(btn);
+      listEl.appendChild(btn);
     }
 
-    // 展开级别按钮：1 2 3 *
+    menuEl.appendChild(listEl);
+
+    // 滚动到当前高亮项
+    if (activeIndex >= 0) {
+      requestAnimationFrame(() => {
+        const activeBtn = listEl.querySelector('.toc-menu__item--active') as HTMLElement | null;
+        activeBtn?.scrollIntoView({ block: 'center' });
+      });
+    }
+
+    // 展开级别按钮：1 2 3 *（固定在底部）
     const currentLevel = getCurrentExpandLevel(view);
     const levels: { label: string; value: number }[] = [
       { label: 'h1', value: 1 },
@@ -275,16 +259,22 @@ export function createTocIndicator(
   function positionMenu() {
     if (!menuEl) return;
     const rect = indicatorEl.getBoundingClientRect();
+    menuEl.style.position = 'fixed';
     menuEl.style.left = `${rect.right + 8}px`;
-    menuEl.style.top = `${rect.top}px`;
 
-    // 确保不超出视口底部
+    // 菜单垂直居中对齐指示器
+    const indicatorCenter = rect.top + rect.height / 2;
+    menuEl.style.top = '0px';
+    menuEl.style.display = 'flex'; // 先显示以获取尺寸
+
     requestAnimationFrame(() => {
       if (!menuEl) return;
       const menuRect = menuEl.getBoundingClientRect();
-      if (menuRect.bottom > window.innerHeight - 8) {
-        menuEl.style.top = `${window.innerHeight - 8 - menuRect.height}px`;
-      }
+      let top = indicatorCenter - menuRect.height / 2;
+
+      // 限制不超出视口
+      top = Math.max(8, Math.min(top, window.innerHeight - menuRect.height - 8));
+      menuEl.style.top = `${top}px`;
     });
   }
 
@@ -357,19 +347,6 @@ export function createTocIndicator(
     }, 200);
   }
 
-  // ── 滚动时重新定位指示器 ──
-  // NoteEditor 的 container div（overflow: auto）就是滚动容器
-  const scrollContainer = editorContainer.parentElement as HTMLElement | null;
-  function onScroll() {
-    positionIndicator();
-    if (isMenuVisible) positionMenu();
-  }
-
-  // 监听滚动容器（container div）
-  if (scrollContainer) {
-    scrollContainer.addEventListener('scroll', onScroll, { passive: true });
-  }
-
   // ── update：文档变化时调用 ──
   function update() {
     entries = scanHeadings();
@@ -378,7 +355,6 @@ export function createTocIndicator(
     if (activeIndex >= entries.length) activeIndex = entries.length - 1;
 
     renderLines();
-    positionIndicator();
     setupObserver();
 
     if (isMenuVisible) renderMenu();
@@ -394,7 +370,6 @@ export function createTocIndicator(
       menuEl.remove();
       menuEl = null;
     }
-    scrollContainer?.removeEventListener('scroll', onScroll);
   }
 
   // ── 初始化（等 DOM 渲染完成）──
