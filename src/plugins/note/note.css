@@ -266,12 +266,18 @@
   outline: 2px solid #8ab4f8;
   outline-offset: -1px;
 }
-/* toolbar / tab-bar 统一显示规则 */
+/* toolbar / tab-bar 统一显示规则 — 浮动菜单，不占文档流 */
 .render-block__toolbar,
 .video-block__tab-bar,
 .tweet-block__tab-bar {
-  display: none;
+  display: flex;
   align-items: center;
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  z-index: 10;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
 }
 .render-block:hover > .render-block__toolbar,
 .render-block--selected > .render-block__toolbar,
@@ -281,12 +287,14 @@
 .render-block--editing .video-block__tab-bar,
 .render-block--hovered .tweet-block__tab-bar,
 .render-block--selected .tweet-block__tab-bar,
-.render-block--editing .tweet-block__tab-bar { display: flex; }
+.render-block--editing .tweet-block__tab-bar {
+  opacity: 1;
+  pointer-events: auto;
+}
 
 .render-block__toolbar {
   padding: 4px 8px;
-  background: #252525;
-  border-bottom: 1px solid #333;
+  background: rgba(30, 30, 30, 0.7);
   border-radius: 6px 6px 0 0;
   min-height: 32px;
 }
@@ -804,8 +812,8 @@
    video Block
    ═══════════════════════════════════════════════════════════ */
 .video-block__tab-bar {
-  padding: 0 8px; background: #252525; border-bottom: 1px solid #333;
-  position: relative;
+  padding: 0 8px; background: rgba(30, 30, 30, 0.7);
+  border-radius: 6px 6px 0 0;
 }
 .video-block__tab-btn {
   padding: 6px 12px; background: transparent; border: none; border-bottom: 2px solid transparent;
@@ -905,7 +913,8 @@
    tweet Block
    ═══════════════════════════════════════════════════════════ */
 .tweet-block__tab-bar {
-  padding: 0 8px; background: #252525; border-bottom: 1px solid #333;
+  padding: 0 8px; background: rgba(30, 30, 30, 0.7);
+  border-radius: 6px 6px 0 0;
 }
 .tweet-block__tab-btn {
   padding: 6px 12px; background: transparent; border: none; border-bottom: 2px solid transparent;
