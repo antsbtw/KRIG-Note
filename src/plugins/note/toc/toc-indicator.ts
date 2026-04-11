@@ -347,21 +347,34 @@ export function createTocIndicator(
     }, 200);
   }
 
-  // ── update：文档变化时调用 ──
+  // ── update：文档变化时调用（防抖 + composing 跳过）──
+  let updateTimer: ReturnType<typeof setTimeout> | null = null;
+
   function update() {
-    entries = scanHeadings();
+    if (updateTimer) clearTimeout(updateTimer);
+    updateTimer = setTimeout(() => {
+      // IME composition 期间不更新，避免 DOM 变更打断输入法
+      if (view.composing) return;
 
-    // 重置 activeIndex
-    if (activeIndex >= entries.length) activeIndex = entries.length - 1;
+      const newEntries = scanHeadings();
 
-    renderLines();
-    setupObserver();
+      // 只在 heading 列表实际变化时才重建
+      const changed = newEntries.length !== entries.length ||
+        newEntries.some((e, i) => e.pos !== entries[i].pos || e.level !== entries[i].level || e.text !== entries[i].text);
+      if (!changed) return;
 
-    if (isMenuVisible) renderMenu();
+      entries = newEntries;
+      if (activeIndex >= entries.length) activeIndex = entries.length - 1;
+
+      renderLines();
+      setupObserver();
+      if (isMenuVisible) renderMenu();
+    }, 300);
   }
 
   // ── destroy ──
   function destroy() {
+    if (updateTimer) clearTimeout(updateTimer);
     if (observer) observer.disconnect();
     indicatorEl.remove();
     if (menuEl) {

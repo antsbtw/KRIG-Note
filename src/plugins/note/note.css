@@ -7,6 +7,7 @@
 /* ── ProseMirror 基础 ── */
 .ProseMirror {
   outline: none;
+  white-space: pre-wrap;  /* ProseMirror 要求，影响 IME composition 正确性 */
   padding: 24px 48px 24px 72px;
   min-height: 100%;
   color: #e8eaed;
