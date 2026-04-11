@@ -10,9 +10,8 @@
 .toc-indicator {
   position: fixed;
   left: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  max-height: 60vh;
+  top: 20%;       /* toolbar 37px + 8px gap */
+  bottom: 16px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
