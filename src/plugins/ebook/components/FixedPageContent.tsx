@@ -32,6 +32,8 @@ export function FixedPageContent({ renderer, scale, initialPage, annotationMode 
   const [annotations, setAnnotations] = useState<any[]>([]);
   const [pageDimensions, setPageDimensions] = useState<PageDimension[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
+  // 每次 domRange 变化导致 DOM 重建时递增，强制触发渲染 effect
+  const [domGeneration, setDomGeneration] = useState(0);
   const totalPages = renderer.getTotalPages();
 
   // 加载页面尺寸
@@ -147,6 +149,16 @@ export function FixedPageContent({ renderer, scale, initialPage, annotationMode 
     return { first, last };
   }, [currentPage, totalPages, pageDimensions, scale]);
 
+  // domRange 变化时递增 generation，确保新挂载的 canvas 被渲染
+  const prevDomRangeRef = useRef({ first: 0, last: 0 });
+  useEffect(() => {
+    const prev = prevDomRangeRef.current;
+    if (prev.first !== domRange.first || prev.last !== domRange.last) {
+      prevDomRangeRef.current = domRange;
+      setDomGeneration((g) => g + 1);
+    }
+  }, [domRange]);
+
   // 渲染可见页面的 canvas + textLayer
   useEffect(() => {
     if (pageDimensions.length === 0) return;
@@ -165,7 +177,7 @@ export function FixedPageContent({ renderer, scale, initialPage, annotationMode 
         renderer.renderTextLayer(pageNum, textDiv, scale);
       }
     }
-  }, [currentPage, scale, pageDimensions, totalPages, renderer, getVisibleRange, domRange]);
+  }, [currentPage, scale, pageDimensions, totalPages, renderer, getVisibleRange, domGeneration]);
 
   // 标注操作
   const handleAnnotationCreate = useCallback(async (pageNum: number, ann: Omit<Annotation, 'id'>) => {
