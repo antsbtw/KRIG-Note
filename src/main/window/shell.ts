@@ -96,7 +96,10 @@ function createViewForWorkMode(workModeId: string): WebContentsView {
       guestWebContents.setWindowOpenHandler(({ url, disposition }) => {
         if (!url || url === 'about:blank') return { action: 'allow' };
         if (disposition === 'foreground-tab' || disposition === 'background-tab') {
-          guestWebContents.loadURL(url);
+          // 延迟 loadURL — 在 setWindowOpenHandler 回调中同步调用会导致死锁
+          setTimeout(() => {
+            guestWebContents.loadURL(url).catch(() => {});
+          }, 0);
           return { action: 'deny' };
         }
         return { action: 'allow' };

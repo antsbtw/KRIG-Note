@@ -17,6 +17,7 @@ import { activityStore } from './storage/activity-store';
 import { initKrigNoteDocs, createBlockTaskDoc, reimportTestDocs } from './storage/init-docs';
 import { mediaSurrealStore as mediaStore } from './media/media-surreal-store';
 import { setupExtractionInterceptor } from '../plugins/web/main/extraction-handler';
+import { setupCSPBypass } from './web-translate/csp-bypass';
 
 /**
  * KRIG Note — 应用入口
@@ -67,6 +68,19 @@ function registerPlugins(): void {
     hidden: true,   // 仅作为 right slot，不在 NavSide tab 中显示
     onViewCreated: (_view, guestWebContents) => {
       setupExtractionInterceptor(guestWebContents);
+    },
+  });
+
+  workModeRegistry.register({
+    id: 'web-translate',
+    viewType: 'web',
+    variant: 'translate',
+    icon: '🌐',
+    label: 'Translate',
+    order: 5,
+    hidden: true,   // 仅作为 right slot，不在 NavSide tab 中显示
+    onViewCreated: (_view, guestWebContents) => {
+      setupCSPBypass(guestWebContents);
     },
   });
 
@@ -136,6 +150,7 @@ function registerPlugins(): void {
   protocolRegistry.register({ id: 'note-note',   match: { left: { type: 'note' },  right: { type: 'note' } } });
   protocolRegistry.register({ id: 'ebook-ebook', match: { left: { type: 'ebook' }, right: { type: 'ebook' } } });
   protocolRegistry.register({ id: 'web-web',     match: { left: { type: 'web' },   right: { type: 'web' } } });
+  protocolRegistry.register({ id: 'web-translate', match: { left: { type: 'web' }, right: { type: 'web', variant: 'translate' } } });
 
   // ── DevTools 辅助函数 ──
   function openDevToolsByName(name: string): void {

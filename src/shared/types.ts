@@ -315,6 +315,9 @@ export const IPC = {
   THOUGHT_RELATE: 'thought:relate',
   THOUGHT_UNRELATE: 'thought:unrelate',
 
+  // Web Translate
+  WEB_TRANSLATE_FETCH_ELEMENT_JS: 'web-translate:fetch-element-js',
+
   // yt-dlp
   YTDLP_CHECK_STATUS: 'ytdlp:check-status',
   YTDLP_INSTALL: 'ytdlp:install',

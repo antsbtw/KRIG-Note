@@ -1,5 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { WebToolbar } from './WebToolbar';
+import { SyncDriver } from '../sync/sync-driver';
+import { SYNC_ACTION } from '../sync/sync-protocol';
 import '../web.css';
 
 declare const viewAPI: {
@@ -8,6 +10,10 @@ declare const viewAPI: {
   webBookmarkList: () => Promise<Array<{ id: string; url: string; title: string; favicon?: string; folderId: string | null; createdAt: number }>>;
   webBookmarkFindByUrl: (url: string) => Promise<{ id: string } | null>;
   webHistoryAdd: (url: string, title: string, favicon?: string) => Promise<unknown>;
+  sendToOtherSlot: (message: { protocol: string; action: string; payload: unknown }) => void;
+  onMessage: (callback: (message: { protocol: string; action: string; payload: unknown }) => void) => () => void;
+  ensureRightSlot: (workModeId: string) => Promise<void>;
+  translateText: (text: string, targetLang?: string) => Promise<{ text: string } | null>;
 };
 
 const DEFAULT_URL = 'https://www.google.com';
@@ -15,11 +21,12 @@ const DEFAULT_URL = 'https://www.google.com';
 /**
  * WebView — L3 View 组件
  *
- * 内部结构：Toolbar + webview 标签。
- * webview 标签是 Electron 提供的独立渲染进程容器。
+ * 通信协议见 slot-communication.md
  */
 export function WebView() {
   const webviewRef = useRef<Electron.WebviewTag | null>(null);
+  const syncDriverRef = useRef<SyncDriver | null>(null);
+  const remoteNavUntilRef = useRef(0);  // 时间戳：在此之前的导航都是对面触发的，不回发
   const [currentUrl, setCurrentUrl] = useState(DEFAULT_URL);
   const [currentTitle, setCurrentTitle] = useState('');
   const [loading, setLoading] = useState(false);
@@ -34,6 +41,18 @@ export function WebView() {
     if (!el || webviewRef.current === el) return;
     webviewRef.current = el;
 
+    // SyncDriver（左侧）— 带翻译回调用于 input-enter
+    const driver = new SyncDriver(
+      'left',
+      (msg) => viewAPI.sendToOtherSlot(msg),
+      async (value) => {
+        const result = await viewAPI.translateText(value, 'en');
+        return result?.text ?? null;
+      },
+    );
+    driver.bind(el);
+    syncDriverRef.current = driver;
+
     el.addEventListener('did-start-loading', () => setLoading(true));
     el.addEventListener('did-stop-loading', () => setLoading(false));
 
@@ -42,6 +61,18 @@ export function WebView() {
       setCanGoBack(el.canGoBack());
       setCanGoForward(el.canGoForward());
       checkBookmark(e.url);
+      driver.reinject();
+      // 区分：用户主动导航 vs 对面 NAVIGATE 消息触发的导航
+      if (Date.now() < remoteNavUntilRef.current) {
+        // 在时间窗口内，是对面触发的导航（含重定向），不回发
+      } else {
+        driver.takeControl();
+        viewAPI.sendToOtherSlot({
+          protocol: 'web-translate',
+          action: SYNC_ACTION.NAVIGATE,
+          payload: { url: e.url },
+        });
+      }
     });
 
     el.addEventListener('did-navigate-in-page', (e: any) => {
@@ -50,18 +81,30 @@ export function WebView() {
         setCanGoBack(el.canGoBack());
         setCanGoForward(el.canGoForward());
         checkBookmark(e.url);
+        driver.reinject();
+        if (Date.now() < remoteNavUntilRef.current) {
+          // 在时间窗口内，不回发
+        } else {
+          driver.takeControl();
+          viewAPI.sendToOtherSlot({
+            protocol: 'web-translate',
+            action: SYNC_ACTION.NAVIGATE,
+            payload: { url: e.url },
+          });
+        }
       }
     });
 
     el.addEventListener('page-title-updated', (e: any) => {
       setCurrentTitle(e.title);
-      // 记录浏览历史
       const url = el.getURL();
       if (url && !url.startsWith('about:') && e.title) {
-        viewAPI.webHistoryAdd(url, e.title).catch((err: unknown) => {
-          console.warn('[WebView] Failed to add history:', err);
-        });
+        viewAPI.webHistoryAdd(url, e.title).catch(() => {});
       }
+    });
+
+    el.addEventListener('did-finish-load', () => {
+      driver.reinject();
     });
 
   }, []);
@@ -79,9 +122,64 @@ export function WebView() {
     }
   }, []);
 
-  // 初始加载时检查
   useEffect(() => {
     checkBookmark(currentUrl);
+  }, []);
+
+  // ── 监听右侧消息（见 slot-communication.md） ──
+
+  useEffect(() => {
+    const unsub = viewAPI.onMessage((msg) => {
+      switch (msg.action) {
+        case SYNC_ACTION.TAKE_CONTROL:
+          syncDriverRef.current?.yield();
+          break;
+
+        case SYNC_ACTION.SYNC_EVENTS: {
+          const p = msg.payload as { events: unknown[]; fromSide: 'left' | 'right' };
+          syncDriverRef.current?.handleRemoteEvents(p.events as any, p.fromSide);
+          break;
+        }
+
+        case SYNC_ACTION.NAVIGATE: {
+          const url = (msg.payload as { url: string }).url;
+          if (url && webviewRef.current) {
+            remoteNavUntilRef.current = Date.now() + 2000;
+            webviewRef.current.loadURL(url);
+          }
+          break;
+        }
+
+        case SYNC_ACTION.REQUEST_URL: {
+          // 右侧初始化请求 → 回复当前 URL（可能需要等 webview 就绪）
+          const url = webviewRef.current?.getURL();
+          if (url && url !== 'about:blank' && url !== '') {
+            viewAPI.sendToOtherSlot({
+              protocol: 'web-translate',
+              action: SYNC_ACTION.NAVIGATE,
+              payload: { url },
+            });
+          } else {
+            // webview 还没导航完成，等 did-navigate 后回复
+            const onNav = (e: any) => {
+              viewAPI.sendToOtherSlot({
+                protocol: 'web-translate',
+                action: SYNC_ACTION.NAVIGATE,
+                payload: { url: e.url },
+              });
+              webviewRef.current?.removeEventListener('did-navigate', onNav);
+            };
+            webviewRef.current?.addEventListener('did-navigate', onNav);
+          }
+          break;
+        }
+
+        case SYNC_ACTION.READY:
+          syncDriverRef.current?.start();
+          break;
+      }
+    });
+    return () => { unsub(); };
   }, []);
 
   // ── Toolbar 回调 ──
@@ -93,7 +191,6 @@ export function WebView() {
     let finalUrl = url.trim();
     if (!finalUrl) return;
 
-    // 非 URL → Google 搜索
     if (!finalUrl.includes('://') && !finalUrl.includes('.')) {
       finalUrl = `https://www.google.com/search?q=${encodeURIComponent(finalUrl)}`;
     } else if (!finalUrl.startsWith('http://') && !finalUrl.startsWith('https://')) {
@@ -140,6 +237,8 @@ export function WebView() {
           src={DEFAULT_URL}
           className="web-view__webview"
           partition="persist:web"
+          // @ts-ignore
+          allowpopups="true"
         />
       </div>
     </div>

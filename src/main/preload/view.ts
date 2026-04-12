@@ -134,6 +134,11 @@ contextBridge.exposeInMainWorld('viewAPI', {
     return () => ipcRenderer.removeListener(IPC.EBOOK_LOADED, listener);
   },
 
+  // ── Web Translate ──
+
+  translateFetchElementJs: () =>
+    ipcRenderer.invoke(IPC.WEB_TRANSLATE_FETCH_ELEMENT_JS),
+
   // ── 学习模块 ──
 
   lookupWord: (word: string) =>

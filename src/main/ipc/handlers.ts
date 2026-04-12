@@ -637,6 +637,21 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
     return { canceled: false, filePath: result.filePath };
   });
 
+  // ── Web Translate ──
+
+  ipcMain.handle(IPC.WEB_TRANSLATE_FETCH_ELEMENT_JS, async () => {
+    try {
+      const { net } = await import('electron');
+      const resp = await net.fetch(
+        'https://translate.google.com/translate_a/element.js?cb=googleTranslateElementInit',
+      );
+      if (!resp.ok) return null;
+      return await resp.text();
+    } catch {
+      return null;
+    }
+  });
+
   // ── 学习模块 ──
 
   ipcMain.handle(IPC.LEARNING_LOOKUP, (_e, word: string) =>
