@@ -77,6 +77,81 @@ export function ContextMenu({ view }: ContextMenuProps) {
     },
   ];
 
+  // Thought 标注：检测光标处是否有 thought mark 或 node attr
+  const thoughtMarkType = view.state.schema.marks.thought;
+  if (thoughtMarkType) {
+    const $pos = view.state.selection.$from;
+    // 检查 inline/block mark
+    const thoughtMark = $pos.marks().find((m) => m.type === thoughtMarkType);
+    if (thoughtMark) {
+      const thoughtId = thoughtMark.attrs.thoughtId;
+      items.push({
+        id: 'remove-thought', label: '删除标注', icon: '💭', separator: true,
+        action: () => {
+          // 移除 mark
+          const { tr, doc } = view.state;
+          doc.descendants((node, pos) => {
+            node.marks.forEach((mark) => {
+              if (mark.type === thoughtMarkType && mark.attrs.thoughtId === thoughtId) {
+                tr.removeMark(pos, pos + node.nodeSize, mark);
+              }
+            });
+          });
+          view.dispatch(tr);
+          // 通知 Thought 面板删除
+          const api = (window as any).viewAPI;
+          if (api?.sendToOtherSlot) {
+            api.sendToOtherSlot({
+              protocol: 'note-thought',
+              action: 'thought:delete',
+              payload: { thoughtId },
+            });
+          }
+          // 删除 DB 记录
+          if (api?.thoughtDelete) api.thoughtDelete(thoughtId);
+          if (api?.getActiveNoteId && api?.thoughtUnrelate) {
+            api.getActiveNoteId().then((noteId: string) => {
+              if (noteId) api.thoughtUnrelate(noteId, thoughtId);
+            });
+          }
+          close();
+        },
+      });
+    }
+    // 检查 node attr（image, codeBlock 等）
+    for (let d = $pos.depth; d >= 0; d--) {
+      const node = $pos.node(d);
+      if (node.attrs.thoughtId) {
+        const thoughtId = node.attrs.thoughtId;
+        const nodePos = $pos.before(d);
+        items.push({
+          id: 'remove-thought-node', label: '删除标注', icon: '💭', separator: true,
+          action: () => {
+            view.dispatch(
+              view.state.tr.setNodeMarkup(nodePos, undefined, { ...node.attrs, thoughtId: null }),
+            );
+            const api = (window as any).viewAPI;
+            if (api?.sendToOtherSlot) {
+              api.sendToOtherSlot({
+                protocol: 'note-thought',
+                action: 'thought:delete',
+                payload: { thoughtId },
+              });
+            }
+            if (api?.thoughtDelete) api.thoughtDelete(thoughtId);
+            if (api?.getActiveNoteId && api?.thoughtUnrelate) {
+              api.getActiveNoteId().then((noteId: string) => {
+                if (noteId) api.thoughtUnrelate(noteId, thoughtId);
+              });
+            }
+            close();
+          },
+        });
+        break;
+      }
+    }
+  }
+
   // 学习模块：选中文本时显示查词/翻译
   const { from, to } = view.state.selection;
   if (from !== to) {

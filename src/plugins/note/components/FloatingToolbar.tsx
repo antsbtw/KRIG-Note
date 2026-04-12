@@ -3,6 +3,9 @@ import type { EditorView } from 'prosemirror-view';
 import type { MarkType } from 'prosemirror-model';
 import { toggleMark } from 'prosemirror-commands';
 import { ColorPicker } from './ColorPicker';
+import { addThought } from '../commands/thought-commands';
+import { THOUGHT_TYPE_META } from '../../../shared/types/thought-types';
+import type { ThoughtType } from '../../../shared/types/thought-types';
 
 /**
  * FloatingToolbar — 选中文字后弹出的格式化工具栏
@@ -49,6 +52,7 @@ export function FloatingToolbar({ view }: FloatingToolbarProps) {
   const [, forceUpdate] = useState(0);
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [showLinkPanel, setShowLinkPanel] = useState(false);
+  const [showThoughtMenu, setShowThoughtMenu] = useState(false);
   const [lastTextColor, setLastTextColor] = useState('');
   const [lastBgColor, setLastBgColor] = useState('');
   const toolbarRef = useRef<HTMLDivElement>(null);
@@ -247,6 +251,49 @@ export function FloatingToolbar({ view }: FloatingToolbarProps) {
       >
         <span style={{ borderBottom: `2px solid ${lastTextColor || '#8ab4f8'}`, lineHeight: 1 }}>A</span>
       </button>
+
+      {/* 思考按钮 + 类型菜单 */}
+      <div className="ft-separator" />
+      <button
+        className={`ft-btn ${showThoughtMenu ? 'ft-btn--active' : ''}`}
+        onClick={() => { setShowThoughtMenu(!showThoughtMenu); setShowColorPicker(false); setShowLinkPanel(false); }}
+        title="添加思考 (⌘⇧M)"
+      >
+        <span style={{ fontSize: '13px' }}>💭</span>
+      </button>
+
+      {/* 思考类型选择菜单 */}
+      {showThoughtMenu && (
+        <div style={{
+          position: 'absolute', top: '100%', left: '50%', transform: 'translateX(-50%)',
+          marginTop: 4, background: '#2a2a2a', border: '1px solid #444', borderRadius: 8,
+          padding: 4, zIndex: 1000, boxShadow: '0 4px 12px rgba(0,0,0,0.4)', minWidth: 120,
+        }} onMouseDown={(e) => e.preventDefault()}>
+          {(Object.keys(THOUGHT_TYPE_META) as ThoughtType[]).map((t) => {
+            const m = THOUGHT_TYPE_META[t];
+            return (
+              <button
+                key={t}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+                  padding: '6px 12px', background: 'transparent', border: 'none',
+                  color: '#e8eaed', fontSize: 13, cursor: 'pointer', borderRadius: 4,
+                  textAlign: 'left' as const,
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = '#3a3a3a')}
+                onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                onClick={() => {
+                  setShowThoughtMenu(false);
+                  if (view) addThought(view, t);
+                }}
+              >
+                <span>{m.icon}</span>
+                <span>{m.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* 链接面板 */}
       {showLinkPanel && (

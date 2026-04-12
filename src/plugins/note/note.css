@@ -2910,3 +2910,47 @@
   padding: 4px 0 0;
 }
 
+/* ── Thought 锚点样式 ── */
+/* 直线下划线，颜色跟随 data-thought-type */
+
+.thought-anchor {
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+  text-decoration-style: solid;
+  cursor: pointer;
+  transition: text-decoration-color 0.15s;
+}
+
+/* 默认 thought = 蓝色 */
+.thought-anchor                                         { text-decoration-color: #4a9eff; }
+.thought-anchor[data-thought-type="thought"]            { text-decoration-color: #4a9eff; }
+.thought-anchor[data-thought-type="question"]           { text-decoration-color: #ff5252; }
+.thought-anchor[data-thought-type="important"]          { text-decoration-color: #ffab40; }
+.thought-anchor[data-thought-type="todo"]               { text-decoration-color: #4caf50; }
+.thought-anchor[data-thought-type="analysis"]           { text-decoration-color: #ab47bc; }
+
+.thought-anchor--active {
+  animation: thought-flash 0.4s ease-in-out 3;
+}
+
+.thought-anchor--resolved {
+  text-decoration-style: dashed;
+  opacity: 0.5;
+}
+
+@keyframes thought-flash {
+  50% { opacity: 0.4; }
+}
+
+/* Node 锚点（image, codeBlock 等） */
+[data-thought-id].thought-anchor-node {
+  outline: 2px solid #ffd400;
+  outline-offset: 2px;
+  cursor: pointer;
+}
+
+[data-thought-id].thought-anchor-node:hover {
+  outline-width: 3px;
+}
+

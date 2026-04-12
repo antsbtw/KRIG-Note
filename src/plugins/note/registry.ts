@@ -121,6 +121,26 @@ class BlockRegistry {
           return ['mark', { 'data-color': mark.attrs.color, style: `background-color: ${mark.attrs.color}` }, 0];
         },
       },
+      thought: {
+        attrs: {
+          thoughtId: {},
+          thoughtType: { default: 'thought' },
+        },
+        inclusive: false,
+        parseDOM: [{ tag: 'span[data-thought-id]', getAttrs(dom: HTMLElement) {
+          return {
+            thoughtId: dom.getAttribute('data-thought-id'),
+            thoughtType: dom.getAttribute('data-thought-type') || 'thought',
+          };
+        }}],
+        toDOM(mark: any) {
+          return ['span', {
+            'data-thought-id': mark.attrs.thoughtId,
+            'data-thought-type': mark.attrs.thoughtType || 'thought',
+            class: 'thought-anchor',
+          }, 0];
+        },
+      },
     };
 
     return new Schema({ nodes, marks });

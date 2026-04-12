@@ -70,6 +70,15 @@ function registerPlugins(): void {
     },
   });
 
+  workModeRegistry.register({
+    id: 'thought',
+    viewType: 'thought',
+    icon: '💭',
+    label: 'Thought',
+    order: 10,
+    hidden: true,   // 不在 NavSide tab 中显示，仅作为 right slot
+  });
+
   // NavSide 内容注册
   navSideRegistry.register({
     workModeId: 'demo-a',
@@ -112,6 +121,11 @@ function registerPlugins(): void {
   protocolRegistry.register({
     id: 'ebook-extraction',
     match: { left: { type: 'ebook' }, right: { type: 'web', variant: 'extraction' } },
+  });
+
+  protocolRegistry.register({
+    id: 'note-thought',
+    match: { left: { type: 'note' }, right: { type: 'thought' } },
   });
 
   // Cross-View Toggle 协议：允许任意 View 组合通信

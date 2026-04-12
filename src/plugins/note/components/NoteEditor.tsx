@@ -26,6 +26,7 @@ import { indentPlugin } from '../plugins/indent';
 import { pasteMediaPlugin } from '../plugins/paste-media';
 import { renderBlockFocusPlugin } from '../plugins/render-block-focus';
 import { vocabHighlightPlugin, updateVocabDefs, dispatchVocabUpdate } from '../learning/vocab-highlight-plugin';
+import { thoughtPlugin } from '../plugins/thought-plugin';
 import { fromPageDecorationPlugin } from '../plugins/from-page-decoration';
 import { updateVocabList } from '../learning';
 import { buildTestDocument } from '../test-content';
@@ -129,6 +130,14 @@ function buildPlugins(s: ReturnType<typeof getSchema>) {
     return true;
   };
 
+  // Cmd+Shift+M 添加思考
+  markKeymap['Mod-Shift-m'] = (state: any, _dispatch: any, editorView: any) => {
+    if (editorView) {
+      import('../commands/thought-commands').then(({ addThought }) => addThought(editorView));
+    }
+    return true;
+  };
+
   if (s.nodes.hardBreak) {
     markKeymap['Shift-Enter'] = (state: any, dispatch: any) => {
       if (dispatch) dispatch(state.tr.replaceSelectionWith(s.nodes.hardBreak.create()));
@@ -159,6 +168,7 @@ function buildPlugins(s: ReturnType<typeof getSchema>) {
     headingCollapsePlugin(),
     vocabHighlightPlugin(),
     fromPageDecorationPlugin,
+    thoughtPlugin(),
     history(),
     dropCursor({ color: '#8ab4f8', width: 2 }),
     gapCursor(),

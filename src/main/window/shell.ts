@@ -52,6 +52,7 @@ const viewTypeRenderers: Record<ViewType | 'default', ViewTypeRendererConfig> = 
   note:  { devServerUrl: NOTE_VIEW_VITE_DEV_SERVER_URL,  htmlFile: 'note.html',      prodDir: 'note_view' },
   ebook: { devServerUrl: EBOOK_VIEW_VITE_DEV_SERVER_URL, htmlFile: 'ebook.html',     prodDir: 'ebook_view' },
   web:   { devServerUrl: WEB_VIEW_VITE_DEV_SERVER_URL,   htmlFile: 'web.html',       prodDir: 'web_view',   webPreferences: { webviewTag: true } },
+  thought: { devServerUrl: THOUGHT_VIEW_VITE_DEV_SERVER_URL, htmlFile: 'thought.html', prodDir: 'thought_view' },
   graph: { devServerUrl: DEMO_VIEW_VITE_DEV_SERVER_URL,  htmlFile: 'demo-view.html', prodDir: 'demo_view' },
   default: { devServerUrl: DEMO_VIEW_VITE_DEV_SERVER_URL, htmlFile: 'demo-view.html', prodDir: 'demo_view' },
 };
@@ -347,6 +348,14 @@ export function hasRightSlot(): boolean {
   if (!active) return false;
   const pool = workspaceViewPools.get(active.id);
   return pool?.rightView !== null && pool?.rightView !== undefined;
+}
+
+/** 检查当前 Right Slot 是否是指定 workModeId */
+export function isRightSlotMode(workModeId: string): boolean {
+  const active = workspaceManager.getActive();
+  if (!active) return false;
+  const pool = workspaceViewPools.get(active.id);
+  return pool?.rightWorkModeId === workModeId;
 }
 
 /** 获取当前活跃的 Left 和 Right View 的 webContents ID（用于消息路由） */
@@ -645,3 +654,4 @@ declare const DEMO_VIEW_VITE_DEV_SERVER_URL: string | undefined;
 declare const NOTE_VIEW_VITE_DEV_SERVER_URL: string | undefined;
 declare const EBOOK_VIEW_VITE_DEV_SERVER_URL: string | undefined;
 declare const WEB_VIEW_VITE_DEV_SERVER_URL: string | undefined;
+declare const THOUGHT_VIEW_VITE_DEV_SERVER_URL: string | undefined;

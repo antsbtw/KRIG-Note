@@ -205,7 +205,58 @@ export const graphStore = {
       title: e.title || '',
     }));
   },
+
+  // ── Thought 关系 ──
+
+  /** note → thought：笔记的思考 */
+  async relateNoteToThought(
+    noteId: string,
+    thoughtId: string,
+    edge: { anchor_type: string; anchor_pos: number; created_at: number },
+  ): Promise<void> {
+    const db = getDB();
+    if (!db) return;
+
+    const query = `RELATE ${rid('note', noteId)} -> thought_of -> ${rid('thought', thoughtId)} SET anchor_type = $anchor_type, anchor_pos = $anchor_pos, created_at = $created_at`;
+    await db.query(query, {
+      anchor_type: edge.anchor_type,
+      anchor_pos: edge.anchor_pos,
+      created_at: edge.created_at,
+    });
+  },
+
+  /** 删除 note → thought 关系 */
+  async removeNoteToThought(noteId: string, thoughtId: string): Promise<void> {
+    const db = getDB();
+    if (!db) return;
+
+    await db.query(
+      `DELETE FROM thought_of WHERE in = ${rid('note', noteId)} AND out = ${rid('thought', thoughtId)}`,
+    );
+  },
+
+  /** 某 Thought 属于哪篇笔记 */
+  async findNoteForThought(thoughtId: string): Promise<{ id: string; title: string } | null> {
+    const db = getDB();
+    if (!db) return null;
+
+    const result = await db.query<[any[]]>(
+      `SELECT in.id AS note_id, in.title AS title FROM thought_of WHERE out = ${rid('thought', thoughtId)} LIMIT 1`,
+    );
+
+    const edges = result[0] || [];
+    if (edges.length === 0) return null;
+
+    return {
+      id: cleanNoteId(edges[0].note_id),
+      title: edges[0].title || '',
+    };
+  },
 };
+
+function cleanThoughtId(raw: unknown): string {
+  return String(raw).replace(/^thought:⟨?|⟩?$/g, '');
+}
 
 function cleanNoteId(raw: unknown): string {
   return String(raw).replace(/^note:⟨?|⟩?$/g, '');

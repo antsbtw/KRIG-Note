@@ -1,0 +1,207 @@
+import { useState, useEffect, useCallback, useRef } from 'react';
+import type { ThoughtRecord } from '../../../shared/types/thought-types';
+import { THOUGHT_ACTION } from '../thought-protocol';
+import { ThoughtPanel } from './ThoughtPanel';
+import '../thought.css';
+
+/**
+ * ThoughtView — L3 容器
+ *
+ * NoteView 的变种，作为独立 View 运行在 Right Slot。
+ * 管理 Thought 列表状态，监听 ViewMessage 实现与 Note 的联动。
+ */
+
+const viewAPI = () => (window as any).viewAPI as {
+  thoughtListByNote: (noteId: string) => Promise<ThoughtRecord[]>;
+  thoughtSave: (id: string, updates: any) => Promise<void>;
+  thoughtDelete: (id: string) => Promise<void>;
+  thoughtUnrelate: (noteId: string, thoughtId: string) => Promise<void>;
+  sendToOtherSlot: (msg: any) => void;
+  onMessage: (cb: (msg: any) => void) => () => void;
+  isDBReady: () => Promise<boolean>;
+  onDBReady: (cb: () => void) => () => void;
+  getActiveNoteId: () => Promise<string | null>;
+} | undefined;
+
+export function ThoughtView() {
+  const [thoughts, setThoughts] = useState<ThoughtRecord[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [noteId, setNoteId] = useState<string | null>(null);
+  const noteIdRef = useRef<string | null>(null);
+
+  // 加载某笔记的所有 Thoughts
+  const loadThoughts = useCallback(async (nId: string) => {
+    const api = viewAPI();
+    if (!api) return;
+    const list = await api.thoughtListByNote(nId);
+    setThoughts(list);
+  }, []);
+
+  // 启动时主动获取当前笔记 ID 并加载 thoughts
+  useEffect(() => {
+    const api = viewAPI();
+    if (!api) return;
+
+    const init = async () => {
+      // 等待 DB 就绪
+      const ready = await api.isDBReady();
+      if (!ready) {
+        // 监听 DB ready 事件
+        const unsub = api.onDBReady(() => {
+          unsub();
+          init();
+        });
+        return;
+      }
+
+      const nId = await api.getActiveNoteId();
+      if (nId) {
+        setNoteId(nId);
+        noteIdRef.current = nId;
+        loadThoughts(nId);
+      }
+    };
+
+    init();
+  }, [loadThoughts]);
+
+  // 监听来自 Note 的 ViewMessage
+  useEffect(() => {
+    const api = viewAPI();
+    if (!api) return;
+
+    const unsub = api.onMessage((msg) => {
+      switch (msg.action) {
+        case THOUGHT_ACTION.NOTE_LOADED: {
+          const nId = (msg.payload as any).noteId;
+          setNoteId(nId);
+          noteIdRef.current = nId;
+          loadThoughts(nId);
+          break;
+        }
+        case THOUGHT_ACTION.CREATE: {
+          const p = msg.payload as any;
+          // 追加新 Thought 到列表（如果不存在的话）
+          setThoughts((prev) => {
+            if (prev.some((t) => t.id === p.thoughtId)) return prev;
+            const newThought: ThoughtRecord = {
+              id: p.thoughtId,
+              anchor_type: p.anchorType,
+              anchor_text: p.anchorText,
+              anchor_pos: p.anchorPos,
+              type: p.type || 'thought',
+              resolved: false,
+              pinned: false,
+              doc_content: [],
+              created_at: Date.now(),
+              updated_at: Date.now(),
+            };
+            return [...prev, newThought];
+          });
+          setActiveId(p.thoughtId);
+          break;
+        }
+        case THOUGHT_ACTION.ACTIVATE: {
+          setActiveId((msg.payload as any).thoughtId);
+          break;
+        }
+        case THOUGHT_ACTION.DELETE: {
+          // Note 侧删除标注 → 移除对应卡片
+          const delId = (msg.payload as any).thoughtId;
+          setThoughts((prev) => prev.filter((t) => t.id !== delId));
+          break;
+        }
+        case THOUGHT_ACTION.SCROLL_SYNC: {
+          break;
+        }
+      }
+    });
+
+    return unsub;
+  }, [loadThoughts]);
+
+  // 保存 Thought 内容
+  const handleSave = useCallback(async (id: string, updates: Partial<ThoughtRecord>) => {
+    const api = viewAPI();
+    if (!api) return;
+    await api.thoughtSave(id, updates);
+    setThoughts((prev) =>
+      prev.map((t) => (t.id === id ? { ...t, ...updates, updated_at: Date.now() } : t)),
+    );
+  }, []);
+
+  // 删除 Thought
+  const handleDelete = useCallback(async (id: string) => {
+    const api = viewAPI();
+    if (!api) return;
+
+    const nId = noteIdRef.current;
+    await api.thoughtDelete(id);
+    if (nId) await api.thoughtUnrelate(nId, id);
+
+    setThoughts((prev) => prev.filter((t) => t.id !== id));
+
+    // 通知 Note 移除 mark
+    api.sendToOtherSlot({
+      protocol: 'note-thought',
+      action: THOUGHT_ACTION.DELETE,
+      payload: { thoughtId: id },
+    });
+  }, []);
+
+  // 点击锚点预览 → Note 滚动到锚点
+  const handleScrollToAnchor = useCallback((thoughtId: string) => {
+    const api = viewAPI();
+    if (!api) return;
+    api.sendToOtherSlot({
+      protocol: 'note-thought',
+      action: THOUGHT_ACTION.SCROLL_TO_ANCHOR,
+      payload: { thoughtId },
+    });
+  }, []);
+
+  // 类型变更
+  const handleTypeChange = useCallback(async (id: string, newType: ThoughtRecord['type']) => {
+    await handleSave(id, { type: newType });
+    const api = viewAPI();
+    if (api) {
+      api.sendToOtherSlot({
+        protocol: 'note-thought',
+        action: THOUGHT_ACTION.TYPE_CHANGE,
+        payload: { thoughtId: id, newType },
+      });
+    }
+  }, [handleSave]);
+
+  return (
+    <div className="thought-view">
+      {/* Toolbar — 与 NoteView 对齐 */}
+      <div className="thought-view__toolbar">
+        <span className="thought-view__toolbar-title">💭 Thoughts</span>
+        <span className="thought-view__toolbar-count">{thoughts.length}</span>
+        <div style={{ flex: 1 }} />
+        <button
+          className="thought-view__close-btn"
+          onClick={() => {
+            const api = viewAPI();
+            if (api) (api as any).closeSlot();
+          }}
+          title="关闭此面板"
+        >
+          ×
+        </button>
+      </div>
+
+      {/* Content */}
+      <ThoughtPanel
+        thoughts={thoughts}
+        activeId={activeId}
+        onActivate={setActiveId}
+        onSave={handleSave}
+        onDelete={handleDelete}
+        onScrollToAnchor={handleScrollToAnchor}
+        onTypeChange={handleTypeChange}
+      />
+    </div>
+  );
+}

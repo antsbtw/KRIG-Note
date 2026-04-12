@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('viewAPI', {
 
   // Slot 操作
   openRightSlot: (workModeId: string) => ipcRenderer.invoke(IPC.SLOT_OPEN_RIGHT, workModeId),
+  ensureRightSlot: (workModeId: string) => ipcRenderer.invoke(IPC.SLOT_ENSURE_RIGHT, workModeId),
   closeRightSlot: () => ipcRenderer.invoke(IPC.SLOT_CLOSE_RIGHT),
   closeSlot: () => ipcRenderer.invoke(IPC.SLOT_CLOSE),  // 关闭自己所在的 slot
 
@@ -95,6 +96,16 @@ contextBridge.exposeInMainWorld('viewAPI', {
     ipcRenderer.on(IPC.WORKSPACE_STATE_CHANGED, listener);
     return () => ipcRenderer.removeListener(IPC.WORKSPACE_STATE_CHANGED, listener);
   },
+
+  // ── Thought 操作 ──
+
+  thoughtCreate: (thought: any) => ipcRenderer.invoke(IPC.THOUGHT_CREATE, thought),
+  thoughtSave: (id: string, updates: any) => ipcRenderer.invoke(IPC.THOUGHT_SAVE, id, updates),
+  thoughtLoad: (id: string) => ipcRenderer.invoke(IPC.THOUGHT_LOAD, id),
+  thoughtDelete: (id: string) => ipcRenderer.invoke(IPC.THOUGHT_DELETE, id),
+  thoughtListByNote: (noteId: string) => ipcRenderer.invoke(IPC.THOUGHT_LIST_BY_NOTE, noteId),
+  thoughtRelate: (noteId: string, thoughtId: string, edge: any) => ipcRenderer.invoke(IPC.THOUGHT_RELATE, noteId, thoughtId, edge),
+  thoughtUnrelate: (noteId: string, thoughtId: string) => ipcRenderer.invoke(IPC.THOUGHT_UNRELATE, noteId, thoughtId),
 
   // ── eBook 操作 ──
 

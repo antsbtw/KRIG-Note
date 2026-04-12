@@ -1,7 +1,7 @@
 // ─── L3: View 基础类型 ───
 
 /** View 的基础类型分类（插件注册） */
-export type ViewType = 'note' | 'ebook' | 'web' | 'graph';
+export type ViewType = 'note' | 'ebook' | 'web' | 'graph' | 'thought';
 
 /** View 实例 ID（格式: '{type}-{workspaceId}-{counter}'） */
 export type ViewInstanceId = string;
@@ -161,6 +161,7 @@ export const IPC = {
   // Slot 操作
   SLOT_OPEN_RIGHT: 'slot:open-right',
   SLOT_CLOSE_RIGHT: 'slot:close-right',
+  SLOT_ENSURE_RIGHT: 'slot:ensure-right', // 确保 Right Slot 打开（不 toggle）
   SLOT_CLOSE: 'slot:close',             // View 关闭自己所在的 slot
   SLOT_DIVIDER_CHANGED: 'slot:divider-changed',
 
@@ -304,6 +305,15 @@ export const IPC = {
   // PDF Extraction (Platform)
   EXTRACTION_OPEN: 'extraction:open',              // 打开 ExtractionView + 上传当前 PDF
   EXTRACTION_IMPORT: 'extraction:import',           // 导入 JSON 数据 → 创建文件夹+Note → 切换到 NoteView
+
+  // Thought 操作
+  THOUGHT_CREATE: 'thought:create',
+  THOUGHT_SAVE: 'thought:save',
+  THOUGHT_LOAD: 'thought:load',
+  THOUGHT_DELETE: 'thought:delete',
+  THOUGHT_LIST_BY_NOTE: 'thought:list-by-note',
+  THOUGHT_RELATE: 'thought:relate',
+  THOUGHT_UNRELATE: 'thought:unrelate',
 
   // yt-dlp
   YTDLP_CHECK_STATUS: 'ytdlp:check-status',

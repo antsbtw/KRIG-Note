@@ -94,6 +94,18 @@ const SCHEMA_QUERIES = [
   // note → note：笔记间链接引用
   `DEFINE TABLE IF NOT EXISTS links_to SCHEMALESS;`,
   // 边属性：created_at
+
+  // ── Thought 系统 ──
+
+  // thought 表
+  `DEFINE TABLE IF NOT EXISTS thought SCHEMALESS;`,
+  `DEFINE INDEX IF NOT EXISTS thought_type ON thought FIELDS type;`,
+  `DEFINE INDEX IF NOT EXISTS thought_updated ON thought FIELDS updated_at;`,
+  `DEFINE INDEX IF NOT EXISTS thought_resolved ON thought FIELDS resolved;`,
+
+  // note → thought 图关系边
+  `DEFINE TABLE IF NOT EXISTS thought_of SCHEMALESS;`,
+  // 边属性：anchor_type, anchor_pos, created_at
 ];
 
 export async function initSchema(): Promise<void> {

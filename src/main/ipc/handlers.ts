@@ -13,9 +13,13 @@ import {
   getSlotBySenderId,
   getActiveViewWebContentsIds,
   getActiveProtocol,
+  hasRightSlot,
+  isRightSlotMode,
 } from '../window/shell';
 import { clampNavSideWidth, getDefaultNavSideWidth } from '../slot/layout';
 import { noteStore } from '../storage/note-store';
+import { thoughtStore } from '../storage/thought-store';
+import { graphStore } from '../association/graph-store';
 import { folderStore } from '../storage/folder-store';
 import { activityStore } from '../storage/activity-store';
 import { isDBReady } from '../storage/client';
@@ -138,6 +142,14 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
   ipcMain.handle(IPC.SLOT_OPEN_RIGHT, (_event, workModeId: string) => {
     openRightSlot(workModeId);
     broadcastWorkspaceState(getMainWindow());
+  });
+
+  // 确保 Right Slot 打开（不 toggle：已打开同类 view 时不关闭）
+  ipcMain.handle(IPC.SLOT_ENSURE_RIGHT, (_event, workModeId: string) => {
+    if (!hasRightSlot() || !isRightSlotMode(workModeId)) {
+      openRightSlot(workModeId);
+      broadcastWorkspaceState(getMainWindow());
+    }
   });
 
   ipcMain.handle(IPC.SLOT_CLOSE_RIGHT, () => {
@@ -315,6 +327,46 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
     if (!isDBReady()) return;
     await noteStore.moveToFolder(noteId, folderId);
     broadcastNoteList(getMainWindow());
+  });
+
+  // ── Thought 操作 ──
+
+  ipcMain.handle(IPC.THOUGHT_CREATE, async (_event, thought: any) => {
+    if (!isDBReady()) return null;
+    const record = await thoughtStore.create(thought);
+    activityStore.log('thought.create', record.id);
+    return record;
+  });
+
+  ipcMain.handle(IPC.THOUGHT_SAVE, async (_event, id: string, updates: any) => {
+    if (!isDBReady()) return;
+    await thoughtStore.save(id, updates);
+  });
+
+  ipcMain.handle(IPC.THOUGHT_LOAD, async (_event, id: string) => {
+    if (!isDBReady()) return null;
+    return thoughtStore.get(id);
+  });
+
+  ipcMain.handle(IPC.THOUGHT_DELETE, async (_event, id: string) => {
+    if (!isDBReady()) return;
+    await thoughtStore.delete(id);
+    activityStore.log('thought.delete', id);
+  });
+
+  ipcMain.handle(IPC.THOUGHT_LIST_BY_NOTE, async (_event, noteId: string) => {
+    if (!isDBReady()) return [];
+    return thoughtStore.listByNote(noteId);
+  });
+
+  ipcMain.handle(IPC.THOUGHT_RELATE, async (_event, noteId: string, thoughtId: string, edge: any) => {
+    if (!isDBReady()) return;
+    await graphStore.relateNoteToThought(noteId, thoughtId, edge);
+  });
+
+  ipcMain.handle(IPC.THOUGHT_UNRELATE, async (_event, noteId: string, thoughtId: string) => {
+    if (!isDBReady()) return;
+    await graphStore.removeNoteToThought(noteId, thoughtId);
   });
 
   // ── Folder 操作 ──

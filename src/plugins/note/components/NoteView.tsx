@@ -52,6 +52,13 @@ export function NoteView() {
         const record = await viewAPI.noteLoad(noteId);
         if (record?.title) setNoteTitle(record.title);
       } catch { /* ignore */ }
+
+      // 通知 Thought 面板加载对应 thoughts
+      viewAPI.sendToOtherSlot({
+        protocol: 'note-thought',
+        action: 'thought:note-loaded',
+        payload: { noteId },
+      });
     });
 
     const unsubTitle = viewAPI.onNoteTitleChanged((data) => {
