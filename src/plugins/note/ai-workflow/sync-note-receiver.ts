@@ -118,9 +118,11 @@ async function parseMarkdownToNodes(schema: any, markdown: string): Promise<PMNo
     // Parse the doc JSON into actual ProseMirror nodes
     const pmDoc = schema.nodeFromJSON(docJson);
 
-    // Extract children from the doc node (we don't want the doc wrapper itself)
+    // Extract children from the doc node, skipping noteTitle
     const children: PMNode[] = [];
     pmDoc.content.forEach((child: PMNode) => {
+      // Skip noteTitle nodes (textBlock with isTitle=true or first node with title text)
+      if (child.type.name === 'textBlock' && child.attrs.isTitle) return;
       children.push(child);
     });
 

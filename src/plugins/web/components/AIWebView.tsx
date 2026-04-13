@@ -263,12 +263,11 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
           `);
 
           if (sseMarkdown) {
-            // DOM complement for images
+            // DOM extraction for complementary content (images, artifacts, code blocks)
             const domScript = getDomToMarkdownScript();
             await webview.executeJavaScript(domScript).catch(() => {});
 
-            // Get the Nth assistant message DOM (matching the Nth SSE response)
-            const domMd = await webview.executeJavaScript(`(function() {
+            const domMd: string | null = await webview.executeJavaScript(`(function() {
               if (typeof domToMarkdown !== 'function') return null;
               var selector = ${JSON.stringify(detected?.selectors.assistantMessage || '')};
               var selectors = selector.split(',').map(function(s) { return s.trim(); });
@@ -281,15 +280,34 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
               return target ? domToMarkdown(target) : null;
             })()`).catch(() => null);
 
-            // Merge SSE + DOM images
+            // Smart merge: use whichever is more complete
+            // SSE has better formatting ($math$, ```code```) but misses Artifacts
+            // DOM captures everything rendered on page but may lose some formatting
+            // Strategy: if DOM is significantly longer (has extra content), use DOM; otherwise SSE
             let finalMd = sseMarkdown;
             if (domMd) {
-              const sseImgs = new Set((sseMarkdown.match(/!\[([^\]]*)\]\(([^)]+)\)/g) || []).map((m: string) => m.match(/\(([^)]+)\)/)?.[1]).filter(Boolean));
-              const extraImgs = (domMd.match(/!\[([^\]]*)\]\(([^)]+)\)/g) || []).filter((m: string) => { const u = m.match(/\(([^)]+)\)/)?.[1]; return u && !sseImgs.has(u); });
-              if (extraImgs.length > 0) finalMd += '\n\n' + extraImgs.join('\n\n');
+              const sseLen = sseMarkdown.length;
+              const domLen = domMd.length;
+
+              // Count code blocks and images in each
+              const sseCodeBlocks = (sseMarkdown.match(/```/g) || []).length / 2;
+              const domCodeBlocks = (domMd.match(/```/g) || []).length / 2;
+              const sseImages = (sseMarkdown.match(/!\[/g) || []).length;
+              const domImages = (domMd.match(/!\[/g) || []).length;
+
+              // Use DOM if it has significantly more content (images, code blocks, etc.)
+              if (domLen > sseLen * 1.2 || domCodeBlocks > sseCodeBlocks || domImages > sseImages) {
+                finalMd = domMd;
+                console.log(`[AIWebView Sync] Using DOM (${domLen}) over SSE (${sseLen}): +${domCodeBlocks - sseCodeBlocks} code blocks, +${domImages - sseImages} images`);
+              } else {
+                // SSE is primary — append any extra images from DOM
+                const sseImgs = new Set((sseMarkdown.match(/!\[([^\]]*)\]\(([^)]+)\)/g) || []).map((m: string) => m.match(/\(([^)]+)\)/)?.[1]).filter(Boolean));
+                const extraImgs = (domMd.match(/!\[([^\]]*)\]\(([^)]+)\)/g) || []).filter((m: string) => { const u = m.match(/\(([^)]+)\)/)?.[1]; return u && !sseImgs.has(u); });
+                if (extraImgs.length > 0) finalMd += '\n\n' + extraImgs.join('\n\n');
+              }
             }
 
-            console.log(`[AIWebView Sync] Response #${idx}: SSE=${sseMarkdown.length}, final=${finalMd.length}, user="${userMessage?.slice(0,50)}"`);
+            console.log(`[AIWebView Sync] Response #${idx}: SSE=${sseMarkdown.length}, DOM=${domMd?.length ?? 0}, final=${finalMd.length}, user="${userMessage?.slice(0,50)}"`);
 
             viewAPI.sendToOtherSlot({
               protocol: 'ai-sync',

@@ -123,7 +123,7 @@ const CLAUDE_PROFILE: AIServiceProfile = {
     sendButton: 'button[aria-label="Send Message"]',
     messageList: '[class*="conversation-content"]',
     userMessage: '[data-is-streaming="false"][class*="human"]',
-    assistantMessage: '[data-is-streaming="false"][class*="assistant"]',
+    assistantMessage: '[class*="font-claude-message"], [data-is-streaming="false"][class*="assistant"], .standard-markdown',
     conversationTitle: 'button[data-testid="chat-menu-trigger"]',
   },
   intercept: {
