@@ -208,15 +208,17 @@ export async function extractArtifactContent(
   readClipboard: () => Promise<string>,
 ): Promise<string | null> {
   try {
-    // First, try direct match — "Copy to clipboard" button may already be visible
-    // if Artifact is expanded/fullscreen.
+    // Find Artifact Copy button (aria-label="Copy", but NOT data-testid="action-bar-copy"
+    // which is the per-message copy button). Artifact toolbar has Retry/Edit/Copy/Close fullscreen.
     const clicked = await webview.executeJavaScript(`(function() {
-      var all = document.querySelectorAll('button, [role="menuitem"], [role="option"]');
+      var all = document.querySelectorAll('button');
       var btns = [];
       for (var i = 0; i < all.length; i++) {
         var label = (all[i].getAttribute('aria-label') || '').toLowerCase();
-        var text = (all[i].textContent || '').trim().toLowerCase();
-        if (label === 'copy to clipboard' || text === 'copy to clipboard') {
+        var testid = all[i].getAttribute('data-testid') || '';
+        // Artifact Copy: label is "Copy" exactly (not "copy to clipboard"),
+        // and NOT the message copy (which has testid="action-bar-copy")
+        if (label === 'copy' && testid !== 'action-bar-copy') {
           btns.push(all[i]);
         }
       }
