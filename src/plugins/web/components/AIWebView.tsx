@@ -1,11 +1,18 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { getSSECaptureScript } from '../../web-bridge/injection/inject-scripts/sse-capture';
+import { getArtifactPostMessageHookScript } from '../../web-bridge/injection/inject-scripts/artifact-postmessage-hook';
+import { debugExtractFirstArtifact } from '../../web-bridge/capabilities/claude-artifact-extractor';
 import { getDomToMarkdownScript } from '../../web-bridge/injection/inject-scripts/dom-to-markdown';
 import {
   extractLatestClaudeResponse,
   isClaudeConversationPage,
   countArtifactPlaceholders,
   replaceArtifactPlaceholders,
+  readCapturedArtifactMessages,
+  collectArtifactSources,
+  fillArtifactPlaceholders,
+  fetchClaudeArtifactVersions,
+  extractArtifactVersionSource,
 } from '../../web-bridge/capabilities/claude-api-extractor';
 import { getAIServiceProfile, getAIServiceList, DEFAULT_AI_SERVICE, detectAIServiceByUrl } from '../../../shared/types/ai-service-types';
 import type { AIServiceId } from '../../../shared/types/ai-service-types';
@@ -23,6 +30,12 @@ declare const viewAPI: {
   wbCdpStart: (urlFilters?: string[]) => Promise<{ success: boolean; error?: string; guestUrl?: string; guestId?: number; filters?: string[] }>;
   wbCdpStop: () => Promise<{ success: boolean }>;
   wbCdpGetResponses: () => Promise<{ success: boolean; error?: string; count?: number; responses?: Array<{ url: string; statusCode: number; mimeType: string; bodyLength: number; bodyPreview: string | null; timestamp: number }> }>;
+  wbSendMouse: (events: Array<{ type: string; x: number; y: number; button?: string; buttons?: number; clickCount?: number }>) =>
+    Promise<{ success: boolean; error?: string; count?: number }>;
+  wbReadClipboardImage: () =>
+    Promise<{ success: boolean; empty?: boolean; dataUrl?: string; width?: number; height?: number }>;
+  wbCaptureDownloadOnce: (timeoutMs?: number) =>
+    Promise<{ success: boolean; filename?: string; mimeType?: string; content?: string; error?: string }>;
   aiExtractDebug: (params: { markdown: string; serviceId: string }) =>
     Promise<{ success: boolean; atomCount?: number; blocks?: number; error?: string; preview?: string; blockTypes?: string[]; atomTypes?: string[]; blockDetails?: any[]; atomDetails?: any[] }>;
   closeSlot: () => void;
@@ -73,14 +86,26 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
 
     el.addEventListener('did-start-loading', () => setLoading(true));
     el.addEventListener('did-stop-loading', () => setLoading(false));
+    const injectArtifactHookIfClaude = () => {
+      try {
+        const u = el.getURL?.() || '';
+        if (u.indexOf('claude.ai') !== -1) {
+          el.executeJavaScript(getArtifactPostMessageHookScript()).catch(() => {});
+        }
+      } catch {}
+    };
+
     el.addEventListener('did-navigate', (_e: any) => {
       setCurrentUrl(el.getURL());
       const detected = detectAIServiceByUrl(el.getURL());
       if (detected) setCurrentService(detected.id);
+      injectArtifactHookIfClaude();
     });
     el.addEventListener('did-navigate-in-page', () => {
       setCurrentUrl(el.getURL());
+      injectArtifactHookIfClaude();
     });
+    el.addEventListener('dom-ready', injectArtifactHookIfClaude);
 
     setCurrentUrl(initialUrl);
   }, [initialUrl]);
@@ -128,6 +153,21 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
 
   // ── 提取最新 AI 回复 ──
   // 策略：SSE + DOM + Copy 按钮，三种方式取最完整的
+  // ── Artifact 提取（调试入口）──
+  // Calls claude-artifact-extractor's single public entry and opens a
+  // preview window with the rendered PNG. No side effects on sync flow.
+  const handleArtifactTest = useCallback(async () => {
+    const webview = webviewRef.current;
+    if (!webview) { console.warn('[ArtifactTest] no webview'); return; }
+    const result = await debugExtractFirstArtifact(webview, viewAPI as any);
+    console.log('[ArtifactTest] result:', result);
+    if (result?.image?.dataUrl) {
+      const w = window.open('', '_blank', 'width=800,height=700');
+      w?.document.write(`<title>Artifact Preview</title><img src="${result.image.dataUrl}" style="max-width:100%">`);
+    }
+  }, []);
+
+
   // ── CDP 拦截（调试 Artifact）──
   const handleCdpToggle = useCallback(async () => {
     if (!cdpActive) {
@@ -177,9 +217,32 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
         console.log(`[Extract/Claude] Raw: ${rawText.length} chars, ${artifactCount} artifact placeholder(s)`);
 
         let finalText = rawText;
+        let artifactsFilled = 0;
         if (artifactCount > 0) {
-          finalText = replaceArtifactPlaceholders(rawText, webview.getURL());
-          console.log(`[Extract/Claude] Replaced ${artifactCount} placeholder(s) with friendly callouts`);
+          try { await webview.executeJavaScript(getArtifactPostMessageHookScript()); } catch {}
+
+          // Poll artifacts versions endpoint first (authoritative source).
+          let versionSources: string[] = [];
+          for (let attempt = 0; attempt < 5; attempt++) {
+            const versions = await fetchClaudeArtifactVersions(webview);
+            if (versions && versions.length > 0) {
+              versionSources = versions
+                .map(v => extractArtifactVersionSource(v))
+                .filter((s): s is string => !!s);
+              if (versionSources.length > 0) break;
+            }
+            await new Promise(r => setTimeout(r, 800));
+          }
+
+          const captured = await readCapturedArtifactMessages(webview);
+          const capturedSources = collectArtifactSources(captured);
+          const sources = [...versionSources.slice().reverse(), ...capturedSources];
+          const filled = fillArtifactPlaceholders(rawText, sources);
+          artifactsFilled = filled.filled;
+          finalText = filled.remaining > 0
+            ? replaceArtifactPlaceholders(filled.text, webview.getURL())
+            : filled.text;
+          console.log(`[Extract/Claude] Artifact: versions=${versionSources.length} captured=${capturedSources.length} filled=${filled.filled} remaining=${filled.remaining}`);
         }
 
         // Parse via main process to get structured atoms
@@ -189,7 +252,7 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
         });
 
         if (result.success) {
-          setExtractResult(`✓ Claude API: ${result.blocks} blocks → ${result.atomCount} atoms (${artifactCount} artifact${artifactCount!==1?'s':''})`);
+          setExtractResult(`✓ Claude API: ${result.blocks} blocks → ${result.atomCount} atoms (${artifactCount} artifact${artifactCount!==1?'s':''}${artifactCount>0?`, filled ${artifactsFilled}`:''})`);
           setExtractDetail({
             markdown: finalText,
             blocks: result.blockTypes || [],
@@ -376,13 +439,55 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
             break;
           }
 
-          // Replace Artifact placeholders with friendly callouts
+          // Replace Artifact placeholders: prefer captured postMessage
+          // source, fall back to callout for any that weren't captured.
           const artifactCount = countArtifactPlaceholders(assistantMsg);
-          let finalMarkdown = artifactCount > 0
-            ? replaceArtifactPlaceholders(assistantMsg, webview.getURL())
-            : assistantMsg;
+          let finalMarkdown = assistantMsg;
           if (artifactCount > 0) {
-            console.log(`[Claude/Artifact] Response #${idx}: ${artifactCount} placeholder(s) replaced with callout`);
+            // Ensure latest hook version is installed (version-guarded, so
+            // this is a no-op if the current version already matches).
+            try { await webview.executeJavaScript(getArtifactPostMessageHookScript()); } catch {}
+
+            // Path A: poll the artifacts versions endpoint. During streaming
+            // it returns an empty array; once the assistant turn settles on
+            // the server, versions are populated. Poll briefly.
+            let versionSources: string[] = [];
+            for (let attempt = 0; attempt < 5; attempt++) {
+              const versions = await fetchClaudeArtifactVersions(webview);
+              if (versions && versions.length > 0) {
+                versionSources = versions
+                  .map(v => extractArtifactVersionSource(v))
+                  .filter((s): s is string => !!s);
+                if (versionSources.length > 0) break;
+              }
+              await new Promise(r => setTimeout(r, 800));
+            }
+
+            // Path B: postMessage hook (fallback; hasn't yielded sources in
+            // our captures, but kept as belt-and-suspenders).
+            const captured = await readCapturedArtifactMessages(webview);
+            const capturedSources = collectArtifactSources(captured);
+
+            // Prefer versions API (newest first) then captured.
+            const sources = [...versionSources.slice().reverse(), ...capturedSources];
+            const filled = fillArtifactPlaceholders(assistantMsg, sources);
+            console.log(`[Claude/Artifact] versions=${versionSources.length} captured=${capturedSources.length}`);
+            finalMarkdown = filled.remaining > 0
+              ? replaceArtifactPlaceholders(filled.text, webview.getURL())
+              : filled.text;
+            console.log(`[Claude/Artifact] Response #${idx}: ${artifactCount} placeholder(s), filled ${filled.filled}, remaining ${filled.remaining}`);
+            // DIAGNOSTIC: dump raw captured messages so we can see Claude's
+            // real postMessage payload shape and adjust the heuristic.
+            if (filled.filled < artifactCount) {
+              console.log('[Claude/Artifact] DIAG captured messages:', captured.length);
+              for (let ci = 0; ci < captured.length; ci++) {
+                const m = captured[ci];
+                const dataType = typeof m.data;
+                const dataKeys = m.data && typeof m.data === 'object' ? Object.keys(m.data) : [];
+                const preview = typeof m.data === 'string' ? m.data.slice(0, 200) : JSON.stringify(m.data).slice(0, 400);
+                console.log(`  [${ci}] ch=${m.channel||'?'} dir=${m.direction} so=${m.sourceOrigin} to=${m.targetOrigin} type=${dataType} keys=${dataKeys.join(',')} preview=${preview}`);
+              }
+            }
           }
 
           console.log(`[AIWebView Sync/Claude API] Response #${idx}: ${finalMarkdown.length} chars, user="${humanMsg.slice(0,50)}"`);
@@ -697,6 +802,19 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
         >
           {cdpActive ? '⏹ CDP 录制中' : '📡 CDP 抓包'}
         </button>
+
+        {/* Claude Artifact extractor (manual test) */}
+        <button
+          style={{
+            background: '#0d7c66', border: 'none', borderRadius: 4,
+            color: '#fff', fontSize: 11, padding: '3px 10px', cursor: 'pointer',
+          }}
+          onClick={handleArtifactTest}
+          title="提取当前页第一个 Claude Artifact（图像）"
+        >
+          🧪 Artifact
+        </button>
+
 
         {/* Extract latest AI response */}
         <button

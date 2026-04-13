@@ -166,7 +166,87 @@ src/plugins/web/components/
 
 ---
 
-## 七、需要其他 AI 回答的问题
+## 七、解决方案（2026-04-13 更新）
+
+### 最终确定的三层架构
+
+```
+Layer 1: API（零干扰，被动）
+  ├─ chat_conversations/{conv}  → 文本 + Artifact 占位符 + 位置
+  └─ artifacts/{conv}/versions  → 当前恒空 []（接口保留）
+
+Layer 2: postMessage Hook（零干扰，被动）
+  └─ Hook window.postMessage + fetch
+     用于诊断和 MCP 协议观察；确认 artifact 源码不走 parent→iframe 的 postMessage
+
+Layer 3: CDP 模拟鼠标（有干扰，主动）
+  ├─ Copy to clipboard → PNG 渲染图像（clipboard.readImage） ✅ 生产可用
+  ├─ Download file     → 完整 HTML 源码（will-download hook）✅ 接口就绪
+  └─ Save as artifact  → Claude 云端保存（KRIG 不落地）      ✅ 接口就绪
+```
+
+### 关键逆向工程发现
+
+1. **Artifact UI 完全在 cross-origin iframe 内**：菜单 DOM 从 claude.ai 主
+   document 的 querySelectorAll 看不到。因此无法用 DOM 定位菜单项坐标 —
+   必须用像素估算 + CDP click（CDP 对跨域透明）。
+
+2. **Radix UI 不响应 JS 层 `dispatchEvent`**：即使派发完整的
+   `pointerover` + `pointerenter` + `pointermove` 序列也不触发 hover state。
+   只有 CDP `Input.dispatchMouseEvent` 合成的原生指针事件有效。
+
+3. **Artifact 卡片必须在 viewport 内**：off-screen iframe 不响应 hover（Claude
+   的性能优化）。提取前必须 `scrollIntoView({ block: 'center' })`。
+
+4. **Hover 需要多点轨迹**：单次 `mouseMoved` 到 "..." 热区不触发菜单。
+   验证过的成功轨迹是 **卡片外左侧 → 卡片中心 → 右上角**。
+
+5. **Copy to clipboard 写入的是 PNG 图像，不是源码**：必须用
+   `clipboard.readImage()`，`readText()` 返回空字符串。
+
+6. **Download file 的 `.html` 是完整自包含文件**：纯原生 JS + Canvas，
+   无外部依赖，可直接嵌入 KRIG Note（未来 module 5 方案）。使用了
+   Claude 主题 CSS 变量（`var(--color-text-primary)` 等），嵌入时需补
+   fallback。
+
+### 菜单项坐标（相对 "..." 按钮热区）
+
+```
+"..."按钮热区: (cardRect.right - 30, cardRect.top + 30)
+
+菜单向下向左展开：
+  Copy to clipboard:  dx=-80, dy=+45
+  Download file:      dx=-80, dy=+81   (+36 项高)
+  Save as artifact:   dx=-80, dy=+117  (+72)
+```
+
+### 时序参数（都经过验证，缩短任一会导致不可靠）
+
+```
+scrollIntoView 稳定:      400ms
+hover 轨迹后菜单弹出:     250ms
+mouseMoved 到菜单项后:    100ms (再 mousePressed)
+点击后等待剪贴板/下载:    700ms
+```
+
+### 代码位置
+
+- 核心模块：[src/plugins/web-bridge/capabilities/artifact-extractor.ts](../../src/plugins/web-bridge/capabilities/artifact-extractor.ts)
+- CDP 鼠标合成 IPC：`WB_SEND_MOUSE`
+- 剪贴板图片 IPC：`WB_READ_CLIPBOARD_IMAGE`
+- 一次性下载捕获 IPC：`WB_CAPTURE_DOWNLOAD_ONCE`
+- postMessage Hook：[src/plugins/web-bridge/injection/inject-scripts/artifact-postmessage-hook.ts](../../src/plugins/web-bridge/injection/inject-scripts/artifact-postmessage-hook.ts)
+
+### 模块状态与后续
+
+| 能力 | 状态 | 下一步 |
+|---|---|---|
+| `extractArtifactImage` | ✅ 验证过，生产可用 | 接 sync engine（流程待讨论） |
+| `extractArtifactSource` | 🟡 代码就绪，main 侧下载 hook 已实现，renderer 未调 | module 5 时启用 |
+| `triggerArtifactSave` | 🟡 接口就绪 | 未来"一键云备份"功能 |
+| UI 开关 | ⏸️ 暂不做 | 待讨论使用流程后再加 |
+
+## 八、需要其他 AI 回答的问题（历史存档）
 
 请基于上述事实，给出**至少一种可行方案**或**确认所有方案都不可行**（如果是后者，请说明根本原因，而不是逐个否决方案）。
 

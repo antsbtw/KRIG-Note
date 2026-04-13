@@ -331,6 +331,9 @@ export const IPC = {
   WB_CDP_START: 'wb:cdp-start',                 // renderer → main：启动 CDP 拦截器（调试用）
   WB_CDP_STOP: 'wb:cdp-stop',                   // renderer → main：停止 CDP 拦截器
   WB_CDP_GET_RESPONSES: 'wb:cdp-get-responses', // renderer → main：获取已捕获的响应
+  WB_SEND_MOUSE: 'wb:send-mouse',               // renderer → main：向 guest webContents 合成鼠标事件（CDP Input.dispatchMouseEvent）
+  WB_READ_CLIPBOARD_IMAGE: 'wb:read-clipboard-image', // renderer → main：读剪贴板图片（PNG dataURL）— Claude Artifact 复制的是渲染图像
+  WB_CAPTURE_DOWNLOAD_ONCE: 'wb:capture-download-once', // renderer → main：一次性拦截下次 download，返回文件内容（Artifact "Download file" 提取源码用）
 
   // yt-dlp
   YTDLP_CHECK_STATUS: 'ytdlp:check-status',

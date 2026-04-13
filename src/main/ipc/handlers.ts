@@ -868,6 +868,86 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
     return clipboard.readText();
   });
 
+  // WB_CAPTURE_DOWNLOAD_ONCE: Arm a one-shot will-download handler on the
+  // sender's guest webContents session. The NEXT download triggered on
+  // that session is intercepted: saved to a temp path, read into memory,
+  // deleted, and returned to the caller. Used by the Artifact "Download
+  // file" extraction path. Auto-clears after the download arrives or the
+  // timeout elapses, so it can be safely re-armed.
+  ipcMain.handle(IPC.WB_CAPTURE_DOWNLOAD_ONCE, async (event, timeoutMs?: number) => {
+    try {
+      const { getGuest } = await import('../../plugins/web-bridge/infrastructure/guest-registry');
+      const { app } = await import('electron');
+      const fs = await import('node:fs');
+      const path = await import('node:path');
+      const os = await import('node:os');
+
+      const guest = getGuest(event.sender.id);
+      if (!guest) return { success: false, error: 'no guest for sender' };
+      const session = guest.session;
+
+      return await new Promise<{ success: boolean; filename?: string; mimeType?: string; content?: string; error?: string }>((resolve) => {
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'krig-artifact-'));
+        let settled = false;
+        const timer = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          session.removeListener('will-download', listener);
+          try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+          resolve({ success: false, error: 'timeout waiting for download' });
+        }, timeoutMs ?? 10_000);
+
+        const listener = (_ev: Electron.Event, item: Electron.DownloadItem) => {
+          // One-shot: detach immediately so later downloads behave normally.
+          session.removeListener('will-download', listener);
+
+          const filename = item.getFilename();
+          const mimeType = item.getMimeType();
+          const savePath = path.join(tmpDir, filename);
+          item.setSavePath(savePath);
+
+          item.on('done', (_e, state) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            if (state === 'completed') {
+              try {
+                const buf = fs.readFileSync(savePath);
+                resolve({ success: true, filename, mimeType, content: buf.toString('utf8') });
+              } catch (err) {
+                resolve({ success: false, error: 'read failed: ' + String(err) });
+              }
+            } else {
+              resolve({ success: false, error: 'download ' + state });
+            }
+            try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+          });
+        };
+        session.on('will-download', listener);
+
+        // Silence "unused" lint — app is imported for future use (e.g. app.getPath).
+        void app;
+      });
+    } catch (err) {
+      return { success: false, error: String(err) };
+    }
+  });
+
+  // WB_READ_CLIPBOARD_IMAGE: Read clipboard as PNG data URL.
+  // Claude "Copy to clipboard" on an Artifact writes the rendered image, not source.
+  ipcMain.handle(IPC.WB_READ_CLIPBOARD_IMAGE, async () => {
+    const { clipboard } = await import('electron');
+    const img = clipboard.readImage();
+    if (img.isEmpty()) return { success: false, empty: true };
+    const size = img.getSize();
+    return {
+      success: true,
+      dataUrl: img.toDataURL(),
+      width: size.width,
+      height: size.height,
+    };
+  });
+
   // ── WebBridge CDP Interceptor (Debug) ──
   // Attach Chrome DevTools Protocol to the sender's guest webview and capture network responses.
   // Used to inspect Claude Artifact API traffic and any other server responses.
@@ -903,6 +983,43 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
         guestId: guest.id,
         filters: urlFilters || [],
       };
+    } catch (err) {
+      return { success: false, error: String(err) };
+    }
+  });
+
+  // WB_SEND_MOUSE: synthesize native mouse events into the sender's guest webview
+  // via CDP (Input.dispatchMouseEvent). Used to trigger Radix UI hover menus
+  // (e.g. Claude Artifact "..." menu) that don't respond to JS-layer dispatchEvent.
+  ipcMain.handle(IPC.WB_SEND_MOUSE, async (event, events: Array<{
+    type: string; x: number; y: number;
+    button?: string; buttons?: number; clickCount?: number;
+  }>) => {
+    try {
+      const { getGuest } = await import('../../plugins/web-bridge/infrastructure/guest-registry');
+      const senderId = event.sender.id;
+      const guest = getGuest(senderId);
+      if (!guest) return { success: false, error: 'No guest for sender ' + senderId };
+
+      // Attach debugger if not already attached. Safe to call repeatedly;
+      // if another debugger is attached we silently ignore.
+      const dbg = guest.debugger;
+      if (!dbg.isAttached()) {
+        try { dbg.attach('1.3'); } catch (e) { /* another debugger may be attached */ }
+      }
+
+      for (const ev of events) {
+        await dbg.sendCommand('Input.dispatchMouseEvent', {
+          type: ev.type,
+          x: ev.x,
+          y: ev.y,
+          button: ev.button ?? 'none',
+          buttons: ev.buttons ?? 0,
+          clickCount: ev.clickCount ?? 0,
+          pointerType: 'mouse',
+        });
+      }
+      return { success: true, count: events.length };
     } catch (err) {
       return { success: false, error: String(err) };
     }

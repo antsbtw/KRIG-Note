@@ -190,6 +190,260 @@ export function countArtifactPlaceholders(text: string): number {
 
 
 /**
+ * Fetch Claude's artifact versions endpoint for a conversation.
+ *
+ * Observed URL: `/api/organizations/{org}/artifacts/{conv}/versions?source=w`
+ * Response shape: `{ artifact_versions: [{ id?, type?, title?, content?, ... }, ...] }`
+ *
+ * The array is empty during/right after streaming — the caller should poll
+ * until it's populated (or give up after a timeout).
+ */
+export async function fetchClaudeArtifactVersions(
+  webview: Electron.WebviewTag,
+): Promise<any[] | null> {
+  const url = webview.getURL?.() || '';
+  const convId = extractConversationId(url);
+  if (!convId) return null;
+
+  try {
+    const script = `(async function() {
+      var orgsResp = await fetch('/api/organizations/', { credentials: 'include' });
+      if (!orgsResp.ok) return { error: 'orgs ' + orgsResp.status };
+      var orgs = await orgsResp.json();
+      if (!Array.isArray(orgs) || orgs.length === 0) return { error: 'no orgs' };
+      var orgId = orgs[0].uuid;
+      var convId = ${JSON.stringify(convId)};
+
+      // Try both URL shapes — Claude has used both over time.
+      var urls = [
+        '/api/organizations/' + orgId + '/artifacts/' + convId + '/versions?source=w',
+        '/api/organizations/' + orgId + '/artifacts/' + convId + '/versions',
+        '/api/organizations/' + orgId + '/artifacts/' + convId,
+      ];
+      for (var i = 0; i < urls.length; i++) {
+        try {
+          var r = await fetch(urls[i], { credentials: 'include' });
+          if (!r.ok) continue;
+          var j = await r.json();
+          var vers = j && (j.artifact_versions || j.versions || j);
+          if (Array.isArray(vers) && vers.length > 0) return { versions: vers, url: urls[i] };
+          if (Array.isArray(vers)) return { versions: [], url: urls[i] }; // empty but valid
+        } catch (e) {}
+      }
+      return { versions: [], url: null };
+    })()`;
+    const result = await webview.executeJavaScript(script);
+    if (!result || result.error) return null;
+    return Array.isArray(result.versions) ? result.versions : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Extract the source text from a Claude artifact version object. The shape
+ * varies (code artifact vs. HTML vs. React), but typically there's a
+ * `content`, `source`, or `code` string somewhere.
+ */
+export function extractArtifactVersionSource(version: any): string | null {
+  if (!version || typeof version !== 'object') return null;
+  const candidates = [
+    version.content,
+    version.source,
+    version.code,
+    version.html,
+    version.body,
+    version.markup,
+  ];
+  for (const c of candidates) {
+    if (typeof c === 'string' && c.length > 0) return c;
+  }
+  // Nested under `artifact` or `data`
+  if (version.artifact) {
+    const nested = extractArtifactVersionSource(version.artifact);
+    if (nested) return nested;
+  }
+  if (version.data) {
+    const nested = extractArtifactVersionSource(version.data);
+    if (nested) return nested;
+  }
+  return null;
+}
+
+/**
+ * Raw captured postMessage record from the claude.ai → artifact iframe
+ * data stream. Shape is whatever Anthropic's code posts; we only look at
+ * fields we can recognize.
+ */
+export interface CapturedArtifactMessage {
+  ts: number;
+  channel?: 'window' | 'port';
+  direction: 'in' | 'out';
+  targetOrigin: string | null;
+  sourceOrigin: string | null;
+  data: any;
+}
+
+/**
+ * Read all artifact-related postMessage payloads captured by the
+ * artifact-postmessage-hook injected into the claude.ai page.
+ *
+ * Returns an empty array if the hook isn't installed or nothing was
+ * captured yet.
+ */
+export async function readCapturedArtifactMessages(
+  webview: Electron.WebviewTag,
+): Promise<CapturedArtifactMessage[]> {
+  try {
+    const result = await webview.executeJavaScript(
+      `(function() { return window.__krig_artifact_messages || []; })()`,
+    );
+    return Array.isArray(result) ? (result as CapturedArtifactMessage[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Best-effort extraction of artifact source code from a captured postMessage
+ * payload. Claude's internal message shape is undocumented, so we walk the
+ * object looking for plausible source-code-bearing string fields.
+ *
+ * Strategy: depth-first scan for string values under keys commonly used for
+ * code (`source`, `code`, `content`, `html`, `artifact`, `files`...). We
+ * prefer the longest plausible string in the payload as the artifact body.
+ */
+export function extractArtifactSourceFromPayload(payload: any): string | null {
+  if (payload == null) return null;
+
+  const SOURCE_KEYS = new Set([
+    'source', 'sourceCode', 'code', 'content', 'body', 'contents',
+    'html', 'svg', 'markup', 'text', 'artifact', 'files', 'file',
+    'template', 'script',
+  ]);
+
+  // Ignore JSON-RPC notifications we know don't carry source.
+  const NOISE_METHODS = new Set([
+    'ui/notifications/sandbox-proxy-ready',
+    'ui/notifications/initialized',
+    'ui/notifications/size-changed',
+    'notifications/message',
+    'ui/initialize', // request, not response
+  ]);
+  if (payload && typeof payload === 'object' && typeof payload.method === 'string' && NOISE_METHODS.has(payload.method)) {
+    return null;
+  }
+
+  let best: string | null = null;
+
+  const consider = (s: string) => {
+    if (typeof s !== 'string' || s.length < 40) return;
+    if (!best || s.length > best.length) best = s;
+  };
+
+  const visit = (node: any, keyHint?: string) => {
+    if (node == null) return;
+    if (typeof node === 'string') {
+      const looksLikeCode = /<\w|<\/|\bfunction\b|\bimport\b|\bconst\b|\breturn\b|\bclass\b|```|\{[\s\S]*\}/.test(node);
+      const underKnownKey = keyHint ? SOURCE_KEYS.has(keyHint) : false;
+      if (underKnownKey || looksLikeCode) consider(node);
+      return;
+    }
+    if (Array.isArray(node)) {
+      for (const item of node) visit(item, keyHint);
+      return;
+    }
+    if (typeof node === 'object') {
+      // MCP resources/read shape: { contents: [{ uri, mimeType, text }] }
+      if (Array.isArray((node as any).contents)) {
+        for (const c of (node as any).contents) {
+          if (c && typeof c.text === 'string') consider(c.text);
+          if (c && typeof c.blob === 'string') consider(c.blob);
+        }
+      }
+      // Our fetch-hook shape: { url, body }
+      if (typeof (node as any).url === 'string' && (node as any).body != null) {
+        visit((node as any).body, 'body');
+        return;
+      }
+      for (const k of Object.keys(node)) visit(node[k], k);
+    }
+  };
+
+  visit(payload);
+  return best;
+}
+
+/**
+ * From a list of captured messages, pick the most recent artifact source
+ * strings (deduplicated). Returns an ordered list, newest first.
+ */
+export function collectArtifactSources(
+  messages: CapturedArtifactMessage[],
+): string[] {
+  const seen = new Set<string>();
+  const sources: string[] = [];
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const src = extractArtifactSourceFromPayload(messages[i].data);
+    if (src && !seen.has(src)) {
+      seen.add(src);
+      sources.push(src);
+    }
+  }
+  return sources;
+}
+
+/**
+ * Detect the fenced code-block language hint (e.g. ```tsx, ```html) from
+ * an artifact placeholder segment, so we can preserve the info line when
+ * substituting real source in.
+ */
+function extractPlaceholderInfoString(placeholderBlock: string): string {
+  const m = placeholderBlock.match(/^```([^\n]*)/);
+  return m ? m[1].trim() : '';
+}
+
+/**
+ * Replace Claude Artifact placeholders in `messageText` with captured
+ * artifact source code (from postMessage hook). Placeholders are matched in
+ * document order and replaced with sources in the order they were captured
+ * (newest first — so the Nth placeholder from the end of the message maps
+ * to the Nth captured artifact).
+ *
+ * Returns the (possibly) rewritten text and a count of how many
+ * placeholders were successfully filled.
+ */
+export function fillArtifactPlaceholders(
+  messageText: string,
+  capturedSources: string[],
+): { text: string; filled: number; remaining: number } {
+  if (!messageText || capturedSources.length === 0) {
+    const remaining = countArtifactPlaceholders(messageText || '');
+    return { text: messageText, filled: 0, remaining };
+  }
+
+  const placeholderRegex = /```[^\n]*\n(?:[^\n]*\n)*?This block is not supported on your current device yet\.(?:[^\n]*\n)*?```/g;
+  const placeholders = messageText.match(placeholderRegex) || [];
+  // Map i-th placeholder (from end) to i-th captured source (newest first),
+  // which matches the user's most-recent-visible-first mental model.
+  const placeholdersFromEnd = placeholders.length;
+  let filled = 0;
+  let idxFromStart = 0;
+
+  const result = messageText.replace(placeholderRegex, (block) => {
+    const idxFromEnd = placeholdersFromEnd - 1 - idxFromStart;
+    idxFromStart += 1;
+    const src = capturedSources[idxFromEnd];
+    if (!src) return block;
+    filled += 1;
+    const info = extractPlaceholderInfoString(block) || 'html';
+    return '```' + info + '\n' + src + '\n```';
+  });
+
+  return { text: result, filled, remaining: placeholdersFromEnd - filled };
+}
+
+/**
  * Replace Claude Artifact placeholders with user-friendly callouts.
  *
  * Investigation conclusion (2026-04-13):
