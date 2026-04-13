@@ -47,6 +47,7 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
   const [extractDetail, setExtractDetail] = useState<{
     markdown: string; blocks: string[]; atoms: string[]; preview: string;
     blockDetails?: any[]; atomDetails?: any[];
+    sseMarkdown?: string; domMarkdown?: string; mergeStrategy?: string;
   } | null>(null);
   const [showExtractDetail, setShowExtractDetail] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -183,6 +184,9 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
           preview: result.preview || '',
           blockDetails: result.blockDetails,
           atomDetails: result.atomDetails,
+          sseMarkdown: sseMarkdown || undefined,
+          domMarkdown: domMarkdown || undefined,
+          mergeStrategy: source,
         });
         setShowExtractDetail(true);
       } else {
@@ -716,12 +720,43 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
               )) ?? <div style={{ color: '#666' }}>No details</div>}
             </div>
 
-            {/* Raw markdown */}
+            {/* Merge strategy */}
+            {extractDetail.mergeStrategy && (
+              <div style={{ marginBottom: 8, color: '#ffab40', fontSize: 11 }}>
+                策略: {extractDetail.mergeStrategy}
+              </div>
+            )}
+
+            {/* SSE vs DOM comparison */}
+            {(extractDetail.sseMarkdown || extractDetail.domMarkdown) && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ color: '#4caf50', marginBottom: 4, fontSize: 11 }}>SSE ({extractDetail.sseMarkdown?.length ?? 0} chars):</div>
+                    <pre style={{
+                      background: '#111', padding: 6, borderRadius: 4, fontSize: 10,
+                      whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 300, overflow: 'auto',
+                      border: '1px solid #2e7d32', lineHeight: 1.3,
+                    }}>{extractDetail.sseMarkdown || '(empty)'}</pre>
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ color: '#2196f3', marginBottom: 4, fontSize: 11 }}>DOM ({extractDetail.domMarkdown?.length ?? 0} chars):</div>
+                    <pre style={{
+                      background: '#111', padding: 6, borderRadius: 4, fontSize: 10,
+                      whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 300, overflow: 'auto',
+                      border: '1px solid #1565c0', lineHeight: 1.3,
+                    }}>{extractDetail.domMarkdown || '(empty)'}</pre>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Final merged markdown */}
             <div>
-              <div style={{ color: '#8ab4f8', marginBottom: 4 }}>原始 SSE Markdown ({extractDetail.markdown.length} chars):</div>
+              <div style={{ color: '#8ab4f8', marginBottom: 4 }}>最终合并 Markdown ({extractDetail.markdown.length} chars):</div>
               <pre style={{
                 background: '#111', padding: 8, borderRadius: 4, fontSize: 11,
-                whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 500, overflow: 'auto',
+                whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 400, overflow: 'auto',
                 border: '1px solid #333', lineHeight: 1.4,
               }}>{extractDetail.markdown}</pre>
             </div>
