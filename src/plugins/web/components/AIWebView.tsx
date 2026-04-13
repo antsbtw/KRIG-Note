@@ -1,7 +1,12 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { getSSECaptureScript } from '../../web-bridge/injection/inject-scripts/sse-capture';
 import { getDomToMarkdownScript } from '../../web-bridge/injection/inject-scripts/dom-to-markdown';
-import { extractLatestClaudeResponse, isClaudeConversationPage } from '../../web-bridge/capabilities/claude-api-extractor';
+import {
+  extractLatestClaudeResponse,
+  isClaudeConversationPage,
+  countArtifactPlaceholders,
+  replaceArtifactPlaceholders,
+} from '../../web-bridge/capabilities/claude-api-extractor';
 import { getAIServiceProfile, getAIServiceList, DEFAULT_AI_SERVICE, detectAIServiceByUrl } from '../../../shared/types/ai-service-types';
 import type { AIServiceId } from '../../../shared/types/ai-service-types';
 import '../web.css';
@@ -323,7 +328,38 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
             break;
           }
 
-          console.log(`[AIWebView Sync/Claude API] Response #${idx}: ${assistantMsg.length} chars, user="${humanMsg.slice(0,50)}"`);
+          // Check for Artifact placeholders and extract real content via Copy button
+          const artifactCount = countArtifactPlaceholders(assistantMsg);
+          let finalMarkdown = assistantMsg;
+
+          if (artifactCount > 0) {
+            // Count artifacts in all prior assistant messages to get the starting button index
+            let priorArtifactCount = 0;
+            let foundIdx = -1;
+            for (let i = 0; i < conv.messages.length; i++) {
+              if (conv.messages[i].sender === 'human') {
+                if (conv.messages[i].text === humanMsg) foundIdx = i;
+              }
+              if (foundIdx === -1 && conv.messages[i].sender === 'assistant') {
+                priorArtifactCount += countArtifactPlaceholders(conv.messages[i].text);
+              }
+            }
+
+            console.log(`[Claude/Artifact] Response #${idx}: ${artifactCount} artifact(s), starting at button index ${priorArtifactCount}`);
+            try {
+              finalMarkdown = await replaceArtifactPlaceholders(
+                assistantMsg,
+                priorArtifactCount,
+                webview,
+                () => viewAPI.aiReadClipboard(),
+              );
+              console.log(`[Claude/Artifact] Replaced placeholders: ${assistantMsg.length} → ${finalMarkdown.length} chars`);
+            } catch (err) {
+              console.warn('[Claude/Artifact] Replacement failed:', err);
+            }
+          }
+
+          console.log(`[AIWebView Sync/Claude API] Response #${idx}: ${finalMarkdown.length} chars, user="${humanMsg.slice(0,50)}"`);
 
           viewAPI.sendToOtherSlot({
             protocol: 'ai-sync',
@@ -332,7 +368,7 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
               turn: {
                 index: idx,
                 userMessage: humanMsg,
-                markdown: assistantMsg,
+                markdown: finalMarkdown,
                 timestamp: Date.now(),
               },
               source: {

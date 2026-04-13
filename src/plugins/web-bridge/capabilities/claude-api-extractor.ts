@@ -92,16 +92,10 @@ export async function extractClaudeConversation(
       if (!convResp.ok) return { error: 'Failed to get conversation: ' + convResp.status };
       var conv = await convResp.json();
 
-      // Step 3: Fetch artifacts (optional)
-      var artifactsResp = await fetch('/api/organizations/' + orgId + '/artifacts/' + convId + '/', {
-        credentials: 'include',
-      });
-      var artifacts = null;
-      if (artifactsResp.ok) {
-        artifacts = await artifactsResp.json();
-      }
-
-      return { conv: conv, artifacts: artifacts, orgId: orgId };
+      // Note: Artifact endpoint consistently returns 404.
+      // Artifact content is NOT available via server API — it must be
+      // extracted via the "Copy to clipboard" button in the page UI.
+      return { conv: conv, orgId: orgId };
     })()`;
 
     const result = await webview.executeJavaScript(script);
@@ -125,16 +119,13 @@ export async function extractClaudeConversation(
     }));
 
     console.log(`[ClaudeAPI] Extracted ${messages.length} messages from conversation ${convId}`);
-    if (result.artifacts?.artifact_versions?.length > 0) {
-      console.log(`[ClaudeAPI] Found ${result.artifacts.artifact_versions.length} artifact versions`);
-    }
 
     return {
       uuid: raw.uuid,
       name: raw.name || '',
       model: raw.model || '',
       messages,
-      raw: { conversation: raw, artifacts: result.artifacts },
+      raw: { conversation: raw },
     };
   } catch (err) {
     console.error('[ClaudeAPI] Exception:', err);
@@ -182,4 +173,114 @@ export async function extractLatestClaudeResponse(
  */
 export function isClaudeConversationPage(url: string): boolean {
   return /^https:\/\/claude\.ai\/chat\/[a-f0-9-]+/.test(url);
+}
+
+/** Placeholder string Claude inserts for Artifact content when rendered for non-official clients. */
+export const CLAUDE_ARTIFACT_PLACEHOLDER = 'This block is not supported on your current device yet.';
+
+/**
+ * Count how many artifact placeholders appear in a message text.
+ * Each `\`\`\`\nThis block is not supported...\n\`\`\`` corresponds to one Artifact.
+ */
+export function countArtifactPlaceholders(text: string): number {
+  if (!text) return 0;
+  const matches = text.match(/```[\s\S]*?This block is not supported on your current device yet\.[\s\S]*?```/g);
+  return matches?.length ?? 0;
+}
+
+/**
+ * Extract Artifact HTML content by clicking the "Copy to clipboard" button.
+ * Reads the system clipboard via main process (renderer clipboard is blocked by focus).
+ *
+ * Strategy:
+ *   1. Find buttons with aria-label="copy to clipboard" in page DOM
+ *   2. Click the Nth button (0-indexed)
+ *   3. Wait briefly for clipboard write
+ *   4. Read clipboard from main process
+ *
+ * @param webview - guest webview
+ * @param index - which artifact copy button to click (0 = first, -1 = last)
+ * @param readClipboard - function to read clipboard (main process IPC)
+ */
+export async function extractArtifactContent(
+  webview: Electron.WebviewTag,
+  index: number,
+  readClipboard: () => Promise<string>,
+): Promise<string | null> {
+  try {
+    const clicked = await webview.executeJavaScript(`(function() {
+      var btns = document.querySelectorAll('button[aria-label="copy to clipboard" i]');
+      if (btns.length === 0) return { success: false, total: 0 };
+      var target = ${index >= 0 ? `btns[${index}]` : 'btns[btns.length - 1]'};
+      if (!target) return { success: false, total: btns.length };
+      target.click();
+      return { success: true, total: btns.length };
+    })()`);
+
+    if (!clicked?.success) {
+      console.warn('[ClaudeAPI] No artifact copy button found', clicked);
+      return null;
+    }
+
+    // Wait for clipboard to be written
+    await new Promise(r => setTimeout(r, 300));
+
+    const text = await readClipboard();
+    if (!text || !text.trim()) return null;
+    return text.trim();
+  } catch (err) {
+    console.error('[ClaudeAPI] Artifact extraction failed:', err);
+    return null;
+  }
+}
+
+/**
+ * For an assistant message containing N artifact placeholders,
+ * extract all N artifact contents and replace placeholders in the text.
+ *
+ * @param messageText - raw message text with placeholders
+ * @param artifactStartIndex - index of the first artifact button on the page that corresponds to this message's first placeholder
+ * @param webview - guest webview
+ * @param readClipboard - clipboard reader
+ */
+export async function replaceArtifactPlaceholders(
+  messageText: string,
+  artifactStartIndex: number,
+  webview: Electron.WebviewTag,
+  readClipboard: () => Promise<string>,
+): Promise<string> {
+  const placeholderRegex = /(```[^\n]*\n)(?:[^\n]*\n)*?This block is not supported on your current device yet\.(?:[^\n]*\n)*?(```)/g;
+  const parts: string[] = [];
+  let lastIdx = 0;
+  let artifactIdx = artifactStartIndex;
+  let match: RegExpExecArray | null;
+
+  while ((match = placeholderRegex.exec(messageText)) !== null) {
+    // Text before placeholder
+    if (match.index > lastIdx) {
+      parts.push(messageText.slice(lastIdx, match.index));
+    }
+
+    // Extract actual artifact content
+    const content = await extractArtifactContent(webview, artifactIdx, readClipboard);
+    if (content) {
+      // Detect content type and wrap as appropriate code block
+      const isHtml = /<html|<!doctype|<svg|<style|<script/i.test(content.slice(0, 500));
+      const lang = isHtml ? 'html' : '';
+      parts.push('```' + lang + '\n' + content + '\n```');
+    } else {
+      // Fallback: keep original placeholder
+      parts.push(match[0]);
+    }
+
+    lastIdx = match.index + match[0].length;
+    artifactIdx++;
+  }
+
+  // Remaining text
+  if (lastIdx < messageText.length) {
+    parts.push(messageText.slice(lastIdx));
+  }
+
+  return parts.length > 0 ? parts.join('') : messageText;
 }
