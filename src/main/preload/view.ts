@@ -253,6 +253,8 @@ contextBridge.exposeInMainWorld('viewAPI', {
     ipcRenderer.invoke(IPC.WB_CDP_STOP),
   wbCdpGetResponses: () =>
     ipcRenderer.invoke(IPC.WB_CDP_GET_RESPONSES),
+  wbCdpFindResponse: (params: { urlSubstring: string; mode?: 'all' | 'latest' | 'first' }) =>
+    ipcRenderer.invoke(IPC.WB_CDP_FIND_RESPONSE, params),
   wbSendMouse: (events: Array<{ type: string; x: number; y: number; button?: string; buttons?: number; clickCount?: number }>) =>
     ipcRenderer.invoke(IPC.WB_SEND_MOUSE, events),
   wbReadClipboardImage: () =>

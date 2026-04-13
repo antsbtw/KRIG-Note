@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { getSSECaptureScript } from '../../web-bridge/injection/inject-scripts/sse-capture';
 import { getArtifactPostMessageHookScript } from '../../web-bridge/injection/inject-scripts/artifact-postmessage-hook';
 import { debugExtractFirstArtifact } from '../../web-bridge/capabilities/claude-artifact-extractor';
+import { debugExtractContent as debugExtractChatGPTContent } from '../../web-bridge/capabilities/chatgpt-content-extractor';
 import { getDomToMarkdownScript } from '../../web-bridge/injection/inject-scripts/dom-to-markdown';
 import {
   extractLatestClaudeResponse,
@@ -30,6 +31,8 @@ declare const viewAPI: {
   wbCdpStart: (urlFilters?: string[]) => Promise<{ success: boolean; error?: string; guestUrl?: string; guestId?: number; filters?: string[] }>;
   wbCdpStop: () => Promise<{ success: boolean }>;
   wbCdpGetResponses: () => Promise<{ success: boolean; error?: string; count?: number; responses?: Array<{ url: string; statusCode: number; mimeType: string; bodyLength: number; bodyPreview: string | null; timestamp: number }> }>;
+  wbCdpFindResponse: (params: { urlSubstring: string; mode?: 'all' | 'latest' | 'first' }) =>
+    Promise<{ success: boolean; error?: string; count?: number; matches?: Array<{ url: string; statusCode: number; mimeType: string; body: string | null; bodyLength: number; timestamp: number }> }>;
   wbSendMouse: (events: Array<{ type: string; x: number; y: number; button?: string; buttons?: number; clickCount?: number }>) =>
     Promise<{ success: boolean; error?: string; count?: number }>;
   wbReadClipboardImage: () =>
@@ -165,6 +168,33 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
       const w = window.open('', '_blank', 'width=800,height=700');
       w?.document.write(`<title>Artifact Preview</title><img src="${result.image.dataUrl}" style="max-width:100%">`);
     }
+  }, []);
+
+  const escapeHtml = (s: string) =>
+    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+  // ── ChatGPT 内容提取（调试入口）──
+  // Reads from the CDP response cache. Caller must start CDP capture and
+  // reload the page first so conversation / textdocs / files are captured.
+  const handleChatGPTTest = useCallback(async () => {
+    const webview = webviewRef.current;
+    if (!webview) { console.warn('[ChatGPTTest] no webview'); return; }
+    const c = await debugExtractChatGPTContent(webview, viewAPI as any);
+    // Open preview window summarizing text + canvases + first image.
+    const firstImage = Object.values(c.files).find(f => f.dataUrl && f.mimeType.startsWith('image/'));
+    const canvasHtml = c.textdocs.map(d => `<h3>${d.title} <small>(v${d.version}, ${d.content.length} chars)</small></h3><pre style="white-space:pre-wrap">${escapeHtml(d.content.slice(0, 1500))}...</pre>`).join('');
+    const html = `
+      <title>ChatGPT Extract — ${escapeHtml(c.title || c.conversationId || '?')}</title>
+      <body style="font: 13px system-ui; padding: 20px; max-width: 900px">
+        <h2>${escapeHtml(c.title || '(untitled)')}</h2>
+        <p><b>Messages:</b> ${c.messages.length} · <b>Canvas docs:</b> ${c.textdocs.length} · <b>Files:</b> ${Object.keys(c.files).length}</p>
+        ${c.warnings.length ? `<div style="color:#c00">⚠ ${c.warnings.join('<br>')}</div>` : ''}
+        ${firstImage?.dataUrl ? `<h3>First image (${firstImage.fileId})</h3><img src="${firstImage.dataUrl}" style="max-width:100%">` : ''}
+        ${canvasHtml}
+      </body>
+    `;
+    const w = window.open('', '_blank', 'width=1000,height=800');
+    w?.document.write(html);
   }, []);
 
 
@@ -813,6 +843,18 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
           title="提取当前页第一个 Claude Artifact（图像）"
         >
           🧪 Artifact
+        </button>
+
+        {/* ChatGPT content extractor (manual test; requires CDP capture) */}
+        <button
+          style={{
+            background: '#10a37f', border: 'none', borderRadius: 4,
+            color: '#fff', fontSize: 11, padding: '3px 10px', cursor: 'pointer',
+          }}
+          onClick={handleChatGPTTest}
+          title="提取当前 ChatGPT 对话（需先启用 📡 CDP 抓包并刷新页面）"
+        >
+          🧪 ChatGPT
         </button>
 
 

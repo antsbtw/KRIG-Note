@@ -1049,6 +1049,34 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
     return { success: true, count: responses.length, responses: preview };
   });
 
+  // WB_CDP_FIND_RESPONSE: Return full bodies of captured CDP responses
+  // matching a URL substring. Used by content extractors (e.g. ChatGPT)
+  // that need the raw JSON / base64 payload rather than a 2KB preview.
+  //
+  // `urlSubstring`: case-sensitive substring match against response URL.
+  // `mode`:
+  //   'all'    → every match, in capture order (default)
+  //   'latest' → only the most recent match
+  //   'first'  → only the earliest match
+  ipcMain.handle(IPC.WB_CDP_FIND_RESPONSE, async (_event, params: {
+    urlSubstring: string;
+    mode?: 'all' | 'latest' | 'first';
+  }) => {
+    if (!cdpInstance) return { success: false, error: 'CDP not started', matches: [] };
+    const all = cdpInstance.getResponses().filter(r => r.url.includes(params.urlSubstring));
+    let picked = all;
+    if (params.mode === 'latest') picked = all.slice(-1);
+    else if (params.mode === 'first') picked = all.slice(0, 1);
+    return {
+      success: true,
+      count: picked.length,
+      matches: picked.map(r => ({
+        url: r.url, statusCode: r.statusCode, mimeType: r.mimeType,
+        body: r.body, bodyLength: r.body?.length ?? 0, timestamp: r.timestamp,
+      })),
+    };
+  });
+
   // AI_PARSE_MARKDOWN: Parse markdown → Atom[] (used by SyncNote receiver)
   ipcMain.handle(IPC.AI_PARSE_MARKDOWN, async (_event, markdown: string) => {
     try {
