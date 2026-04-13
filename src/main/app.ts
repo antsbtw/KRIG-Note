@@ -18,6 +18,7 @@ import { initKrigNoteDocs, createBlockTaskDoc, reimportTestDocs } from './storag
 import { mediaSurrealStore as mediaStore } from './media/media-surreal-store';
 import { setupExtractionInterceptor } from '../plugins/web/main/extraction-handler';
 import { setupCSPBypass } from '../plugins/web-bridge/infrastructure/csp-bypass';
+import { registerGuest } from '../plugins/web-bridge/infrastructure/guest-registry';
 
 /**
  * KRIG Note — 应用入口
@@ -92,8 +93,9 @@ function registerPlugins(): void {
     label: 'AI',
     order: 6,
     hidden: true,   // 仅作为 right slot（场景 A 标注模式）
-    onViewCreated: (_view, guestWebContents) => {
+    onViewCreated: (view, guestWebContents) => {
       setupCSPBypass(guestWebContents);
+      registerGuest(view.webContents, guestWebContents);
     },
   });
 
@@ -106,8 +108,9 @@ function registerPlugins(): void {
     label: 'AI',
     order: 4,
     hidden: false,   // 在 NavSide tab 中显示
-    onViewCreated: (_view, guestWebContents) => {
+    onViewCreated: (view, guestWebContents) => {
       setupCSPBypass(guestWebContents);
+      registerGuest(view.webContents, guestWebContents);
     },
   });
 

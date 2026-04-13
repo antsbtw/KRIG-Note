@@ -328,6 +328,9 @@ export const IPC = {
   AI_EXTRACT_DEBUG: 'ai:extract-debug',         // renderer → main：调试用，解析 Markdown 并返回统计
   AI_PARSE_MARKDOWN: 'ai:parse-markdown',       // renderer → main：解析 Markdown → Atom[]
   AI_READ_CLIPBOARD: 'ai:read-clipboard',       // renderer → main：读取系统剪贴板文本
+  WB_CDP_START: 'wb:cdp-start',                 // renderer → main：启动 CDP 拦截器（调试用）
+  WB_CDP_STOP: 'wb:cdp-stop',                   // renderer → main：停止 CDP 拦截器
+  WB_CDP_GET_RESPONSES: 'wb:cdp-get-responses', // renderer → main：获取已捕获的响应
 
   // yt-dlp
   YTDLP_CHECK_STATUS: 'ytdlp:check-status',

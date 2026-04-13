@@ -868,6 +868,70 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
     return clipboard.readText();
   });
 
+  // ── WebBridge CDP Interceptor (Debug) ──
+  // Attach Chrome DevTools Protocol to the sender's guest webview and capture network responses.
+  // Used to inspect Claude Artifact API traffic and any other server responses.
+  let cdpInstance: import('../../plugins/web-bridge/capabilities/cdp-interceptor').CDPInterceptor | null = null;
+
+  ipcMain.handle(IPC.WB_CDP_START, async (event, urlFilters?: string[]) => {
+    try {
+      const { getGuest } = await import('../../plugins/web-bridge/infrastructure/guest-registry');
+      const { CDPInterceptor } = await import('../../plugins/web-bridge/capabilities/cdp-interceptor');
+
+      const senderId = event.sender.id;
+      const guest = getGuest(senderId);
+      if (!guest) {
+        return { success: false, error: 'No guest webview found for sender ' + senderId };
+      }
+
+      // Stop previous instance if any
+      if (cdpInstance) {
+        cdpInstance.stop();
+        cdpInstance = null;
+      }
+
+      const filters = (urlFilters || []).map(f => f.startsWith('/') && f.endsWith('/') ? new RegExp(f.slice(1, -1)) : f);
+      cdpInstance = new CDPInterceptor(guest, {
+        urlFilters: filters,
+        maxCacheSize: 200,
+        captureBodies: true,
+      });
+      const ok = cdpInstance.start();
+      return {
+        success: ok,
+        guestUrl: guest.getURL(),
+        guestId: guest.id,
+        filters: urlFilters || [],
+      };
+    } catch (err) {
+      return { success: false, error: String(err) };
+    }
+  });
+
+  ipcMain.handle(IPC.WB_CDP_STOP, async () => {
+    if (cdpInstance) {
+      cdpInstance.stop();
+      cdpInstance = null;
+    }
+    return { success: true };
+  });
+
+  ipcMain.handle(IPC.WB_CDP_GET_RESPONSES, async () => {
+    if (!cdpInstance) return { success: false, error: 'CDP not started', responses: [] };
+    const responses = cdpInstance.getResponses();
+    // Return truncated body previews to avoid massive IPC payloads
+    const preview = responses.map(r => ({
+      requestId: r.requestId,
+      url: r.url,
+      statusCode: r.statusCode,
+      mimeType: r.mimeType,
+      bodyLength: r.body?.length ?? 0,
+      bodyPreview: r.body?.slice(0, 2000) ?? null,
+      timestamp: r.timestamp,
+    }));
+    return { success: true, count: responses.length, responses: preview };
+  });
+
   // AI_PARSE_MARKDOWN: Parse markdown → Atom[] (used by SyncNote receiver)
   ipcMain.handle(IPC.AI_PARSE_MARKDOWN, async (_event, markdown: string) => {
     try {

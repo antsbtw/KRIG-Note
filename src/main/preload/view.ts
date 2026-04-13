@@ -246,6 +246,14 @@ contextBridge.exposeInMainWorld('viewAPI', {
   aiReadClipboard: () =>
     ipcRenderer.invoke(IPC.AI_READ_CLIPBOARD),
 
+  // ── WebBridge CDP 调试接口 ──
+  wbCdpStart: (urlFilters?: string[]) =>
+    ipcRenderer.invoke(IPC.WB_CDP_START, urlFilters),
+  wbCdpStop: () =>
+    ipcRenderer.invoke(IPC.WB_CDP_STOP),
+  wbCdpGetResponses: () =>
+    ipcRenderer.invoke(IPC.WB_CDP_GET_RESPONSES),
+
   aiExtractDebug: (params: { markdown: string; serviceId: string }) =>
     ipcRenderer.invoke(IPC.AI_EXTRACT_DEBUG, params),
 

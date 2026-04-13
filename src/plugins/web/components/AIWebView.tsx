@@ -15,6 +15,9 @@ declare const viewAPI: {
   onAIInjectAndSend?: (callback: (params: any) => void) => () => void;
   aiSendResponse?: (channel: string, result: any) => Promise<void>;
   aiReadClipboard: () => Promise<string>;
+  wbCdpStart: (urlFilters?: string[]) => Promise<{ success: boolean; error?: string; guestUrl?: string; guestId?: number; filters?: string[] }>;
+  wbCdpStop: () => Promise<{ success: boolean }>;
+  wbCdpGetResponses: () => Promise<{ success: boolean; error?: string; count?: number; responses?: Array<{ url: string; statusCode: number; mimeType: string; bodyLength: number; bodyPreview: string | null; timestamp: number }> }>;
   aiExtractDebug: (params: { markdown: string; serviceId: string }) =>
     Promise<{ success: boolean; atomCount?: number; blocks?: number; error?: string; preview?: string; blockTypes?: string[]; atomTypes?: string[]; blockDetails?: any[]; atomDetails?: any[] }>;
   closeSlot: () => void;
@@ -51,6 +54,9 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
     sseMarkdown?: string; domMarkdown?: string; copyMarkdown?: string; mergeStrategy?: string;
   } | null>(null);
   const [showExtractDetail, setShowExtractDetail] = useState(false);
+  const [cdpActive, setCdpActive] = useState(false);
+  const [cdpResult, setCdpResult] = useState<{ count: number; responses: Array<{ url: string; bodyLength: number; bodyPreview: string | null; mimeType: string; statusCode: number }> } | null>(null);
+  const [showCdpPanel, setShowCdpPanel] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   const initialUrl = getAIServiceProfile(DEFAULT_AI_SERVICE).newChatUrl;
@@ -117,6 +123,30 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
 
   // ── 提取最新 AI 回复 ──
   // 策略：SSE + DOM + Copy 按钮，三种方式取最完整的
+  // ── CDP 拦截（调试 Artifact）──
+  const handleCdpToggle = useCallback(async () => {
+    if (!cdpActive) {
+      // 启动 — 不加过滤器（先看全部请求，便于发现 Artifact 的 URL 模式）
+      const res = await viewAPI.wbCdpStart([]);
+      if (res.success) {
+        setCdpActive(true);
+        console.log('[CDP] Started on', res.guestUrl, 'guestId=', res.guestId);
+      } else {
+        console.warn('[CDP] Start failed:', res.error);
+      }
+    } else {
+      // 停止 + 获取所有已捕获的响应
+      const data = await viewAPI.wbCdpGetResponses();
+      await viewAPI.wbCdpStop();
+      setCdpActive(false);
+      if (data.success && data.responses) {
+        setCdpResult({ count: data.count || 0, responses: data.responses });
+        setShowCdpPanel(true);
+        console.log(`[CDP] Captured ${data.count} requests`);
+      }
+    }
+  }, [cdpActive]);
+
   const handleExtractLatest = useCallback(async () => {
     const webview = webviewRef.current;
     if (!webview) {
@@ -622,6 +652,18 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
 
         <div style={{ flex: 1 }} />
 
+        {/* CDP interceptor (debug Artifact & all network) */}
+        <button
+          style={{
+            background: cdpActive ? '#d32f2f' : '#455a64', border: 'none', borderRadius: 4,
+            color: '#fff', fontSize: 11, padding: '3px 10px', cursor: 'pointer',
+          }}
+          onClick={handleCdpToggle}
+          title={cdpActive ? '停止 CDP 拦截并查看结果' : '启动 CDP 拦截（查看所有网络请求）'}
+        >
+          {cdpActive ? '⏹ CDP 录制中' : '📡 CDP 抓包'}
+        </button>
+
         {/* Extract latest AI response */}
         <button
           style={{
@@ -663,6 +705,53 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
           // @ts-ignore
           allowpopups="true"
         />
+
+        {/* CDP Capture Panel — 显示所有捕获的 HTTP 请求 */}
+        {showCdpPanel && cdpResult && (
+          <div style={{
+            position: 'absolute', top: 0, right: 0, bottom: 0,
+            width: '55%', minWidth: 400,
+            background: '#1e1e1e', borderLeft: '1px solid #444',
+            overflow: 'auto', zIndex: 101, padding: 12,
+            fontSize: 11, color: '#ccc', fontFamily: 'monospace',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+              <span style={{ fontWeight: 'bold', color: '#e8eaed' }}>
+                📡 CDP 捕获 ({cdpResult.count} 个请求)
+              </span>
+              <button
+                style={{ background: 'transparent', border: 'none', color: '#aaa', cursor: 'pointer', fontSize: 16 }}
+                onClick={() => setShowCdpPanel(false)}
+              >×</button>
+            </div>
+
+            <div style={{ color: '#888', fontSize: 10, marginBottom: 10 }}>
+              提示：点击某个请求展开详情，寻找 Artifact 相关的 URL pattern。
+              常见的有 <code style={{color:'#4caf50'}}>/artifacts/</code>, <code style={{color:'#4caf50'}}>/projects/</code>, <code style={{color:'#4caf50'}}>sandbox</code>。
+            </div>
+
+            {cdpResult.responses.map((r, i) => (
+              <details key={i} style={{
+                background: '#252525', borderRadius: 4, padding: '6px 8px', marginBottom: 4,
+                borderLeft: '3px solid ' + (r.mimeType?.indexOf('json') !== -1 ? '#4caf50' : r.mimeType?.indexOf('javascript') !== -1 ? '#ffab40' : r.mimeType?.indexOf('html') !== -1 ? '#2196f3' : r.mimeType?.indexOf('image') !== -1 ? '#e91e63' : '#555'),
+              }}>
+                <summary style={{ cursor: 'pointer', fontSize: 11, wordBreak: 'break-all' }}>
+                  <span style={{ color: '#8ab4f8' }}>[{i}]</span>
+                  <span style={{ color: '#888', marginLeft: 4 }}>{r.mimeType || '?'}</span>
+                  <span style={{ color: '#aaa', marginLeft: 4 }}>{r.bodyLength}b</span>
+                  <span style={{ marginLeft: 6, color: '#ccc' }}>{r.url.slice(0, 120)}</span>
+                </summary>
+                {r.bodyPreview && (
+                  <pre style={{
+                    background: '#111', padding: 6, borderRadius: 3, fontSize: 10,
+                    marginTop: 4, whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+                    maxHeight: 300, overflow: 'auto', border: '1px solid #333',
+                  }}>{r.bodyPreview}</pre>
+                )}
+              </details>
+            ))}
+          </div>
+        )}
 
         {/* Extract Debug Detail Panel */}
         {showExtractDetail && extractDetail && (
