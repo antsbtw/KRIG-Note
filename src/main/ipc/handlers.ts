@@ -774,11 +774,64 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
         const responseChannel = `ai:response:${params.thoughtId}`;
         let resolved = false;
 
-        const listener = (_e: any, result: any) => {
+        const listener = async (_e: any, result: any) => {
           if (resolved) return;
           resolved = true;
           ipcMain.removeListener(responseChannel, listener);
           console.log('[AI_ASK_VISIBLE] Step 4: Got response from renderer:', { success: result?.success, mdLen: result?.markdown?.length ?? 0, error: result?.error });
+
+          // Parse markdown → Atoms and save to ThoughtStore
+          if (result?.success && result?.markdown) {
+            try {
+              const { ResultParser } = await import('../ai/result-parser');
+              const { createAtomsFromExtracted } = await import('../ai/content-to-atoms');
+
+              console.log('[AI_ASK_VISIBLE] Parsing markdown, length:', result.markdown.length);
+              console.log('[AI_ASK_VISIBLE] Markdown preview:', result.markdown.slice(0, 200));
+
+              const parser = new ResultParser();
+              const blocks = parser.parse(result.markdown);
+              console.log('[AI_ASK_VISIBLE] Parsed blocks:', blocks.length, blocks.map((b: any) => b.type));
+
+              const atoms = createAtomsFromExtracted(blocks);
+              console.log('[AI_ASK_VISIBLE] Created atoms:', atoms.length, atoms.map((a: any) => `${a.type}(${a.id?.slice(0,8)})`));
+
+              // Remove the document root and noteTitle — Thought only needs content atoms
+              const contentAtoms = atoms.filter((a: any) => a.type !== 'document' && a.type !== 'noteTitle');
+              console.log('[AI_ASK_VISIBLE] Content atoms (after filter):', contentAtoms.length);
+
+              // Fix parentId: Thought's atomsToDoc expects top-level atoms without parentId,
+              // or with parentId pointing to a root document.
+              // Since we removed the document atom, clear parentId of top-level atoms.
+              const docAtom = atoms.find((a: any) => a.type === 'document');
+              const docId = docAtom?.id;
+              for (const atom of contentAtoms) {
+                if (atom.parentId === docId) {
+                  atom.parentId = undefined;
+                }
+              }
+
+              console.log('[AI_ASK_VISIBLE] First content atom:', JSON.stringify(contentAtoms[0])?.slice(0, 300));
+
+              await thoughtStore.save(params.thoughtId, { doc_content: contentAtoms });
+              console.log('[AI_ASK_VISIBLE] Saved', contentAtoms.length, 'atoms to ThoughtStore');
+            } catch (parseErr) {
+              console.error('[AI_ASK_VISIBLE] Failed to parse/save AI response:', parseErr);
+              // Fallback: save raw markdown as single paragraph
+              await thoughtStore.save(params.thoughtId, {
+                doc_content: [{
+                  id: `atom-${Date.now()}`,
+                  type: 'paragraph',
+                  content: { children: [{ type: 'text', text: result.markdown }] },
+                  meta: { createdAt: Date.now(), updatedAt: Date.now(), dirty: false },
+                }],
+              });
+              console.log('[AI_ASK_VISIBLE] Fallback: saved raw markdown as single paragraph');
+            }
+          } else {
+            console.log('[AI_ASK_VISIBLE] No markdown to parse:', { success: result?.success, hasMarkdown: !!result?.markdown });
+          }
+
           resolve(result);
         };
 
@@ -807,6 +860,82 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
   ipcMain.handle(IPC.AI_STATUS, async () => {
     const { backgroundAI } = await import('../ai/background-ai-webview');
     return backgroundAI.getStatus();
+  });
+
+  // AI_EXTRACT_DEBUG: Parse markdown and return stats (for debugging extraction quality)
+  ipcMain.handle(IPC.AI_EXTRACT_DEBUG, async (_event, params: { markdown: string; serviceId: string }) => {
+    try {
+      const { ResultParser } = await import('../ai/result-parser');
+      const { createAtomsFromExtracted } = await import('../ai/content-to-atoms');
+
+      const parser = new ResultParser();
+      const blocks = parser.parse(params.markdown);
+
+      console.log('[AI_EXTRACT_DEBUG] Parsed blocks:', blocks.length);
+
+      // Build detailed block info for the debug panel
+      const blockDetails = blocks.map((b: any, i: number) => {
+        const info: any = { index: i, type: b.type, textLength: b.text?.length ?? 0 };
+        if (b.language) info.language = b.language;
+        if (b.headingLevel) info.headingLevel = b.headingLevel;
+        if (b.src) info.src = b.src;
+        if (b.items) info.itemCount = b.items.length;
+        if (b.tableRows) info.rows = b.tableRows.length;
+        if (b.inlines) info.inlineCount = b.inlines.length;
+        info.textPreview = b.text?.slice(0, 120) || '';
+        console.log(`  [${i}] ${b.type}${b.language ? `(${b.language})` : ''}: "${info.textPreview.slice(0, 60)}"`);
+        return info;
+      });
+
+      const atoms = createAtomsFromExtracted(blocks);
+      const contentAtoms = atoms.filter((a: any) => a.type !== 'document' && a.type !== 'noteTitle');
+
+      const docAtom = atoms.find((a: any) => a.type === 'document');
+      const docId = docAtom?.id;
+      for (const atom of contentAtoms) {
+        if (atom.parentId === docId) atom.parentId = undefined;
+      }
+
+      console.log('[AI_EXTRACT_DEBUG] Content atoms:', contentAtoms.length);
+      const atomDetails = contentAtoms.map((a: any, i: number) => {
+        const info: any = { index: i, type: a.type, id: a.id?.slice(0, 15) };
+        if (a.parentId) info.parentId = a.parentId.slice(0, 15);
+        // Extract text preview from content
+        const content = a.content as any;
+        if (content?.children) {
+          const parts = content.children.map((c: any) => {
+            if (c.type === 'text') return c.text || '';
+            if (c.type === 'math-inline') return `$${c.latex}$`;
+            if (c.type === 'code-inline') return `\`${c.code}\``;
+            if (c.type === 'link') return `[${c.children?.map((ch: any) => ch.text).join('') || ''}](${c.href})`;
+            return `[${c.type}]`;
+          }).join('');
+          info.textPreview = parts.slice(0, 120);
+          info.inlineTypes = content.children.map((c: any) => c.type);
+        } else if (content?.latex) {
+          info.textPreview = `[LaTeX] ${content.latex.slice(0, 60)}`;
+        } else if (content?.language) {
+          info.textPreview = `[Code:${content.language}]`;
+        } else if (content?.src) {
+          info.textPreview = `[Image] ${content.src.slice(0, 60)}`;
+        }
+        return info;
+      });
+
+      return {
+        success: true,
+        blocks: blocks.length,
+        atomCount: contentAtoms.length,
+        preview: JSON.stringify(contentAtoms[0]?.content).slice(0, 200),
+        blockTypes: blocks.map((b: any) => b.type),
+        atomTypes: contentAtoms.map((a: any) => a.type),
+        blockDetails,
+        atomDetails,
+      };
+    } catch (err) {
+      console.error('[AI_EXTRACT_DEBUG] Error:', err);
+      return { success: false, error: String(err) };
+    }
   });
 
   // ── Tweet 数据获取 ──

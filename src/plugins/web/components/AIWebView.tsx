@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { getSSECaptureScript } from '../../../shared/ai/sse-capture-script';
+import { getDomToMarkdownScript } from '../../../shared/ai/dom-to-markdown';
 import { getAIServiceProfile, getAIServiceList, DEFAULT_AI_SERVICE, detectAIServiceByUrl } from '../../../shared/types/ai-service-types';
 import type { AIServiceId } from '../../../shared/types/ai-service-types';
 import '../web.css';
@@ -9,6 +10,8 @@ declare const viewAPI: {
   onMessage: (callback: (message: { protocol: string; action: string; payload: unknown }) => void) => () => void;
   onAIInjectAndSend?: (callback: (params: any) => void) => () => void;
   aiSendResponse?: (channel: string, result: any) => Promise<void>;
+  aiExtractDebug: (params: { markdown: string; serviceId: string }) =>
+    Promise<{ success: boolean; atomCount?: number; blocks?: number; error?: string; preview?: string; blockTypes?: string[]; atomTypes?: string[]; blockDetails?: any[]; atomDetails?: any[] }>;
   closeSlot: () => void;
 };
 
@@ -28,6 +31,12 @@ export function AIWebView() {
   const [loading, setLoading] = useState(true);
   const [showServiceMenu, setShowServiceMenu] = useState(false);
   const [aiStatus, setAiStatus] = useState<'idle' | 'injecting' | 'waiting' | 'capturing'>('idle');
+  const [extractResult, setExtractResult] = useState<string | null>(null);
+  const [extractDetail, setExtractDetail] = useState<{
+    markdown: string; blocks: string[]; atoms: string[]; preview: string;
+    blockDetails?: any[]; atomDetails?: any[];
+  } | null>(null);
+  const [showExtractDetail, setShowExtractDetail] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   const initialUrl = getAIServiceProfile(DEFAULT_AI_SERVICE).newChatUrl;
@@ -61,6 +70,118 @@ export function AIWebView() {
     setCurrentUrl(profile.newChatUrl);
     setShowServiceMenu(false);
   }, []);
+
+  // ── 提取最新 AI 回复 ──
+  // 策略：SSE（原始 Markdown）+ DOM（补充图片/图表/Artifacts）互补
+  const handleExtractLatest = useCallback(async () => {
+    const webview = webviewRef.current;
+    if (!webview) {
+      setExtractResult('✗ Webview not ready');
+      return;
+    }
+
+    try {
+      setExtractResult('提取中...');
+      const profile = getAIServiceProfile(currentService);
+
+      // ── Step 1: SSE 缓存（原始 Markdown，格式最准确）──
+      const sseScript = getSSECaptureScript(profile.id, profile.intercept.endpointPattern);
+      await webview.executeJavaScript(sseScript);
+
+      const sseMarkdown: string | null = await webview.executeJavaScript(`(function() {
+        var r = window.__krig_sse_responses || [];
+        for (var i = r.length - 1; i >= 0; i--) {
+          if (!r[i].streaming && r[i].markdown.length > 0) return r[i].markdown;
+        }
+        return null;
+      })()`);
+
+      // ── Step 2: DOM 提取（最后一个 assistant message → Markdown）──
+      // 注入 domToMarkdown 函数
+      const domScript = getDomToMarkdownScript();
+      await webview.executeJavaScript(domScript);
+
+      const domMarkdown: string | null = await webview.executeJavaScript(`(function() {
+        if (typeof domToMarkdown !== 'function') return null;
+        var selector = ${JSON.stringify(profile.selectors.assistantMessage)};
+        var selectors = selector.split(',').map(function(s) { return s.trim(); });
+        var all = [];
+        for (var i = 0; i < selectors.length; i++) {
+          var nodes = document.querySelectorAll(selectors[i]);
+          for (var j = 0; j < nodes.length; j++) all.push(nodes[j]);
+        }
+        if (all.length === 0) return null;
+        var last = all[all.length - 1];
+        return domToMarkdown(last);
+      })()`);
+
+      // ── Step 3: 合并策略 ──
+      // SSE 有原始 Markdown（公式/代码格式完美），DOM 有渲染后内容（含图片/图表）
+      let finalMarkdown = '';
+      let source = '';
+
+      if (sseMarkdown && domMarkdown) {
+        // 两者都有 — SSE 为主，DOM 补充 SSE 中缺失的图片
+        finalMarkdown = sseMarkdown;
+        source = 'SSE+DOM';
+
+        // 从 DOM 中提取 SSE 中没有的图片 URL
+        const sseImageUrls = new Set(
+          (sseMarkdown.match(/!\[([^\]]*)\]\(([^)]+)\)/g) || [])
+            .map(m => m.match(/\(([^)]+)\)/)?.[1]).filter(Boolean)
+        );
+        const domImages = (domMarkdown.match(/!\[([^\]]*)\]\(([^)]+)\)/g) || [])
+          .filter(m => {
+            const url = m.match(/\(([^)]+)\)/)?.[1];
+            return url && !sseImageUrls.has(url);
+          });
+
+        if (domImages.length > 0) {
+          finalMarkdown += '\n\n' + domImages.join('\n\n');
+          source = `SSE(${sseMarkdown.length})+DOM(+${domImages.length} images)`;
+        } else {
+          source = `SSE(${sseMarkdown.length}), DOM(${domMarkdown.length}) no extra images`;
+        }
+      } else if (sseMarkdown) {
+        finalMarkdown = sseMarkdown;
+        source = `SSE only (${sseMarkdown.length} chars)`;
+      } else if (domMarkdown) {
+        finalMarkdown = domMarkdown;
+        source = `DOM only (${domMarkdown.length} chars)`;
+      } else {
+        setExtractResult('✗ SSE 和 DOM 均无数据');
+        return;
+      }
+
+      console.log(`[AIWebView Extract] Source: ${source}`);
+      console.log(`[AIWebView Extract] Final markdown: ${finalMarkdown.length} chars`);
+
+      // ── Step 4: 发送到 main 解析 ──
+      const result = await viewAPI.aiExtractDebug({
+        markdown: finalMarkdown,
+        serviceId: currentService,
+      });
+
+      if (result.success) {
+        setExtractResult(`✓ ${result.blocks} blocks → ${result.atomCount} atoms [${source}]`);
+        setExtractDetail({
+          markdown: finalMarkdown,
+          blocks: result.blockTypes || [],
+          atoms: result.atomTypes || [],
+          preview: result.preview || '',
+          blockDetails: result.blockDetails,
+          atomDetails: result.atomDetails,
+        });
+        setShowExtractDetail(true);
+      } else {
+        setExtractResult(`✗ ${result.error}`);
+        setExtractDetail(null);
+      }
+    } catch (err) {
+      setExtractResult(`✗ ${String(err)}`);
+      console.error('[AIWebView Extract] Error:', err);
+    }
+  }, [currentService]);
 
   // ── 点击外部关闭菜单 ──
   useEffect(() => {
@@ -170,19 +291,67 @@ export function AIWebView() {
 
           if (status.count > 0 && !status.streaming) {
             setAiStatus('capturing');
-            const markdown = await webview.executeJavaScript(`(function() {
+
+            // SSE markdown
+            const sseMarkdown = await webview.executeJavaScript(`(function() {
               var r = window.__krig_sse_responses || [];
               for (var i = r.length - 1; i >= 0; i--) { if (!r[i].streaming && r[i].markdown.length > 0) return r[i].markdown; }
               return null;
             })()`);
-            console.log(`[AIWebView] Captured response: ${markdown?.length ?? 0} chars`);
+
+            // DOM markdown (complement — captures images/artifacts SSE misses)
+            const domScript2 = getDomToMarkdownScript();
+            await webview.executeJavaScript(domScript2);
+            const domMd = await webview.executeJavaScript(`(function() {
+              if (typeof domToMarkdown !== 'function') return null;
+              var selector = ${JSON.stringify(profile.selectors.assistantMessage)};
+              var selectors = selector.split(',').map(function(s) { return s.trim(); });
+              var all = [];
+              for (var i = 0; i < selectors.length; i++) {
+                var nodes = document.querySelectorAll(selectors[i]);
+                for (var j = 0; j < nodes.length; j++) all.push(nodes[j]);
+              }
+              if (all.length === 0) return null;
+              return domToMarkdown(all[all.length - 1]);
+            })()`);
+
+            // Merge: SSE + DOM images
+            let finalMd = sseMarkdown || domMd || '';
+            if (sseMarkdown && domMd) {
+              const sseImgs = new Set((sseMarkdown.match(/!\[([^\]]*)\]\(([^)]+)\)/g) || []).map((m: string) => m.match(/\(([^)]+)\)/)?.[1]).filter(Boolean));
+              const extraImgs = (domMd.match(/!\[([^\]]*)\]\(([^)]+)\)/g) || []).filter((m: string) => { const u = m.match(/\(([^)]+)\)/)?.[1]; return u && !sseImgs.has(u); });
+              if (extraImgs.length > 0) finalMd += '\n\n' + extraImgs.join('\n\n');
+            }
+
+            console.log(`[AIWebView] Captured: SSE=${sseMarkdown?.length ?? 0}, DOM=${domMd?.length ?? 0}, final=${finalMd.length}`);
             setAiStatus('idle');
-            viewAPI.aiSendResponse?.(params.responseChannel, { success: true, markdown });
+            viewAPI.aiSendResponse?.(params.responseChannel, { success: true, markdown: finalMd });
             return;
           }
         }
+        // Timeout — try DOM extraction as last resort
+        setAiStatus('capturing');
+        const domScript3 = getDomToMarkdownScript();
+        await webview.executeJavaScript(domScript3);
+        const timeoutDomMd = await webview.executeJavaScript(`(function() {
+          if (typeof domToMarkdown !== 'function') return null;
+          var selector = ${JSON.stringify(profile.selectors.assistantMessage)};
+          var selectors = selector.split(',').map(function(s) { return s.trim(); });
+          var all = [];
+          for (var i = 0; i < selectors.length; i++) {
+            var nodes = document.querySelectorAll(selectors[i]);
+            for (var j = 0; j < nodes.length; j++) all.push(nodes[j]);
+          }
+          if (all.length === 0) return null;
+          return domToMarkdown(all[all.length - 1]);
+        })()`);
         setAiStatus('idle');
-        viewAPI.aiSendResponse?.(params.responseChannel, { success: false, error: 'AI response timed out' });
+        if (timeoutDomMd) {
+          console.log(`[AIWebView] SSE timeout but DOM extracted: ${timeoutDomMd.length} chars`);
+          viewAPI.aiSendResponse?.(params.responseChannel, { success: true, markdown: timeoutDomMd });
+        } else {
+          viewAPI.aiSendResponse?.(params.responseChannel, { success: false, error: 'AI response timed out (SSE + DOM both empty)' });
+        }
       } catch (err) {
         setAiStatus('idle');
         console.error('[AIWebView] Error:', err);
@@ -248,7 +417,38 @@ export function AIWebView() {
           <span style={{ color: '#6366f1', fontSize: 12, fontWeight: 500 }}>{statusText}</span>
         )}
 
+        {/* Extract result info (click to toggle detail panel) */}
+        {extractResult && (
+          <span
+            style={{
+              fontSize: 11,
+              color: extractResult.startsWith('✓') ? '#4caf50' : '#f44336',
+              maxWidth: 200,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              cursor: extractDetail ? 'pointer' : 'default',
+            }}
+            onClick={() => { if (extractDetail) setShowExtractDetail(!showExtractDetail); }}
+            title={extractDetail ? '点击查看/隐藏详情' : undefined}
+          >
+            {extractResult}
+          </span>
+        )}
+
         <div style={{ flex: 1 }} />
+
+        {/* Extract latest AI response */}
+        <button
+          style={{
+            background: '#6366f1', border: 'none', borderRadius: 4,
+            color: '#fff', fontSize: 11, padding: '3px 10px', cursor: 'pointer',
+          }}
+          onClick={handleExtractLatest}
+          title="提取最新 AI 回复（调试用）"
+        >
+          📋 提取回复
+        </button>
 
         {/* Reload */}
         <button
@@ -270,7 +470,7 @@ export function AIWebView() {
       </div>
 
       {/* AI webview content */}
-      <div className="web-view__content">
+      <div className="web-view__content" style={{ position: 'relative' }}>
         <webview
           ref={setupWebview}
           src={initialUrl}
@@ -279,6 +479,82 @@ export function AIWebView() {
           // @ts-ignore
           allowpopups="true"
         />
+
+        {/* Extract Debug Detail Panel */}
+        {showExtractDetail && extractDetail && (
+          <div style={{
+            position: 'absolute', top: 0, right: 0, bottom: 0,
+            width: '50%', minWidth: 300,
+            background: '#1e1e1e', borderLeft: '1px solid #444',
+            overflow: 'auto', zIndex: 100, padding: 12,
+            fontSize: 12, color: '#ccc', fontFamily: 'monospace',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+              <span style={{ fontWeight: 'bold', color: '#e8eaed' }}>提取调试面板</span>
+              <button
+                style={{ background: 'transparent', border: 'none', color: '#aaa', cursor: 'pointer', fontSize: 16 }}
+                onClick={() => setShowExtractDetail(false)}
+              >×</button>
+            </div>
+
+            {/* Block details */}
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ color: '#8ab4f8', marginBottom: 4 }}>Blocks → ExtractedBlock[] ({extractDetail.blocks.length}):</div>
+              {extractDetail.blockDetails?.map((b, i) => (
+                <div key={i} style={{
+                  background: '#252525', borderRadius: 4, padding: '4px 8px', marginBottom: 3,
+                  borderLeft: `3px solid ${
+                    b.type === 'heading' ? '#ffab40' : b.type === 'code' ? '#4caf50' :
+                    b.type === 'math' ? '#ce93d8' : b.type === 'image' ? '#4fc3f7' :
+                    b.type === 'bulletList' || b.type === 'orderedList' ? '#ff9800' :
+                    b.type === 'table' ? '#00bcd4' : b.type === 'blockquote' ? '#78909c' : '#555'
+                  }`,
+                }}>
+                  <span style={{ color: '#8ab4f8', fontWeight: 'bold' }}>[{b.type}]</span>
+                  {b.language && <span style={{ color: '#4caf50' }}> ({b.language})</span>}
+                  {b.headingLevel && <span style={{ color: '#ffab40' }}> H{b.headingLevel}</span>}
+                  {b.itemCount && <span style={{ color: '#ff9800' }}> {b.itemCount} items</span>}
+                  {b.rows && <span style={{ color: '#00bcd4' }}> {b.rows} rows</span>}
+                  {b.src && <span style={{ color: '#4fc3f7' }}> src={b.src.slice(0, 40)}</span>}
+                  <span style={{ color: '#888' }}> ({b.textLength} chars)</span>
+                  <div style={{ color: '#999', fontSize: 10, marginTop: 2, wordBreak: 'break-all' }}>
+                    {b.textPreview}
+                  </div>
+                </div>
+              )) ?? <div style={{ color: '#666' }}>No details</div>}
+            </div>
+
+            {/* Atom details */}
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ color: '#8ab4f8', marginBottom: 4 }}>Atoms → Atom[] ({extractDetail.atoms.length}):</div>
+              {extractDetail.atomDetails?.map((a, i) => (
+                <div key={i} style={{
+                  background: '#252525', borderRadius: 4, padding: '4px 8px', marginBottom: 3,
+                  borderLeft: '3px solid #6366f1',
+                }}>
+                  <span style={{ color: '#6366f1', fontWeight: 'bold' }}>[{a.type}]</span>
+                  <span style={{ color: '#555' }}> {a.id}</span>
+                  {a.parentId && <span style={{ color: '#444' }}> ← {a.parentId}</span>}
+                  {a.textPreview && (
+                    <div style={{ color: '#999', fontSize: 10, marginTop: 2, wordBreak: 'break-all' }}>
+                      {a.textPreview}
+                    </div>
+                  )}
+                </div>
+              )) ?? <div style={{ color: '#666' }}>No details</div>}
+            </div>
+
+            {/* Raw markdown */}
+            <div>
+              <div style={{ color: '#8ab4f8', marginBottom: 4 }}>原始 SSE Markdown ({extractDetail.markdown.length} chars):</div>
+              <pre style={{
+                background: '#111', padding: 8, borderRadius: 4, fontSize: 11,
+                whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 500, overflow: 'auto',
+                border: '1px solid #333', lineHeight: 1.4,
+              }}>{extractDetail.markdown}</pre>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

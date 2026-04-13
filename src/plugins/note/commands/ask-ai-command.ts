@@ -120,18 +120,10 @@ export async function askAI(
 
   // 6. AI response captured — switch to ThoughtView
   if (result.success && result.markdown) {
-    console.log('[askAI] Step 6: AI responded successfully, saving to ThoughtStore...');
-
-    // Save the response to DB first
-    await api.thoughtSave(record.id, {
-      doc_content: [{
-        id: `atom-${Date.now()}`,
-        type: 'paragraph',
-        content: { children: [{ type: 'text', text: result.markdown }] },
-        meta: { createdAt: Date.now(), updatedAt: Date.now(), dirty: false },
-      }],
-    });
-    console.log('[askAI] Step 6: ThoughtRecord saved, switching to ThoughtView...');
+    console.log('[askAI] Step 6: AI responded successfully (main handler already parsed + saved atoms)');
+    // Note: The main IPC handler (AI_ASK_VISIBLE) already parsed the markdown
+    // into structured Atoms via ResultParser + createAtomsFromExtracted
+    // and saved them to ThoughtStore. We just need to switch to ThoughtView.
 
     // Switch Right Slot to ThoughtView
     await api.openRightSlot('thought');
@@ -170,16 +162,6 @@ export async function askAI(
     }, 800);
   } else {
     console.log('[askAI] Step 6: AI FAILED, switching to ThoughtView for error display...', result.error);
-
-    // Save error to DB
-    await api.thoughtSave(record.id, {
-      doc_content: [{
-        id: `atom-${Date.now()}`,
-        type: 'paragraph',
-        content: { children: [{ type: 'text', text: `AI 请求失败: ${result.error || 'Unknown error'}` }] },
-        meta: { createdAt: Date.now(), updatedAt: Date.now(), dirty: false },
-      }],
-    });
 
     // Switch Right Slot to ThoughtView and show error
     await api.openRightSlot('thought');

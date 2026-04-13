@@ -14,6 +14,7 @@ import '../thought.css';
 const viewAPI = () => (window as any).viewAPI as {
   thoughtListByNote: (noteId: string) => Promise<ThoughtRecord[]>;
   thoughtSave: (id: string, updates: any) => Promise<void>;
+  thoughtLoad: (id: string) => Promise<ThoughtRecord | null>;
   thoughtDelete: (id: string) => Promise<void>;
   thoughtUnrelate: (noteId: string, thoughtId: string) => Promise<void>;
   sendToOtherSlot: (msg: any) => void;
@@ -122,23 +123,22 @@ export function ThoughtView() {
         case THOUGHT_ACTION.AI_RESPONSE_READY: {
           const p = msg.payload as any;
           console.log('[ThoughtView] AI_RESPONSE_READY received:', { thoughtId: p.thoughtId, mdLen: p.markdown?.length ?? 0 });
-          // AI 回复就绪 — 更新对应 ThoughtCard 的内容
-          setThoughts((prev) =>
-            prev.map((t) => {
-              if (t.id !== p.thoughtId) return t;
-              return {
-                ...t,
-                doc_content: [{
-                  id: `atom-${Date.now()}`,
-                  type: 'paragraph' as const,
-                  content: { children: [{ type: 'text', text: p.markdown }] },
-                  meta: { createdAt: Date.now(), updatedAt: Date.now(), dirty: false },
-                }],
-                updated_at: Date.now(),
-              } as ThoughtRecord;
-            }),
-          );
-          setActiveId(p.thoughtId);
+          // AI 回复就绪 — 从 DB 重新加载 ThoughtRecord（main 已解析 + 保存结构化 Atoms）
+          const api2 = viewAPI();
+          if (api2) {
+            console.log('[ThoughtView] Loading thought from DB:', p.thoughtId);
+            api2.thoughtLoad(p.thoughtId).then((loaded: ThoughtRecord | null) => {
+              console.log('[ThoughtView] Loaded thought:', loaded ? `${loaded.doc_content?.length ?? 0} atoms` : 'null');
+              if (loaded && loaded.doc_content?.length > 0) {
+                console.log('[ThoughtView] First atom type:', loaded.doc_content[0]?.type);
+              }
+              if (!loaded) return;
+              setThoughts((prev) =>
+                prev.map((t) => t.id === p.thoughtId ? loaded : t),
+              );
+              setActiveId(p.thoughtId);
+            });
+          }
           break;
         }
         case THOUGHT_ACTION.AI_ERROR: {

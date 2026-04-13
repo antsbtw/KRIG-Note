@@ -325,6 +325,7 @@ export const IPC = {
   AI_NAVIGATE: 'ai:navigate',         // main → web renderer：导航到 AI 服务
   AI_INJECT_AND_SEND: 'ai:inject-and-send', // main → web renderer：注入 SSE + 粘贴 + 发送
   AI_RESPONSE_CAPTURED: 'ai:response-captured', // web renderer → main：SSE 拦截到回复
+  AI_EXTRACT_DEBUG: 'ai:extract-debug',         // renderer → main：调试用，解析 Markdown 并返回统计
 
   // yt-dlp
   YTDLP_CHECK_STATUS: 'ytdlp:check-status',
