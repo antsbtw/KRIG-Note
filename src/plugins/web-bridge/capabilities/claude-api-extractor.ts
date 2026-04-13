@@ -112,11 +112,13 @@ export async function extractClaudeConversation(
     }
 
     const raw = result.conv;
+    // Claude's chat_messages use the top-level `text` field as the authoritative source.
+    // The `content` array exists but is always empty in observed responses.
     const messages: ClaudeMessage[] = (raw.chat_messages || []).map((m: any) => ({
       uuid: m.uuid,
       sender: m.sender,
       index: m.index,
-      text: m.content?.map((c: any) => c.text || '').join('\n').trim() || m.text || '',
+      text: m.text || '',
       created_at: m.created_at,
       attachments: m.attachments,
       files: m.files,
