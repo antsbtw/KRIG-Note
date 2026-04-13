@@ -209,12 +209,18 @@ export async function extractArtifactContent(
 ): Promise<string | null> {
   try {
     const clicked = await webview.executeJavaScript(`(function() {
-      var btns = document.querySelectorAll('button[aria-label="copy to clipboard" i]');
+      // Case-insensitive match across all buttons (Claude uses lowercase "copy to clipboard")
+      var all = document.querySelectorAll('button');
+      var btns = [];
+      for (var i = 0; i < all.length; i++) {
+        var label = (all[i].getAttribute('aria-label') || '').toLowerCase();
+        if (label === 'copy to clipboard') btns.push(all[i]);
+      }
       if (btns.length === 0) return { success: false, total: 0 };
       var target = ${index >= 0 ? `btns[${index}]` : 'btns[btns.length - 1]'};
-      if (!target) return { success: false, total: btns.length };
+      if (!target) return { success: false, total: btns.length, requested: ${index} };
       target.click();
-      return { success: true, total: btns.length };
+      return { success: true, total: btns.length, clicked: ${index} };
     })()`);
 
     if (!clicked?.success) {
