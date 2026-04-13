@@ -235,7 +235,8 @@ export async function extractArtifactContent(
         }
         return { totalButtons: all.length, withAriaLabel: labels.length, labels: labels };
       })()`);
-      console.warn('[ClaudeAPI] Page has', btnInfo.totalButtons, 'buttons,', btnInfo.withAriaLabel, 'with aria-label. First 30:', btnInfo.labels.slice(0, 30));
+      console.warn('[ClaudeAPI] Page has', btnInfo.totalButtons, 'buttons,', btnInfo.withAriaLabel, 'with aria-label.');
+      console.warn('[ClaudeAPI] All labels:\n  - ' + btnInfo.labels.join('\n  - '));
       return null;
     }
 
