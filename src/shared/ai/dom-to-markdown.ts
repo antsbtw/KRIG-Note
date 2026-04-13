@@ -740,7 +740,13 @@ function shouldSkipFn(): string {
 function shouldSkip(node) {
   if (node.nodeType !== 1) return false;
   var tag = node.tagName.toLowerCase();
-  if (tag === 'button' || tag === 'input' || tag === 'select') return true;
+  if (tag === 'input' || tag === 'select') return true;
+  // Button: skip unless it contains an img (Claude wraps search result images in buttons)
+  if (tag === 'button') {
+    var btnImg = node.querySelector('img');
+    if (btnImg && btnImg.getAttribute('src')) return false; // has real image inside
+    return true;
+  }
   // SVG: skip unless marked as chart for screenshot
   if (tag === 'svg') {
     var chartAttr = node.getAttribute && node.getAttribute('data-mirro-chart-idx');
