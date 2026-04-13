@@ -163,6 +163,70 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
       setExtractResult('提取中...');
       const profile = getAIServiceProfile(currentService);
 
+      // ── Claude 专用：API + Artifact 提取（调试主要入口）──
+      if (profile.id === 'claude' && isClaudeConversationPage(webview.getURL?.() || '')) {
+        console.log('[Extract/Claude] Using API extraction path');
+        const apiResult = await extractLatestClaudeResponse(webview);
+        if (!apiResult || !apiResult.assistantMessage) {
+          setExtractResult('✗ Claude API 提取失败');
+          return;
+        }
+
+        const rawText = apiResult.assistantMessage;
+        const artifactCount = countArtifactPlaceholders(rawText);
+        console.log(`[Extract/Claude] Raw: ${rawText.length} chars, ${artifactCount} artifact placeholder(s)`);
+
+        let finalText = rawText;
+        if (artifactCount > 0) {
+          // Count prior artifacts to get the right button index
+          let priorCount = 0;
+          const conv = apiResult.raw?.messages || [];
+          for (let i = 0; i < conv.length; i++) {
+            if (conv[i].sender === 'assistant' && conv[i].text !== rawText) {
+              priorCount += countArtifactPlaceholders(conv[i].text);
+            } else if (conv[i].text === rawText) {
+              break;
+            }
+          }
+          console.log(`[Extract/Claude] Replacing ${artifactCount} artifact(s) starting at button index ${priorCount}`);
+          finalText = await replaceArtifactPlaceholders(
+            rawText,
+            priorCount,
+            webview,
+            () => viewAPI.aiReadClipboard(),
+          );
+          console.log(`[Extract/Claude] After replacement: ${finalText.length} chars`);
+        }
+
+        // Parse via main process to get structured atoms
+        const result = await viewAPI.aiExtractDebug({
+          markdown: finalText,
+          serviceId: currentService,
+        });
+
+        if (result.success) {
+          setExtractResult(`✓ Claude API: ${result.blocks} blocks → ${result.atomCount} atoms (${artifactCount} artifact${artifactCount!==1?'s':''})`);
+          setExtractDetail({
+            markdown: finalText,
+            blocks: result.blockTypes || [],
+            atoms: result.atomTypes || [],
+            preview: result.preview || '',
+            blockDetails: result.blockDetails,
+            atomDetails: result.atomDetails,
+            sseMarkdown: rawText,  // Use the raw API text as "SSE" column
+            domMarkdown: artifactCount > 0 ? finalText : undefined,  // Show replaced version as "DOM" column
+            copyMarkdown: undefined,
+            mergeStrategy: `Claude API + ${artifactCount} Artifact(s)`,
+          });
+          setShowExtractDetail(true);
+        } else {
+          setExtractResult(`✗ 解析失败: ${result.error}`);
+        }
+        return;
+      }
+
+      // ── 其他服务（ChatGPT/Gemini）走 SSE + DOM + Copy 路径 ──
+
       // ── Step 1: SSE 缓存（原始 Markdown，格式最准确）──
       const sseScript = getSSECaptureScript(profile.id, profile.intercept.endpointPattern);
       await webview.executeJavaScript(sseScript);
