@@ -355,6 +355,10 @@ export function createAtomsFromExtracted(blocks: ExtractedBlock[], pageTitle?: s
         children: [{ type: 'text' as const, text: block.text }],
       }, rootAtom.id));
 
+    } else if (block.tag === 'hr') {
+      // Horizontal rule
+      atoms.push(createAtom('horizontalRule', {} as any, rootAtom.id));
+
     } else {
       // paragraph → paragraph
       const content: ParagraphContent = {

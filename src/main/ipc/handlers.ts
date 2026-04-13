@@ -870,9 +870,10 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
 
       const parser = new ResultParser();
       const blocks = parser.parse(markdown);
-      const atoms = createAtomsFromExtracted(blocks);
+      // Pass a title to prevent createAtomsFromExtracted from consuming the first heading
+      const atoms = createAtomsFromExtracted(blocks, '__skip_title__');
 
-      // Remove document root + noteTitle — only content atoms
+      // Remove document root + noteTitle — only content atoms needed
       const docAtom = atoms.find((a: any) => a.type === 'document');
       const docId = docAtom?.id;
       const contentAtoms = atoms.filter((a: any) => a.type !== 'document' && a.type !== 'noteTitle');

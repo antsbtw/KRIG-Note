@@ -98,6 +98,18 @@ export class ResultParser {
         continue;
       }
 
+      // Horizontal rule: --- or *** or ___
+      if (line.trim().match(/^(-{3,}|\*{3,}|_{3,})$/)) {
+        blocks.push({
+          type: 'paragraph' as any,  // No 'horizontalRule' in ExtractedBlock type — use marker
+          tag: 'hr',
+          text: '---',
+          headingLevel: 0,
+        });
+        i++;
+        continue;
+      }
+
       // HTML Callout: <blockquote data-callout="warning">...</blockquote>
       const calloutMatch = line.match(/^<blockquote\s+data-callout=["']([^"']+)["'][^>]*>/i);
       if (calloutMatch) {
