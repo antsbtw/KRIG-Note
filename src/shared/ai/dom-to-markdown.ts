@@ -678,10 +678,12 @@ function isAIImagePlaceholder(node) {
     }
 
     // Claude image block: dark background container with an img inside that hasn't loaded
+    // Only treat as placeholder if the img has NO src (hasn't loaded)
     var cls = node.className || '';
     if (typeof cls === 'string' && (cls.indexOf('image') !== -1 || cls.indexOf('artifact') !== -1)) {
       var innerImg = node.querySelector('img');
-      if (innerImg) return true;
+      if (innerImg && !innerImg.getAttribute('src')) return true;
+      // If img has a real src, don't skip — let processNode handle it normally
     }
   }
 
@@ -779,8 +781,9 @@ function shouldSkip(node) {
 
   if (cls.indexOf('katex-html') !== -1) return true;
   if (cls.indexOf('MathJax_Display') !== -1 && node.querySelector('annotation')) return true;
-  if (cls.indexOf('copy') !== -1 && tag === 'div') return true;
-  if (cls.indexOf('toolbar') !== -1) return true;
+  // Only skip copy-button divs, not containers that happen to have "copy" in class
+  if ((cls.indexOf('copy-button') !== -1 || cls.indexOf('copy-code') !== -1) && tag === 'div') return true;
+  if (cls.indexOf('toolbar') !== -1 && !node.querySelector('pre') && !node.querySelector('code')) return true;
 
   if (node.getAttribute && node.getAttribute('aria-hidden') === 'true') {
     if (cls.indexOf('katex') === -1 && cls.indexOf('MathJax') === -1 && tag !== 'math') {
