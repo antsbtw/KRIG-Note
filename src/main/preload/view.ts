@@ -254,7 +254,7 @@ contextBridge.exposeInMainWorld('viewAPI', {
 
   /** Send AI response back to main */
   aiSendResponse: (channel: string, result: { success: boolean; markdown?: string; error?: string }) =>
-    ipcRenderer.invoke(channel, result),
+    ipcRenderer.send(channel, result),
 
   // ── Web 书签（WebView 用）──
 

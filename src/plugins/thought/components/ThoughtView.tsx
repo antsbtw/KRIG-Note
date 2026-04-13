@@ -81,6 +81,7 @@ export function ThoughtView() {
         }
         case THOUGHT_ACTION.CREATE: {
           const p = msg.payload as any;
+          console.log('[ThoughtView] CREATE received:', { thoughtId: p.thoughtId, type: p.type, serviceId: p.serviceId });
           // 追加新 Thought 到列表（如果不存在的话）
           setThoughts((prev) => {
             if (prev.some((t) => t.id === p.thoughtId)) return prev;
@@ -120,6 +121,7 @@ export function ThoughtView() {
 
         case THOUGHT_ACTION.AI_RESPONSE_READY: {
           const p = msg.payload as any;
+          console.log('[ThoughtView] AI_RESPONSE_READY received:', { thoughtId: p.thoughtId, mdLen: p.markdown?.length ?? 0 });
           // AI 回复就绪 — 更新对应 ThoughtCard 的内容
           setThoughts((prev) =>
             prev.map((t) => {
@@ -141,6 +143,7 @@ export function ThoughtView() {
         }
         case THOUGHT_ACTION.AI_ERROR: {
           const p = msg.payload as any;
+          console.log('[ThoughtView] AI_ERROR received:', { thoughtId: p.thoughtId, error: p.error });
           // AI 回复失败 — 在 ThoughtCard 中显示错误
           setThoughts((prev) =>
             prev.map((t) => {

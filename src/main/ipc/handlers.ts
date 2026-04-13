@@ -725,20 +725,23 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
     thoughtId: string;
   }) => {
     try {
+      console.log('[AI_ASK_VISIBLE] Starting...', { serviceId: params.serviceId, promptLen: params.prompt.length });
+
       const mainWindow = getMainWindow();
       if (!mainWindow) return { success: false, error: 'No main window' };
 
       // 1. Open Right Slot with AI WebView (ai-web variant)
-      //    openRightSlot creates a new WebContentsView and loads web.html?variant=ai
       const rightView = openRightSlot('ai-web');
+      console.log('[AI_ASK_VISIBLE] Step 1: openRightSlot result:', rightView ? 'OK' : 'null (toggle?)');
       if (!rightView) {
-        // If toggle closed it, try again (it was already showing ai-web)
         const retryView = openRightSlot('ai-web');
+        console.log('[AI_ASK_VISIBLE] Step 1 retry:', retryView ? 'OK' : 'FAILED');
         if (!retryView) return { success: false, error: 'Failed to open Right Slot' };
       }
 
-      // 2. Find the Right Slot's webContents (freshly created)
+      // 2. Find the Right Slot's webContents
       const rightSlotIds = getActiveViewWebContentsIds();
+      console.log('[AI_ASK_VISIBLE] Step 2: rightSlotIds =', rightSlotIds);
       if (!rightSlotIds || !rightSlotIds.rightId) {
         return { success: false, error: 'Right Slot not open after creation' };
       }
@@ -748,31 +751,40 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
       )?.webContents;
 
       if (!rightWC) {
+        console.log('[AI_ASK_VISIBLE] Step 2: webContents NOT found for rightId =', rightSlotIds.rightId);
         return { success: false, error: 'Right Slot webContents not found' };
       }
+      console.log('[AI_ASK_VISIBLE] Step 2: webContents found, id =', rightWC.id);
 
-      // 3. Wait for the renderer (web.html) to finish loading
-      //    The WebView React component needs time to mount and register onAIInjectAndSend
+      // 3. Wait for the renderer to finish loading
+      console.log('[AI_ASK_VISIBLE] Step 3: Waiting for renderer load... isLoading =', rightWC.isLoading());
       await new Promise<void>((resolve) => {
         if (!rightWC.isLoading()) {
-          // Already loaded — but React may still be mounting, give it a moment
           setTimeout(resolve, 1500);
         } else {
           rightWC.once('did-finish-load', () => {
-            // React mount + useEffect registration
             setTimeout(resolve, 1500);
           });
         }
       });
+      console.log('[AI_ASK_VISIBLE] Step 3: Renderer ready, sending AI_INJECT_AND_SEND...');
 
       // 4. Send AI request to the Right Slot renderer
       return new Promise((resolve) => {
         const responseChannel = `ai:response:${params.thoughtId}`;
+        let resolved = false;
 
-        ipcMain.handleOnce(responseChannel, (_e: any, result: any) => {
+        const listener = (_e: any, result: any) => {
+          if (resolved) return;
+          resolved = true;
+          ipcMain.removeListener(responseChannel, listener);
+          console.log('[AI_ASK_VISIBLE] Step 4: Got response from renderer:', { success: result?.success, mdLen: result?.markdown?.length ?? 0, error: result?.error });
           resolve(result);
-        });
+        };
 
+        ipcMain.on(responseChannel, listener);
+
+        console.log('[AI_ASK_VISIBLE] Step 4: Sending IPC.AI_INJECT_AND_SEND to rightWC id =', rightWC.id);
         rightWC.send(IPC.AI_INJECT_AND_SEND, {
           ...params,
           responseChannel,
@@ -780,7 +792,10 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
 
         // Timeout after 90 seconds
         setTimeout(() => {
-          try { ipcMain.removeHandler(responseChannel); } catch {}
+          if (resolved) return;
+          resolved = true;
+          ipcMain.removeListener(responseChannel, listener);
+          console.log('[AI_ASK_VISIBLE] Step 4: TIMEOUT after 90s');
           resolve({ success: false, error: 'AI response timed out (90s)' });
         }, 90_000);
       });

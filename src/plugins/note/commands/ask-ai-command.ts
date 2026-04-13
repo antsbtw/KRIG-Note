@@ -21,6 +21,7 @@ import { THOUGHT_ACTION } from '../../thought/thought-protocol';
 
 const viewAPI = () => (window as any).viewAPI as {
   thoughtCreate: (t: any) => Promise<any>;
+  thoughtSave: (id: string, updates: any) => Promise<void>;
   thoughtRelate: (noteId: string, thoughtId: string, edge: any) => Promise<void>;
   sendToOtherSlot: (msg: any) => void;
   ensureRightSlot: (workModeId: string) => Promise<void>;
@@ -103,11 +104,11 @@ export async function askAI(
   view.dispatch(state.tr.addMark(from, to, mark));
 
   // 4. Open Right Slot with AI WebView — user sees the AI page
+  console.log('[askAI] Step 4: Opening AI WebView in Right Slot...');
   await api.openRightSlot('ai-web');
 
   // 5. Send to AI via visible WebView (main process orchestrates)
-  //    Main will: navigate to AI URL → inject SSE → paste → send → wait → capture
-  //    User sees the entire process in the Right Slot
+  console.log('[askAI] Step 5: Sending to AI via aiAskVisible...', { serviceId, promptLength: fullPrompt.length });
   const result = await api.aiAskVisible({
     serviceId,
     prompt: fullPrompt,
@@ -115,13 +116,30 @@ export async function askAI(
     thoughtId: record.id,
   });
 
+  console.log('[askAI] Step 5 result:', { success: result.success, markdownLength: result.markdown?.length ?? 0, error: result.error });
+
   // 6. AI response captured — switch to ThoughtView
   if (result.success && result.markdown) {
+    console.log('[askAI] Step 6: AI responded successfully, saving to ThoughtStore...');
+
+    // Save the response to DB first
+    await api.thoughtSave(record.id, {
+      doc_content: [{
+        id: `atom-${Date.now()}`,
+        type: 'paragraph',
+        content: { children: [{ type: 'text', text: result.markdown }] },
+        meta: { createdAt: Date.now(), updatedAt: Date.now(), dirty: false },
+      }],
+    });
+    console.log('[askAI] Step 6: ThoughtRecord saved, switching to ThoughtView...');
+
     // Switch Right Slot to ThoughtView
     await api.openRightSlot('thought');
 
-    // Wait a moment for ThoughtView to load
-    await new Promise(resolve => setTimeout(resolve, 800));
+    // Wait for ThoughtView to load
+    await new Promise(resolve => setTimeout(resolve, 1200));
+
+    console.log('[askAI] Step 6: Sending CREATE + AI_RESPONSE_READY to ThoughtView...');
 
     // Notify ThoughtView: new AI thought with content
     api.sendToOtherSlot({
@@ -137,8 +155,9 @@ export async function askAI(
       },
     });
 
-    // Send the response content
+    // Send the response content (delay to ensure CREATE is processed first)
     setTimeout(() => {
+      console.log('[askAI] Step 6: Sending AI_RESPONSE_READY with markdown...');
       api.sendToOtherSlot({
         protocol: 'note-thought',
         action: THOUGHT_ACTION.AI_RESPONSE_READY,
@@ -148,11 +167,23 @@ export async function askAI(
           serviceId,
         },
       });
-    }, 500);
+    }, 800);
   } else {
-    // Failed — switch to ThoughtView and show error
+    console.log('[askAI] Step 6: AI FAILED, switching to ThoughtView for error display...', result.error);
+
+    // Save error to DB
+    await api.thoughtSave(record.id, {
+      doc_content: [{
+        id: `atom-${Date.now()}`,
+        type: 'paragraph',
+        content: { children: [{ type: 'text', text: `AI 请求失败: ${result.error || 'Unknown error'}` }] },
+        meta: { createdAt: Date.now(), updatedAt: Date.now(), dirty: false },
+      }],
+    });
+
+    // Switch Right Slot to ThoughtView and show error
     await api.openRightSlot('thought');
-    await new Promise(resolve => setTimeout(resolve, 800));
+    await new Promise(resolve => setTimeout(resolve, 1200));
 
     api.sendToOtherSlot({
       protocol: 'note-thought',
@@ -176,6 +207,6 @@ export async function askAI(
           error: result.error || 'Unknown error',
         },
       });
-    }, 500);
+    }, 800);
   }
 }

@@ -128,7 +128,7 @@ const CLAUDE_PROFILE: AIServiceProfile = {
   },
   intercept: {
     strategy: 'fetch-hook',
-    endpointPattern: '/api/organizations/.*/chat_conversations/.*/completion',
+    endpointPattern: '/api/',
   },
   input: {
     method: 'paste-contenteditable',
