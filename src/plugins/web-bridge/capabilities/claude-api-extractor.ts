@@ -208,13 +208,48 @@ export async function extractArtifactContent(
   readClipboard: () => Promise<string>,
 ): Promise<string | null> {
   try {
+    // Step 1: Find the Artifact "..." menu button (top-right corner of Artifact,
+    // no aria-label, no svg direct child — distinctive signature).
+    // Then click it to open the menu containing "Copy to clipboard".
+    const menuOpened = await webview.executeJavaScript(`(function() {
+      // Find all buttons in the top-right region (typical Artifact toolbar position)
+      var candidates = [];
+      var btns = document.querySelectorAll('button');
+      for (var i = 0; i < btns.length; i++) {
+        var b = btns[i];
+        var r = b.getBoundingClientRect();
+        var label = b.getAttribute('aria-label');
+        var hasSvg = !!b.querySelector('svg');
+        // Artifact "..." menu button: no aria-label, no direct svg child, top-right
+        if (!label && !hasSvg && r.width > 0 && r.top < 150 && r.left > window.innerWidth * 0.5) {
+          candidates.push({ el: b, x: r.left, y: r.top });
+        }
+      }
+      if (candidates.length === 0) return { success: false, reason: 'no-menu-button' };
+      // Sort by position — rightmost wins (the "..." is usually furthest right)
+      candidates.sort(function(a, b) { return b.x - a.x; });
+      candidates[0].el.click();
+      return { success: true, menuButtons: candidates.length };
+    })()`);
+
+    if (!menuOpened?.success) {
+      console.warn('[ClaudeAPI] Could not open Artifact menu:', menuOpened);
+      return null;
+    }
+
+    // Step 2: Wait for menu to render
+    await new Promise(r => setTimeout(r, 200));
+
+    // Step 3: Click "Copy to clipboard" in the menu
     const clicked = await webview.executeJavaScript(`(function() {
-      // Case-insensitive match across all buttons (Claude uses lowercase "copy to clipboard")
-      var all = document.querySelectorAll('button');
+      var all = document.querySelectorAll('button, [role="menuitem"], [role="option"]');
       var btns = [];
       for (var i = 0; i < all.length; i++) {
         var label = (all[i].getAttribute('aria-label') || '').toLowerCase();
-        if (label === 'copy to clipboard') btns.push(all[i]);
+        var text = (all[i].textContent || '').trim().toLowerCase();
+        if (label === 'copy to clipboard' || text === 'copy to clipboard') {
+          btns.push(all[i]);
+        }
       }
       if (btns.length === 0) return { success: false, total: 0 };
       var target = ${index >= 0 ? `btns[${index}]` : 'btns[btns.length - 1]'};
