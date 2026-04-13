@@ -208,39 +208,8 @@ export async function extractArtifactContent(
   readClipboard: () => Promise<string>,
 ): Promise<string | null> {
   try {
-    // Step 1: Find the Artifact "..." menu button (top-right corner of Artifact,
-    // no aria-label, no svg direct child — distinctive signature).
-    // Then click it to open the menu containing "Copy to clipboard".
-    const menuOpened = await webview.executeJavaScript(`(function() {
-      // Find all buttons in the top-right region (typical Artifact toolbar position)
-      var candidates = [];
-      var btns = document.querySelectorAll('button');
-      for (var i = 0; i < btns.length; i++) {
-        var b = btns[i];
-        var r = b.getBoundingClientRect();
-        var label = b.getAttribute('aria-label');
-        var hasSvg = !!b.querySelector('svg');
-        // Artifact "..." menu button: no aria-label, no direct svg child, top-right
-        if (!label && !hasSvg && r.width > 0 && r.top < 150 && r.left > window.innerWidth * 0.5) {
-          candidates.push({ el: b, x: r.left, y: r.top });
-        }
-      }
-      if (candidates.length === 0) return { success: false, reason: 'no-menu-button' };
-      // Sort by position — rightmost wins (the "..." is usually furthest right)
-      candidates.sort(function(a, b) { return b.x - a.x; });
-      candidates[0].el.click();
-      return { success: true, menuButtons: candidates.length };
-    })()`);
-
-    if (!menuOpened?.success) {
-      console.warn('[ClaudeAPI] Could not open Artifact menu:', menuOpened);
-      return null;
-    }
-
-    // Step 2: Wait for menu to render
-    await new Promise(r => setTimeout(r, 200));
-
-    // Step 3: Click "Copy to clipboard" in the menu
+    // First, try direct match — "Copy to clipboard" button may already be visible
+    // if Artifact is expanded/fullscreen.
     const clicked = await webview.executeJavaScript(`(function() {
       var all = document.querySelectorAll('button, [role="menuitem"], [role="option"]');
       var btns = [];
