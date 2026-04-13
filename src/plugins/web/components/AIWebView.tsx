@@ -178,24 +178,8 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
 
         let finalText = rawText;
         if (artifactCount > 0) {
-          // Count prior artifacts to get the right button index
-          let priorCount = 0;
-          const conv = apiResult.raw?.messages || [];
-          for (let i = 0; i < conv.length; i++) {
-            if (conv[i].sender === 'assistant' && conv[i].text !== rawText) {
-              priorCount += countArtifactPlaceholders(conv[i].text);
-            } else if (conv[i].text === rawText) {
-              break;
-            }
-          }
-          console.log(`[Extract/Claude] Replacing ${artifactCount} artifact(s) starting at button index ${priorCount}`);
-          finalText = await replaceArtifactPlaceholders(
-            rawText,
-            priorCount,
-            webview,
-            () => viewAPI.aiReadClipboard(),
-          );
-          console.log(`[Extract/Claude] After replacement: ${finalText.length} chars`);
+          finalText = replaceArtifactPlaceholders(rawText, webview.getURL());
+          console.log(`[Extract/Claude] Replaced ${artifactCount} placeholder(s) with friendly callouts`);
         }
 
         // Parse via main process to get structured atoms
@@ -392,35 +376,13 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
             break;
           }
 
-          // Check for Artifact placeholders and extract real content via Copy button
+          // Replace Artifact placeholders with friendly callouts
           const artifactCount = countArtifactPlaceholders(assistantMsg);
-          let finalMarkdown = assistantMsg;
-
+          let finalMarkdown = artifactCount > 0
+            ? replaceArtifactPlaceholders(assistantMsg, webview.getURL())
+            : assistantMsg;
           if (artifactCount > 0) {
-            // Count artifacts in all prior assistant messages to get the starting button index
-            let priorArtifactCount = 0;
-            let foundIdx = -1;
-            for (let i = 0; i < conv.messages.length; i++) {
-              if (conv.messages[i].sender === 'human') {
-                if (conv.messages[i].text === humanMsg) foundIdx = i;
-              }
-              if (foundIdx === -1 && conv.messages[i].sender === 'assistant') {
-                priorArtifactCount += countArtifactPlaceholders(conv.messages[i].text);
-              }
-            }
-
-            console.log(`[Claude/Artifact] Response #${idx}: ${artifactCount} artifact(s), starting at button index ${priorArtifactCount}`);
-            try {
-              finalMarkdown = await replaceArtifactPlaceholders(
-                assistantMsg,
-                priorArtifactCount,
-                webview,
-                () => viewAPI.aiReadClipboard(),
-              );
-              console.log(`[Claude/Artifact] Replaced placeholders: ${assistantMsg.length} → ${finalMarkdown.length} chars`);
-            } catch (err) {
-              console.warn('[Claude/Artifact] Replacement failed:', err);
-            }
+            console.log(`[Claude/Artifact] Response #${idx}: ${artifactCount} placeholder(s) replaced with callout`);
           }
 
           console.log(`[AIWebView Sync/Claude API] Response #${idx}: ${finalMarkdown.length} chars, user="${humanMsg.slice(0,50)}"`);

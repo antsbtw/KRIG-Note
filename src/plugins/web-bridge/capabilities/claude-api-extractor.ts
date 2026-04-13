@@ -188,139 +188,31 @@ export function countArtifactPlaceholders(text: string): number {
   return matches?.length ?? 0;
 }
 
-/**
- * Extract Artifact HTML content by clicking the "Copy to clipboard" button.
- * Reads the system clipboard via main process (renderer clipboard is blocked by focus).
- *
- * Strategy:
- *   1. Find buttons with aria-label="copy to clipboard" in page DOM
- *   2. Click the Nth button (0-indexed)
- *   3. Wait briefly for clipboard write
- *   4. Read clipboard from main process
- *
- * @param webview - guest webview
- * @param index - which artifact copy button to click (0 = first, -1 = last)
- * @param readClipboard - function to read clipboard (main process IPC)
- */
-export async function extractArtifactContent(
-  webview: Electron.WebviewTag,
-  index: number,
-  readClipboard: () => Promise<string>,
-): Promise<string | null> {
-  try {
-    // Find Artifact Copy button (aria-label="Copy", but NOT data-testid="action-bar-copy"
-    // which is the per-message copy button). Artifact toolbar has Retry/Edit/Copy/Close fullscreen.
-    const clicked = await webview.executeJavaScript(`(function() {
-      var all = document.querySelectorAll('button');
-      var btns = [];
-      for (var i = 0; i < all.length; i++) {
-        var label = (all[i].getAttribute('aria-label') || '').toLowerCase();
-        var testid = all[i].getAttribute('data-testid') || '';
-        // Artifact Copy: label is "Copy" exactly (not "copy to clipboard"),
-        // and NOT the message copy (which has testid="action-bar-copy")
-        if (label === 'copy' && testid !== 'action-bar-copy') {
-          btns.push(all[i]);
-        }
-      }
-      if (btns.length === 0) return { success: false, total: 0 };
-      var target = ${index >= 0 ? `btns[${index}]` : 'btns[btns.length - 1]'};
-      if (!target) return { success: false, total: btns.length, requested: ${index} };
-      target.click();
-      return { success: true, total: btns.length, clicked: ${index} };
-    })()`);
-
-    if (!clicked?.success) {
-      console.warn('[ClaudeAPI] No artifact copy button found. Total:', clicked?.total, 'Requested index:', clicked?.requested);
-      // Debug: dump every button with aria-label="Copy" and its full attribute set
-      const btnInfo = await webview.executeJavaScript(`(function() {
-        var all = document.querySelectorAll('button');
-        var copyDetails = [];
-        for (var i = 0; i < all.length; i++) {
-          var l = (all[i].getAttribute('aria-label') || '').toLowerCase();
-          if (l === 'copy') {
-            var r = all[i].getBoundingClientRect();
-            var attrs = {};
-            for (var j = 0; j < all[i].attributes.length; j++) {
-              attrs[all[i].attributes[j].name] = all[i].attributes[j].value.slice(0, 80);
-            }
-            copyDetails.push({
-              pos: [Math.round(r.left), Math.round(r.top)],
-              size: [Math.round(r.width), Math.round(r.height)],
-              attrs: attrs,
-              parentClass: (all[i].parentElement?.className || '').slice(0, 80),
-            });
-          }
-        }
-        return { copyCount: copyDetails.length, details: copyDetails };
-      })()`);
-      console.warn('[ClaudeAPI] Found', btnInfo.copyCount, 'buttons with aria-label="Copy":');
-      btnInfo.details.forEach((d: any, i: number) => {
-        console.warn('  Copy #' + i, 'pos:', JSON.stringify(d.pos), 'size:', JSON.stringify(d.size));
-        console.warn('    attrs:', JSON.stringify(d.attrs));
-        console.warn('    parent:', d.parentClass);
-      });
-      return null;
-    }
-
-    // Wait for clipboard to be written
-    await new Promise(r => setTimeout(r, 300));
-
-    const text = await readClipboard();
-    if (!text || !text.trim()) return null;
-    return text.trim();
-  } catch (err) {
-    console.error('[ClaudeAPI] Artifact extraction failed:', err);
-    return null;
-  }
-}
 
 /**
- * For an assistant message containing N artifact placeholders,
- * extract all N artifact contents and replace placeholders in the text.
+ * Replace Claude Artifact placeholders with user-friendly callouts.
  *
- * @param messageText - raw message text with placeholders
- * @param artifactStartIndex - index of the first artifact button on the page that corresponds to this message's first placeholder
- * @param webview - guest webview
- * @param readClipboard - clipboard reader
+ * Investigation conclusion (2026-04-13):
+ *   - Claude server returns "This block is not supported..." placeholder in
+ *     conversation API for any non-official client (regardless of headers/UA)
+ *   - Real Artifact content is rendered in cross-origin iframe (claudemcpcontent.com)
+ *     that we cannot access (CORS, sandboxed)
+ *   - The placeholder string contains NO artifact ID/UUID — there's no way
+ *     to look up the real content from API
+ *
+ * Best we can do: replace the cryptic placeholder with a friendly callout
+ * pointing the user back to the Claude page where they can see the Artifact.
  */
-export async function replaceArtifactPlaceholders(
+export function replaceArtifactPlaceholders(
   messageText: string,
-  artifactStartIndex: number,
-  webview: Electron.WebviewTag,
-  readClipboard: () => Promise<string>,
-): Promise<string> {
-  const placeholderRegex = /(```[^\n]*\n)(?:[^\n]*\n)*?This block is not supported on your current device yet\.(?:[^\n]*\n)*?(```)/g;
-  const parts: string[] = [];
-  let lastIdx = 0;
-  let artifactIdx = artifactStartIndex;
-  let match: RegExpExecArray | null;
-
-  while ((match = placeholderRegex.exec(messageText)) !== null) {
-    // Text before placeholder
-    if (match.index > lastIdx) {
-      parts.push(messageText.slice(lastIdx, match.index));
-    }
-
-    // Extract actual artifact content
-    const content = await extractArtifactContent(webview, artifactIdx, readClipboard);
-    if (content) {
-      // Detect content type and wrap as appropriate code block
-      const isHtml = /<html|<!doctype|<svg|<style|<script/i.test(content.slice(0, 500));
-      const lang = isHtml ? 'html' : '';
-      parts.push('```' + lang + '\n' + content + '\n```');
-    } else {
-      // Fallback: keep original placeholder
-      parts.push(match[0]);
-    }
-
-    lastIdx = match.index + match[0].length;
-    artifactIdx++;
-  }
-
-  // Remaining text
-  if (lastIdx < messageText.length) {
-    parts.push(messageText.slice(lastIdx));
-  }
-
-  return parts.length > 0 ? parts.join('') : messageText;
+  conversationUrl?: string,
+): string {
+  const placeholderRegex = /```[^\n]*\n(?:[^\n]*\n)*?This block is not supported on your current device yet\.(?:[^\n]*\n)*?```/g;
+  const linkText = conversationUrl
+    ? `> [在 Claude 中查看](${conversationUrl})`
+    : `> 请在原始 Claude 对话中查看`;
+  return messageText.replace(
+    placeholderRegex,
+    `> [!note] Claude Artifact (交互式内容)\n> 这里是 Claude 生成的交互式 HTML/图表，无法自动提取到 Note。\n${linkText}`,
+  );
 }
