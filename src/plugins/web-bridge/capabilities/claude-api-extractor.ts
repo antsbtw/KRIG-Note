@@ -231,18 +231,32 @@ export async function extractArtifactContent(
 
     if (!clicked?.success) {
       console.warn('[ClaudeAPI] No artifact copy button found. Total:', clicked?.total, 'Requested index:', clicked?.requested);
-      // Debug: dump all button aria-labels so we can see what's available
+      // Debug: dump every button with aria-label="Copy" and its full attribute set
       const btnInfo = await webview.executeJavaScript(`(function() {
         var all = document.querySelectorAll('button');
-        var labels = [];
+        var copyDetails = [];
         for (var i = 0; i < all.length; i++) {
-          var l = all[i].getAttribute('aria-label');
-          if (l) labels.push(l);
+          var l = (all[i].getAttribute('aria-label') || '').toLowerCase();
+          if (l === 'copy') {
+            var r = all[i].getBoundingClientRect();
+            var attrs = {};
+            for (var j = 0; j < all[i].attributes.length; j++) {
+              attrs[all[i].attributes[j].name] = all[i].attributes[j].value.slice(0, 80);
+            }
+            copyDetails.push({
+              pos: [Math.round(r.left), Math.round(r.top)],
+              size: [Math.round(r.width), Math.round(r.height)],
+              attrs: attrs,
+              parentClass: (all[i].parentElement?.className || '').slice(0, 80),
+            });
+          }
         }
-        return { totalButtons: all.length, withAriaLabel: labels.length, labels: labels };
+        return { copyCount: copyDetails.length, details: copyDetails };
       })()`);
-      console.warn('[ClaudeAPI] Page has', btnInfo.totalButtons, 'buttons,', btnInfo.withAriaLabel, 'with aria-label.');
-      console.warn('[ClaudeAPI] All labels:\n  - ' + btnInfo.labels.join('\n  - '));
+      console.warn('[ClaudeAPI] Found', btnInfo.copyCount, 'buttons with aria-label="Copy":');
+      btnInfo.details.forEach((d: any, i: number) => {
+        console.warn('  Copy #' + i, 'pos:', d.pos, 'size:', d.size, 'attrs:', d.attrs, 'parent:', d.parentClass);
+      });
       return null;
     }
 
