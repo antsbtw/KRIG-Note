@@ -91,7 +91,21 @@ function registerPlugins(): void {
     icon: '🤖',
     label: 'AI',
     order: 6,
-    hidden: true,   // 仅作为 right slot，不在 NavSide tab 中显示
+    hidden: true,   // 仅作为 right slot（场景 A 标注模式）
+    onViewCreated: (_view, guestWebContents) => {
+      setupCSPBypass(guestWebContents);
+    },
+  });
+
+  // 场景 C：AI 浏览同步模式 — Left Slot: AIWebView, Right Slot: NoteView
+  workModeRegistry.register({
+    id: 'ai-sync',
+    viewType: 'web',
+    variant: 'ai',
+    icon: '🤖',
+    label: 'AI',
+    order: 4,
+    hidden: false,   // 在 NavSide tab 中显示
     onViewCreated: (_view, guestWebContents) => {
       setupCSPBypass(guestWebContents);
     },
@@ -134,6 +148,13 @@ function registerPlugins(): void {
     contentType: 'web-bookmarks',
   });
 
+  // AI Sync NavSide — 显示 AI 服务选择（简化版）
+  navSideRegistry.register({
+    workModeId: 'ai-sync',
+    actionBar: { title: 'AI 对话', actions: [] },
+    contentType: 'ai-services',
+  });
+
   // 协同协议注册
   protocolRegistry.register({
     id: 'demo-sync',
@@ -168,6 +189,9 @@ function registerPlugins(): void {
   // AI Workflow 协议
   protocolRegistry.register({ id: 'note-ai', match: { left: { type: 'note' }, right: { type: 'web', variant: 'ai' } } });
   protocolRegistry.register({ id: 'ebook-ai', match: { left: { type: 'ebook' }, right: { type: 'web', variant: 'ai' } } });
+
+  // AI Sync 协议：左侧 AIWebView ↔ 右侧 NoteView（实时同步对话记录）
+  protocolRegistry.register({ id: 'ai-sync', match: { left: { type: 'web', variant: 'ai' }, right: { type: 'note' } } });
 
   // ── DevTools 辅助函数 ──
   function openDevToolsByName(name: string): void {

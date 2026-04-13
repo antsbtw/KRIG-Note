@@ -63,6 +63,8 @@ declare const viewAPI: {
   onDBReady: (callback: () => void) => () => void;
   listVocabWords?: () => Promise<{ word: string; definition: string }[]>;
   onVocabChanged?: (callback: (entries: { word: string; definition: string }[]) => void) => () => void;
+  // AI Sync
+  onMessage: (callback: (message: any) => void) => () => void;
 };
 
 // 注册所有 Block（只执行一次）
@@ -627,6 +629,20 @@ export function NoteEditor() {
       }
     };
   }, [createEditor, loadNote, saveNote]);
+
+  // ── AI Sync: listen for 'as:append-turn' ViewMessage ──
+  useEffect(() => {
+    const unsub = viewAPI.onMessage((msg: any) => {
+      if (msg.protocol === 'ai-sync' && msg.action === 'as:append-turn') {
+        const view = viewRef.current;
+        if (!view || view.isDestroyed) return;
+        import('../ai-workflow/sync-note-receiver').then(({ appendTurnToEditor }) => {
+          appendTurnToEditor(view, msg.payload);
+        });
+      }
+    });
+    return unsub;
+  }, []);
 
   return (
     <div style={styles.container}>

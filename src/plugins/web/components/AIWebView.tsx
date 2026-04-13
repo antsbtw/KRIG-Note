@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { getSSECaptureScript } from '../../../shared/ai/sse-capture-script';
 import { getDomToMarkdownScript } from '../../../shared/ai/dom-to-markdown';
+import { getUserMessageCaptureScript } from '../../../shared/ai/user-message-capture';
 import { getAIServiceProfile, getAIServiceList, DEFAULT_AI_SERVICE, detectAIServiceByUrl } from '../../../shared/types/ai-service-types';
 import type { AIServiceId } from '../../../shared/types/ai-service-types';
 import '../web.css';
@@ -8,6 +9,9 @@ import '../web.css';
 declare const viewAPI: {
   sendToOtherSlot: (message: { protocol: string; action: string; payload: unknown }) => void;
   onMessage: (callback: (message: { protocol: string; action: string; payload: unknown }) => void) => () => void;
+  ensureRightSlot: (workModeId: string) => Promise<void>;
+  noteCreate: (title?: string) => Promise<{ id: string; title: string } | null>;
+  noteOpenInEditor: (id: string) => Promise<void>;
   onAIInjectAndSend?: (callback: (params: any) => void) => () => void;
   aiSendResponse?: (channel: string, result: any) => Promise<void>;
   aiExtractDebug: (params: { markdown: string; serviceId: string }) =>
@@ -24,7 +28,12 @@ declare const viewAPI: {
  * - 支持 AI_INJECT_AND_SEND IPC 消息
  * - 保持 AI 页面的登录状态和对话历史
  */
-export function AIWebView() {
+interface AIWebViewProps {
+  workModeId?: string;
+}
+
+export function AIWebView({ workModeId = '' }: AIWebViewProps) {
+  const isSyncMode = workModeId === 'ai-sync';
   const webviewRef = useRef<Electron.WebviewTag | null>(null);
   const [currentService, setCurrentService] = useState<AIServiceId>(DEFAULT_AI_SERVICE);
   const [currentUrl, setCurrentUrl] = useState('');
@@ -32,6 +41,9 @@ export function AIWebView() {
   const [showServiceMenu, setShowServiceMenu] = useState(false);
   const [aiStatus, setAiStatus] = useState<'idle' | 'injecting' | 'waiting' | 'capturing'>('idle');
   const [extractResult, setExtractResult] = useState<string | null>(null);
+  const [syncEnabled, setSyncEnabled] = useState(isSyncMode);
+  const [syncCount, setSyncCount] = useState(0);
+  const lastSyncedCountRef = useRef(0);
   const [extractDetail, setExtractDetail] = useState<{
     markdown: string; blocks: string[]; atoms: string[]; preview: string;
     blockDetails?: any[]; atomDetails?: any[];
@@ -182,6 +194,131 @@ export function AIWebView() {
       console.error('[AIWebView Extract] Error:', err);
     }
   }, [currentService]);
+
+  // ── Sync Engine（场景 C：实时同步到 NoteView）──
+  useEffect(() => {
+    if (!isSyncMode || !syncEnabled) return;
+
+    // Auto-open NoteView in Right Slot + create and open sync note
+    const profile = getAIServiceProfile(currentService);
+    const now = new Date();
+    const dateStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+
+    (async () => {
+      // 1. Open NoteView in Right Slot
+      await viewAPI.ensureRightSlot('demo-a');
+      // Wait for NoteView renderer to mount
+      await new Promise(r => setTimeout(r, 1500));
+
+      // 2. Create a new note
+      const note = await viewAPI.noteCreate(`AI Sync — ${profile.name} — ${dateStr}`);
+      if (note) {
+        // 3. Tell NoteView to open this note
+        await viewAPI.noteOpenInEditor(note.id);
+        console.log('[AIWebView Sync] Created and opened sync note:', note.id, note.title);
+      }
+    })();
+
+    console.log('[AIWebView Sync] Sync mode started, polling for SSE responses...');
+
+    // Poll for new SSE responses
+    const pollInterval = setInterval(async () => {
+      const webview = webviewRef.current;
+      if (!webview) return;
+
+      try {
+        // Ensure SSE hook + user message capture are injected
+        const curUrl = webview.getURL?.() || '';
+        const detected = detectAIServiceByUrl(curUrl);
+        if (detected) {
+          const sseScript = getSSECaptureScript(detected.id, detected.intercept.endpointPattern);
+          await webview.executeJavaScript(sseScript).catch(() => {});
+          const userCaptureScript = getUserMessageCaptureScript(detected.selectors.inputBox);
+          await webview.executeJavaScript(userCaptureScript).catch(() => {});
+        }
+
+        // Check for new completed responses
+        const status = await webview.executeJavaScript(`(function() {
+          var r = window.__krig_sse_responses || [];
+          var completed = 0;
+          for (var i = 0; i < r.length; i++) { if (!r[i].streaming && r[i].markdown.length > 0) completed++; }
+          return { total: r.length, completed: completed, hooked: !!window.__krig_sse_hooked };
+        })()`);
+
+        // Process ALL new completed responses (not just one)
+        while (status.completed > lastSyncedCountRef.current) {
+          const idx = lastSyncedCountRef.current;
+
+          // Get this specific response's markdown
+          const sseMarkdown = await webview.executeJavaScript(`(function() {
+            var r = window.__krig_sse_responses || [];
+            var completed = [];
+            for (var i = 0; i < r.length; i++) { if (!r[i].streaming && r[i].markdown.length > 0) completed.push(r[i]); }
+            return completed[${idx}]?.markdown || null;
+          })()`);
+
+          // Get user message
+          const userMessage = await webview.executeJavaScript(`
+            window.__krig_last_user_message || ''
+          `);
+
+          if (sseMarkdown) {
+            // DOM complement for images
+            const domScript = getDomToMarkdownScript();
+            await webview.executeJavaScript(domScript).catch(() => {});
+
+            // Get the Nth assistant message DOM (matching the Nth SSE response)
+            const domMd = await webview.executeJavaScript(`(function() {
+              if (typeof domToMarkdown !== 'function') return null;
+              var selector = ${JSON.stringify(detected?.selectors.assistantMessage || '')};
+              var selectors = selector.split(',').map(function(s) { return s.trim(); });
+              var all = [];
+              for (var i = 0; i < selectors.length; i++) {
+                var nodes = document.querySelectorAll(selectors[i]);
+                for (var j = 0; j < nodes.length; j++) all.push(nodes[j]);
+              }
+              var target = all[${idx}] || all[all.length - 1];
+              return target ? domToMarkdown(target) : null;
+            })()`).catch(() => null);
+
+            // Merge SSE + DOM images
+            let finalMd = sseMarkdown;
+            if (domMd) {
+              const sseImgs = new Set((sseMarkdown.match(/!\[([^\]]*)\]\(([^)]+)\)/g) || []).map((m: string) => m.match(/\(([^)]+)\)/)?.[1]).filter(Boolean));
+              const extraImgs = (domMd.match(/!\[([^\]]*)\]\(([^)]+)\)/g) || []).filter((m: string) => { const u = m.match(/\(([^)]+)\)/)?.[1]; return u && !sseImgs.has(u); });
+              if (extraImgs.length > 0) finalMd += '\n\n' + extraImgs.join('\n\n');
+            }
+
+            console.log(`[AIWebView Sync] Response #${idx}: SSE=${sseMarkdown.length}, final=${finalMd.length}, user="${userMessage?.slice(0,50)}"`);
+
+            viewAPI.sendToOtherSlot({
+              protocol: 'ai-sync',
+              action: 'as:append-turn',
+              payload: {
+                turn: {
+                  index: idx,
+                  userMessage: userMessage || '',
+                  markdown: finalMd,
+                  timestamp: Date.now(),
+                },
+                source: {
+                  serviceId: detected?.id || currentService,
+                  serviceName: detected?.name || profile.name,
+                },
+              },
+            });
+          }
+
+          lastSyncedCountRef.current = idx + 1;
+          setSyncCount(idx + 1);
+        }
+      } catch (err) {
+        // Silently retry on next poll
+      }
+    }, 2000); // Poll every 2 seconds
+
+    return () => clearInterval(pollInterval);
+  }, [isSyncMode, syncEnabled, currentService]);
 
   // ── 点击外部关闭菜单 ──
   useEffect(() => {
@@ -410,6 +547,23 @@ export function AIWebView() {
             </div>
           )}
         </div>
+
+        {/* Sync status (only in ai-sync mode) */}
+        {isSyncMode && (
+          <button
+            style={{
+              background: syncEnabled ? '#1b5e20' : '#555',
+              border: 'none', borderRadius: 4, color: '#fff',
+              fontSize: 11, padding: '3px 8px', cursor: 'pointer',
+              display: 'flex', alignItems: 'center', gap: 4,
+            }}
+            onClick={() => setSyncEnabled(!syncEnabled)}
+            title={syncEnabled ? '暂停同步' : '恢复同步'}
+          >
+            <span>{syncEnabled ? '●' : '⏸'}</span>
+            <span>{syncEnabled ? `同步中 (${syncCount})` : '已暂停'}</span>
+          </button>
+        )}
 
         {/* Loading / AI status */}
         {loading && <span style={{ color: '#888', fontSize: 12 }}>加载中...</span>}

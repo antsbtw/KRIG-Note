@@ -16,12 +16,13 @@ import { AIWebView } from './components/AIWebView';
 
 const params = new URLSearchParams(window.location.search);
 const variant = params.get('variant') || '';
+const workModeId = params.get('workModeId') || '';
 
 const rootEl = document.getElementById('root');
 if (rootEl) {
   const root = createRoot(rootEl);
   if (variant === 'ai') {
-    root.render(<AIWebView />);
+    root.render(<AIWebView workModeId={workModeId} />);
   } else if (variant === 'translate') {
     root.render(<TranslateWebView />);
   } else if (variant === 'extraction') {
