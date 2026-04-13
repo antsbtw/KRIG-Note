@@ -224,7 +224,18 @@ export async function extractArtifactContent(
     })()`);
 
     if (!clicked?.success) {
-      console.warn('[ClaudeAPI] No artifact copy button found', clicked);
+      console.warn('[ClaudeAPI] No artifact copy button found. Total:', clicked?.total, 'Requested index:', clicked?.requested);
+      // Debug: dump all button aria-labels so we can see what's available
+      const btnInfo = await webview.executeJavaScript(`(function() {
+        var all = document.querySelectorAll('button');
+        var labels = [];
+        for (var i = 0; i < all.length; i++) {
+          var l = all[i].getAttribute('aria-label');
+          if (l) labels.push(l);
+        }
+        return { totalButtons: all.length, withAriaLabel: labels.length, labels: labels };
+      })()`);
+      console.warn('[ClaudeAPI] Page has', btnInfo.totalButtons, 'buttons,', btnInfo.withAriaLabel, 'with aria-label. First 30:', btnInfo.labels.slice(0, 30));
       return null;
     }
 
