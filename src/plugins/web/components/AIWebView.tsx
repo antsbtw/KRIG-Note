@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { getSSECaptureScript } from '../../web-bridge/injection/inject-scripts/sse-capture';
 import { getDomToMarkdownScript } from '../../web-bridge/injection/inject-scripts/dom-to-markdown';
 import { getUserMessageCaptureScript } from '../../web-bridge/injection/inject-scripts/user-message-capture';
+import { extractLatestClaudeResponse, isClaudeConversationPage } from '../../web-bridge/capabilities/claude-api-extractor';
 import { getAIServiceProfile, getAIServiceList, DEFAULT_AI_SERVICE, detectAIServiceByUrl } from '../../../shared/types/ai-service-types';
 import type { AIServiceId } from '../../../shared/types/ai-service-types';
 import '../web.css';
@@ -291,6 +292,68 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
           const userCaptureScript = getUserMessageCaptureScript(detected.selectors.inputBox);
           await webview.executeJavaScript(userCaptureScript).catch(() => {});
         }
+
+        // ── Claude 专用路径：直接调用 conversation API（最准确最完整）──
+        if (detected?.id === 'claude' && isClaudeConversationPage(webview.getURL?.() || '')) {
+          const apiResult = await extractLatestClaudeResponse(webview);
+          if (apiResult) {
+            // Count human messages — each represents a completed turn
+            const humanCount = apiResult.raw?.messages.filter(m => m.sender === 'human').length ?? 0;
+
+            while (humanCount > lastSyncedCountRef.current) {
+              const idx = lastSyncedCountRef.current;
+              const conv = apiResult.raw!;
+              // Find the idx-th human message and its next assistant response
+              let humanFound = -1;
+              let humanMsg = '';
+              let assistantMsg = '';
+              for (let i = 0; i < conv.messages.length; i++) {
+                if (conv.messages[i].sender === 'human') humanFound++;
+                if (humanFound === idx && conv.messages[i].sender === 'human') {
+                  humanMsg = conv.messages[i].text;
+                  // Find next assistant message
+                  for (let j = i + 1; j < conv.messages.length; j++) {
+                    if (conv.messages[j].sender === 'assistant') {
+                      assistantMsg = conv.messages[j].text;
+                      break;
+                    }
+                  }
+                  break;
+                }
+              }
+
+              if (!assistantMsg) {
+                // Response not ready yet (streaming), stop here
+                break;
+              }
+
+              console.log(`[AIWebView Sync/Claude API] Response #${idx}: ${assistantMsg.length} chars, user="${humanMsg.slice(0,50)}"`);
+
+              viewAPI.sendToOtherSlot({
+                protocol: 'ai-sync',
+                action: 'as:append-turn',
+                payload: {
+                  turn: {
+                    index: idx,
+                    userMessage: humanMsg,
+                    markdown: assistantMsg,
+                    timestamp: Date.now(),
+                  },
+                  source: {
+                    serviceId: 'claude',
+                    serviceName: detected.name,
+                  },
+                },
+              });
+              lastSyncedCountRef.current = idx + 1;
+              setSyncCount(idx + 1);
+            }
+            return; // Skip SSE/DOM path for Claude
+          }
+          // If API extraction failed, fall through to SSE/DOM fallback
+        }
+
+        // ── 通用 SSE+DOM+Copy 路径（ChatGPT/Gemini，或 Claude API 失败时）──
 
         // Check for new completed responses
         const status = await webview.executeJavaScript(`(function() {
