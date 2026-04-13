@@ -2,7 +2,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { WebToolbar } from './WebToolbar';
 import { SyncDriver } from '../sync/sync-driver';
 import { SYNC_ACTION } from '../sync/sync-protocol';
-import { getSSECaptureScript } from '../../../shared/ai/sse-capture-script';
+import { getSSECaptureScript } from '../../web-bridge/injection/inject-scripts/sse-capture';
 import { getAIServiceProfile, detectAIServiceByUrl } from '../../../shared/types/ai-service-types';
 import type { AIServiceId } from '../../../shared/types/ai-service-types';
 import '../web.css';

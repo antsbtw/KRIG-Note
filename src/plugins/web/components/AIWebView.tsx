@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { getSSECaptureScript } from '../../../shared/ai/sse-capture-script';
-import { getDomToMarkdownScript } from '../../../shared/ai/dom-to-markdown';
-import { getUserMessageCaptureScript } from '../../../shared/ai/user-message-capture';
+import { getSSECaptureScript } from '../../web-bridge/injection/inject-scripts/sse-capture';
+import { getDomToMarkdownScript } from '../../web-bridge/injection/inject-scripts/dom-to-markdown';
+import { getUserMessageCaptureScript } from '../../web-bridge/injection/inject-scripts/user-message-capture';
 import { getAIServiceProfile, getAIServiceList, DEFAULT_AI_SERVICE, detectAIServiceByUrl } from '../../../shared/types/ai-service-types';
 import type { AIServiceId } from '../../../shared/types/ai-service-types';
 import '../web.css';

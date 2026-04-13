@@ -1,4 +1,4 @@
-import type { ExtractedBlock, ExtractedInline, ExtractedListItem } from '../../shared/types/extraction-types';
+import type { ExtractedBlock, ExtractedInline, ExtractedListItem } from '../../../shared/types/extraction-types';
 
 /**
  * ResultParser — parses AI response text into ExtractedBlock[].

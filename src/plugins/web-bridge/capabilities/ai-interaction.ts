@@ -6,10 +6,10 @@
  * Design doc: docs/web/AI-Workflow-Protocol-设计.md §四
  */
 
-import type { AIServiceId } from '../../shared/types/ai-service-types';
-import { backgroundAI } from './background-ai-webview';
-import { SSECaptureManager } from './sse-capture-manager';
-import { pasteTextToAI, clickSendButton } from './content-sender';
+import type { AIServiceId } from '../../../shared/types/ai-service-types';
+import { backgroundAI } from './background-webview';
+import { SSECaptureManager } from './interceptor';
+import { pasteTextToAI, clickSendButton } from './writer';
 
 /** Singleton SSE capture manager — created on first use */
 let captureManager: SSECaptureManager | null = null;

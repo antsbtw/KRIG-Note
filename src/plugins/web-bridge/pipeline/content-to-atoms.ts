@@ -1,4 +1,4 @@
-import { createAtom } from '../../shared/types/atom-types';
+import { createAtom } from '../../../shared/types/atom-types';
 import type {
   Atom,
   InlineElement,
@@ -14,8 +14,8 @@ import type {
   TableContent,
   TableCellContent,
   NoteTitleContent,
-} from '../../shared/types/atom-types';
-import type { ExtractedBlock, ExtractedInline } from '../../shared/types/extraction-types';
+} from '../../../shared/types/atom-types';
+import type { ExtractedBlock, ExtractedInline } from '../../../shared/types/extraction-types';
 
 /**
  * Normalize inline elements: clean whitespace, merge adjacent text nodes, trim edges

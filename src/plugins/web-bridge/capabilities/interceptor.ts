@@ -17,8 +17,8 @@ import {
   type AIServiceId,
   detectAIServiceByUrl,
   getAIServiceProfile,
-} from '../../shared/types/ai-service-types';
-import { getSSECaptureScript } from '../../shared/ai/sse-capture-script';
+} from '../../../shared/types/ai-service-types';
+import { getSSECaptureScript } from '../injection/inject-scripts/sse-capture';
 
 export interface SSEResponseRecord {
   id: string;

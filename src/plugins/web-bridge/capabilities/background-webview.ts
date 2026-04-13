@@ -17,7 +17,7 @@ import {
   type AIServiceId,
   getAIServiceProfile,
   type AIServiceProfile,
-} from '../../shared/types/ai-service-types';
+} from '../../../shared/types/ai-service-types';
 
 /** 后台 webview 的状态 */
 export type BackgroundAIStatus = 'idle' | 'loading' | 'ready' | 'error';

@@ -17,7 +17,7 @@ import { activityStore } from './storage/activity-store';
 import { initKrigNoteDocs, createBlockTaskDoc, reimportTestDocs } from './storage/init-docs';
 import { mediaSurrealStore as mediaStore } from './media/media-surreal-store';
 import { setupExtractionInterceptor } from '../plugins/web/main/extraction-handler';
-import { setupCSPBypass } from './web-translate/csp-bypass';
+import { setupCSPBypass } from '../plugins/web-bridge/infrastructure/csp-bypass';
 
 /**
  * KRIG Note — 应用入口

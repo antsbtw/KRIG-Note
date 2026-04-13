@@ -707,7 +707,7 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
     thoughtId?: string;
   }) => {
     try {
-      const { askAI } = await import('../ai/ai-request-handler');
+      const { askAI } = await import('../../plugins/web-bridge/capabilities/ai-interaction');
       const result = await askAI(params.serviceId as any, params.prompt);
       return result;
     } catch (err) {
@@ -783,8 +783,8 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
           // Parse markdown → Atoms and save to ThoughtStore
           if (result?.success && result?.markdown) {
             try {
-              const { ResultParser } = await import('../ai/result-parser');
-              const { createAtomsFromExtracted } = await import('../ai/content-to-atoms');
+              const { ResultParser } = await import('../../plugins/web-bridge/pipeline/result-parser');
+              const { createAtomsFromExtracted } = await import('../../plugins/web-bridge/pipeline/content-to-atoms');
 
               console.log('[AI_ASK_VISIBLE] Parsing markdown, length:', result.markdown.length);
               console.log('[AI_ASK_VISIBLE] Markdown preview:', result.markdown.slice(0, 200));
@@ -858,7 +858,7 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
   });
 
   ipcMain.handle(IPC.AI_STATUS, async () => {
-    const { backgroundAI } = await import('../ai/background-ai-webview');
+    const { backgroundAI } = await import('../../plugins/web-bridge/capabilities/background-webview');
     return backgroundAI.getStatus();
   });
 
@@ -871,8 +871,8 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
   // AI_PARSE_MARKDOWN: Parse markdown → Atom[] (used by SyncNote receiver)
   ipcMain.handle(IPC.AI_PARSE_MARKDOWN, async (_event, markdown: string) => {
     try {
-      const { ResultParser } = await import('../ai/result-parser');
-      const { createAtomsFromExtracted } = await import('../ai/content-to-atoms');
+      const { ResultParser } = await import('../../plugins/web-bridge/pipeline/result-parser');
+      const { createAtomsFromExtracted } = await import('../../plugins/web-bridge/pipeline/content-to-atoms');
 
       const parser = new ResultParser();
       const blocks = parser.parse(markdown);
@@ -897,8 +897,8 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
   // AI_EXTRACT_DEBUG: Parse markdown and return stats (for debugging extraction quality)
   ipcMain.handle(IPC.AI_EXTRACT_DEBUG, async (_event, params: { markdown: string; serviceId: string }) => {
     try {
-      const { ResultParser } = await import('../ai/result-parser');
-      const { createAtomsFromExtracted } = await import('../ai/content-to-atoms');
+      const { ResultParser } = await import('../../plugins/web-bridge/pipeline/result-parser');
+      const { createAtomsFromExtracted } = await import('../../plugins/web-bridge/pipeline/content-to-atoms');
 
       const parser = new ResultParser();
       const blocks = parser.parse(params.markdown);

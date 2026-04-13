@@ -5,7 +5,7 @@
  * Design doc: docs/web/WebBridge-设计.md §五 写入能力
  */
 
-import { getAIServiceProfile, type AIServiceId } from '../../shared/types/ai-service-types';
+import { getAIServiceProfile, type AIServiceId } from '../../../shared/types/ai-service-types';
 
 /**
  * Paste text into the AI service input box via executeJavaScript.
