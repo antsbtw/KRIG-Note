@@ -1,7 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { getSSECaptureScript } from '../../web-bridge/injection/inject-scripts/sse-capture';
 import { getDomToMarkdownScript } from '../../web-bridge/injection/inject-scripts/dom-to-markdown';
-import { getUserMessageCaptureScript } from '../../web-bridge/injection/inject-scripts/user-message-capture';
 import { extractLatestClaudeResponse, isClaudeConversationPage } from '../../web-bridge/capabilities/claude-api-extractor';
 import { getAIServiceProfile, getAIServiceList, DEFAULT_AI_SERVICE, detectAIServiceByUrl } from '../../../shared/types/ai-service-types';
 import type { AIServiceId } from '../../../shared/types/ai-service-types';
@@ -283,160 +282,70 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
       if (!webview) return;
 
       try {
-        // Ensure SSE hook + user message capture are injected
         const curUrl = webview.getURL?.() || '';
         const detected = detectAIServiceByUrl(curUrl);
-        if (detected) {
-          const sseScript = getSSECaptureScript(detected.id, detected.intercept.endpointPattern);
-          await webview.executeJavaScript(sseScript).catch(() => {});
-          const userCaptureScript = getUserMessageCaptureScript(detected.selectors.inputBox);
-          await webview.executeJavaScript(userCaptureScript).catch(() => {});
+
+        // Only Claude is supported via conversation API (pure path, no fallback)
+        // ChatGPT/Gemini: waiting for their own API extractors to be implemented
+        if (detected?.id !== 'claude' || !isClaudeConversationPage(curUrl)) {
+          return;
         }
 
-        // ── Claude 专用路径：直接调用 conversation API（最准确最完整）──
-        if (detected?.id === 'claude' && isClaudeConversationPage(webview.getURL?.() || '')) {
-          const apiResult = await extractLatestClaudeResponse(webview);
-          if (apiResult) {
-            // Count human messages — each represents a completed turn
-            const humanCount = apiResult.raw?.messages.filter(m => m.sender === 'human').length ?? 0;
+        const apiResult = await extractLatestClaudeResponse(webview);
+        if (!apiResult || !apiResult.raw) return;
 
-            while (humanCount > lastSyncedCountRef.current) {
-              const idx = lastSyncedCountRef.current;
-              const conv = apiResult.raw!;
-              // Find the idx-th human message and its next assistant response
-              let humanFound = -1;
-              let humanMsg = '';
-              let assistantMsg = '';
-              for (let i = 0; i < conv.messages.length; i++) {
-                if (conv.messages[i].sender === 'human') humanFound++;
-                if (humanFound === idx && conv.messages[i].sender === 'human') {
-                  humanMsg = conv.messages[i].text;
-                  // Find next assistant message
-                  for (let j = i + 1; j < conv.messages.length; j++) {
-                    if (conv.messages[j].sender === 'assistant') {
-                      assistantMsg = conv.messages[j].text;
-                      break;
-                    }
-                  }
+        const conv = apiResult.raw;
+        const humanCount = conv.messages.filter(m => m.sender === 'human').length;
+
+        while (humanCount > lastSyncedCountRef.current) {
+          const idx = lastSyncedCountRef.current;
+
+          // Find the idx-th human message and its next assistant response
+          let humanFound = -1;
+          let humanMsg = '';
+          let assistantMsg = '';
+          for (let i = 0; i < conv.messages.length; i++) {
+            if (conv.messages[i].sender === 'human') humanFound++;
+            if (humanFound === idx && conv.messages[i].sender === 'human') {
+              humanMsg = conv.messages[i].text;
+              for (let j = i + 1; j < conv.messages.length; j++) {
+                if (conv.messages[j].sender === 'assistant') {
+                  assistantMsg = conv.messages[j].text;
                   break;
                 }
               }
-
-              if (!assistantMsg) {
-                // Response not ready yet (streaming), stop here
-                break;
-              }
-
-              console.log(`[AIWebView Sync/Claude API] Response #${idx}: ${assistantMsg.length} chars, user="${humanMsg.slice(0,50)}"`);
-
-              viewAPI.sendToOtherSlot({
-                protocol: 'ai-sync',
-                action: 'as:append-turn',
-                payload: {
-                  turn: {
-                    index: idx,
-                    userMessage: humanMsg,
-                    markdown: assistantMsg,
-                    timestamp: Date.now(),
-                  },
-                  source: {
-                    serviceId: 'claude',
-                    serviceName: detected.name,
-                  },
-                },
-              });
-              lastSyncedCountRef.current = idx + 1;
-              setSyncCount(idx + 1);
+              break;
             }
-            return; // Skip SSE/DOM path for Claude
           }
-          // If API extraction failed, fall through to SSE/DOM fallback
-        }
 
-        // ── 通用 SSE+DOM+Copy 路径（ChatGPT/Gemini，或 Claude API 失败时）──
+          if (!assistantMsg) {
+            // Streaming not finished yet — wait for next poll
+            break;
+          }
 
-        // Check for new completed responses
-        const status = await webview.executeJavaScript(`(function() {
-          var r = window.__krig_sse_responses || [];
-          var completed = 0;
-          for (var i = 0; i < r.length; i++) { if (!r[i].streaming && r[i].markdown.length > 0) completed++; }
-          return { total: r.length, completed: completed, hooked: !!window.__krig_sse_hooked };
-        })()`);
+          console.log(`[AIWebView Sync/Claude API] Response #${idx}: ${assistantMsg.length} chars, user="${humanMsg.slice(0,50)}"`);
 
-        // Process ALL new completed responses (not just one)
-        while (status.completed > lastSyncedCountRef.current) {
-          const idx = lastSyncedCountRef.current;
-
-          // Get this specific response's markdown
-          const sseMarkdown = await webview.executeJavaScript(`(function() {
-            var r = window.__krig_sse_responses || [];
-            var completed = [];
-            for (var i = 0; i < r.length; i++) { if (!r[i].streaming && r[i].markdown.length > 0) completed.push(r[i]); }
-            return completed[${idx}]?.markdown || null;
-          })()`);
-
-          // Get user message
-          const userMessage = await webview.executeJavaScript(`
-            window.__krig_last_user_message || ''
-          `);
-
-          if (sseMarkdown) {
-            // DOM extraction for complementary content (images, artifacts, code blocks)
-            const domScript = getDomToMarkdownScript();
-            await webview.executeJavaScript(domScript).catch(() => {});
-
-            const domMd: string | null = await webview.executeJavaScript(`(function() {
-              if (typeof domToMarkdown !== 'function') return null;
-              var selector = ${JSON.stringify(detected?.selectors.assistantMessage || '')};
-              var selectors = selector.split(',').map(function(s) { return s.trim(); });
-              var all = [];
-              for (var i = 0; i < selectors.length; i++) {
-                var nodes = document.querySelectorAll(selectors[i]);
-                for (var j = 0; j < nodes.length; j++) all.push(nodes[j]);
-              }
-              var target = all[${idx}] || all[all.length - 1];
-              return target ? domToMarkdown(target) : null;
-            })()`).catch(() => null);
-
-            // Copy button extraction (most reliable)
-            const copyMd = await extractViaCopyButton(webview, idx);
-
-            // Three-source merge: pick the longest (most complete)
-            const srcs = [
-              { name: 'Copy', md: copyMd, len: copyMd?.length ?? 0 },
-              { name: 'SSE', md: sseMarkdown, len: sseMarkdown.length },
-              { name: 'DOM', md: domMd, len: domMd?.length ?? 0 },
-            ].filter(s => s.md && s.len > 0);
-            srcs.sort((a, b) => b.len - a.len);
-
-            const finalMd = srcs.length > 0 ? srcs[0].md! : sseMarkdown;
-            const srcDesc = srcs.map(s => `${s.name}(${s.len})`).join(' > ');
-
-            console.log(`[AIWebView Sync] Response #${idx}: ${srcDesc}, user="${userMessage?.slice(0,50)}"`);
-
-            viewAPI.sendToOtherSlot({
-              protocol: 'ai-sync',
-              action: 'as:append-turn',
-              payload: {
-                turn: {
-                  index: idx,
-                  userMessage: userMessage || '',
-                  markdown: finalMd,
-                  timestamp: Date.now(),
-                },
-                source: {
-                  serviceId: detected?.id || currentService,
-                  serviceName: detected?.name || profile.name,
-                },
+          viewAPI.sendToOtherSlot({
+            protocol: 'ai-sync',
+            action: 'as:append-turn',
+            payload: {
+              turn: {
+                index: idx,
+                userMessage: humanMsg,
+                markdown: assistantMsg,
+                timestamp: Date.now(),
               },
-            });
-          }
-
+              source: {
+                serviceId: 'claude',
+                serviceName: detected.name,
+              },
+            },
+          });
           lastSyncedCountRef.current = idx + 1;
           setSyncCount(idx + 1);
         }
       } catch (err) {
-        // Silently retry on next poll
+        console.warn('[AIWebView Sync/Claude API] Error:', err);
       }
     }, 2000); // Poll every 2 seconds
 
