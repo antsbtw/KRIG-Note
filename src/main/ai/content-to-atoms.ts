@@ -321,10 +321,10 @@ export function createAtomsFromExtracted(blocks: ExtractedBlock[], pageTitle?: s
       atoms.push(createAtom('blockquote', content, rootAtom.id));
 
     } else if (block.type === 'code') {
-      // Code block → code-block atom
+      // Code block → codeBlock atom
       atoms.push(createAtom('codeBlock', {
+        code: block.text,
         language: block.language || '',
-        children: [{ type: 'text' as const, text: block.text }],
       }, rootAtom.id));
 
     } else if (block.type === 'table' && block.tableRows?.length) {
@@ -349,10 +349,9 @@ export function createAtomsFromExtracted(blocks: ExtractedBlock[], pageTitle?: s
       }
 
     } else if (block.type === 'math') {
-      // Math block → math-block atom
+      // Math block → mathBlock atom
       atoms.push(createAtom('mathBlock', {
         latex: block.text,
-        children: [{ type: 'text' as const, text: block.text }],
       }, rootAtom.id));
 
     } else if (block.tag === 'hr') {
