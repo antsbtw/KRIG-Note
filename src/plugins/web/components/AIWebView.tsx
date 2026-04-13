@@ -134,26 +134,18 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
       let source = '';
 
       if (sseMarkdown && domMarkdown) {
-        // 两者都有 — SSE 为主，DOM 补充 SSE 中缺失的图片
-        finalMarkdown = sseMarkdown;
-        source = 'SSE+DOM';
+        // Smart merge: compare content richness
+        const sseCodeBlocks = (sseMarkdown.match(/```/g) || []).length / 2;
+        const domCodeBlocks = (domMarkdown.match(/```/g) || []).length / 2;
+        const sseImgCount = (sseMarkdown.match(/!\[/g) || []).length;
+        const domImgCount = (domMarkdown.match(/!\[/g) || []).length;
 
-        // 从 DOM 中提取 SSE 中没有的图片 URL
-        const sseImageUrls = new Set(
-          (sseMarkdown.match(/!\[([^\]]*)\]\(([^)]+)\)/g) || [])
-            .map(m => m.match(/\(([^)]+)\)/)?.[1]).filter(Boolean)
-        );
-        const domImages = (domMarkdown.match(/!\[([^\]]*)\]\(([^)]+)\)/g) || [])
-          .filter(m => {
-            const url = m.match(/\(([^)]+)\)/)?.[1];
-            return url && !sseImageUrls.has(url);
-          });
-
-        if (domImages.length > 0) {
-          finalMarkdown += '\n\n' + domImages.join('\n\n');
-          source = `SSE(${sseMarkdown.length})+DOM(+${domImages.length} images)`;
+        if (domCodeBlocks > sseCodeBlocks || domImgCount > sseImgCount || domMarkdown.length > sseMarkdown.length) {
+          finalMarkdown = domMarkdown;
+          source = `DOM(${domMarkdown.length}) [code=${domCodeBlocks}vs${sseCodeBlocks}, img=${domImgCount}vs${sseImgCount}]`;
         } else {
-          source = `SSE(${sseMarkdown.length}), DOM(${domMarkdown.length}) no extra images`;
+          finalMarkdown = sseMarkdown;
+          source = `SSE(${sseMarkdown.length}) [code=${sseCodeBlocks}vs${domCodeBlocks}, img=${sseImgCount}vs${domImgCount}]`;
         }
       } else if (sseMarkdown) {
         finalMarkdown = sseMarkdown;
@@ -299,10 +291,10 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
               const sseImages = (sseMarkdown.match(/!\[/g) || []).length;
               const domImages = (domMd.match(/!\[/g) || []).length;
 
-              // Use DOM if it has significantly more content (images, code blocks, etc.)
-              if (domLen > sseLen * 1.2 || domCodeBlocks > sseCodeBlocks || domImages > sseImages) {
+              // Use DOM if it has more content elements (images, code blocks) or is longer
+              if (domCodeBlocks > sseCodeBlocks || domImages > sseImages || domLen > sseLen) {
                 finalMd = domMd;
-                console.log(`[AIWebView Sync] Using DOM (${domLen}) over SSE (${sseLen}): +${domCodeBlocks - sseCodeBlocks} code blocks, +${domImages - sseImages} images`);
+                console.log(`[AIWebView Sync] Using DOM (${domLen}) over SSE (${sseLen}): code=${domCodeBlocks}vs${sseCodeBlocks}, imgs=${domImages}vs${sseImages}`);
               } else {
                 // SSE is primary — append any extra images from DOM
                 const sseImgs = new Set((sseMarkdown.match(/!\[([^\]]*)\]\(([^)]+)\)/g) || []).map((m: string) => m.match(/\(([^)]+)\)/)?.[1]).filter(Boolean));
