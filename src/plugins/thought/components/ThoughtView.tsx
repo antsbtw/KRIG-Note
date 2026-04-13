@@ -93,6 +93,7 @@ export function ThoughtView() {
               resolved: false,
               pinned: false,
               doc_content: [],
+              serviceId: p.serviceId,
               created_at: Date.now(),
               updated_at: Date.now(),
             };
@@ -112,6 +113,51 @@ export function ThoughtView() {
           break;
         }
         case THOUGHT_ACTION.SCROLL_SYNC: {
+          break;
+        }
+
+        // ── AI Workflow ──
+
+        case THOUGHT_ACTION.AI_RESPONSE_READY: {
+          const p = msg.payload as any;
+          // AI 回复就绪 — 更新对应 ThoughtCard 的内容
+          setThoughts((prev) =>
+            prev.map((t) => {
+              if (t.id !== p.thoughtId) return t;
+              return {
+                ...t,
+                doc_content: [{
+                  id: `atom-${Date.now()}`,
+                  type: 'paragraph' as const,
+                  content: { children: [{ type: 'text', text: p.markdown }] },
+                  meta: { createdAt: Date.now(), updatedAt: Date.now(), dirty: false },
+                }],
+                updated_at: Date.now(),
+              } as ThoughtRecord;
+            }),
+          );
+          setActiveId(p.thoughtId);
+          break;
+        }
+        case THOUGHT_ACTION.AI_ERROR: {
+          const p = msg.payload as any;
+          // AI 回复失败 — 在 ThoughtCard 中显示错误
+          setThoughts((prev) =>
+            prev.map((t) => {
+              if (t.id !== p.thoughtId) return t;
+              return {
+                ...t,
+                doc_content: [{
+                  id: `atom-${Date.now()}`,
+                  type: 'paragraph' as const,
+                  content: { children: [{ type: 'text', text: `AI 请求失败: ${p.error}` }] },
+                  meta: { createdAt: Date.now(), updatedAt: Date.now(), dirty: false },
+                }],
+                updated_at: Date.now(),
+              } as ThoughtRecord;
+            }),
+          );
+          setActiveId(p.thoughtId);
           break;
         }
       }

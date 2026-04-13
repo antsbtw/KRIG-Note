@@ -9,14 +9,15 @@ import type { Atom } from './atom-types';
 
 // ── 语义分类 ──
 
-export type ThoughtType = 'thought' | 'question' | 'important' | 'todo' | 'analysis';
+export type ThoughtType = 'thought' | 'question' | 'important' | 'todo' | 'analysis' | 'ai-response';
 
 export const THOUGHT_TYPE_META: Record<ThoughtType, { icon: string; color: string; label: string }> = {
-  thought:   { icon: '💭', color: '#4a9eff', label: '思考' },
-  question:  { icon: '❓', color: '#ff5252', label: '疑问' },
-  important: { icon: '⭐', color: '#ffab40', label: '重要' },
-  todo:      { icon: '☐', color: '#4caf50', label: '待办' },
-  analysis:  { icon: '🔍', color: '#ab47bc', label: '分析' },
+  thought:       { icon: '💭', color: '#4a9eff', label: '思考' },
+  question:      { icon: '❓', color: '#ff5252', label: '疑问' },
+  important:     { icon: '⭐', color: '#ffab40', label: '重要' },
+  todo:          { icon: '☐', color: '#4caf50', label: '待办' },
+  analysis:      { icon: '🔍', color: '#ab47bc', label: '分析' },
+  'ai-response': { icon: '🤖', color: '#6366f1', label: 'AI 回复' },
 };
 
 // ── 锚点类型 ──
@@ -37,6 +38,9 @@ export interface ThoughtRecord {
   type: ThoughtType;
   resolved: boolean;
   pinned: boolean;
+
+  // AI 回复专用（type === 'ai-response' 时填充）
+  serviceId?: string;    // 'chatgpt' | 'claude' | 'gemini'
 
   // 内容
   doc_content: Atom[];

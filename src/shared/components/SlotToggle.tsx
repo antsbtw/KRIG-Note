@@ -20,9 +20,11 @@ interface ViewOption {
 }
 
 const VIEW_OPTIONS: ViewOption[] = [
-  { workModeId: 'demo-a', icon: '\u{1F4DD}', label: 'Note' },   // 📝
-  { workModeId: 'demo-b', icon: '\u{1F4D5}', label: 'eBook' },  // 📕
-  { workModeId: 'demo-c', icon: '\u{1F310}', label: 'Web' },    // 🌐
+  { workModeId: 'demo-a', icon: '\u{1F4DD}', label: 'Note' },     // 📝
+  { workModeId: 'demo-b', icon: '\u{1F4D5}', label: 'eBook' },    // 📕
+  { workModeId: 'demo-c', icon: '\u{1F310}', label: 'Web' },      // 🌐
+  { workModeId: 'ai-web', icon: '\u{1F916}', label: 'AI' },       // 🤖
+  { workModeId: 'thought', icon: '\u{1F4AD}', label: 'Thought' }, // 💭
 ];
 
 interface SlotToggleProps {

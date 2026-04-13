@@ -30,9 +30,9 @@ let dividerView: WebContentsView | null = null;
 // ── Workspace 隔离的 View 实例池 ──
 
 interface WorkspaceViewPool {
-  leftViews: Map<string, WebContentsView>;   // workModeId → Left View
-  rightView: WebContentsView | null;          // Right Slot View（当前只支持一个）
-  rightWorkModeId: string | null;             // Right View 的 workModeId
+  leftViews: Map<string, WebContentsView>;    // workModeId → Left View
+  rightViews: Map<string, WebContentsView>;   // workModeId → Right View（缓存池）
+  rightWorkModeId: string | null;             // 当前显示的 Right View workModeId
   activeLeftId: string | null;                // 当前 Left Slot 显示的 workModeId
 }
 
@@ -41,7 +41,7 @@ const workspaceViewPools: Map<WorkspaceId, WorkspaceViewPool> = new Map();
 function getViewPool(workspaceId: WorkspaceId): WorkspaceViewPool {
   let pool = workspaceViewPools.get(workspaceId);
   if (!pool) {
-    pool = { leftViews: new Map(), rightView: null, rightWorkModeId: null, activeLeftId: null };
+    pool = { leftViews: new Map(), rightViews: new Map(), rightWorkModeId: null, activeLeftId: null };
     workspaceViewPools.set(workspaceId, pool);
   }
   return pool;
@@ -152,46 +152,52 @@ export function switchLeftSlotView(workModeId: string): void {
   updateLayout();
 }
 
-/** 打开 Right Slot */
+/** 获取当前显示中的 Right View（如果有） */
+function getActiveRightView(pool: WorkspaceViewPool): WebContentsView | null {
+  if (!pool.rightWorkModeId) return null;
+  return pool.rightViews.get(pool.rightWorkModeId) ?? null;
+}
+
+/** 打开 Right Slot — 缓存池模式，切换时隐藏而非销毁 */
 export function openRightSlot(workModeId: string): WebContentsView | null {
   if (!mainWindow) return null;
   const active = workspaceManager.getActive();
   if (!active) return null;
 
   const pool = getViewPool(active.id);
+  const currentRight = getActiveRightView(pool);
 
-  // 如果已有 Right View 且是同一个 workModeId，关闭它（toggle 行为）
-  if (pool.rightView && pool.rightWorkModeId === workModeId) {
+  // 如果当前显示的就是目标 workModeId，关闭它（toggle 行为）
+  if (currentRight && pool.rightWorkModeId === workModeId) {
     closeRightSlot();
     return null;
   }
 
-  // 关闭旧的 Right View
-  if (pool.rightView) {
-    pool.rightView.setVisible(false);
-    mainWindow.contentView.removeChildView(pool.rightView);
-    pool.rightView.webContents.close();
+  // 隐藏当前的 Right View（不销毁，保留在缓存池中）
+  if (currentRight) {
+    currentRight.setVisible(false);
+    mainWindow.contentView.removeChildView(currentRight);
   }
 
-  // 创建新的 Right View
-  pool.rightView = createViewForWorkMode(workModeId);
+  // 从缓存池取已有的 View，或创建新的
+  let targetView = pool.rightViews.get(workModeId);
+  if (!targetView || targetView.webContents.isDestroyed()) {
+    targetView = createViewForWorkMode(workModeId);
+    pool.rightViews.set(workModeId, targetView);
+
+    // 诊断：监听 renderer 崩溃
+    targetView.webContents.on('render-process-gone', (_e, details) => {
+      console.error('[RightSlot] Renderer process gone:', details.reason, details.exitCode);
+    });
+  }
+
   pool.rightWorkModeId = workModeId;
-  pool.rightView.setVisible(true);
+  targetView.setVisible(true);
+  mainWindow.contentView.addChildView(targetView);
 
   // 同步 slotBinding.right 到 WorkspaceState
   workspaceManager.update(active.id, {
     slotBinding: { ...active.slotBinding, right: workModeId },
-  });
-
-  // 诊断：监听 renderer 崩溃
-  pool.rightView.webContents.on('render-process-gone', (_e, details) => {
-    console.error('[RightSlot] Renderer process gone:', details.reason, details.exitCode);
-  });
-  pool.rightView.webContents.on('unresponsive', () => {
-    console.error('[RightSlot] Renderer became unresponsive');
-  });
-  pool.rightView.webContents.on('responsive', () => {
-    console.log('[RightSlot] Renderer became responsive again');
   });
 
   // 显示 Divider
@@ -199,7 +205,7 @@ export function openRightSlot(workModeId: string): WebContentsView | null {
   dividerView?.setVisible(true);
 
   updateLayout();
-  return pool.rightView;
+  return targetView;
 }
 
 /** 关闭 Right Slot */
@@ -210,13 +216,13 @@ export function closeRightSlot(): void {
 
   const pool = getViewPool(active.id);
 
-  if (pool.rightView) {
-    pool.rightView.setVisible(false);
-    mainWindow.contentView.removeChildView(pool.rightView);
-    pool.rightView.webContents.close();
-    pool.rightView = null;
-    pool.rightWorkModeId = null;
+  const currentRight = getActiveRightView(pool);
+  if (currentRight) {
+    currentRight.setVisible(false);
+    mainWindow.contentView.removeChildView(currentRight);
+    // 不销毁 — 保留在缓存池中
   }
+  pool.rightWorkModeId = null;
 
   // 同步 slotBinding.right 到 WorkspaceState
   workspaceManager.update(active.id, {
@@ -238,7 +244,8 @@ export function switchWorkspace(oldId: WorkspaceId | null, newId: WorkspaceId): 
     const oldPool = workspaceViewPools.get(oldId);
     if (oldPool) {
       for (const view of oldPool.leftViews.values()) view.setVisible(false);
-      if (oldPool.rightView) oldPool.rightView.setVisible(false);
+      const oldRight = getActiveRightView(oldPool);
+      if (oldRight) oldRight.setVisible(false);
     }
   }
 
@@ -257,8 +264,9 @@ export function switchWorkspace(oldId: WorkspaceId | null, newId: WorkspaceId): 
     }
 
     // 恢复 Right Slot
-    if (pool.rightView) {
-      pool.rightView.setVisible(true);
+    const restoredRight = getActiveRightView(pool);
+    if (restoredRight) {
+      restoredRight.setVisible(true);
       ensureDivider();
       dividerView?.setVisible(true);
     } else if (newWorkspace.slotBinding?.right) {
@@ -286,11 +294,11 @@ export function closeWorkspaceViews(workspaceId: WorkspaceId): void {
     view.webContents.close();
   }
 
-  if (pool.rightView) {
-    if (mainWindow.contentView.children.includes(pool.rightView)) {
-      mainWindow.contentView.removeChildView(pool.rightView);
+  for (const rv of pool.rightViews.values()) {
+    if (mainWindow.contentView.children.includes(rv)) {
+      mainWindow.contentView.removeChildView(rv);
     }
-    pool.rightView.webContents.close();
+    rv.webContents.close();
   }
 
   workspaceViewPools.delete(workspaceId);
@@ -306,7 +314,12 @@ export function getSlotBySenderId(senderId: number): 'left' | 'right' | null {
     const leftView = pool.leftViews.get(pool.activeLeftId);
     if (leftView?.webContents.id === senderId) return 'left';
   }
-  if (pool.rightView?.webContents.id === senderId) return 'right';
+  const activeRight = getActiveRightView(pool);
+  if (activeRight?.webContents.id === senderId) return 'right';
+  // Also check all cached right views
+  for (const rv of pool.rightViews.values()) {
+    if (rv.webContents.id === senderId) return 'right';
+  }
   return null;
 }
 
@@ -321,7 +334,8 @@ export function closeSlot(side: 'left' | 'right'): void {
   const active = workspaceManager.getActive();
   if (!active) return;
   const pool = getViewPool(active.id);
-  if (!pool.rightView || !pool.rightWorkModeId) return;
+  const currentRight = getActiveRightView(pool);
+  if (!currentRight || !pool.rightWorkModeId) return;
 
   // 销毁 left view
   if (pool.activeLeftId) {
@@ -334,11 +348,11 @@ export function closeSlot(side: 'left' | 'right'): void {
     pool.leftViews.delete(pool.activeLeftId);
   }
   // right 晋升为 left
-  const promotedView = pool.rightView;
+  const promotedView = currentRight;
   const promotedModeId = pool.rightWorkModeId;
+  pool.rightViews.delete(promotedModeId);
   pool.leftViews.set(promotedModeId, promotedView);
   pool.activeLeftId = promotedModeId;
-  pool.rightView = null;
   pool.rightWorkModeId = null;
   workspaceManager.update(active.id, { workModeId: promotedModeId });
   dividerView?.setVisible(false);
@@ -350,7 +364,7 @@ export function hasRightSlot(): boolean {
   const active = workspaceManager.getActive();
   if (!active) return false;
   const pool = workspaceViewPools.get(active.id);
-  return pool?.rightView !== null && pool?.rightView !== undefined;
+  return pool?.rightWorkModeId !== null && pool?.rightWorkModeId !== undefined;
 }
 
 /** 检查当前 Right Slot 是否是指定 workModeId */
@@ -371,7 +385,7 @@ export function getActiveViewWebContentsIds(): { leftId: number | null; rightId:
   const leftView = pool.activeLeftId ? pool.leftViews.get(pool.activeLeftId) : null;
   return {
     leftId: leftView?.webContents.id ?? null,
-    rightId: pool.rightView?.webContents.id ?? null,
+    rightId: getActiveRightView(pool)?.webContents.id ?? null,
   };
 }
 
@@ -571,8 +585,9 @@ export function updateLayout(): void {
     }
 
     // Right Slot + Divider
-    if (pool?.rightView && layout.rightSlot && layout.divider) {
-      pool.rightView.setBounds(layout.rightSlot);
+    const activeRight = pool ? getActiveRightView(pool) : null;
+    if (activeRight && layout.rightSlot && layout.divider) {
+      activeRight.setBounds(layout.rightSlot);
       if (dividerView) dividerView.setBounds(layout.divider);
     }
   }

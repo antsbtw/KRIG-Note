@@ -697,6 +697,103 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
     shell.showItemInFolder(filePath);
   });
 
+  // ── AI Workflow ──
+
+  // AI_ASK: Orchestrator / background mode (BackgroundAIWebview)
+  ipcMain.handle(IPC.AI_ASK, async (_event, params: {
+    serviceId: string;
+    prompt: string;
+    noteId?: string;
+    thoughtId?: string;
+  }) => {
+    try {
+      const { askAI } = await import('../ai/ai-request-handler');
+      const result = await askAI(params.serviceId as any, params.prompt);
+      return result;
+    } catch (err) {
+      return { success: false, error: String(err) };
+    }
+  });
+
+  // AI_ASK_VISIBLE: User-facing mode — use Right Slot WebView
+  // Opens Right Slot with WebView, waits for renderer to load,
+  // then sends AI_INJECT_AND_SEND to the renderer.
+  ipcMain.handle(IPC.AI_ASK_VISIBLE, async (_event, params: {
+    serviceId: string;
+    prompt: string;
+    noteId: string;
+    thoughtId: string;
+  }) => {
+    try {
+      const mainWindow = getMainWindow();
+      if (!mainWindow) return { success: false, error: 'No main window' };
+
+      // 1. Open Right Slot with AI WebView (ai-web variant)
+      //    openRightSlot creates a new WebContentsView and loads web.html?variant=ai
+      const rightView = openRightSlot('ai-web');
+      if (!rightView) {
+        // If toggle closed it, try again (it was already showing ai-web)
+        const retryView = openRightSlot('ai-web');
+        if (!retryView) return { success: false, error: 'Failed to open Right Slot' };
+      }
+
+      // 2. Find the Right Slot's webContents (freshly created)
+      const rightSlotIds = getActiveViewWebContentsIds();
+      if (!rightSlotIds || !rightSlotIds.rightId) {
+        return { success: false, error: 'Right Slot not open after creation' };
+      }
+
+      const rightWC = (mainWindow as any).contentView.children.find(
+        (v: any) => v.webContents?.id === rightSlotIds.rightId
+      )?.webContents;
+
+      if (!rightWC) {
+        return { success: false, error: 'Right Slot webContents not found' };
+      }
+
+      // 3. Wait for the renderer (web.html) to finish loading
+      //    The WebView React component needs time to mount and register onAIInjectAndSend
+      await new Promise<void>((resolve) => {
+        if (!rightWC.isLoading()) {
+          // Already loaded — but React may still be mounting, give it a moment
+          setTimeout(resolve, 1500);
+        } else {
+          rightWC.once('did-finish-load', () => {
+            // React mount + useEffect registration
+            setTimeout(resolve, 1500);
+          });
+        }
+      });
+
+      // 4. Send AI request to the Right Slot renderer
+      return new Promise((resolve) => {
+        const responseChannel = `ai:response:${params.thoughtId}`;
+
+        ipcMain.handleOnce(responseChannel, (_e: any, result: any) => {
+          resolve(result);
+        });
+
+        rightWC.send(IPC.AI_INJECT_AND_SEND, {
+          ...params,
+          responseChannel,
+        });
+
+        // Timeout after 90 seconds
+        setTimeout(() => {
+          try { ipcMain.removeHandler(responseChannel); } catch {}
+          resolve({ success: false, error: 'AI response timed out (90s)' });
+        }, 90_000);
+      });
+    } catch (err) {
+      return { success: false, error: String(err) };
+    }
+  });
+
+  ipcMain.handle(IPC.AI_STATUS, async () => {
+    const { backgroundAI } = await import('../ai/background-ai-webview');
+    return backgroundAI.getStatus();
+  });
+
   // ── Tweet 数据获取 ──
 
   // ── yt-dlp ──

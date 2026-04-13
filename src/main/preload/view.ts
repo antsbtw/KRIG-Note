@@ -232,6 +232,30 @@ contextBridge.exposeInMainWorld('viewAPI', {
     return () => ipcRenderer.removeListener('extraction:import', listener);
   },
 
+  // ── AI Workflow ──
+
+  aiAsk: (params: { serviceId: string; prompt: string; noteId?: string; thoughtId?: string }) =>
+    ipcRenderer.invoke(IPC.AI_ASK, params),
+
+  aiAskVisible: (params: { serviceId: string; prompt: string; noteId: string; thoughtId: string }) =>
+    ipcRenderer.invoke(IPC.AI_ASK_VISIBLE, params),
+
+  aiStatus: () =>
+    ipcRenderer.invoke(IPC.AI_STATUS),
+
+  /** Listen for AI inject-and-send requests from main (WebView receives this) */
+  onAIInjectAndSend: (callback: (params: {
+    serviceId: string; prompt: string; noteId: string; thoughtId: string; responseChannel: string;
+  }) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, params: any) => callback(params);
+    ipcRenderer.on(IPC.AI_INJECT_AND_SEND, listener);
+    return () => ipcRenderer.removeListener(IPC.AI_INJECT_AND_SEND, listener);
+  },
+
+  /** Send AI response back to main */
+  aiSendResponse: (channel: string, result: { success: boolean; markdown?: string; error?: string }) =>
+    ipcRenderer.invoke(channel, result),
+
   // ── Web 书签（WebView 用）──
 
   webBookmarkAdd: (url: string, title: string, favicon?: string) =>

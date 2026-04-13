@@ -78,6 +78,19 @@ function registerPlugins(): void {
     icon: '🌐',
     label: 'Translate',
     order: 5,
+    hidden: true,
+    onViewCreated: (_view, guestWebContents) => {
+      setupCSPBypass(guestWebContents);
+    },
+  });
+
+  workModeRegistry.register({
+    id: 'ai-web',
+    viewType: 'web',
+    variant: 'ai',
+    icon: '🤖',
+    label: 'AI',
+    order: 6,
     hidden: true,   // 仅作为 right slot，不在 NavSide tab 中显示
     onViewCreated: (_view, guestWebContents) => {
       setupCSPBypass(guestWebContents);
@@ -151,6 +164,10 @@ function registerPlugins(): void {
   protocolRegistry.register({ id: 'ebook-ebook', match: { left: { type: 'ebook' }, right: { type: 'ebook' } } });
   protocolRegistry.register({ id: 'web-web',     match: { left: { type: 'web' },   right: { type: 'web' } } });
   protocolRegistry.register({ id: 'web-translate', match: { left: { type: 'web' }, right: { type: 'web', variant: 'translate' } } });
+
+  // AI Workflow 协议
+  protocolRegistry.register({ id: 'note-ai', match: { left: { type: 'note' }, right: { type: 'web', variant: 'ai' } } });
+  protocolRegistry.register({ id: 'ebook-ai', match: { left: { type: 'ebook' }, right: { type: 'web', variant: 'ai' } } });
 
   // ── DevTools 辅助函数 ──
   function openDevToolsByName(name: string): void {

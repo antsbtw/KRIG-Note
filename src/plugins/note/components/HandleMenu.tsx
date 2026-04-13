@@ -3,6 +3,9 @@ import type { EditorView } from 'prosemirror-view';
 import { TextSelection } from 'prosemirror-state';
 import { blockRegistry } from '../registry';
 import { toggleHeadingCollapse } from '../plugins/heading-collapse';
+import { askAI } from '../commands/ask-ai-command';
+import { DEFAULT_AI_SERVICE } from '../../../shared/types/ai-service-types';
+import type { AIServiceId } from '../../../shared/types/ai-service-types';
 
 /**
  * HandleMenu — 手柄点击后的操作菜单
@@ -129,6 +132,23 @@ export function HandleMenu({ view }: HandleMenuProps) {
     if (node) {
       const text = node.textContent;
       if (text) navigator.clipboard.writeText(text);
+    }
+    close();
+  };
+
+  const askAIBlock = () => {
+    const node = view.state.doc.nodeAt(menu.pos);
+    if (node) {
+      // Select the entire block so askAI can pick up the selection
+      const from = menu.pos;
+      const to = menu.pos + node.nodeSize;
+      const tr = view.state.tr.setSelection(TextSelection.create(view.state.doc, from + 1, to - 1));
+      view.dispatch(tr);
+      // Open the AI panel — use a small delay so the selection is applied
+      setTimeout(() => {
+        // Trigger the FloatingToolbar's AI panel via custom event
+        view.dom.dispatchEvent(new CustomEvent('ask-ai-from-handle', { detail: { pos: menu.pos } }));
+      }, 100);
     }
     close();
   };
@@ -389,6 +409,19 @@ export function HandleMenu({ view }: HandleMenuProps) {
           <span style={styles.icon}>📋</span>
           <span>Copy</span>
         </div>
+
+        {/* Ask AI */}
+        <div
+          style={styles.item}
+          onMouseDown={(e) => { e.preventDefault(); askAIBlock(); }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = '#3a3a3a'; setSubMenu(null); }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+        >
+          <span style={styles.icon}>🤖</span>
+          <span>Ask AI</span>
+        </div>
+
+        <div style={styles.separator} />
 
         {/* Delete */}
         <div

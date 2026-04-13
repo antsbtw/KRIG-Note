@@ -2,6 +2,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import type { ThoughtRecord, ThoughtType } from '../../../shared/types/thought-types';
 import { THOUGHT_TYPE_META } from '../../../shared/types/thought-types';
 import { ThoughtEditor } from './ThoughtEditor';
+import { getAIServiceProfile } from '../../../shared/types/ai-service-types';
 
 /**
  * ThoughtCard — 单个 Thought 的卡片组件
@@ -42,10 +43,15 @@ export function ThoughtCard({
     }
   }, [isActive]);
 
+  const isAI = thought.type === 'ai-response';
   const meta = THOUGHT_TYPE_META[thought.type];
+  const aiServiceName = isAI && thought.serviceId
+    ? (() => { try { return getAIServiceProfile(thought.serviceId as any).name; } catch { return thought.serviceId; } })()
+    : null;
 
   // 提取标题：content 中第一段非空文字
   const title = extractTitle(thought);
+  const isPending = isAI && thought.doc_content.length === 0;
 
   const handleToggle = useCallback(() => {
     setExpanded((prev) => !prev);
@@ -77,7 +83,19 @@ export function ThoughtCard({
       {/* Header */}
       <div className="thought-card__header" onClick={handleToggle}>
         <span className="thought-card__icon">{meta.icon}</span>
-        <span className="thought-card__title">{title || '空思考'}</span>
+        <span className="thought-card__title">
+          {isAI
+            ? (isPending
+              ? `${aiServiceName || 'AI'} 思考中...`
+              : (title || `${aiServiceName || 'AI'} 回复`))
+            : (title || '空思考')
+          }
+        </span>
+        {isAI && aiServiceName && (
+          <span className="thought-card__service" style={{ color: meta.color, fontSize: 11, marginLeft: 4 }}>
+            {aiServiceName}
+          </span>
+        )}
         <span className="thought-card__time">{formatTime(thought.created_at)}</span>
         <span className="thought-card__chevron">{expanded ? '▾' : '▸'}</span>
       </div>
@@ -132,6 +150,20 @@ export function ThoughtCard({
               )}
             </div>
 
+            {/* AI-specific actions */}
+            {isAI && !isPending && (
+              <button
+                className="thought-card__action-btn"
+                onClick={() => {
+                  const text = extractFullText(thought);
+                  if (text) navigator.clipboard.writeText(text);
+                }}
+                title="复制 Markdown"
+              >
+                📋 复制
+              </button>
+            )}
+
             <button
               className={`thought-card__action-btn ${thought.resolved ? 'thought-card__action-btn--resolved' : ''}`}
               onClick={handleResolve}
@@ -150,6 +182,20 @@ export function ThoughtCard({
       )}
     </div>
   );
+}
+
+function extractFullText(thought: ThoughtRecord): string {
+  if (!thought.doc_content || thought.doc_content.length === 0) return '';
+  const parts: string[] = [];
+  for (const atom of thought.doc_content) {
+    const content = atom.content as any;
+    if (content?.children) {
+      for (const child of content.children) {
+        if (child.type === 'text' && child.text) parts.push(child.text);
+      }
+    }
+  }
+  return parts.join('\n');
 }
 
 function extractTitle(thought: ThoughtRecord): string {

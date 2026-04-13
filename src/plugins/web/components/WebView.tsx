@@ -2,6 +2,9 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { WebToolbar } from './WebToolbar';
 import { SyncDriver } from '../sync/sync-driver';
 import { SYNC_ACTION } from '../sync/sync-protocol';
+import { getSSECaptureScript } from '../../../shared/ai/sse-capture-script';
+import { getAIServiceProfile, detectAIServiceByUrl } from '../../../shared/types/ai-service-types';
+import type { AIServiceId } from '../../../shared/types/ai-service-types';
 import '../web.css';
 
 declare const viewAPI: {
@@ -215,6 +218,122 @@ export function WebView() {
       bookmarkIdRef.current = result?.id ?? null;
     }
   }, [isBookmarked, currentUrl, currentTitle]);
+
+  // ── AI Workflow: handle AI inject-and-send from main process ──
+  // When NoteView asks AI, main opens this WebView in Right Slot,
+  // then sends AI_INJECT_AND_SEND. We navigate to AI, inject SSE, paste, send, capture.
+  // User watches the entire AI interaction in real time.
+  useEffect(() => {
+    const unsub = (viewAPI as any).onAIInjectAndSend?.(async (params: {
+      serviceId: string; prompt: string; noteId: string; thoughtId: string; responseChannel: string;
+    }) => {
+      // Wait for webview element to be available (may not be mounted yet)
+      let webview = webviewRef.current;
+      for (let attempt = 0; attempt < 10 && !webview; attempt++) {
+        await new Promise(r => setTimeout(r, 300));
+        webview = webviewRef.current;
+      }
+      if (!webview) {
+        (viewAPI as any).aiSendResponse(params.responseChannel, { success: false, error: 'Webview not ready after 3s' });
+        return;
+      }
+
+      try {
+        const profile = getAIServiceProfile(params.serviceId as AIServiceId);
+
+        // 1. Navigate to AI service
+        // Always navigate — this is a fresh WebView showing google.com
+        console.log(`[AI WebView] Navigating to ${profile.newChatUrl}`);
+        webview.loadURL(profile.newChatUrl);
+        setCurrentUrl(profile.newChatUrl);
+        setCurrentTitle(profile.name);
+
+        // Wait for AI page to fully load
+        await new Promise<void>((resolve) => {
+          const onLoad = () => { webview!.removeEventListener('did-finish-load', onLoad); resolve(); };
+          webview!.addEventListener('did-finish-load', onLoad);
+        });
+        // Extra time for SPA frameworks to hydrate (React/Angular/etc.)
+        console.log(`[AI WebView] Page loaded, waiting for SPA hydration...`);
+        await new Promise(r => setTimeout(r, 3000));
+
+        // 2. Inject SSE capture
+        console.log(`[AI WebView] Injecting SSE capture for ${profile.id}`);
+        const sseScript = getSSECaptureScript(profile.id, profile.intercept.endpointPattern);
+        const hookResult = await webview.executeJavaScript(sseScript);
+        console.log(`[AI WebView] SSE hook result: ${hookResult}`);
+        await webview.executeJavaScript('window.__krig_sse_responses = [];');
+
+        // 3. Paste prompt
+        const escaped = params.prompt.replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$/g, '\\$');
+        await webview.executeJavaScript(`(function() {
+          var selector = ${JSON.stringify(profile.selectors.inputBox)};
+          var selectors = selector.split(',').map(function(s) { return s.trim(); });
+          var el = null;
+          for (var i = 0; i < selectors.length; i++) { el = document.querySelector(selectors[i]); if (el) break; }
+          if (!el) return;
+          el.focus();
+          if (el.contentEditable === 'true') {
+            var dt = new DataTransfer();
+            dt.setData('text/plain', \`${escaped}\`);
+            el.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt }));
+            setTimeout(function() {
+              if (el.textContent.trim().length === 0) {
+                el.innerHTML = '<p>' + \`${escaped}\`.replace(/\\n/g, '</p><p>') + '</p>';
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+              }
+            }, 200);
+          } else {
+            el.value = \`${escaped}\`;
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+          }
+        })()`);
+
+        // 4. Click send
+        await new Promise(r => setTimeout(r, 500));
+        await webview.executeJavaScript(`(function() {
+          var selector = ${JSON.stringify(profile.selectors.sendButton)};
+          var selectors = selector.split(',').map(function(s) { return s.trim(); });
+          var btn = null;
+          for (var i = 0; i < selectors.length; i++) { btn = document.querySelector(selectors[i]); if (btn && !btn.disabled) break; btn = null; }
+          if (btn) btn.click();
+        })()`);
+
+        // 5. Poll for SSE response (user watches AI reply in real time)
+        console.log(`[AI WebView] Polling for SSE response...`);
+        const startTime = Date.now();
+        while (Date.now() - startTime < 90_000) {
+          await new Promise(r => setTimeout(r, 1000));
+          const status = await webview.executeJavaScript(`(function() {
+            var r = window.__krig_sse_responses || [];
+            var l = r.length > 0 ? r[r.length - 1] : null;
+            return { count: r.length, latestStreaming: l ? l.streaming : false, hooked: !!window.__krig_sse_hooked };
+          })()`);
+
+          // Log every 5 seconds
+          const elapsed = Math.round((Date.now() - startTime) / 1000);
+          if (elapsed % 5 === 0) {
+            console.log(`[AI WebView] Poll ${elapsed}s: responses=${status.count}, streaming=${status.latestStreaming}, hooked=${status.hooked}`);
+          }
+
+          if (status.count > 0 && !status.latestStreaming) {
+            const markdown = await webview.executeJavaScript(`(function() {
+              var r = window.__krig_sse_responses || [];
+              for (var i = r.length - 1; i >= 0; i--) { if (!r[i].streaming && r[i].markdown.length > 0) return r[i].markdown; }
+              return null;
+            })()`);
+            (viewAPI as any).aiSendResponse(params.responseChannel, { success: true, markdown });
+            return;
+          }
+        }
+        (viewAPI as any).aiSendResponse(params.responseChannel, { success: false, error: 'AI response timed out' });
+      } catch (err) {
+        (viewAPI as any).aiSendResponse(params.responseChannel, { success: false, error: String(err) });
+      }
+    });
+
+    return () => { if (unsub) unsub(); };
+  }, []);
 
   return (
     <div className="web-view">

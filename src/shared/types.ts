@@ -318,6 +318,14 @@ export const IPC = {
   // Web Translate
   WEB_TRANSLATE_FETCH_ELEMENT_JS: 'web-translate:fetch-element-js',
 
+  // AI Workflow
+  AI_ASK: 'ai:ask',                   // renderer → main：发送 AI 提问（Orchestrator 用后台 webview）
+  AI_ASK_VISIBLE: 'ai:ask-visible',   // renderer → main：发送 AI 提问（用户可见，Right Slot WebView）
+  AI_STATUS: 'ai:status',             // renderer → main：查询后台 AI 状态
+  AI_NAVIGATE: 'ai:navigate',         // main → web renderer：导航到 AI 服务
+  AI_INJECT_AND_SEND: 'ai:inject-and-send', // main → web renderer：注入 SSE + 粘贴 + 发送
+  AI_RESPONSE_CAPTURED: 'ai:response-captured', // web renderer → main：SSE 拦截到回复
+
   // yt-dlp
   YTDLP_CHECK_STATUS: 'ytdlp:check-status',
   YTDLP_INSTALL: 'ytdlp:install',
