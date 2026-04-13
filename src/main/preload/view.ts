@@ -246,6 +246,9 @@ contextBridge.exposeInMainWorld('viewAPI', {
   aiExtractDebug: (params: { markdown: string; serviceId: string }) =>
     ipcRenderer.invoke(IPC.AI_EXTRACT_DEBUG, params),
 
+  aiParseMarkdown: (markdown: string) =>
+    ipcRenderer.invoke(IPC.AI_PARSE_MARKDOWN, markdown),
+
   /** Listen for AI inject-and-send requests from main (WebView receives this) */
   onAIInjectAndSend: (callback: (params: {
     serviceId: string; prompt: string; noteId: string; thoughtId: string; responseChannel: string;

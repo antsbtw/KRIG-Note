@@ -65,6 +65,7 @@ declare const viewAPI: {
   onVocabChanged?: (callback: (entries: { word: string; definition: string }[]) => void) => () => void;
   // AI Sync
   onMessage: (callback: (message: any) => void) => () => void;
+  aiParseMarkdown: (markdown: string) => Promise<{ success: boolean; atoms: any[]; error?: string }>;
 };
 
 // 注册所有 Block（只执行一次）

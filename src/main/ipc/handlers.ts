@@ -862,6 +862,31 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
     return backgroundAI.getStatus();
   });
 
+  // AI_PARSE_MARKDOWN: Parse markdown → Atom[] (used by SyncNote receiver)
+  ipcMain.handle(IPC.AI_PARSE_MARKDOWN, async (_event, markdown: string) => {
+    try {
+      const { ResultParser } = await import('../ai/result-parser');
+      const { createAtomsFromExtracted } = await import('../ai/content-to-atoms');
+
+      const parser = new ResultParser();
+      const blocks = parser.parse(markdown);
+      const atoms = createAtomsFromExtracted(blocks);
+
+      // Remove document root + noteTitle — only content atoms
+      const docAtom = atoms.find((a: any) => a.type === 'document');
+      const docId = docAtom?.id;
+      const contentAtoms = atoms.filter((a: any) => a.type !== 'document' && a.type !== 'noteTitle');
+      for (const atom of contentAtoms) {
+        if (atom.parentId === docId) atom.parentId = undefined;
+      }
+
+      return { success: true, atoms: contentAtoms };
+    } catch (err) {
+      console.error('[AI_PARSE_MARKDOWN] Error:', err);
+      return { success: false, error: String(err), atoms: [] };
+    }
+  });
+
   // AI_EXTRACT_DEBUG: Parse markdown and return stats (for debugging extraction quality)
   ipcMain.handle(IPC.AI_EXTRACT_DEBUG, async (_event, params: { markdown: string; serviceId: string }) => {
     try {
