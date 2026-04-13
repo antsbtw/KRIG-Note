@@ -933,6 +933,44 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
     }
   });
 
+  // WB_FETCH_BINARY: fetch a URL from the main process and return the body
+  // as base64. Used to download assets that the renderer can't fetch itself
+  // because of CORS (e.g. Gemini's lh3.googleusercontent.com Imagen outputs,
+  // which reject cross-origin fetch and also fail img.onerror under
+  // crossOrigin="anonymous"). Main-process net.fetch has no CORS.
+  ipcMain.handle(IPC.WB_FETCH_BINARY, async (_event, params: {
+    url: string;
+    headers?: Record<string, string>;
+    timeoutMs?: number;
+  }) => {
+    try {
+      const { net } = await import('electron');
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), params.timeoutMs ?? 15_000);
+      try {
+        const resp = await net.fetch(params.url, {
+          method: 'GET',
+          headers: params.headers,
+          redirect: 'follow',
+          signal: controller.signal,
+        });
+        if (!resp.ok) return { success: false, error: `http ${resp.status}` };
+        const buf = Buffer.from(await resp.arrayBuffer());
+        const mimeType = resp.headers.get('content-type') || 'application/octet-stream';
+        return {
+          success: true,
+          base64: buf.toString('base64'),
+          mimeType: mimeType.split(';')[0].trim(),
+          bodyLength: buf.length,
+        };
+      } finally {
+        clearTimeout(timer);
+      }
+    } catch (err) {
+      return { success: false, error: String(err) };
+    }
+  });
+
   // WB_READ_CLIPBOARD_IMAGE: Read clipboard as PNG data URL.
   // Claude "Copy to clipboard" on an Artifact writes the rendered image, not source.
   ipcMain.handle(IPC.WB_READ_CLIPBOARD_IMAGE, async () => {

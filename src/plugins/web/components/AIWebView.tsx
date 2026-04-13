@@ -3,6 +3,7 @@ import { getSSECaptureScript } from '../../web-bridge/injection/inject-scripts/s
 import { getArtifactPostMessageHookScript } from '../../web-bridge/injection/inject-scripts/artifact-postmessage-hook';
 import { debugExtractFirstArtifact } from '../../web-bridge/capabilities/claude-artifact-extractor';
 import { debugExtractContent as debugExtractChatGPTContent } from '../../web-bridge/capabilities/chatgpt-content-extractor';
+import { debugExtractContent as debugExtractGeminiContent } from '../../web-bridge/capabilities/gemini-content-extractor';
 import { getDomToMarkdownScript } from '../../web-bridge/injection/inject-scripts/dom-to-markdown';
 import {
   extractLatestClaudeResponse,
@@ -39,6 +40,8 @@ declare const viewAPI: {
     Promise<{ success: boolean; empty?: boolean; dataUrl?: string; width?: number; height?: number }>;
   wbCaptureDownloadOnce: (timeoutMs?: number) =>
     Promise<{ success: boolean; filename?: string; mimeType?: string; content?: string; error?: string }>;
+  wbFetchBinary: (params: { url: string; headers?: Record<string, string>; timeoutMs?: number }) =>
+    Promise<{ success: boolean; base64?: string; mimeType?: string; bodyLength?: number; error?: string }>;
   aiExtractDebug: (params: { markdown: string; serviceId: string }) =>
     Promise<{ success: boolean; atomCount?: number; blocks?: number; error?: string; preview?: string; blockTypes?: string[]; atomTypes?: string[]; blockDetails?: any[]; atomDetails?: any[] }>;
   closeSlot: () => void;
@@ -194,6 +197,37 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
       </body>
     `;
     const w = window.open('', '_blank', 'width=1000,height=800');
+    w?.document.write(html);
+  }, []);
+
+  // ── Gemini 内容提取（调试入口）──
+  // Same CDP-based flow as ChatGPT: requires 📡 CDP 抓包 + page reload.
+  const handleGeminiTest = useCallback(async () => {
+    const webview = webviewRef.current;
+    if (!webview) { console.warn('[GeminiTest] no webview'); return; }
+    const c = await debugExtractGeminiContent(webview, viewAPI as any);
+    const totalImages = c.turns.reduce((n, t) => n + t.images.length, 0);
+    const firstImage = c.turns.flatMap(t => t.images).find(img => img.dataUrl);
+    const turnsHtml = c.turns.map((t, i) => `
+      <div style="border-top: 1px solid #333; padding: 12px 0; margin-top: 12px">
+        <div style="color:#888">Turn ${i + 1} — ${new Date(t.createdAt * 1000).toLocaleString()}</div>
+        <div style="color:#6aa" >👤 ${escapeHtml(t.userText)}</div>
+        <pre style="white-space:pre-wrap; font: 12px system-ui; background:#111; padding:8px; border-radius:4px">${escapeHtml(t.markdown.slice(0, 1200))}${t.markdown.length > 1200 ? '…' : ''}</pre>
+        ${t.thinking ? `<details><summary style="color:#888">💭 thinking (${t.thinking.length} chars)</summary><pre style="white-space:pre-wrap; font-size:11px; color:#999">${escapeHtml(t.thinking.slice(0, 800))}…</pre></details>` : ''}
+        ${t.images.map(img => img.dataUrl ? `<img src="${img.dataUrl}" style="max-width:300px; margin:4px; border:1px solid #333">` : `<a href="${img.url}" style="color:#f80">⚠ url-only: ${img.url.slice(0, 60)}…</a>`).join('')}
+      </div>
+    `).join('');
+    const html = `
+      <title>Gemini Extract — ${escapeHtml(c.conversationId || '?')}</title>
+      <body style="font: 13px system-ui; padding: 20px; max-width: 900px; background:#1a1a1a; color:#ddd">
+        <h2>Gemini: ${escapeHtml(c.conversationId || '(no conv id)')}</h2>
+        <p><b>Turns:</b> ${c.turns.length} · <b>Images:</b> ${totalImages}</p>
+        ${c.warnings.length ? `<div style="color:#f66">⚠ ${c.warnings.map(escapeHtml).join('<br>')}</div>` : ''}
+        ${firstImage?.dataUrl ? `<p>First image inlined successfully.</p>` : ''}
+        ${turnsHtml}
+      </body>
+    `;
+    const w = window.open('', '_blank', 'width=1100,height=800');
     w?.document.write(html);
   }, []);
 
@@ -855,6 +889,18 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
           title="提取当前 ChatGPT 对话（需先启用 📡 CDP 抓包并刷新页面）"
         >
           🧪 ChatGPT
+        </button>
+
+        {/* Gemini content extractor (manual test; requires CDP capture) */}
+        <button
+          style={{
+            background: '#4285f4', border: 'none', borderRadius: 4,
+            color: '#fff', fontSize: 11, padding: '3px 10px', cursor: 'pointer',
+          }}
+          onClick={handleGeminiTest}
+          title="提取当前 Gemini 对话（需先启用 📡 CDP 抓包并刷新页面）"
+        >
+          🧪 Gemini
         </button>
 
 
