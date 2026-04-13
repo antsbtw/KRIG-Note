@@ -255,7 +255,9 @@ export async function extractArtifactContent(
       })()`);
       console.warn('[ClaudeAPI] Found', btnInfo.copyCount, 'buttons with aria-label="Copy":');
       btnInfo.details.forEach((d: any, i: number) => {
-        console.warn('  Copy #' + i, 'pos:', d.pos, 'size:', d.size, 'attrs:', d.attrs, 'parent:', d.parentClass);
+        console.warn('  Copy #' + i, 'pos:', JSON.stringify(d.pos), 'size:', JSON.stringify(d.size));
+        console.warn('    attrs:', JSON.stringify(d.attrs));
+        console.warn('    parent:', d.parentClass);
       });
       return null;
     }
