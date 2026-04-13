@@ -14,6 +14,7 @@ declare const viewAPI: {
   noteOpenInEditor: (id: string) => Promise<void>;
   onAIInjectAndSend?: (callback: (params: any) => void) => () => void;
   aiSendResponse?: (channel: string, result: any) => Promise<void>;
+  aiReadClipboard: () => Promise<string>;
   aiExtractDebug: (params: { markdown: string; serviceId: string }) =>
     Promise<{ success: boolean; atomCount?: number; blocks?: number; error?: string; preview?: string; blockTypes?: string[]; atomTypes?: string[]; blockDetails?: any[]; atomDetails?: any[] }>;
   closeSlot: () => void;
@@ -47,7 +48,7 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
   const [extractDetail, setExtractDetail] = useState<{
     markdown: string; blocks: string[]; atoms: string[]; preview: string;
     blockDetails?: any[]; atomDetails?: any[];
-    sseMarkdown?: string; domMarkdown?: string; mergeStrategy?: string;
+    sseMarkdown?: string; domMarkdown?: string; copyMarkdown?: string; mergeStrategy?: string;
   } | null>(null);
   const [showExtractDetail, setShowExtractDetail] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -84,8 +85,38 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
     setShowServiceMenu(false);
   }, []);
 
+  /**
+   * Extract AI response via Copy button click + clipboard read.
+   * Most reliable method — uses Claude's own export function.
+   * @param index - which response to copy (0-based from latest, -1 = last)
+   */
+  const extractViaCopyButton = async (webview: Electron.WebviewTag, index = -1): Promise<string | null> => {
+    try {
+      // Click the Copy button for the target response
+      const clicked = await webview.executeJavaScript(`(function() {
+        var btns = document.querySelectorAll('button[data-testid="action-bar-copy"]');
+        if (btns.length === 0) return false;
+        var target = ${index >= 0 ? `btns[${index}]` : 'btns[btns.length - 1]'};
+        if (!target) return false;
+        target.click();
+        return true;
+      })()`);
+
+      if (!clicked) return null;
+
+      // Wait for clipboard to be written
+      await new Promise(r => setTimeout(r, 300));
+
+      // Read clipboard via main process (bypasses browser focus restrictions)
+      const text = await viewAPI.aiReadClipboard();
+      return text && text.trim().length > 0 ? text.trim() : null;
+    } catch {
+      return null;
+    }
+  };
+
   // ── 提取最新 AI 回复 ──
-  // 策略：SSE（原始 Markdown）+ DOM（补充图片/图表/Artifacts）互补
+  // 策略：SSE + DOM + Copy 按钮，三种方式取最完整的
   const handleExtractLatest = useCallback(async () => {
     const webview = webviewRef.current;
     if (!webview) {
@@ -128,35 +159,32 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
         return domToMarkdown(last);
       })()`);
 
-      // ── Step 3: 合并策略 ──
-      // SSE 有原始 Markdown（公式/代码格式完美），DOM 有渲染后内容（含图片/图表）
+      // ── Step 3: Copy 按钮提取（最可靠）──
+      const copyMarkdown = await extractViaCopyButton(webview);
+
+      // ── Step 4: 三方合并策略 ──
+      // Copy 按钮 > SSE > DOM（按可靠度排序）
       let finalMarkdown = '';
       let source = '';
 
-      if (sseMarkdown && domMarkdown) {
-        // Smart merge: compare content richness
-        const sseCodeBlocks = (sseMarkdown.match(/```/g) || []).length / 2;
-        const domCodeBlocks = (domMarkdown.match(/```/g) || []).length / 2;
-        const sseImgCount = (sseMarkdown.match(/!\[/g) || []).length;
-        const domImgCount = (domMarkdown.match(/!\[/g) || []).length;
+      // Collect all sources with their content metrics
+      const sources = [
+        { name: 'Copy', md: copyMarkdown, len: copyMarkdown?.length ?? 0 },
+        { name: 'SSE', md: sseMarkdown, len: sseMarkdown?.length ?? 0 },
+        { name: 'DOM', md: domMarkdown, len: domMarkdown?.length ?? 0 },
+      ].filter(s => s.md && s.len > 0);
 
-        if (domCodeBlocks > sseCodeBlocks || domImgCount > sseImgCount || domMarkdown.length > sseMarkdown.length) {
-          finalMarkdown = domMarkdown;
-          source = `DOM(${domMarkdown.length}) [code=${domCodeBlocks}vs${sseCodeBlocks}, img=${domImgCount}vs${sseImgCount}]`;
-        } else {
-          finalMarkdown = sseMarkdown;
-          source = `SSE(${sseMarkdown.length}) [code=${sseCodeBlocks}vs${domCodeBlocks}, img=${sseImgCount}vs${domImgCount}]`;
-        }
-      } else if (sseMarkdown) {
-        finalMarkdown = sseMarkdown;
-        source = `SSE only (${sseMarkdown.length} chars)`;
-      } else if (domMarkdown) {
-        finalMarkdown = domMarkdown;
-        source = `DOM only (${domMarkdown.length} chars)`;
-      } else {
-        setExtractResult('✗ SSE 和 DOM 均无数据');
+      if (sources.length === 0) {
+        setExtractResult('✗ SSE / DOM / Copy 均无数据');
         return;
       }
+
+      // Pick the longest source (most complete content)
+      sources.sort((a, b) => b.len - a.len);
+      finalMarkdown = sources[0].md!;
+      source = sources.map(s => `${s.name}(${s.len})`).join(' > ');
+
+      // (old if/else branches removed — unified source selection above)
 
       console.log(`[AIWebView Extract] Source: ${source}`);
       console.log(`[AIWebView Extract] Final markdown: ${finalMarkdown.length} chars`);
@@ -178,6 +206,7 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
           atomDetails: result.atomDetails,
           sseMarkdown: sseMarkdown || undefined,
           domMarkdown: domMarkdown || undefined,
+          copyMarkdown: copyMarkdown || undefined,
           mergeStrategy: source,
         });
         setShowExtractDetail(true);
@@ -276,34 +305,21 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
               return target ? domToMarkdown(target) : null;
             })()`).catch(() => null);
 
-            // Smart merge: use whichever is more complete
-            // SSE has better formatting ($math$, ```code```) but misses Artifacts
-            // DOM captures everything rendered on page but may lose some formatting
-            // Strategy: if DOM is significantly longer (has extra content), use DOM; otherwise SSE
-            let finalMd = sseMarkdown;
-            if (domMd) {
-              const sseLen = sseMarkdown.length;
-              const domLen = domMd.length;
+            // Copy button extraction (most reliable)
+            const copyMd = await extractViaCopyButton(webview, idx);
 
-              // Count code blocks and images in each
-              const sseCodeBlocks = (sseMarkdown.match(/```/g) || []).length / 2;
-              const domCodeBlocks = (domMd.match(/```/g) || []).length / 2;
-              const sseImages = (sseMarkdown.match(/!\[/g) || []).length;
-              const domImages = (domMd.match(/!\[/g) || []).length;
+            // Three-source merge: pick the longest (most complete)
+            const srcs = [
+              { name: 'Copy', md: copyMd, len: copyMd?.length ?? 0 },
+              { name: 'SSE', md: sseMarkdown, len: sseMarkdown.length },
+              { name: 'DOM', md: domMd, len: domMd?.length ?? 0 },
+            ].filter(s => s.md && s.len > 0);
+            srcs.sort((a, b) => b.len - a.len);
 
-              // Use DOM if it has more content elements (images, code blocks) or is longer
-              if (domCodeBlocks > sseCodeBlocks || domImages > sseImages || domLen > sseLen) {
-                finalMd = domMd;
-                console.log(`[AIWebView Sync] Using DOM (${domLen}) over SSE (${sseLen}): code=${domCodeBlocks}vs${sseCodeBlocks}, imgs=${domImages}vs${sseImages}`);
-              } else {
-                // SSE is primary — append any extra images from DOM
-                const sseImgs = new Set((sseMarkdown.match(/!\[([^\]]*)\]\(([^)]+)\)/g) || []).map((m: string) => m.match(/\(([^)]+)\)/)?.[1]).filter(Boolean));
-                const extraImgs = (domMd.match(/!\[([^\]]*)\]\(([^)]+)\)/g) || []).filter((m: string) => { const u = m.match(/\(([^)]+)\)/)?.[1]; return u && !sseImgs.has(u); });
-                if (extraImgs.length > 0) finalMd += '\n\n' + extraImgs.join('\n\n');
-              }
-            }
+            const finalMd = srcs.length > 0 ? srcs[0].md! : sseMarkdown;
+            const srcDesc = srcs.map(s => `${s.name}(${s.len})`).join(' > ');
 
-            console.log(`[AIWebView Sync] Response #${idx}: SSE=${sseMarkdown.length}, DOM=${domMd?.length ?? 0}, final=${finalMd.length}, user="${userMessage?.slice(0,50)}"`);
+            console.log(`[AIWebView Sync] Response #${idx}: ${srcDesc}, user="${userMessage?.slice(0,50)}"`);
 
             viewAPI.sendToOtherSlot({
               protocol: 'ai-sync',
@@ -719,29 +735,35 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
               </div>
             )}
 
-            {/* SSE vs DOM comparison */}
-            {(extractDetail.sseMarkdown || extractDetail.domMarkdown) && (
-              <div style={{ marginBottom: 12 }}>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ color: '#4caf50', marginBottom: 4, fontSize: 11 }}>SSE ({extractDetail.sseMarkdown?.length ?? 0} chars):</div>
-                    <pre style={{
-                      background: '#111', padding: 6, borderRadius: 4, fontSize: 10,
-                      whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 300, overflow: 'auto',
-                      border: '1px solid #2e7d32', lineHeight: 1.3,
-                    }}>{extractDetail.sseMarkdown || '(empty)'}</pre>
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ color: '#2196f3', marginBottom: 4, fontSize: 11 }}>DOM ({extractDetail.domMarkdown?.length ?? 0} chars):</div>
-                    <pre style={{
-                      background: '#111', padding: 6, borderRadius: 4, fontSize: 10,
-                      whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 300, overflow: 'auto',
-                      border: '1px solid #1565c0', lineHeight: 1.3,
-                    }}>{extractDetail.domMarkdown || '(empty)'}</pre>
-                  </div>
+            {/* SSE vs DOM vs Copy comparison */}
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                <div style={{ flex: '1 1 150px', minWidth: 150 }}>
+                  <div style={{ color: '#4caf50', marginBottom: 4, fontSize: 11 }}>SSE ({extractDetail.sseMarkdown?.length ?? 0}):</div>
+                  <pre style={{
+                    background: '#111', padding: 6, borderRadius: 4, fontSize: 10,
+                    whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 200, overflow: 'auto',
+                    border: '1px solid #2e7d32', lineHeight: 1.3,
+                  }}>{extractDetail.sseMarkdown || '(empty)'}</pre>
+                </div>
+                <div style={{ flex: '1 1 150px', minWidth: 150 }}>
+                  <div style={{ color: '#2196f3', marginBottom: 4, fontSize: 11 }}>DOM ({extractDetail.domMarkdown?.length ?? 0}):</div>
+                  <pre style={{
+                    background: '#111', padding: 6, borderRadius: 4, fontSize: 10,
+                    whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 200, overflow: 'auto',
+                    border: '1px solid #1565c0', lineHeight: 1.3,
+                  }}>{extractDetail.domMarkdown || '(empty)'}</pre>
+                </div>
+                <div style={{ flex: '1 1 150px', minWidth: 150 }}>
+                  <div style={{ color: '#ff9800', marginBottom: 4, fontSize: 11 }}>Copy ({extractDetail.copyMarkdown?.length ?? 0}):</div>
+                  <pre style={{
+                    background: '#111', padding: 6, borderRadius: 4, fontSize: 10,
+                    whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 200, overflow: 'auto',
+                    border: '1px solid #e65100', lineHeight: 1.3,
+                  }}>{extractDetail.copyMarkdown || '(empty)'}</pre>
                 </div>
               </div>
-            )}
+            </div>
 
             {/* Final merged markdown */}
             <div>

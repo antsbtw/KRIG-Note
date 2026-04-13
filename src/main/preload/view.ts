@@ -243,6 +243,9 @@ contextBridge.exposeInMainWorld('viewAPI', {
   aiStatus: () =>
     ipcRenderer.invoke(IPC.AI_STATUS),
 
+  aiReadClipboard: () =>
+    ipcRenderer.invoke(IPC.AI_READ_CLIPBOARD),
+
   aiExtractDebug: (params: { markdown: string; serviceId: string }) =>
     ipcRenderer.invoke(IPC.AI_EXTRACT_DEBUG, params),
 

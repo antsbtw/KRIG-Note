@@ -862,6 +862,12 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
     return backgroundAI.getStatus();
   });
 
+  // AI_READ_CLIPBOARD: Read system clipboard text (for Copy button extraction)
+  ipcMain.handle(IPC.AI_READ_CLIPBOARD, async () => {
+    const { clipboard } = await import('electron');
+    return clipboard.readText();
+  });
+
   // AI_PARSE_MARKDOWN: Parse markdown → Atom[] (used by SyncNote receiver)
   ipcMain.handle(IPC.AI_PARSE_MARKDOWN, async (_event, markdown: string) => {
     try {
