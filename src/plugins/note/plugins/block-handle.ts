@@ -3,6 +3,34 @@ import { Slice, Fragment } from 'prosemirror-model';
 import type { EditorView } from 'prosemirror-view';
 import type { Node as PMNode } from 'prosemirror-model';
 import { blockSelectionKey } from './block-selection';
+import { blockRegistry } from '../registry';
+
+/** 任意注册为容器（content: block+ 风格，有 containerRule）的 block 类型名 */
+function isContainerType(name: string): boolean {
+  const def = blockRegistry.get(name);
+  return !!def?.containerRule;
+}
+
+/**
+ * 找到鼠标位置对应的"手柄目标 block"的 depth。
+ *
+ * 规则：从 $pos 最深处向上，找到第一个 block 节点，其直接父节点是 doc 或容器
+ * （blockquote / callout / toggleList / frameBlock / column / 列表 / tableCell 等）。
+ * 这样嵌套容器内的子 block 也能显示自己的手柄，而不是容器本身的手柄。
+ *
+ * 折叠态 toggleList 的"整组手柄"语义在后续 PR 处理；本函数只负责通用定位。
+ */
+function findHandleTargetDepth($pos: import('prosemirror-model').ResolvedPos): number {
+  for (let d = $pos.depth; d >= 1; d--) {
+    const node = $pos.node(d);
+    if (node.isInline || node.type.name === 'text') continue;
+    const parent = $pos.node(d - 1);
+    if (parent.type.name === 'doc' || isContainerType(parent.type.name)) {
+      return d;
+    }
+  }
+  return 1;
+}
 
 /**
  * Block Handle Plugin — 鼠标悬停 Block 时显示手柄（+ ⠿）
@@ -351,38 +379,8 @@ export function blockHandlePlugin(): Plugin {
           if (pos) {
             try {
               const $pos = view.state.doc.resolve(pos.pos);
-              let depth = $pos.depth;
-              while (depth > 0 && ($pos.node(depth).isInline || $pos.node(depth).type.name === 'text')) depth--;
-
-              // 如果在 column 内部，钻入到 column 的直接子 block
-              // 结构: doc > columnList > column > textBlock
-              // 我们要定位到 column 的子 block（depth 对应 column 的子节点层）
-              if (depth >= 1) {
-                // 检查是否在 column 内部：向上找 column 祖先
-                let targetDepth = depth;
-                for (let d = depth; d >= 1; d--) {
-                  const ancestor = $pos.node(d);
-                  if (ancestor.type.name === 'column') {
-                    // 定位到 column 的直接子节点（depth = d + 1）
-                    if (depth > d) {
-                      targetDepth = d + 1;
-                    }
-                    break;
-                  }
-                  // 如果碰到 columnList 但没碰到 column，说明光标在 columnList 层级但不在 column 内
-                  if (ancestor.type.name === 'columnList') break;
-                }
-
-                // 对于非 column 场景，回退到顶层 block（depth=1）
-                if (targetDepth > 1) {
-                  // 在 column 内：用 targetDepth
-                  let inColumn = false;
-                  for (let d = targetDepth; d >= 1; d--) {
-                    if ($pos.node(d).type.name === 'column') { inColumn = true; break; }
-                  }
-                  if (!inColumn) targetDepth = 1;
-                }
-
+              const targetDepth = findHandleTargetDepth($pos);
+              if (targetDepth >= 1) {
                 blockStart = $pos.before(targetDepth);
                 blockNode = $pos.node(targetDepth);
                 const dom = view.nodeDOM(blockStart);
@@ -456,25 +454,25 @@ export function blockHandlePlugin(): Plugin {
 
               const topPx = textTop - containerRect.top + scrollTop + (lineHeight - handleHeight) / 2;
               // left：保持手柄和文字的相对距离一致
-              // 普通 block：editorLeft + 20，文字从 editorLeft + 72 开始 → 差 52px
-              // column 内 block：用 block DOM 的 left - 52，保持同样的视觉距离
+              // 顶层 block：editorLeft + 20（文字从 editorLeft + 72 开始 → 差 52px）
+              // 嵌套容器内 block（column / toggleList / frameBlock / 列表 / callout 等）：
+              //   贴 block DOM 左侧 - 52，保持与文字相同的视觉距离
               const editorLeft = view.dom.getBoundingClientRect().left - containerRect.left + container.scrollLeft;
-              const isInsideColumn = blockStart >= 0 && (() => {
+              const isNested = blockStart >= 0 && (() => {
                 try {
                   const $p = view.state.doc.resolve(blockStart);
+                  // $p.depth 是 block 的父节点深度；只要任一祖先（<= $p.depth）是容器就算嵌套
                   for (let d = $p.depth; d >= 1; d--) {
-                    if ($p.node(d).type.name === 'column') return true;
+                    if (isContainerType($p.node(d).type.name)) return true;
                   }
-                } catch {}
-                return false;
+                  return false;
+                } catch { return false; }
               })();
 
-              if (isInsideColumn) {
-                // column 内 block：手柄紧贴 block 文字左侧（叠加在文字上）
+              if (isNested) {
                 const blockLeftPx = blockRect.left - containerRect.left + container.scrollLeft;
                 handleDOM.style.left = `${blockLeftPx - 52}px`;
               } else {
-                // 普通 block：固定在编辑器左边缘
                 handleDOM.style.left = `${editorLeft + 20}px`;
               }
               handleDOM.style.top = `${topPx}px`;
