@@ -1141,6 +1141,9 @@
 .ProseMirror table.pm-table th {
   background: #2d2d2d;
   font-weight: 600;
+  color: #e8eaed; /* force same bright text color as td; overrides any
+                     inherited muted color from the editor or a theme
+                     default that renders <th> dimmer than <td> */
 }
 
 .ProseMirror table.pm-table td > *:first-child,
