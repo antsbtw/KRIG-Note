@@ -26,6 +26,9 @@ declare const viewAPI: {
   ensureRightSlot: (workModeId: string) => Promise<void>;
   noteCreate: (title?: string) => Promise<{ id: string; title: string } | null>;
   noteOpenInEditor: (id: string) => Promise<void>;
+  noteLoad: (id: string) => Promise<{ id: string; title: string; doc_content: unknown[] } | null>;
+  noteList: () => Promise<Array<{ id: string; title: string; folder_id: string | null; updated_at: number }>>;
+  getActiveNoteId: () => Promise<string | null>;
   onAIInjectAndSend?: (callback: (params: any) => void) => () => void;
   aiSendResponse?: (channel: string, result: any) => Promise<void>;
   aiReadClipboard: () => Promise<string>;
@@ -434,24 +437,38 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
   useEffect(() => {
     if (!isSyncMode || !syncEnabled) return;
 
-    // Auto-open NoteView in Right Slot + create and open sync note
-    const profile = getAIServiceProfile(currentService);
-    const now = new Date();
-    const dateStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
-
+    // AI-Note workflow Step 1: don't spam the user's notebook with a fresh
+    // "AI Sync — …" note every time they toggle sync. Instead reuse the
+    // workspace's lastActive note (already persisted as activeNoteId).
+    // Fallback chain: activeNoteId (if it still exists) → most-recently-
+    // updated note in the library → show Note view's empty state and let
+    // the user decide (new / open).
     (async () => {
-      // 1. Open NoteView in Right Slot
       await viewAPI.ensureRightSlot('demo-a');
-      // Wait for NoteView renderer to mount
       await new Promise(r => setTimeout(r, 1500));
 
-      // 2. Create a new note
-      const note = await viewAPI.noteCreate(`AI Sync — ${profile.name} — ${dateStr}`);
-      if (note) {
-        // 3. Tell NoteView to open this note
-        await viewAPI.noteOpenInEditor(note.id);
-        console.log('[AIWebView Sync] Created and opened sync note:', note.id, note.title);
+      const lastActiveId = await viewAPI.getActiveNoteId();
+      if (lastActiveId) {
+        const existing = await viewAPI.noteLoad(lastActiveId);
+        if (existing) {
+          await viewAPI.noteOpenInEditor(lastActiveId);
+          console.log('[AIWebView Sync] Opened lastActive note:', lastActiveId);
+          return;
+        }
+        // lastActive pointed to a deleted note; fall through to list.
       }
+
+      const list = await viewAPI.noteList();
+      if (Array.isArray(list) && list.length > 0) {
+        const latest = (list[0] as { id: string }).id;
+        await viewAPI.noteOpenInEditor(latest);
+        console.log('[AIWebView Sync] Opened most-recent note:', latest);
+        return;
+      }
+
+      // Library is empty — do nothing. Note view will show its empty
+      // state with a "new note" button for the user to start from.
+      console.log('[AIWebView Sync] No notes available; awaiting user new/open.');
     })();
 
     console.log('[AIWebView Sync] Sync mode started, polling for SSE responses...');

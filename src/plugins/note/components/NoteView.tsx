@@ -17,6 +17,7 @@ import { canGoBack, canGoForward, goBack, goForward } from '../plugins/link-clic
  */
 
 declare const viewAPI: {
+  noteCreate: (title?: string) => Promise<{ id: string; title: string } | null>;
   noteLoad: (id: string) => Promise<{ title?: string } | null>;
   noteList: () => Promise<Array<{ id: string; title: string }>>;
   noteOpenInEditor: (id: string) => Promise<void>;
@@ -30,6 +31,12 @@ export function NoteView() {
   const [noteTitle, setNoteTitle] = useState('');
   const [navState, setNavState] = useState({ back: false, forward: false });
   const [dirty, setDirty] = useState(false);
+  // Tracks whether the library has any notes at all. When false + no
+  // active note, we show the empty state with a big [+ 新建笔记] button
+  // instead of an empty editor. Refreshed on mount and whenever a note
+  // is created/opened.
+  const [libraryEmpty, setLibraryEmpty] = useState(false);
+  const [hasActiveNote, setHasActiveNote] = useState(false);
 
   const refreshNav = useCallback(() => {
     setNavState({ back: canGoBack(), forward: canGoForward() });
@@ -44,9 +51,36 @@ export function NoteView() {
     viewAPI.noteOpenInEditor(noteId);
   }, []);
 
+  /**
+   * Create an untitled note and immediately open it in this editor.
+   * Used by the "+" toolbar button. Title is left empty so the user can
+   * fill it in; the title bar at the top of NoteEditor shows the placeholder.
+   */
+  const handleNewNote = useCallback(async () => {
+    const note = await viewAPI.noteCreate('');
+    if (note) {
+      await viewAPI.noteOpenInEditor(note.id);
+      setHasActiveNote(true);
+      setLibraryEmpty(false);
+    }
+  }, []);
+
+  /** Refresh the "library has notes" signal. Called on mount. */
+  const refreshLibrary = useCallback(async () => {
+    try {
+      const list = await viewAPI.noteList();
+      setLibraryEmpty(!Array.isArray(list) || list.length === 0);
+    } catch { /* ignore */ }
+  }, []);
+
   useEffect(() => {
+    // Initial library check on mount.
+    refreshLibrary();
+
     const unsubOpen = viewAPI.onNoteOpenInEditor(async (noteId) => {
       refreshNav();
+      setHasActiveNote(true);
+      setLibraryEmpty(false);
       // 加载笔记标题
       try {
         const record = await viewAPI.noteLoad(noteId);
@@ -221,6 +255,13 @@ export function NoteView() {
         >
           {dirty ? '保存' : '已保存'}
         </button>
+        <button
+          style={styles.newBtn}
+          onClick={handleNewNote}
+          title="新建笔记"
+        >
+          + 新建
+        </button>
         <OpenFilePopup
           label="Open"
           placeholder="搜索笔记..."
@@ -238,7 +279,17 @@ export function NoteView() {
       </div>
 
       {/* Content */}
-      <NoteEditor />
+      {libraryEmpty && !hasActiveNote ? (
+        <div style={styles.emptyState}>
+          <div style={styles.emptyStateIcon}>📝</div>
+          <div style={styles.emptyStateText}>还没有笔记</div>
+          <button style={styles.emptyStateBtn} onClick={handleNewNote}>
+            + 新建笔记
+          </button>
+        </div>
+      ) : (
+        <NoteEditor />
+      )}
     </div>
   );
 }
@@ -292,6 +343,42 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '2px 10px',
     cursor: 'pointer',
     flexShrink: 0,
+  },
+  newBtn: {
+    background: 'transparent',
+    border: '1px solid #555',
+    borderRadius: 4,
+    color: '#e8eaed',
+    fontSize: 12,
+    padding: '2px 10px',
+    cursor: 'pointer',
+    flexShrink: 0,
+  },
+  emptyState: {
+    flex: 1,
+    display: 'flex',
+    flexDirection: 'column' as const,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+    gap: 12,
+    color: '#888',
+  },
+  emptyStateIcon: {
+    fontSize: 48,
+    opacity: 0.5,
+  },
+  emptyStateText: {
+    fontSize: 14,
+  },
+  emptyStateBtn: {
+    marginTop: 8,
+    padding: '8px 20px',
+    background: '#3a3a3a',
+    border: '1px solid #555',
+    borderRadius: 6,
+    color: '#e8eaed',
+    fontSize: 14,
+    cursor: 'pointer',
   },
   closeSlotBtn: {
     background: 'transparent',
