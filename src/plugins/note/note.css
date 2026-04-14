@@ -2957,21 +2957,14 @@
 
 /* ═══════════════════════════════════════════════════════════════
  * fileBlock & externalRef — AI-Note Step 0b
+ *
+ * Outer frame (border/background/margin) comes from .render-block.
+ * These classes are inner content only — no duplicate border.
  * ═══════════════════════════════════════════════════════════════ */
 
 .file-block,
 .external-ref {
-  margin: 0.5em 0;
-  border: 1px solid var(--color-border-secondary, rgba(255,255,255,0.1));
-  border-radius: 8px;
-  background: var(--color-background-secondary, rgba(255,255,255,0.02));
-  transition: background 0.15s;
   user-select: none;
-}
-
-.file-block:hover,
-.external-ref:hover {
-  background: rgba(255,255,255,0.05);
 }
 
 .file-block__inner,

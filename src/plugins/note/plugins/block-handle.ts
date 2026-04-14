@@ -15,7 +15,7 @@ import { blockSelectionKey } from './block-selection';
 export const blockHandleKey = new PluginKey('blockHandle');
 
 /** RenderBlock 类型集合 — coordsAtPos 会指向 caption 底部，需特殊处理 */
-const RENDER_BLOCK_TYPES = new Set(['image', 'audioBlock', 'videoBlock', 'tweetBlock']);
+const RENDER_BLOCK_TYPES = new Set(['image', 'audioBlock', 'videoBlock', 'tweetBlock', 'fileBlock', 'externalRef']);
 
 /** 找到 pos 所在的顶层 block 起始位置 */
 export function findTopBlockPos(doc: PMNode, pos: number): number | null {
