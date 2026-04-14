@@ -72,9 +72,6 @@ export function smartPastePlugin(): Plugin {
   return new Plugin({
     props: {
       handlePaste(view, event) {
-        // Only activate on Cmd+Shift+V. Plain Cmd+V stays default.
-        if (!shiftDown) return false;
-
         const cd = event.clipboardData;
         if (!cd) return false;
 
@@ -82,6 +79,21 @@ export function smartPastePlugin(): Plugin {
         for (const item of Array.from(cd.items)) {
           if (item.kind === 'file' && item.type.startsWith('image/')) return false;
         }
+
+        // ── Plain paste branch (Cmd+V) ────────────────────────────
+        // ProseMirror's default paste handler will parse any text/html
+        // present in the clipboard, which for rich sources like Wikipedia
+        // produces a fragmented mess (each <a> becomes its own textBlock,
+        // etc). We want Cmd+V to behave like "paste as plain text": drop
+        // structure, keep paragraph breaks.
+        if (!shiftDown) {
+          const plain = cd.getData('text/plain');
+          if (!plain) return false;
+          insertAsPlainText(view, plain);
+          return true;
+        }
+
+        // ── Smart paste branch (Cmd+Shift+V) ──────────────────────
 
         const plain = cd.getData('text/plain');
         const html = cd.getData('text/html');
@@ -130,6 +142,53 @@ export function smartPastePlugin(): Plugin {
       },
     },
   });
+}
+
+/**
+ * Insert clipboard text as plain paragraphs.
+ *
+ * Splits on blank lines (\n\n+) to form paragraphs; single \n becomes
+ * a hard-break inside the current paragraph. No marks, no link parsing,
+ * no markdown interpretation. Mirrors Google Docs / Slack "paste as
+ * plain text" behavior.
+ */
+function insertAsPlainText(view: any, text: string) {
+  const { state } = view;
+  const { schema } = state;
+  const paragraphType = schema.nodes.textBlock || schema.nodes.paragraph;
+  if (!paragraphType) {
+    // Schema missing expected block type; fall back to raw insertText.
+    view.dispatch(state.tr.insertText(text, state.selection.from, state.selection.to));
+    return;
+  }
+
+  const paragraphs = text.split(/\n{2,}/);
+  const nodes: any[] = [];
+  for (const para of paragraphs) {
+    // Convert single \n → hard break (two spaces), then the paragraph
+    // node holds a single run of text.
+    const lines = para.split('\n');
+    const parts: any[] = [];
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].length > 0) parts.push(schema.text(lines[i]));
+      if (i < lines.length - 1 && schema.nodes.hardBreak) {
+        parts.push(schema.nodes.hardBreak.create());
+      }
+    }
+    try {
+      nodes.push(paragraphType.create(null, parts));
+    } catch {
+      // If parts are rejected (e.g. hardBreak not in textBlock's
+      // allowed content), degrade to a single-line paragraph.
+      nodes.push(paragraphType.create(null, schema.text(para.replace(/\n/g, ' '))));
+    }
+  }
+  if (nodes.length === 0) return;
+
+  const fragment = Fragment.from(nodes);
+  const slice = new Slice(fragment, 0, 0);
+  const tr = state.tr.replaceSelection(slice).scrollIntoView();
+  view.dispatch(tr);
 }
 
 function looksLikeMarkdown(text: string): boolean {
