@@ -173,6 +173,12 @@ contextBridge.exposeInMainWorld('viewAPI', {
   mediaPutBase64: (input: string, mimeType?: string) =>
     ipcRenderer.invoke(IPC.MEDIA_PUT_BASE64, { input, mimeType }),
 
+  mediaResolvePath: (mediaUrl: string) =>
+    ipcRenderer.invoke(IPC.MEDIA_RESOLVE_PATH, mediaUrl),
+
+  mediaOpenPath: (filePath: string) =>
+    ipcRenderer.invoke(IPC.MEDIA_OPEN_PATH, filePath),
+
   openExternal: (url: string) =>
     ipcRenderer.invoke(IPC.MEDIA_OPEN_EXTERNAL, url),
 

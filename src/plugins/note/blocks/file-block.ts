@@ -36,6 +36,43 @@ function iconForMime(mime: string): string {
   return '📎';
 }
 
+/**
+ * Resolve a src (possibly `media://...`) to a local disk path via the
+ * MEDIA_RESOLVE_PATH IPC. Returns null for non-media URLs or on
+ * failure. `media://` is a renderer-only protocol and the OS can't
+ * open it directly, so anything that wants shell.openPath /
+ * showItemInFolder needs this resolution first.
+ */
+async function resolveToLocalPath(src: string, api: any): Promise<string | null> {
+  if (!src) return null;
+  if (src.startsWith('media://')) {
+    try {
+      const r = await api?.mediaResolvePath?.(src);
+      return r?.success ? r.path : null;
+    } catch { return null; }
+  }
+  if (src.startsWith('file://')) {
+    try { return decodeURIComponent(new URL(src).pathname); } catch { return null; }
+  }
+  // Plain absolute path (rare for fileBlock.src, but tolerate it)
+  if (src.startsWith('/')) return src;
+  return null;
+}
+
+/**
+ * Open a src with the right mechanism: media:// and file:// paths go
+ * through shell.openPath (which respects the OS default handler),
+ * http(s) URLs go through shell.openExternal (which opens in browser).
+ */
+async function openMediaOrUrl(src: string, api: any): Promise<void> {
+  if (src.startsWith('media://') || src.startsWith('file://') || src.startsWith('/')) {
+    const p = await resolveToLocalPath(src, api);
+    if (p) api?.mediaOpenPath?.(p);
+    return;
+  }
+  api?.openExternal?.(src);
+}
+
 function formatSize(bytes?: number): string {
   if (!bytes || bytes <= 0) return '';
   if (bytes < 1024) return `${bytes} B`;
@@ -130,20 +167,23 @@ const fileBlockNodeView: NodeViewFactory = (initialNode, view, getPos) => {
     const openBtn = document.createElement('button');
     openBtn.classList.add('file-block__btn');
     openBtn.textContent = '打开';
-    openBtn.addEventListener('click', (e) => {
+    openBtn.addEventListener('click', async (e) => {
       e.preventDefault(); e.stopPropagation();
       const src = (node.attrs.src as string) || '';
-      if (src) api?.openExternal?.(src);
+      if (!src) return;
+      await openMediaOrUrl(src, api);
     });
     actions.appendChild(openBtn);
 
     const revealBtn = document.createElement('button');
     revealBtn.classList.add('file-block__btn');
     revealBtn.textContent = '在 Finder 显示';
-    revealBtn.addEventListener('click', (e) => {
+    revealBtn.addEventListener('click', async (e) => {
       e.preventDefault(); e.stopPropagation();
       const src = (node.attrs.src as string) || '';
-      if (src) api?.showItemInFolder?.(src);
+      if (!src) return;
+      const p = await resolveToLocalPath(src, api);
+      if (p) api?.showItemInFolder?.(p);
     });
     actions.appendChild(revealBtn);
 

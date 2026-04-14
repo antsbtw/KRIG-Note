@@ -108,7 +108,16 @@ const externalRefNodeView: NodeViewFactory = (initialNode, view, getPos) => {
     openBtn.addEventListener('click', (e) => {
       e.preventDefault(); e.stopPropagation();
       const h = (node.attrs.href as string) || '';
-      if (h) api?.openExternal?.(h);
+      if (!h) return;
+      // file:// URLs: resolve to local path + shell.openPath (OS respects
+      // default-handler mapping for file extensions). Others: openExternal
+      // in the system browser.
+      if (h.startsWith('file:')) {
+        const d = decodeHref(h);
+        if (d.localPath) api?.mediaOpenPath?.(d.localPath);
+      } else {
+        api?.openExternal?.(h);
+      }
     });
     actions.appendChild(openBtn);
 

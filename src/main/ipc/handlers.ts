@@ -697,6 +697,34 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
     return mediaSurrealStore.putBase64(params.input, params.mimeType);
   });
 
+  // MEDIA_RESOLVE_PATH: turn `media://bucket/name.ext` into the real disk
+  // path at `{userData}/krig-data/media/bucket/name.ext`. The media://
+  // protocol is only registered in Electron's renderer — the OS (and
+  // therefore shell.openExternal) doesn't know it, so we resolve to a
+  // filesystem path whenever we need shell.openPath / showItemInFolder.
+  ipcMain.handle(IPC.MEDIA_RESOLVE_PATH, async (_e, mediaUrl: string) => {
+    try {
+      const { app } = await import('electron');
+      const path = await import('node:path');
+      const fs = await import('node:fs');
+      if (!mediaUrl.startsWith('media://')) return { success: false, error: 'not a media:// URL' };
+      const rel = mediaUrl.slice('media://'.length);
+      const abs = path.join(app.getPath('userData'), 'krig-data', 'media', rel);
+      if (!fs.existsSync(abs)) return { success: false, error: 'file not found', path: abs };
+      return { success: true, path: abs };
+    } catch (err) {
+      return { success: false, error: String(err) };
+    }
+  });
+
+  // MEDIA_OPEN_PATH: open a local file with the system default handler.
+  // Use after MEDIA_RESOLVE_PATH (or with any pre-resolved absolute path).
+  ipcMain.handle(IPC.MEDIA_OPEN_PATH, async (_e, filePath: string) => {
+    const result = await shell.openPath(filePath);
+    // shell.openPath returns '' on success, error string on failure.
+    return { success: !result, error: result || undefined };
+  });
+
   ipcMain.handle(IPC.MEDIA_OPEN_EXTERNAL, async (_e, url: string) => {
     await shell.openExternal(url);
     return { success: true };
