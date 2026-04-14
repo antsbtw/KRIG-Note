@@ -13,6 +13,8 @@ import {
   fetchClaudeArtifactVersions,
   extractArtifactVersionSource,
 } from '../../web-bridge/capabilities/claude-api-extractor';
+import { extractContent as extractChatGPTContent } from '../../web-bridge/capabilities/chatgpt-content-extractor';
+import { extractContent as extractGeminiContent } from '../../web-bridge/capabilities/gemini-content-extractor';
 import { getAIServiceProfile, getAIServiceList, DEFAULT_AI_SERVICE, detectAIServiceByUrl } from '../../../shared/types/ai-service-types';
 import type { AIServiceId } from '../../../shared/types/ai-service-types';
 import '../web.css';
@@ -117,37 +119,15 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
     setShowServiceMenu(false);
   }, []);
 
-  /**
-   * Extract AI response via Copy button click + clipboard read.
-   * Most reliable method — uses Claude's own export function.
-   * @param index - which response to copy (0-based from latest, -1 = last)
-   */
-  const extractViaCopyButton = async (webview: Electron.WebviewTag, index = -1): Promise<string | null> => {
-    try {
-      // Click the Copy button for the target response
-      const clicked = await webview.executeJavaScript(`(function() {
-        var btns = document.querySelectorAll('button[data-testid="action-bar-copy"]');
-        if (btns.length === 0) return false;
-        var target = ${index >= 0 ? `btns[${index}]` : 'btns[btns.length - 1]'};
-        if (!target) return false;
-        target.click();
-        return true;
-      })()`);
-
-      if (!clicked) return null;
-
-      // Wait for clipboard to be written
-      await new Promise(r => setTimeout(r, 300));
-
-      // Read clipboard via main process (bypasses browser focus restrictions)
-      const text = await viewAPI.aiReadClipboard();
-      return text && text.trim().length > 0 ? text.trim() : null;
-    } catch {
-      return null;
-    }
-  };
-
   // ── Sync Engine（场景 C：实时同步到 NoteView）──
+  // Tracks per-service sync state by conversationId → set of synced response ids
+  const syncedResponsesRef = useRef<Map<string, Set<string>>>(new Map());
+  const cdpStartedRef = useRef(false);
+  // Peer (NoteView) status — updated via 'as:note-status' ViewMessage
+  const noteOpenRef = useRef(false);
+  const lastTypedAtRef = useRef(0);
+  const [noteOpen, setNoteOpen] = useState(false);
+
   useEffect(() => {
     if (!isSyncMode || !syncEnabled) return;
 
@@ -185,133 +165,235 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
       console.log('[AIWebView Sync] No notes available; awaiting user new/open.');
     })();
 
-    console.log('[AIWebView Sync] Sync mode started, polling for SSE responses...');
+    console.log('[AIWebView Sync] Sync mode started, polling for responses...');
 
-    // Poll for new SSE responses
+    // Listen for NoteView status broadcasts.
+    const unsubStatus = viewAPI.onMessage((msg: any) => {
+      if (msg.protocol === 'ai-sync' && msg.action === 'as:note-status') {
+        const open = !!msg.payload?.open;
+        const t = Number(msg.payload?.lastTypedAt) || 0;
+        noteOpenRef.current = open;
+        if (t > lastTypedAtRef.current) lastTypedAtRef.current = t;
+        setNoteOpen(open);
+      }
+    });
+
+    // Probe: ask any live NoteView to announce itself (handles case where
+    // NoteView mounted before sync engine started).
+    viewAPI.sendToOtherSlot({ protocol: 'ai-sync', action: 'as:probe', payload: null });
+
+    // Auto-start CDP once per sync session; ChatGPT/Gemini need it to observe
+    // the Service Worker / batchexecute traffic that page scripts can't see.
+    (async () => {
+      if (cdpStartedRef.current) return;
+      try {
+        const r = await viewAPI.wbCdpStart(['/backend-api/', 'rpcids=', '/api/organizations/']);
+        cdpStartedRef.current = !!r?.success;
+        console.log('[AIWebView Sync] CDP start:', r?.success, r?.error || '');
+      } catch (err) {
+        console.warn('[AIWebView Sync] CDP start failed:', err);
+      }
+    })();
+
+    const sendTurn = (payload: {
+      responseId: string;
+      index: number;
+      userMessage: string;
+      markdown: string;
+      serviceId: string;
+      serviceName: string;
+    }) => {
+      viewAPI.sendToOtherSlot({
+        protocol: 'ai-sync',
+        action: 'as:append-turn',
+        payload: {
+          turn: {
+            index: payload.index,
+            userMessage: payload.userMessage,
+            markdown: payload.markdown,
+            timestamp: Date.now(),
+          },
+          source: {
+            serviceId: payload.serviceId,
+            serviceName: payload.serviceName,
+          },
+        },
+      });
+      setSyncCount(c => c + 1);
+    };
+
+    /** Get (or create) the synced-response-id set for a conversation. */
+    const getSyncedSet = (convId: string): Set<string> => {
+      let set = syncedResponsesRef.current.get(convId);
+      if (!set) {
+        set = new Set();
+        syncedResponsesRef.current.set(convId, set);
+      }
+      return set;
+    };
+
+    // Poll for new responses
     const pollInterval = setInterval(async () => {
       const webview = webviewRef.current;
       if (!webview) return;
 
+      // Boundary: NoteView not open → pause (UI shows ⏸).
+      if (!noteOpenRef.current) return;
+      // Boundary: user typed within 500ms → defer so we don't interrupt them.
+      if (Date.now() - lastTypedAtRef.current < 500) return;
+
       try {
         const curUrl = webview.getURL?.() || '';
         const detected = detectAIServiceByUrl(curUrl);
+        if (!detected) return;
 
-        // Only Claude is supported via conversation API (pure path, no fallback)
-        // ChatGPT/Gemini: waiting for their own API extractors to be implemented
-        if (detected?.id !== 'claude' || !isClaudeConversationPage(curUrl)) {
-          return;
-        }
-
-        const apiResult = await extractLatestClaudeResponse(webview);
-        if (!apiResult || !apiResult.raw) return;
-
-        const conv = apiResult.raw;
-        const humanCount = conv.messages.filter(m => m.sender === 'human').length;
-
-        while (humanCount > lastSyncedCountRef.current) {
-          const idx = lastSyncedCountRef.current;
-
-          // Find the idx-th human message and its next assistant response
-          let humanFound = -1;
-          let humanMsg = '';
-          let assistantMsg = '';
-          for (let i = 0; i < conv.messages.length; i++) {
-            if (conv.messages[i].sender === 'human') humanFound++;
-            if (humanFound === idx && conv.messages[i].sender === 'human') {
-              humanMsg = conv.messages[i].text;
-              for (let j = i + 1; j < conv.messages.length; j++) {
-                if (conv.messages[j].sender === 'assistant') {
-                  assistantMsg = conv.messages[j].text;
-                  break;
-                }
-              }
-              break;
-            }
-          }
-
-          if (!assistantMsg) {
-            // Streaming not finished yet — wait for next poll
-            break;
-          }
-
-          // Replace Artifact placeholders: prefer captured postMessage
-          // source, fall back to callout for any that weren't captured.
-          const artifactCount = countArtifactPlaceholders(assistantMsg);
-          let finalMarkdown = assistantMsg;
-          if (artifactCount > 0) {
-            // Ensure latest hook version is installed (version-guarded, so
-            // this is a no-op if the current version already matches).
-            try { await webview.executeJavaScript(getArtifactPostMessageHookScript()); } catch {}
-
-            // Path A: poll the artifacts versions endpoint. During streaming
-            // it returns an empty array; once the assistant turn settles on
-            // the server, versions are populated. Poll briefly.
-            let versionSources: string[] = [];
-            for (let attempt = 0; attempt < 5; attempt++) {
-              const versions = await fetchClaudeArtifactVersions(webview);
-              if (versions && versions.length > 0) {
-                versionSources = versions
-                  .map(v => extractArtifactVersionSource(v))
-                  .filter((s): s is string => !!s);
-                if (versionSources.length > 0) break;
-              }
-              await new Promise(r => setTimeout(r, 800));
-            }
-
-            // Path B: postMessage hook (fallback; hasn't yielded sources in
-            // our captures, but kept as belt-and-suspenders).
-            const captured = await readCapturedArtifactMessages(webview);
-            const capturedSources = collectArtifactSources(captured);
-
-            // Prefer versions API (newest first) then captured.
-            const sources = [...versionSources.slice().reverse(), ...capturedSources];
-            const filled = fillArtifactPlaceholders(assistantMsg, sources);
-            console.log(`[Claude/Artifact] versions=${versionSources.length} captured=${capturedSources.length}`);
-            finalMarkdown = filled.remaining > 0
-              ? replaceArtifactPlaceholders(filled.text, webview.getURL())
-              : filled.text;
-            console.log(`[Claude/Artifact] Response #${idx}: ${artifactCount} placeholder(s), filled ${filled.filled}, remaining ${filled.remaining}`);
-            // DIAGNOSTIC: dump raw captured messages so we can see Claude's
-            // real postMessage payload shape and adjust the heuristic.
-            if (filled.filled < artifactCount) {
-              console.log('[Claude/Artifact] DIAG captured messages:', captured.length);
-              for (let ci = 0; ci < captured.length; ci++) {
-                const m = captured[ci];
-                const dataType = typeof m.data;
-                const dataKeys = m.data && typeof m.data === 'object' ? Object.keys(m.data) : [];
-                const preview = typeof m.data === 'string' ? m.data.slice(0, 200) : JSON.stringify(m.data).slice(0, 400);
-                console.log(`  [${ci}] ch=${m.channel||'?'} dir=${m.direction} so=${m.sourceOrigin} to=${m.targetOrigin} type=${dataType} keys=${dataKeys.join(',')} preview=${preview}`);
-              }
-            }
-          }
-
-          console.log(`[AIWebView Sync/Claude API] Response #${idx}: ${finalMarkdown.length} chars, user="${humanMsg.slice(0,50)}"`);
-
-          viewAPI.sendToOtherSlot({
-            protocol: 'ai-sync',
-            action: 'as:append-turn',
-            payload: {
-              turn: {
-                index: idx,
-                userMessage: humanMsg,
-                markdown: finalMarkdown,
-                timestamp: Date.now(),
-              },
-              source: {
-                serviceId: 'claude',
-                serviceName: detected.name,
-              },
-            },
-          });
-          lastSyncedCountRef.current = idx + 1;
-          setSyncCount(idx + 1);
+        if (detected.id === 'claude') {
+          await syncClaude(webview, detected.name);
+        } else if (detected.id === 'chatgpt') {
+          await syncChatGPT(webview, detected.name);
+        } else if (detected.id === 'gemini') {
+          await syncGemini(webview, detected.name);
         }
       } catch (err) {
-        console.warn('[AIWebView Sync/Claude API] Error:', err);
+        console.warn('[AIWebView Sync] Error:', err);
       }
-    }, 2000); // Poll every 2 seconds
+    }, 2000);
 
-    return () => clearInterval(pollInterval);
+    async function syncChatGPT(webview: Electron.WebviewTag, serviceName: string) {
+      const c = await extractChatGPTContent(webview, viewAPI as any);
+      if (!c.conversationId || c.messages.length === 0) return;
+      const synced = getSyncedSet(c.conversationId);
+
+      // Walk messages in order; for each user→assistant pair not yet synced, send.
+      let pendingUser = '';
+      let turnIdx = synced.size;
+      for (const m of c.messages) {
+        if (m.role === 'user' && m.text.trim()) {
+          pendingUser = m.text.trim();
+        } else if (m.role === 'assistant' && m.text.trim() && pendingUser) {
+          if (!synced.has(m.id)) {
+            synced.add(m.id);
+            sendTurn({
+              responseId: m.id,
+              index: turnIdx++,
+              userMessage: pendingUser,
+              markdown: m.text,
+              serviceId: 'chatgpt',
+              serviceName,
+            });
+            console.log(`[AIWebView Sync/ChatGPT] Sent turn ${m.id}: ${m.text.length} chars`);
+          }
+          pendingUser = '';
+        }
+      }
+    }
+
+    async function syncGemini(webview: Electron.WebviewTag, serviceName: string) {
+      const c = await extractGeminiContent(webview, viewAPI as any);
+      if (!c.conversationId || c.turns.length === 0) return;
+      const synced = getSyncedSet(c.conversationId);
+
+      let turnIdx = synced.size;
+      for (const t of c.turns) {
+        if (synced.has(t.responseId)) continue;
+        if (!t.markdown.trim()) continue;
+        synced.add(t.responseId);
+        sendTurn({
+          responseId: t.responseId,
+          index: turnIdx++,
+          userMessage: t.userText,
+          markdown: t.markdown,
+          serviceId: 'gemini',
+          serviceName,
+        });
+        console.log(`[AIWebView Sync/Gemini] Sent turn ${t.responseId}: ${t.markdown.length} chars`);
+      }
+    }
+
+    async function syncClaude(webview: Electron.WebviewTag, serviceName: string) {
+      const curUrl = webview.getURL?.() || '';
+      if (!isClaudeConversationPage(curUrl)) return;
+
+      const apiResult = await extractLatestClaudeResponse(webview);
+      if (!apiResult || !apiResult.raw) return;
+
+      const conv = apiResult.raw;
+      const humanCount = conv.messages.filter(m => m.sender === 'human').length;
+
+      while (humanCount > lastSyncedCountRef.current) {
+        const idx = lastSyncedCountRef.current;
+
+        // Find the idx-th human message and its next assistant response
+        let humanFound = -1;
+        let humanMsg = '';
+        let assistantMsg = '';
+        for (let i = 0; i < conv.messages.length; i++) {
+          if (conv.messages[i].sender === 'human') humanFound++;
+          if (humanFound === idx && conv.messages[i].sender === 'human') {
+            humanMsg = conv.messages[i].text;
+            for (let j = i + 1; j < conv.messages.length; j++) {
+              if (conv.messages[j].sender === 'assistant') {
+                assistantMsg = conv.messages[j].text;
+                break;
+              }
+            }
+            break;
+          }
+        }
+
+        if (!assistantMsg) {
+          // Streaming not finished yet — wait for next poll
+          break;
+        }
+
+        // Replace Artifact placeholders: prefer captured postMessage
+        // source, fall back to callout for any that weren't captured.
+        const artifactCount = countArtifactPlaceholders(assistantMsg);
+        let finalMarkdown = assistantMsg;
+        if (artifactCount > 0) {
+          try { await webview.executeJavaScript(getArtifactPostMessageHookScript()); } catch {}
+
+          let versionSources: string[] = [];
+          for (let attempt = 0; attempt < 5; attempt++) {
+            const versions = await fetchClaudeArtifactVersions(webview);
+            if (versions && versions.length > 0) {
+              versionSources = versions
+                .map(v => extractArtifactVersionSource(v))
+                .filter((s): s is string => !!s);
+              if (versionSources.length > 0) break;
+            }
+            await new Promise(r => setTimeout(r, 800));
+          }
+
+          const captured = await readCapturedArtifactMessages(webview);
+          const capturedSources = collectArtifactSources(captured);
+          const sources = [...versionSources.slice().reverse(), ...capturedSources];
+          const filled = fillArtifactPlaceholders(assistantMsg, sources);
+          console.log(`[Claude/Artifact] versions=${versionSources.length} captured=${capturedSources.length}`);
+          finalMarkdown = filled.remaining > 0
+            ? replaceArtifactPlaceholders(filled.text, webview.getURL())
+            : filled.text;
+          console.log(`[Claude/Artifact] Response #${idx}: ${artifactCount} placeholder(s), filled ${filled.filled}, remaining ${filled.remaining}`);
+        }
+
+        console.log(`[AIWebView Sync/Claude] Response #${idx}: ${finalMarkdown.length} chars`);
+
+        sendTurn({
+          responseId: `claude-${idx}`,
+          index: idx,
+          userMessage: humanMsg,
+          markdown: finalMarkdown,
+          serviceId: 'claude',
+          serviceName,
+        });
+        lastSyncedCountRef.current = idx + 1;
+      }
+    }
+
+    return () => {
+      clearInterval(pollInterval);
+      unsubStatus();
+    };
   }, [isSyncMode, syncEnabled, currentService]);
 
   // ── 点击外部关闭菜单 ──
@@ -546,16 +628,18 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
         {isSyncMode && (
           <button
             style={{
-              background: syncEnabled ? '#1b5e20' : '#555',
+              background: !syncEnabled ? '#555' : (noteOpen ? '#1b5e20' : '#8a6d3b'),
               border: 'none', borderRadius: 4, color: '#fff',
               fontSize: 11, padding: '3px 8px', cursor: 'pointer',
               display: 'flex', alignItems: 'center', gap: 4,
             }}
             onClick={() => setSyncEnabled(!syncEnabled)}
-            title={syncEnabled ? '暂停同步' : '恢复同步'}
+            title={!syncEnabled ? '恢复同步' : noteOpen ? '暂停同步' : '等待 NoteView 打开'}
           >
-            <span>{syncEnabled ? '●' : '⏸'}</span>
-            <span>{syncEnabled ? `同步中 (${syncCount})` : '已暂停'}</span>
+            <span>{!syncEnabled ? '⏸' : noteOpen ? '●' : '⏸'}</span>
+            <span>
+              {!syncEnabled ? '已暂停' : noteOpen ? `同步中 (${syncCount})` : `等待笔记 (${syncCount})`}
+            </span>
           </button>
         )}
 

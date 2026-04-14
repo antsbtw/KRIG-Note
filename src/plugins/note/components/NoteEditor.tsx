@@ -66,6 +66,7 @@ declare const viewAPI: {
   onVocabChanged?: (callback: (entries: { word: string; definition: string }[]) => void) => () => void;
   // AI Sync
   onMessage: (callback: (message: any) => void) => () => void;
+  sendToOtherSlot: (message: { protocol: string; action: string; payload: unknown }) => void;
   aiParseMarkdown: (markdown: string) => Promise<{ success: boolean; atoms: any[]; error?: string }>;
 };
 
@@ -307,6 +308,15 @@ export function NoteEditor() {
         view.updateState(newState);
         // 文档变化时触发自动保存（排除分片追加的 addToHistory=false 事务）
         if (tr.docChanged && tr.getMeta('addToHistory') !== false) {
+          // AI sync: notify peer slot that user is typing (debounce source)
+          // Skip when the tr originates from sync insertion itself.
+          if (tr.getMeta('ai-sync') !== true) {
+            viewAPI.sendToOtherSlot({
+              protocol: 'ai-sync',
+              action: 'as:note-status',
+              payload: { open: true, lastTypedAt: Date.now() },
+            });
+          }
           scheduleSaveRef.current();
           tocRef.current?.update();
           // noteTitle 变化时实时同步到 NoteView toolbar
@@ -639,12 +649,36 @@ export function NoteEditor() {
       if (msg.protocol === 'ai-sync' && msg.action === 'as:append-turn') {
         const view = viewRef.current;
         if (!view || view.isDestroyed) return;
-        import('../ai-workflow/sync-note-receiver').then(({ appendTurnToEditor }) => {
-          appendTurnToEditor(view, msg.payload);
+        import('../ai-workflow/sync-note-receiver').then(({ insertTurnIntoNote }) => {
+          insertTurnIntoNote(view, msg.payload);
+        });
+      } else if (msg.protocol === 'ai-sync' && msg.action === 'as:probe') {
+        // Peer asks "are you open?" — reply immediately.
+        viewAPI.sendToOtherSlot({
+          protocol: 'ai-sync',
+          action: 'as:note-status',
+          payload: { open: true, lastTypedAt: 0 },
         });
       }
     });
     return unsub;
+  }, []);
+
+  // Broadcast open/close so the AI sync engine can pause when the note
+  // view is unmounted (user closed the right slot).
+  useEffect(() => {
+    viewAPI.sendToOtherSlot({
+      protocol: 'ai-sync',
+      action: 'as:note-status',
+      payload: { open: true, lastTypedAt: 0 },
+    });
+    return () => {
+      viewAPI.sendToOtherSlot({
+        protocol: 'ai-sync',
+        action: 'as:note-status',
+        payload: { open: false, lastTypedAt: 0 },
+      });
+    };
   }, []);
 
   return (

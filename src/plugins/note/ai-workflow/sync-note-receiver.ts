@@ -33,19 +33,24 @@ interface AppendTurnPayload {
 }
 
 /**
- * Append a conversation turn to the ProseMirror document.
+ * Insert a conversation turn into the ProseMirror document.
  * Creates: callout (user question) + toggle (AI answer with fully parsed content)
+ * Inserts at cursor position (block boundary), falling back to end of doc.
+ * Pads with blank textBlocks before and after so surrounding content keeps breathing room.
  */
-export async function appendTurnToEditor(view: EditorView, payload: AppendTurnPayload): Promise<void> {
+export async function insertTurnIntoNote(view: EditorView, payload: AppendTurnPayload): Promise<void> {
   const { turn, source } = payload;
   const { schema } = view.state;
 
   const nodes: PMNode[] = [];
+  const textBlockType = schema.nodes.textBlock;
+
+  // Leading blank line
+  if (textBlockType) nodes.push(textBlockType.create());
 
   // 1. User question → callout (❓)
   if (turn.userMessage.trim()) {
     const calloutType = schema.nodes.callout;
-    const textBlockType = schema.nodes.textBlock;
     if (calloutType && textBlockType) {
       const userPara = textBlockType.create(null, [schema.text(turn.userMessage.trim())]);
       nodes.push(calloutType.create({ emoji: '❓' }, [userPara]));
@@ -55,19 +60,16 @@ export async function appendTurnToEditor(view: EditorView, payload: AppendTurnPa
   // 2. AI answer → toggle with parsed content
   if (turn.markdown.trim()) {
     const toggleType = schema.nodes.toggleList;
-    const textBlockType = schema.nodes.textBlock;
 
     if (toggleType && textBlockType) {
       const labelText = `回答 (${source.serviceName})`;
       const labelNode = textBlockType.create(null, [schema.text(labelText)]);
 
-      // Parse markdown via main process (ResultParser + createAtomsFromExtracted)
       const contentNodes = await parseMarkdownToNodes(schema, turn.markdown);
 
       if (contentNodes.length > 0) {
         nodes.push(toggleType.create({ open: true }, [labelNode, ...contentNodes]));
       } else {
-        // Fallback: plain text
         const fallback = textBlockType.create(null, [schema.text(turn.markdown.trim())]);
         nodes.push(toggleType.create({ open: true }, [labelNode, fallback]));
       }
@@ -79,16 +81,40 @@ export async function appendTurnToEditor(view: EditorView, payload: AppendTurnPa
     nodes.push(schema.nodes.horizontalRule.create());
   }
 
+  // Trailing blank line
+  if (textBlockType) nodes.push(textBlockType.create());
+
   if (nodes.length === 0) return;
 
-  // Append to end of document
+  const insertPos = resolveInsertPos(view);
   const tr = view.state.tr;
+  tr.setMeta('ai-sync', true);
+  let pos = insertPos;
   for (const node of nodes) {
-    tr.insert(tr.doc.content.size, node);
+    tr.insert(pos, node);
+    pos += node.nodeSize;
   }
   view.dispatch(tr.scrollIntoView());
 
-  console.log(`[SyncNote] Appended turn #${turn.index}: ${nodes.length} nodes (${turn.markdown.length} chars)`);
+  console.log(`[SyncNote] Inserted turn #${turn.index} at pos ${insertPos}: ${nodes.length} nodes (${turn.markdown.length} chars)`);
+}
+
+/** Back-compat alias */
+export const appendTurnToEditor = insertTurnIntoNote;
+
+/**
+ * Resolve a block-boundary insertion position from the current selection.
+ * Prefers the end of the current top-level block; falls back to doc end.
+ */
+function resolveInsertPos(view: EditorView): number {
+  const { selection, doc } = view.state;
+  const $from = selection.$from;
+  if ($from && $from.depth >= 1) {
+    // End of the top-level block containing the cursor
+    const topAfter = $from.after(1);
+    if (topAfter > 0 && topAfter <= doc.content.size) return topAfter;
+  }
+  return doc.content.size;
 }
 
 /**
