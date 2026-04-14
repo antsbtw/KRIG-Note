@@ -38,7 +38,12 @@ export class ConverterRegistry {
     for (const atomType of converter.atomTypes) {
       this.byAtomType.set(atomType, converter);
     }
-    this.byPMType.set(converter.pmType, converter);
+    // Don't let later-registered converters steal a pmType that's already
+    // bound (e.g. a compat atom → PM mapping shouldn't hijack the canonical
+    // PM → atom direction owned by an earlier converter).
+    if (!this.byPMType.has(converter.pmType)) {
+      this.byPMType.set(converter.pmType, converter);
+    }
   }
 
   /**

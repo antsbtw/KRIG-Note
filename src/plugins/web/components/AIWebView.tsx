@@ -62,10 +62,23 @@ interface AIWebViewProps {
   workModeId?: string;
 }
 
+const LAST_SERVICE_KEY = 'krig.ai.lastService';
+
+/** Read the last-used AI service from localStorage; fall back to default if missing/invalid. */
+function loadLastService(): AIServiceId {
+  try {
+    const stored = localStorage.getItem(LAST_SERVICE_KEY);
+    if (stored && getAIServiceList().some(s => s.id === stored)) {
+      return stored as AIServiceId;
+    }
+  } catch {}
+  return DEFAULT_AI_SERVICE;
+}
+
 export function AIWebView({ workModeId = '' }: AIWebViewProps) {
   const isSyncMode = workModeId === 'ai-sync';
   const webviewRef = useRef<Electron.WebviewTag | null>(null);
-  const [currentService, setCurrentService] = useState<AIServiceId>(DEFAULT_AI_SERVICE);
+  const [currentService, setCurrentService] = useState<AIServiceId>(loadLastService);
   const [currentUrl, setCurrentUrl] = useState('');
   const [loading, setLoading] = useState(true);
   const [showServiceMenu, setShowServiceMenu] = useState(false);
@@ -75,7 +88,7 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
   const lastSyncedCountRef = useRef(0);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  const initialUrl = getAIServiceProfile(DEFAULT_AI_SERVICE).newChatUrl;
+  const initialUrl = getAIServiceProfile(currentService).newChatUrl;
 
   // ── webview 事件绑定 ──
   const setupWebview = useCallback((el: Electron.WebviewTag | null) => {
@@ -96,7 +109,10 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
     el.addEventListener('did-navigate', (_e: any) => {
       setCurrentUrl(el.getURL());
       const detected = detectAIServiceByUrl(el.getURL());
-      if (detected) setCurrentService(detected.id);
+      if (detected) {
+        setCurrentService(detected.id);
+        try { localStorage.setItem(LAST_SERVICE_KEY, detected.id); } catch {}
+      }
       injectArtifactHookIfClaude();
     });
     el.addEventListener('did-navigate-in-page', () => {
@@ -117,12 +133,18 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
     setCurrentService(serviceId);
     setCurrentUrl(profile.newChatUrl);
     setShowServiceMenu(false);
+    try { localStorage.setItem(LAST_SERVICE_KEY, serviceId); } catch {}
   }, []);
 
   // ── Sync Engine（场景 C：实时同步到 NoteView）──
   // Tracks per-service sync state by conversationId → set of synced response ids
   const syncedResponsesRef = useRef<Map<string, Set<string>>>(new Map());
   const cdpStartedRef = useRef(false);
+  // Prevent overlapping poll invocations: a single poll pass can take longer
+  // than the 2 s interval (Claude artifact probe waits up to 4 s), so we
+  // must skip re-entry rather than let two passes race on lastSyncedCountRef
+  // and double-insert the same turn.
+  const pollInFlightRef = useRef(false);
   // Peer (NoteView) status — updated via 'as:note-status' ViewMessage
   const noteOpenRef = useRef(false);
   const lastTypedAtRef = useRef(0);
@@ -241,6 +263,10 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
       if (!noteOpenRef.current) return;
       // Boundary: user typed within 500ms → defer so we don't interrupt them.
       if (Date.now() - lastTypedAtRef.current < 500) return;
+      // Boundary: previous poll still running (e.g. Claude artifact probe takes
+      // up to 4 s, longer than the 2 s tick). Skip rather than race.
+      if (pollInFlightRef.current) return;
+      pollInFlightRef.current = true;
 
       try {
         const curUrl = webview.getURL?.() || '';
@@ -256,6 +282,8 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
         }
       } catch (err) {
         console.warn('[AIWebView Sync] Error:', err);
+      } finally {
+        pollInFlightRef.current = false;
       }
     }, 2000);
 

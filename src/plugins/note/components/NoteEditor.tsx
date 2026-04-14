@@ -644,14 +644,20 @@ export function NoteEditor() {
   }, [createEditor, loadNote, saveNote]);
 
   // ── AI Sync: listen for 'as:append-turn' ViewMessage ──
+  // Serialize inserts: insertTurnIntoNote awaits IPC markdown parse, so two
+  // turns arriving back-to-back would race and can finish out of order (a
+  // shorter second turn lands before a longer first turn). Chain through a
+  // single queue so order matches arrival.
   useEffect(() => {
+    let queue: Promise<void> = Promise.resolve();
     const unsub = viewAPI.onMessage((msg: any) => {
       if (msg.protocol === 'ai-sync' && msg.action === 'as:append-turn') {
-        const view = viewRef.current;
-        if (!view || view.isDestroyed) return;
-        import('../ai-workflow/sync-note-receiver').then(({ insertTurnIntoNote }) => {
-          insertTurnIntoNote(view, msg.payload);
-        });
+        queue = queue.then(async () => {
+          const view = viewRef.current;
+          if (!view || view.isDestroyed) return;
+          const { insertTurnIntoNote } = await import('../ai-workflow/sync-note-receiver');
+          await insertTurnIntoNote(view, msg.payload);
+        }).catch(err => console.warn('[SyncNote] insert failed:', err));
       } else if (msg.protocol === 'ai-sync' && msg.action === 'as:probe') {
         // Peer asks "are you open?" — reply immediately.
         viewAPI.sendToOtherSlot({

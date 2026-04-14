@@ -71,6 +71,29 @@ export const taskListConverter: AtomConverter = {
   },
 };
 
+// ── listItem (compat) ──
+// KRIG bulletList/orderedList schema 是 content: 'block+'，没有 listItem 中间层。
+// 但外部 markdown parser（web-bridge/pipeline/content-to-atoms）产出的是 listItem
+// atom。这个 compat converter 把 listItem atom 展平成一个 textBlock 段落，使其
+// 能直接放进 bulletList / orderedList 容器里渲染。
+export const listItemConverter: AtomConverter = {
+  atomTypes: ['listItem'],
+  pmType: 'textBlock',
+
+  toAtom(node: PMNode, parentId?: string): Atom {
+    const children = pmInlinesToAtom(node);
+    return createAtom('listItem', { children } as ListItemContent, parentId);
+  },
+
+  toPM(atom: Atom): PMNodeJSON {
+    const c = atom.content as ListItemContent;
+    return {
+      type: 'textBlock',
+      content: atomInlinesToPM(c.children),
+    };
+  },
+};
+
 // ── taskItem ──
 // content: 'block+' → 子节点是 textBlock 等
 

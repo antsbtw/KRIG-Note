@@ -13,7 +13,7 @@ import type { Plugin } from 'prosemirror-state';
 import type { BlockDef, SlashItemDef, NodeViewFactory } from './types';
 import { converterRegistry } from './converters/registry';
 import { textBlockConverter } from './converters/text-block-converter';
-import { bulletListConverter, orderedListConverter, taskListConverter, taskItemConverter } from './converters/list-converter';
+import { bulletListConverter, orderedListConverter, taskListConverter, taskItemConverter, listItemConverter } from './converters/list-converter';
 import { codeBlockConverter, mathBlockConverter, imageConverter, videoConverter, audioConverter, tweetConverter, horizontalRuleConverter, pageAnchorConverter, fileBlockConverter, externalRefConverter } from './converters/render-block-converters';
 import { blockquoteConverter, calloutConverter, toggleListConverter, frameBlockConverter, tableConverter, tableRowConverter, tableCellConverter, tableHeaderConverter, columnListConverter, columnConverter } from './converters/container-converters';
 import { mathVisualConverter } from './converters/math-visual-converter';
@@ -192,7 +192,7 @@ class BlockRegistry {
     // 直接注册所有已实现的 Converter
     const converters = [
       textBlockConverter,
-      bulletListConverter, orderedListConverter, taskListConverter, taskItemConverter,
+      bulletListConverter, orderedListConverter, taskListConverter, taskItemConverter, listItemConverter,
       codeBlockConverter, mathBlockConverter, mathVisualConverter, imageConverter,
       videoConverter, audioConverter, tweetConverter, horizontalRuleConverter, pageAnchorConverter,
       fileBlockConverter, externalRefConverter,

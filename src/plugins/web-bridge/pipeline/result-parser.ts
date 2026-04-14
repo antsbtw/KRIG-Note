@@ -480,8 +480,18 @@ export class ResultParser {
     let i = startIdx;
 
     while (i < lines.length) {
-      // Skip blank lines
-      if (!lines[i].trim()) { i++; continue; }
+      // Blank line: peek ahead. If the next non-blank line is another list
+      // item of the same type, consume the blank(s) and keep going. Otherwise
+      // the list has ended — return and let the outer parser handle the next
+      // block as a sibling (paragraph, heading, new list, etc.).
+      if (!lines[i].trim()) {
+        let j = i + 1;
+        while (j < lines.length && !lines[j].trim()) j++;
+        if (j >= lines.length) return j;
+        if (!lines[j].match(itemRe)) return i;
+        i = j;
+        continue;
+      }
 
       // Next list item → end current item
       if (lines[i].match(itemRe)) break;

@@ -13,6 +13,7 @@
 
 import type { EditorView } from 'prosemirror-view';
 import type { Node as PMNode } from 'prosemirror-model';
+import { TextSelection } from 'prosemirror-state';
 import { converterRegistry } from '../converters/registry';
 
 declare const viewAPI: {
@@ -45,9 +46,6 @@ export async function insertTurnIntoNote(view: EditorView, payload: AppendTurnPa
   const nodes: PMNode[] = [];
   const textBlockType = schema.nodes.textBlock;
 
-  // Leading blank line
-  if (textBlockType) nodes.push(textBlockType.create());
-
   // 1. User question → callout (❓)
   if (turn.userMessage.trim()) {
     const calloutType = schema.nodes.callout;
@@ -76,24 +74,43 @@ export async function insertTurnIntoNote(view: EditorView, payload: AppendTurnPa
     }
   }
 
-  // 3. Horizontal rule separator
+  // 3. Horizontal rule separator between turns
   if (schema.nodes.horizontalRule) {
     nodes.push(schema.nodes.horizontalRule.create());
   }
-
-  // Trailing blank line
-  if (textBlockType) nodes.push(textBlockType.create());
 
   if (nodes.length === 0) return;
 
   const insertPos = resolveInsertPos(view);
   const tr = view.state.tr;
   tr.setMeta('ai-sync', true);
+
+  // Absorb an empty placeholder textBlock sitting right at insertPos (the
+  // default "empty paragraph" the note is seeded with, or the empty block
+  // trailing a previous turn). Otherwise it would leave a visible blank
+  // gap between consecutive turns.
+  const afterInsert = tr.doc.nodeAt(insertPos);
+  if (
+    afterInsert &&
+    afterInsert.type.name === 'textBlock' &&
+    !afterInsert.attrs.isTitle &&
+    afterInsert.content.size === 0
+  ) {
+    tr.delete(insertPos, insertPos + afterInsert.nodeSize);
+  }
+
   let pos = insertPos;
   for (const node of nodes) {
     tr.insert(pos, node);
     pos += node.nodeSize;
   }
+  // Move the selection to the end of the freshly inserted block so the next
+  // sync turn anchors *after* this one rather than at the original cursor,
+  // which would cause later turns to appear before earlier ones.
+  try {
+    const resolved = tr.doc.resolve(Math.min(pos, tr.doc.content.size));
+    tr.setSelection(TextSelection.near(resolved, -1));
+  } catch {}
   view.dispatch(tr.scrollIntoView());
 
   console.log(`[SyncNote] Inserted turn #${turn.index} at pos ${insertPos}: ${nodes.length} nodes (${turn.markdown.length} chars)`);
