@@ -29,6 +29,7 @@
  */
 
 import { Plugin } from 'prosemirror-state';
+import { Slice, Fragment } from 'prosemirror-model';
 import { htmlToMarkdown } from '../utils/html-to-markdown';
 
 interface ViewAPILike {
@@ -76,7 +77,7 @@ export function smartPastePlugin(): Plugin {
           try {
             const { state } = view;
             const { schema } = state;
-            // Fragment: build Nodes from the JSON shapes we got back.
+            // Hydrate PM nodes from the JSON shapes main sent back.
             const pmNodes = nodes
               .map(n => {
                 try { return schema.nodeFromJSON(n as any); }
@@ -85,26 +86,15 @@ export function smartPastePlugin(): Plugin {
               .filter((n): n is NonNullable<typeof n> => !!n);
             if (pmNodes.length === 0) return;
 
-            // Insert at cursor; replace the current selection if any.
-            const { from, to } = state.selection;
-            const slice = state.doc.slice(0, 0); // dummy to get Slice import-free
-            // Use replaceWith to add block nodes at the block boundary.
-            // Simplest approach: for each node, insert it at the current
-            // cursor using tr.replaceSelectionWith when single, otherwise
-            // use insert(pos, fragment).
-            let tr = state.tr;
-            if (pmNodes.length === 1) {
-              tr = tr.replaceSelectionWith(pmNodes[0], false);
-            } else {
-              // Multiple blocks: split off current position + inline
-              // insert each.
-              tr = tr.deleteRange(from, to);
-              for (const n of pmNodes) {
-                tr = tr.insert(tr.selection.from, n);
-              }
-            }
+            // Insert all nodes in one replace, using a Slice built from a
+            // Fragment. This is the only correct way to paste multiple
+            // block-level nodes: it preserves order (manual insert() in a
+            // loop would reverse them because the insert pos never moves
+            // forward), and PM handles the block-boundary splitting.
+            const fragment = Fragment.from(pmNodes);
+            const slice = new Slice(fragment, 0, 0);
+            const tr = state.tr.replaceSelection(slice).scrollIntoView();
             view.dispatch(tr);
-            void slice;
           } catch (err) {
             console.warn('[smart-paste] PM insert failed:', err);
           }

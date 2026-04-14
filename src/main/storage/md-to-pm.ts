@@ -56,11 +56,21 @@ export async function markdownToProseMirror(md: string): Promise<PMNode[]> {
 
     // Math block: $$...$$ (single line) or $$ ... $$ (multi-line)
     if (line.trim().startsWith('$$')) {
+      // mathBlock's schema is { content: 'text*' }: the LaTeX source
+      // lives as a text node inside the block, NOT as an `attrs.latex`
+      // string. Getting this wrong produced an empty mathBlock that
+      // looked like a greyed-out inline code chunk in the editor.
       const first = line.trim().slice(2);
       const closeIdx = first.indexOf('$$');
+      const emitMathBlock = (latex: string) => {
+        if (!latex) return;
+        content.push({
+          type: 'mathBlock',
+          content: [{ type: 'text', text: latex }],
+        });
+      };
       if (closeIdx >= 0) {
-        const latex = first.slice(0, closeIdx).trim();
-        if (latex) content.push({ type: 'mathBlock', attrs: { latex } });
+        emitMathBlock(first.slice(0, closeIdx).trim());
         i++;
         continue;
       }
@@ -79,8 +89,7 @@ export async function markdownToProseMirror(md: string): Promise<PMNode[]> {
         buf.push(curr);
         i++;
       }
-      const latex = buf.join('\n').trim();
-      if (latex) content.push({ type: 'mathBlock', attrs: { latex } });
+      emitMathBlock(buf.join('\n').trim());
       continue;
     }
 
