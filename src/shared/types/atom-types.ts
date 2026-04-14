@@ -118,7 +118,9 @@ export type RenderAtomType =
   | 'figure'
   | 'video'
   | 'audio'
-  | 'tweet';
+  | 'tweet'
+  | 'fileBlock'      // 附件 — AI/user 自包含资产，字节存在 media store
+  | 'externalRef';   // 外部引用 — 对本机路径或网络 URL 的指向（不复制字节）
 
 // ── 特殊 ──
 export type SpecialAtomType =
@@ -260,6 +262,50 @@ export interface AudioContent {
   duration?: number;
 }
 
+/**
+ * A generic attachment — a file whose bytes live inside the KRIG media
+ * store. Used for AI-generated outputs (Canvas source, Code Interpreter
+ * .csv/.xlsx, Deep Research PDFs) and user uploads. `src` is a
+ * `media://files/...` URL that renders through the registered protocol.
+ */
+export interface FileBlockContent {
+  /** Media store id (from mediaSurrealStore.putBase64 or similar). */
+  mediaId: string;
+  /** `media://files/{filename}` — directly usable as href. */
+  src: string;
+  /** Display name (with extension). */
+  filename: string;
+  /** Original MIME type, e.g. `application/pdf`. */
+  mimeType: string;
+  /** Size in bytes; optional when unknown. */
+  size?: number;
+  /** Optional: where this attachment came from. */
+  source?: 'ai-generated' | 'user-uploaded' | 'krig-attached';
+}
+
+/**
+ * An external reference — a pointer to something outside KRIG's storage
+ * (local disk file or web URL). Unlike FileBlock we do NOT copy bytes;
+ * KRIG only stores the URI. This lets the user treat external resources
+ * as first-class knowledge nodes for future Graph queries like
+ * "which notes reference this PDF" without bloating the note body.
+ *
+ * The `href` is always a URI: `file:///absolute/path` for local files
+ * or `https://...` for web URLs. Renderer code splits on `kind` to
+ * decide how to open (shell.openPath vs shell.openExternal).
+ */
+export interface ExternalRefContent {
+  kind: 'file' | 'url';
+  /** URI — `file:///...` for kind=file, `https://...` for kind=url. */
+  href: string;
+  /** Display label shown in the card; defaults to filename or host. */
+  title?: string;
+  /** Optional metadata (populated opportunistically by the caller). */
+  mimeType?: string;
+  size?: number;
+  modifiedAt?: number;
+}
+
 export interface TweetContent {
   tweetUrl: string;
   tweetId?: string;
@@ -299,6 +345,8 @@ export type AtomContent =
   | VideoContent
   | AudioContent
   | TweetContent
+  | FileBlockContent
+  | ExternalRefContent
   | PageAnchorContent;
 
 // ═══════════════════════════════════════════════════════

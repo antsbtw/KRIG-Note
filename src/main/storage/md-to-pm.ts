@@ -99,6 +99,47 @@ export async function markdownToProseMirror(md: string): Promise<PMNode[]> {
       continue;
     }
 
+    // Block-level attachment: `!attach[filename](src)`
+    const attachMatch = line.trim().match(/^!attach\[([^\]]*)\]\(([^)]+)\)\s*$/);
+    if (attachMatch) {
+      const filename = attachMatch[1] || 'attachment';
+      const rawSrc = attachMatch[2];
+      const resolved = await resolvePMAttachmentSrc(rawSrc, filename);
+      content.push({
+        type: 'fileBlock',
+        attrs: {
+          mediaId:  resolved.mediaId,
+          src:      resolved.src,
+          filename: resolved.filename,
+          mimeType: resolved.mimeType,
+          size:     null,
+          source:   null,
+        },
+      });
+      i++;
+      continue;
+    }
+
+    // Block-level external file reference: `!file[title](/path)`
+    const fileMatch = line.trim().match(/^!file\[([^\]]*)\]\(([^)]+)\)\s*$/);
+    if (fileMatch) {
+      const title = fileMatch[1] || '';
+      const rawPath = fileMatch[2];
+      content.push({
+        type: 'externalRef',
+        attrs: {
+          kind: 'file',
+          href: normalizePMFileHref(rawPath),
+          title,
+          mimeType: '',
+          size: null,
+          modifiedAt: null,
+        },
+      });
+      i++;
+      continue;
+    }
+
     // Heading (# ## ###)
     const headingMatch = line.match(/^(#{1,3})\s+(.+)/);
     if (headingMatch) {
@@ -215,6 +256,34 @@ export async function markdownToProseMirror(md: string): Promise<PMNode[]> {
   }
 
   return content;
+}
+
+/** Mirror of md-to-atoms.resolveAttachmentSrc for PM flow. */
+async function resolvePMAttachmentSrc(
+  rawSrc: string,
+  filename: string,
+): Promise<{ src: string; mediaId: string; filename: string; mimeType: string }> {
+  if (rawSrc.startsWith('data:') && rawSrc.includes(';base64,')) {
+    try {
+      const r = await mediaSurrealStore.putBase64(rawSrc);
+      if (r.success && r.mediaUrl) {
+        const mimeMatch = rawSrc.match(/^data:([^;]+);/);
+        const mime = mimeMatch ? mimeMatch[1] : 'application/octet-stream';
+        return { src: r.mediaUrl, mediaId: r.mediaId || '', filename, mimeType: mime };
+      }
+    } catch { /* fall through */ }
+  }
+  return { src: rawSrc, mediaId: '', filename, mimeType: '' };
+}
+
+/** Mirror of md-to-atoms.normalizeFileHref for PM flow. */
+function normalizePMFileHref(raw: string): string {
+  if (raw.startsWith('file:')) return raw;
+  if (raw.startsWith('/')) {
+    const encoded = raw.split('/').map(seg => seg ? encodeURIComponent(seg) : '').join('/');
+    return `file://${encoded}`;
+  }
+  return raw;
 }
 
 /**

@@ -38,7 +38,7 @@ const MIME_TO_EXT: Record<string, string> = {
 };
 
 function ensureDirs(): void {
-  for (const sub of ['images', 'audio']) {
+  for (const sub of ['images', 'audio', 'files']) {
     fs.mkdirSync(path.join(MEDIA_DIR, sub), { recursive: true });
   }
 }
@@ -57,10 +57,22 @@ function extForMime(mimeType: string): string {
   return MIME_TO_EXT[core] || 'bin';
 }
 
-/** Bucket a MIME type into 'image' | 'audio' (default 'image'). */
-function mediaTypeForMime(mimeType: string): 'image' | 'audio' {
+/**
+ * Bucket a MIME type into the on-disk subdirectory under MEDIA_DIR.
+ *
+ *   image/*         → 'images'
+ *   audio/*         → 'audio'
+ *   anything else   → 'files'    (pdf, zip, csv, html, tsx, ...)
+ *
+ * `video/*` currently lands in `files` because we haven't needed a
+ * dedicated video bucket yet — the existing video-block uses external
+ * URLs (YouTube/Vimeo). Can be upgraded to 'videos' later if needed.
+ */
+function bucketForMime(mimeType: string): 'images' | 'audio' | 'files' {
   const core = mimeType.split(';')[0].trim();
-  return core.startsWith('audio/') ? 'audio' : 'image';
+  if (core.startsWith('image/')) return 'images';
+  if (core.startsWith('audio/')) return 'audio';
+  return 'files';
 }
 
 export const mediaSurrealStore = {
@@ -175,17 +187,19 @@ export const mediaSurrealStore = {
       const buffer = Buffer.from(b64, 'base64');
       if (buffer.length === 0) return { success: false, error: 'decoded buffer is empty' };
 
-      const mediaType = mediaTypeForMime(mimeType);
-      const limit = SIZE_LIMITS[mediaType] || SIZE_LIMITS.image;
+      const subDir = bucketForMime(mimeType);
+      // Size limit by bucket. 'files' inherits image's 20MB for v1;
+      // upgrade to a larger/unlimited cap for AI-generated reports etc.
+      const sizeKey = subDir === 'images' ? 'image' : subDir === 'audio' ? 'audio' : 'image';
+      const limit = SIZE_LIMITS[sizeKey];
       if (buffer.length > limit) {
         return { success: false, error: `Data too large (${Math.round(buffer.length / 1024 / 1024)}MB > ${Math.round(limit / 1024 / 1024)}MB limit)` };
       }
 
       const hash = createHash('sha256').update(buffer).digest('hex').slice(0, 16);
       const ext = extForMime(mimeType);
-      const prefix = mediaType === 'audio' ? 'audio' : 'img';
+      const prefix = subDir === 'audio' ? 'audio' : subDir === 'images' ? 'img' : 'file';
       const mediaId = `${prefix}-${hash}`;
-      const subDir = mediaType === 'audio' ? 'audio' : 'images';
       const fileName = `${mediaId}.${ext}`;
       const filePath = path.join(MEDIA_DIR, subDir, fileName);
       const mediaUrl = `media://${subDir}/${fileName}`;

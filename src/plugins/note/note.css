@@ -2954,3 +2954,93 @@
   outline-width: 3px;
 }
 
+
+/* ═══════════════════════════════════════════════════════════════
+ * fileBlock & externalRef — AI-Note Step 0b
+ * ═══════════════════════════════════════════════════════════════ */
+
+.file-block,
+.external-ref {
+  margin: 0.5em 0;
+  border: 1px solid var(--color-border-secondary, rgba(255,255,255,0.1));
+  border-radius: 8px;
+  background: var(--color-background-secondary, rgba(255,255,255,0.02));
+  transition: background 0.15s;
+  user-select: none;
+}
+
+.file-block:hover,
+.external-ref:hover {
+  background: rgba(255,255,255,0.05);
+}
+
+.file-block__inner,
+.external-ref__inner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+}
+
+.file-block__icon,
+.external-ref__icon {
+  flex: 0 0 auto;
+  font-size: 28px;
+  line-height: 1;
+}
+
+.file-block__meta,
+.external-ref__meta {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.file-block__name,
+.external-ref__title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-text-primary, #ddd);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-block__sub,
+.external-ref__sub {
+  font-size: 11px;
+  color: var(--color-text-secondary, #888);
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-block__actions,
+.external-ref__actions {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 6px;
+}
+
+.file-block__btn,
+.external-ref__btn {
+  font-size: 12px;
+  padding: 4px 10px;
+  background: transparent;
+  border: 0.5px solid var(--color-border-tertiary, rgba(255,255,255,0.15));
+  border-radius: 4px;
+  color: var(--color-text-primary, #ddd);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.file-block__btn:hover:not(:disabled),
+.external-ref__btn:hover:not(:disabled) {
+  background: rgba(255,255,255,0.08);
+}
+
+.file-block__btn:disabled,
+.external-ref__btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}

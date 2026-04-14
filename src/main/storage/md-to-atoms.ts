@@ -39,6 +39,8 @@ import {
   type ImageContent,
   type MathBlockContent,
   type MathInline,
+  type FileBlockContent,
+  type ExternalRefContent,
 } from '../../shared/types/atom-types';
 
 /**
@@ -131,6 +133,35 @@ async function parseMarkdownToAtoms(md: string): Promise<Atom[]> {
       const rawSrc = imgMatch[2];
       const imageContent = await resolveImageSrc(rawSrc, alt);
       atoms.push(createAtom('image', imageContent));
+      i++;
+      continue;
+    }
+
+    // Block-level attachment: `!attach[filename](src)` on its own line.
+    // When src is a data URL the bytes are persisted to the media store
+    // and the atom stores a `media://files/...` URL. Otherwise src is
+    // passed through unchanged (assumed to be a pre-existing media:// URL).
+    const attachMatch = line.trim().match(/^!attach\[([^\]]*)\]\(([^)]+)\)\s*$/);
+    if (attachMatch) {
+      const filename = attachMatch[1] || 'attachment';
+      const rawSrc = attachMatch[2];
+      const content = await resolveAttachmentSrc(rawSrc, filename);
+      atoms.push(createAtom('fileBlock', content));
+      i++;
+      continue;
+    }
+
+    // Block-level external file reference: `!file[title](/path|file:///...)`
+    // on its own line. Never copies bytes — just stores the URI.
+    const fileMatch = line.trim().match(/^!file\[([^\]]*)\]\(([^)]+)\)\s*$/);
+    if (fileMatch) {
+      const title = fileMatch[1] || '';
+      const rawPath = fileMatch[2];
+      atoms.push(createAtom('externalRef', {
+        kind: 'file',
+        href: normalizeFileHref(rawPath),
+        title: title || undefined,
+      } as ExternalRefContent));
       i++;
       continue;
     }
@@ -264,6 +295,58 @@ async function parseMarkdownToAtoms(md: string): Promise<Atom[]> {
   }
 
   return atoms;
+}
+
+/**
+ * Resolve an attachment `src` string into a FileBlockContent.
+ *
+ * - `data:<mime>;base64,...`  → putBase64 → `media://files/...`
+ * - `media://...`             → pass-through (already in store)
+ * - otherwise                 → pass-through but mediaId remains empty
+ *   (caller may wish to upgrade this to an externalRef instead)
+ */
+async function resolveAttachmentSrc(
+  rawSrc: string,
+  filename: string,
+): Promise<FileBlockContent> {
+  if (rawSrc.startsWith('data:') && rawSrc.includes(';base64,')) {
+    try {
+      const r = await mediaSurrealStore.putBase64(rawSrc);
+      if (r.success && r.mediaUrl) {
+        const mimeMatch = rawSrc.match(/^data:([^;]+);/);
+        const mime = mimeMatch ? mimeMatch[1] : 'application/octet-stream';
+        return {
+          mediaId: r.mediaId || '',
+          src: r.mediaUrl,
+          filename,
+          mimeType: mime,
+        };
+      }
+    } catch {
+      /* fall through */
+    }
+  }
+  return { mediaId: '', src: rawSrc, filename, mimeType: '' };
+}
+
+/**
+ * Normalize a raw path / URL into a `file:///...` URI. Accepts:
+ *   - absolute path:  `/Users/wen/foo.pdf`
+ *   - file: URL:      `file:///Users/wen/foo.pdf`
+ *   - relative path (stored as-is — resolution deferred to caller)
+ *
+ * Always URI-encodes spaces and special characters when building the
+ * `file://` form, so the stored href is always a valid URI.
+ */
+function normalizeFileHref(raw: string): string {
+  if (raw.startsWith('file:')) return raw;
+  if (raw.startsWith('/')) {
+    // Split by '/', encode each segment — keeps the path structure,
+    // escapes spaces/non-ASCII.
+    const encoded = raw.split('/').map(seg => seg ? encodeURIComponent(seg) : '').join('/');
+    return `file://${encoded}`;
+  }
+  return raw;
 }
 
 /**

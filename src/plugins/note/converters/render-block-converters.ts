@@ -17,6 +17,8 @@ import type {
   AudioContent,
   TweetContent,
   PageAnchorContent,
+  FileBlockContent,
+  ExternalRefContent,
 } from '../../../shared/types/atom-types';
 import { createAtom } from '../../../shared/types/atom-types';
 import type { AtomConverter, PMNodeJSON } from './converter-types';
@@ -179,6 +181,72 @@ export const horizontalRuleConverter: AtomConverter = {
 
   toPM(): PMNodeJSON {
     return { type: 'horizontalRule' };
+  },
+};
+
+// ── fileBlock ──
+
+export const fileBlockConverter: AtomConverter = {
+  atomTypes: ['fileBlock'],
+  pmType: 'fileBlock',
+
+  toAtom(node: PMNode, parentId?: string): Atom {
+    return createAtom('fileBlock', {
+      mediaId:  node.attrs.mediaId || '',
+      src:      node.attrs.src || '',
+      filename: node.attrs.filename || '',
+      mimeType: node.attrs.mimeType || '',
+      size:     node.attrs.size == null ? undefined : Number(node.attrs.size),
+      source:   node.attrs.source || undefined,
+    } as FileBlockContent, parentId);
+  },
+
+  toPM(atom: Atom): PMNodeJSON {
+    const c = atom.content as FileBlockContent;
+    return {
+      type: 'fileBlock',
+      attrs: {
+        mediaId:  c.mediaId || '',
+        src:      c.src || '',
+        filename: c.filename || '',
+        mimeType: c.mimeType || '',
+        size:     c.size ?? null,
+        source:   c.source ?? null,
+      },
+    };
+  },
+};
+
+// ── externalRef ──
+
+export const externalRefConverter: AtomConverter = {
+  atomTypes: ['externalRef'],
+  pmType: 'externalRef',
+
+  toAtom(node: PMNode, parentId?: string): Atom {
+    return createAtom('externalRef', {
+      kind:       (node.attrs.kind as 'file' | 'url') || 'url',
+      href:       node.attrs.href || '',
+      title:      node.attrs.title || undefined,
+      mimeType:   node.attrs.mimeType || undefined,
+      size:       node.attrs.size == null ? undefined : Number(node.attrs.size),
+      modifiedAt: node.attrs.modifiedAt == null ? undefined : Number(node.attrs.modifiedAt),
+    } as ExternalRefContent, parentId);
+  },
+
+  toPM(atom: Atom): PMNodeJSON {
+    const c = atom.content as ExternalRefContent;
+    return {
+      type: 'externalRef',
+      attrs: {
+        kind:       c.kind,
+        href:       c.href || '',
+        title:      c.title || '',
+        mimeType:   c.mimeType || '',
+        size:       c.size ?? null,
+        modifiedAt: c.modifiedAt ?? null,
+      },
+    };
   },
 };
 
