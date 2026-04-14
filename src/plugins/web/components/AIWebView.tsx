@@ -2,7 +2,10 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { getSSECaptureScript } from '../../web-bridge/injection/inject-scripts/sse-capture';
 import { getArtifactPostMessageHookScript } from '../../web-bridge/injection/inject-scripts/artifact-postmessage-hook';
 import { getDomToMarkdownScript } from '../../web-bridge/injection/inject-scripts/dom-to-markdown';
+import { getContextMenuInjectScript, CONTEXT_MENU_MARKER } from '../../web-bridge/injection/inject-scripts/context-menu-inject';
+import { SlotToggle } from '../../../shared/components/SlotToggle';
 import {
+  extractClaudeConversation,
   extractLatestClaudeResponse,
   isClaudeConversationPage,
   countArtifactPlaceholders,
@@ -120,6 +123,14 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
   const lastSyncedCountRef = useRef(0);
   const menuRef = useRef<HTMLDivElement>(null);
 
+  // Context menu state for "📥 提取到笔记" — populated by guest's contextmenu handler
+  const [ctxMenu, setCtxMenu] = useState<{
+    x: number;
+    y: number;
+    msgIndex: number;
+  } | null>(null);
+  const [ctxBusy, setCtxBusy] = useState(false);
+
   const initialUrl = getAIServiceProfile(currentService).newChatUrl;
 
   // ── webview 事件绑定 ──
@@ -138,6 +149,47 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
       } catch {}
     };
 
+    // Install the contextmenu inject for whichever service the guest is on
+    // so right-click on assistant messages surfaces the custom menu.
+    const installContextMenu = () => {
+      try {
+        const u = el.getURL?.() || '';
+        const profile = detectAIServiceByUrl(u);
+        if (!profile) return;
+        const script = getContextMenuInjectScript(
+          profile.selectors.assistantMessage,
+          profile.selectors.userMessage,
+        );
+        el.executeJavaScript(script)
+          .then((r: any) => console.log('[AIWebView] ctx-menu inject:', r, 'selector=', profile.selectors.assistantMessage))
+          .catch((err: any) => console.warn('[AIWebView] ctx-menu inject failed:', err));
+      } catch (err) {
+        console.warn('[AIWebView] ctx-menu install exception:', err);
+      }
+    };
+
+    // Guest's contextmenu handler signals via console.log with a marker.
+    // Electron console-message event shape: {message, level, line, sourceId}
+    // — but version-dependent. Also try `e.args` for newer versions.
+    el.addEventListener('console-message', (e: any) => {
+      const text: string =
+        (typeof e?.message === 'string' ? e.message : '') ||
+        (typeof e?.message?.text === 'string' ? e.message.text : '') ||
+        '';
+      if (!text) return;
+      if (text.indexOf(CONTEXT_MENU_MARKER) < 0) return;
+      const start = text.indexOf(CONTEXT_MENU_MARKER) + CONTEXT_MENU_MARKER.length;
+      try {
+        const payload = JSON.parse(text.slice(start));
+        console.log('[AIWebView] ctx-menu payload:', payload);
+        if (typeof payload?.msgIndex === 'number') {
+          setCtxMenu({ x: payload.x | 0, y: payload.y | 0, msgIndex: payload.msgIndex });
+        }
+      } catch (err) {
+        console.warn('[AIWebView] ctx-menu parse failed:', err, 'text=', text);
+      }
+    });
+
     el.addEventListener('did-navigate', (_e: any) => {
       setCurrentUrl(el.getURL());
       const detected = detectAIServiceByUrl(el.getURL());
@@ -146,12 +198,17 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
         try { localStorage.setItem(LAST_SERVICE_KEY, detected.id); } catch {}
       }
       injectArtifactHookIfClaude();
+      installContextMenu();
     });
     el.addEventListener('did-navigate-in-page', () => {
       setCurrentUrl(el.getURL());
       injectArtifactHookIfClaude();
+      installContextMenu();
     });
-    el.addEventListener('dom-ready', injectArtifactHookIfClaude);
+    el.addEventListener('dom-ready', () => {
+      injectArtifactHookIfClaude();
+      installContextMenu();
+    });
 
     setCurrentUrl(initialUrl);
   }, [initialUrl]);
@@ -166,6 +223,178 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
     setCurrentUrl(profile.newChatUrl);
     setShowServiceMenu(false);
     try { localStorage.setItem(LAST_SERVICE_KEY, serviceId); } catch {}
+  }, []);
+
+  // ── Mode B: Right-click extract ──
+  // Extract the assistant message at the given DOM index by calling the
+  // service's own extractor (API source, not DOM scrape) and emit a
+  // standard as:append-turn so the insert path is identical to real-time sync.
+  const extractTurnByIndex = useCallback(async (msgIndex: number) => {
+    const webview = webviewRef.current;
+    if (!webview) return;
+    const url = webview.getURL?.() || '';
+    const profile = detectAIServiceByUrl(url);
+    if (!profile) return;
+
+    setCtxBusy(true);
+    try {
+      // Ensure right slot (NoteView) exists so the insert has a target.
+      await viewAPI.ensureRightSlot('demo-a');
+
+      // ChatGPT / Gemini need CDP to see the conversation API response.
+      // If we haven't started it yet (user skipped sync mode), start now
+      // and reload so the response gets captured. Claude uses page fetch,
+      // no CDP needed.
+      if ((profile.id === 'chatgpt' || profile.id === 'gemini') && !cdpStartedRef.current) {
+        console.log('[AIWebView Extract] Starting CDP for', profile.id);
+        const r = await viewAPI.wbCdpStart(['/backend-api/', 'rpcids=']);
+        cdpStartedRef.current = !!r?.success;
+        if (cdpStartedRef.current) {
+          // reloadIgnoringCache forces conversation / estuary / etc. to
+          // re-hit the network so CDP can capture the bodies. A plain
+          // reload would serve image bytes from HTTP cache and leave
+          // the CDP response map empty.
+          (webview as any).reloadIgnoringCache?.() ?? webview.reload();
+          await new Promise<void>(resolve => {
+            const onStop = () => { webview.removeEventListener('did-stop-loading', onStop); resolve(); };
+            webview.addEventListener('did-stop-loading', onStop);
+          });
+          await new Promise(r => setTimeout(r, 1500));
+        }
+      }
+
+      let userMessage = '';
+      let markdown = '';
+
+      if (profile.id === 'claude') {
+        const conv = await extractClaudeConversation(webview);
+        if (!conv) return;
+        // Pair human → assistant in document order, pick the msgIndex-th assistant.
+        let aSeen = -1;
+        let pendingHuman = '';
+        for (const m of conv.messages) {
+          if (m.sender === 'human') pendingHuman = m.text;
+          else if (m.sender === 'assistant') {
+            aSeen++;
+            if (aSeen === msgIndex) {
+              userMessage = pendingHuman;
+              markdown = m.text;
+              break;
+            }
+            pendingHuman = '';
+          }
+        }
+      } else if (profile.id === 'chatgpt') {
+        const c = await extractChatGPTContent(webview, viewAPI as any);
+        console.log('[AIWebView Extract/ChatGPT] convId=', c.conversationId,
+          'messages=', c.messages.length,
+          'warnings=', c.warnings);
+        // Coalesce one user prompt + following tool/assistant messages into
+        // a single "turn". An assistant counts as a content-turn if it
+        // has text OR any fileRefs (DALL·E / Code Interpreter produce
+        // assistants whose only content is an image attachment).
+        type Turn = { user: string; text: string; fileIds: string[] };
+        const turns: Turn[] = [];
+        let cur: Turn | null = null;
+        let pendingUser = '';
+        // Flush on user boundary: if tool messages accumulated fileRefs
+        // since the last user prompt but no assistant absorbed them
+        // (DALL·E case), emit a turn anyway so the image isn't lost.
+        const flushOrphanTool = () => {
+          if (!cur && pendingUser && /* have leftover tool files */ false) {
+            // handled below via orphanFiles
+          }
+        };
+        void flushOrphanTool;
+        let orphanFiles: string[] = [];
+        for (const m of c.messages) {
+          if (m.role === 'user' && m.text.trim()) {
+            // Before starting a new user turn, flush any orphan tool files
+            // (rare: tool output without following assistant text).
+            if (!cur && orphanFiles.length > 0 && pendingUser) {
+              turns.push({ user: pendingUser, text: '', fileIds: orphanFiles });
+            }
+            pendingUser = m.text;
+            orphanFiles = [];
+            cur = null;
+          } else if (m.role === 'tool') {
+            for (const id of m.fileRefs) orphanFiles.push(id);
+          } else if (m.role === 'assistant') {
+            const hasText = m.text.trim().length > 0;
+            const hasFiles = m.fileRefs.length > 0 || orphanFiles.length > 0;
+            if (!hasText && !hasFiles) continue;
+            if (!cur) {
+              cur = { user: pendingUser, text: '', fileIds: [] };
+              turns.push(cur);
+              pendingUser = '';
+            }
+            if (hasText) cur.text = (cur.text ? cur.text + '\n\n' : '') + m.text;
+            for (const id of orphanFiles) cur.fileIds.push(id);
+            for (const id of m.fileRefs) cur.fileIds.push(id);
+            orphanFiles = [];
+          }
+        }
+        // End-of-list flush.
+        if (!cur && orphanFiles.length > 0 && pendingUser) {
+          turns.push({ user: pendingUser, text: '', fileIds: orphanFiles });
+        }
+        const t = turns[msgIndex];
+        if (t) {
+          userMessage = t.user;
+          markdown = t.text || '_[无文字内容]_';
+          const imgLines: string[] = [];
+          for (const fid of t.fileIds) {
+            const f = c.files[fid];
+            if (f?.dataUrl) imgLines.push(`![${f.fileId}](${f.dataUrl})`);
+          }
+          if (imgLines.length > 0) {
+            markdown = markdown.trimEnd() + '\n\n' + imgLines.join('\n\n');
+          }
+        }
+      } else if (profile.id === 'gemini') {
+        const c = await extractGeminiContent(webview, viewAPI as any);
+        const t = c.turns[msgIndex];
+        if (t) {
+          userMessage = t.userText;
+          markdown = t.markdown;
+          const imgLines: string[] = [];
+          for (const img of t.images) {
+            if (img.dataUrl) imgLines.push(`![](${img.dataUrl})`);
+          }
+          if (imgLines.length > 0) {
+            markdown = markdown.trimEnd() + '\n\n' + imgLines.join('\n\n');
+          }
+        }
+      }
+
+      if (!markdown.trim()) {
+        console.warn('[AIWebView Extract] No markdown for index', msgIndex);
+        return;
+      }
+
+      viewAPI.sendToOtherSlot({
+        protocol: 'ai-sync',
+        action: 'as:append-turn',
+        payload: {
+          turn: {
+            index: msgIndex,
+            userMessage,
+            markdown,
+            timestamp: Date.now(),
+          },
+          source: {
+            serviceId: profile.id,
+            serviceName: profile.name,
+          },
+        },
+      });
+      console.log(`[AIWebView Extract] Sent turn #${msgIndex}: ${markdown.length} chars`);
+    } catch (err) {
+      console.warn('[AIWebView Extract] Failed:', err);
+    } finally {
+      setCtxBusy(false);
+      setCtxMenu(null);
+    }
   }, []);
 
   // ── Sync Engine（场景 C：实时同步到 NoteView）──
@@ -734,6 +963,9 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
 
         <div style={{ flex: 1 }} />
 
+        {/* Open view in right slot (Note / eBook / Web / Thought) */}
+        <SlotToggle />
+
         {/* Reload */}
         <button
           style={{ background: 'transparent', border: 'none', color: '#aaa', cursor: 'pointer', fontSize: 14 }}
@@ -764,7 +996,86 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
           allowpopups="true"
         />
 
-
+        {ctxMenu && (
+          <>
+            {/* Click-outside dismiss overlay */}
+            <div
+              style={{
+                position: 'absolute', inset: 0, zIndex: 999,
+              }}
+              onClick={() => setCtxMenu(null)}
+              onContextMenu={(e) => { e.preventDefault(); setCtxMenu(null); }}
+            />
+            <div
+              style={{
+                position: 'absolute',
+                left: Math.min(ctxMenu.x, 99999),
+                top: Math.min(ctxMenu.y, 99999),
+                background: '#2a2a2a',
+                border: '1px solid #444',
+                borderRadius: 8,
+                padding: 4,
+                boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+                minWidth: 160,
+                zIndex: 1000,
+              }}
+            >
+              {(() => {
+                const canExtract = ctxMenu.msgIndex >= 0 && !ctxBusy;
+                const itemStyle = (disabled: boolean): React.CSSProperties => ({
+                  display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+                  padding: '6px 12px', background: 'transparent',
+                  border: 'none',
+                  color: disabled ? '#666' : '#e8eaed',
+                  fontSize: 13,
+                  cursor: disabled ? 'not-allowed' : 'pointer',
+                  borderRadius: 4,
+                  textAlign: 'left',
+                });
+                const hover = (e: React.MouseEvent<HTMLButtonElement>, on: boolean) => {
+                  (e.currentTarget).style.background = on ? '#3a3a3a' : 'transparent';
+                };
+                const sep = () => (
+                  <div style={{ height: 1, background: '#444', margin: '4px 0' }} />
+                );
+                return (
+                  <>
+                    <button
+                      disabled={!canExtract}
+                      style={itemStyle(!canExtract)}
+                      onClick={() => canExtract && extractTurnByIndex(ctxMenu.msgIndex)}
+                      onMouseEnter={(e) => canExtract && hover(e, true)}
+                      onMouseLeave={(e) => hover(e, false)}
+                      title={ctxMenu.msgIndex < 0 ? '请在 AI 回答的消息上右键' : ''}
+                    >
+                      <span>📥</span>
+                      <span>{ctxBusy ? '提取中...' : '提取到笔记'}</span>
+                    </button>
+                    {sep()}
+                    <button
+                      style={itemStyle(false)}
+                      onClick={() => { webviewRef.current?.reload(); setCtxMenu(null); }}
+                      onMouseEnter={(e) => hover(e, true)}
+                      onMouseLeave={(e) => hover(e, false)}
+                    >
+                      <span>↻</span>
+                      <span>刷新页面</span>
+                    </button>
+                    <button
+                      style={itemStyle(false)}
+                      onClick={() => { webviewRef.current?.openDevTools(); setCtxMenu(null); }}
+                      onMouseEnter={(e) => hover(e, true)}
+                      onMouseLeave={(e) => hover(e, false)}
+                    >
+                      <span>🛠</span>
+                      <span>检查元素</span>
+                    </button>
+                  </>
+                );
+              })()}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
