@@ -1,29 +1,37 @@
 /**
- * smart-paste — treat clipboard text as Markdown.
+ * smart-paste — normalize clipboard content into KRIG markdown atoms.
  *
- * AI assistants (Claude, ChatGPT, Gemini) and many code-oriented sites
- * put standard Markdown in the `text/plain` flavor of their clipboard
- * payloads. If we let ProseMirror's default paste handler drop the text
- * in, `$$...$$` / `![](...)` / fenced code etc. stay as literal text
- * — KaTeX and image blocks never fire because input rules only run on
- * live typing, not on bulk paste.
+ * Clipboard data comes in two common flavors:
  *
- * This plugin runs clipboard text through the existing markdown →
- * ProseMirror pipeline (md-to-pm.ts on the main side), then replaces
- * the selection with the resulting block fragment. That way a paste
- * produces the same tree you'd get from opening a `.md` file.
+ *   text/plain
+ *     AI assistants (Claude / ChatGPT / Gemini), GitHub code viewers,
+ *     and anything that treats text as source tend to put **Markdown**
+ *     in text/plain. If we feed that through md-to-pm the result is
+ *     a proper block tree (code fences, math, lists, etc).
  *
- * Interaction with other paste plugins:
- *   - paste-media runs first and handles `image/*` items, so a
- *     clipboard containing image bytes still inserts as an image.
- *   - smart-paste skips paste if the clipboard only has image data.
- *   - smart-paste skips "trivial" text that looks like a plain string
- *     (no newlines, no markdown markers) — default caret-insertion
- *     stays intact for everyday typing-like pastes.
+ *   text/html
+ *     Wiki / blog / docs / most browsers put rendered HTML here. The
+ *     text/plain flavor for those is usually a flat single-paragraph
+ *     string with all links and inline marks stripped. To preserve
+ *     structure we parse the HTML back to Markdown first and then
+ *     feed it to md-to-pm.
+ *
+ * Dispatcher:
+ *   1. Images in clipboard  → let paste-media handle it (earlier in
+ *      NoteEditor.buildPlugins).
+ *   2. `text/plain` looks like Markdown (has newlines or common
+ *      markdown markers) → use text/plain directly.
+ *   3. Else if `text/html` has structural elements → html → markdown.
+ *   4. Else (boring plain text, single word, etc) → default PM paste.
+ *
+ * Both Markdown sources go through the same md-to-pm pipeline via
+ * the MD_TO_PM_NODES IPC, producing a ProseMirror fragment that
+ * replaces the current selection in-place.
  */
 
 import { Plugin } from 'prosemirror-state';
 import { Slice, Fragment } from 'prosemirror-model';
+import { htmlToMarkdown } from '../utils/html-to-markdown';
 
 interface ViewAPILike {
   markdownToPMNodes?: (markdown: string) => Promise<unknown[]>;
@@ -41,13 +49,19 @@ export function smartPastePlugin(): Plugin {
           if (item.kind === 'file' && item.type.startsWith('image/')) return false;
         }
 
-        const markdown = cd.getData('text/plain');
-        if (!markdown || !markdown.trim()) return false;
+        const plain = cd.getData('text/plain');
+        const html = cd.getData('text/html');
 
-        // Heuristic: single short line with no markdown markers — let
-        // ProseMirror do its default caret-insertion. Multi-line or
-        // markdown-flavored text goes through the full pipeline.
-        if (!looksLikeMarkdown(markdown)) return false;
+        // Path 1: text/plain looks like raw Markdown → use it directly.
+        // Path 2: text/html has rich structure → html → markdown.
+        // Else: let PM's default handler insert the plain text.
+        let markdown = '';
+        if (plain && looksLikeMarkdown(plain)) {
+          markdown = plain;
+        } else if (html && looksLikeRichHtml(html)) {
+          markdown = htmlToMarkdown(html);
+        }
+        if (!markdown || !markdown.trim()) return false;
 
         // Convert asynchronously via existing pipeline; we've already
         // told ProseMirror we handled the event (return true) so default
@@ -109,4 +123,12 @@ export function smartPastePlugin(): Plugin {
 function looksLikeMarkdown(text: string): boolean {
   if (/\n/.test(text)) return true;
   return /(^|\s)(#{1,3}\s|[-*]\s|\d+\.\s|>\s|```|\$\$|!\[|\[[^\]]+\]\()/m.test(text);
+}
+
+/**
+ * Decide whether an HTML payload is worth parsing to Markdown. Plain
+ * text wrapped in a single <span> isn't, Wiki's <p>+<a>+<b> layout is.
+ */
+function looksLikeRichHtml(html: string): boolean {
+  return /<\s*(h[1-6]|ul|ol|li|pre|code|blockquote|table|img|a\s|strong|b\s|b>|em\s|em>|i\s|i>)/i.test(html);
 }
