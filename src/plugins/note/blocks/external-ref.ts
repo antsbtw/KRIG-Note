@@ -39,17 +39,19 @@ function decodeHref(href: string): { kind: 'file' | 'url'; display: string; loca
 
 /**
  * Encode a browser-picked File path into a `file:///...` URI.
- * `file.webkitRelativePath` is usually empty in the <input type=file>
- * case; `file.path` (Electron non-standard) is what we need. Falls
- * back to a pure-name `file://` if path is unavailable.
+ *
+ * Electron ≥ v32 no longer exposes `File.path` to renderer JS (security).
+ * We call the preload-exposed `viewAPI.getFilePath(file)` which wraps
+ * `webUtils.getPathForFile` — the only sanctioned way to recover the
+ * absolute path in modern Electron. Returns an empty string if no path
+ * is available (e.g. file from a Blob URL or non-file source).
  */
 function fileToFileHref(file: File): string {
-  const p: string = (file as any).path || '';
-  if (p) {
-    const enc = p.split('/').map(s => s ? encodeURIComponent(s) : '').join('/');
-    return `file://${enc}`;
-  }
-  return `file://${encodeURIComponent(file.name)}`;
+  const api = (window as any).viewAPI;
+  const p: string = api?.getFilePath?.(file) || (file as any).path || '';
+  if (!p) return '';
+  const enc = p.split('/').map(s => s ? encodeURIComponent(s) : '').join('/');
+  return `file://${enc}`;
 }
 
 const externalRefNodeView: NodeViewFactory = (initialNode, view, getPos) => {
@@ -148,6 +150,11 @@ const externalRefNodeView: NodeViewFactory = (initialNode, view, getPos) => {
       onUpload: (_dataUrl, file) => {
         if (!file) return;
         const href = fileToFileHref(file);
+        if (!href) {
+          // eslint-disable-next-line no-console
+          console.warn('[externalRef] Could not resolve file path — cannot create reference. The file may have been dropped from a non-disk source.');
+          return;
+        }
         updateAttrs({
           kind: 'file',
           href,

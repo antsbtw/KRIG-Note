@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC } from '../../shared/types';
 import type { ViewMessage } from '../../shared/types';
 
@@ -178,6 +178,16 @@ contextBridge.exposeInMainWorld('viewAPI', {
 
   mediaOpenPath: (filePath: string) =>
     ipcRenderer.invoke(IPC.MEDIA_OPEN_PATH, filePath),
+
+  /**
+   * Resolve the absolute filesystem path of a `File` object (from
+   * <input type=file> or a drop event). Electron ≥ v32 no longer
+   * exposes `file.path` to renderer JS for security; the sanctioned
+   * replacement is `webUtils.getPathForFile` called from preload.
+   */
+  getFilePath: (file: File): string => {
+    try { return webUtils.getPathForFile(file); } catch { return ''; }
+  },
 
   openExternal: (url: string) =>
     ipcRenderer.invoke(IPC.MEDIA_OPEN_EXTERNAL, url),
