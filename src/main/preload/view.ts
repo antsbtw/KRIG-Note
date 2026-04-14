@@ -192,6 +192,9 @@ contextBridge.exposeInMainWorld('viewAPI', {
   openExternal: (url: string) =>
     ipcRenderer.invoke(IPC.MEDIA_OPEN_EXTERNAL, url),
 
+  markdownToPMNodes: (markdown: string) =>
+    ipcRenderer.invoke(IPC.MD_TO_PM_NODES, markdown),
+
   showItemInFolder: (filePath: string) =>
     ipcRenderer.invoke(IPC.SHOW_ITEM_IN_FOLDER, filePath),
 

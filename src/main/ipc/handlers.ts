@@ -730,6 +730,19 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
     return { success: true };
   });
 
+  // MD_TO_PM_NODES: convert a Markdown string to ProseMirror-node JSON
+  // blocks. Used by the renderer's smart-paste plugin after turning the
+  // clipboard's text/html into Markdown.
+  ipcMain.handle(IPC.MD_TO_PM_NODES, async (_e, markdown: string) => {
+    try {
+      const { markdownToProseMirror } = await import('../storage/md-to-pm');
+      return await markdownToProseMirror(markdown);
+    } catch (err) {
+      console.warn('[MD_TO_PM_NODES] failed:', err);
+      return [];
+    }
+  });
+
   ipcMain.handle(IPC.SHOW_ITEM_IN_FOLDER, (_e, filePath: string) => {
     shell.showItemInFolder(filePath);
   });

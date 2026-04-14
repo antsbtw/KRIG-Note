@@ -24,6 +24,7 @@ import { blockHandlePlugin } from '../plugins/block-handle';
 import { blockSelectionPlugin } from '../plugins/block-selection';
 import { indentPlugin } from '../plugins/indent';
 import { pasteMediaPlugin } from '../plugins/paste-media';
+import { smartPastePlugin } from '../plugins/smart-paste';
 import { renderBlockFocusPlugin } from '../plugins/render-block-focus';
 import { vocabHighlightPlugin, updateVocabDefs, dispatchVocabUpdate } from '../learning/vocab-highlight-plugin';
 import { thoughtPlugin } from '../plugins/thought-plugin';
@@ -167,6 +168,7 @@ function buildPlugins(s: ReturnType<typeof getSchema>) {
     titleGuardPlugin(),
     columnCollapsePlugin(),
     pasteMediaPlugin(),
+    smartPastePlugin(),
     renderBlockFocusPlugin(),
     headingCollapsePlugin(),
     vocabHighlightPlugin(),
