@@ -170,8 +170,8 @@ contextBridge.exposeInMainWorld('viewAPI', {
   downloadMedia: (url: string, mediaType: 'video' | 'audio') =>
     ipcRenderer.invoke(IPC.MEDIA_DOWNLOAD, url, mediaType),
 
-  mediaPutBase64: (input: string, mimeType?: string) =>
-    ipcRenderer.invoke(IPC.MEDIA_PUT_BASE64, { input, mimeType }),
+  mediaPutBase64: (input: string, mimeType?: string, filename?: string) =>
+    ipcRenderer.invoke(IPC.MEDIA_PUT_BASE64, { input, mimeType, filename }),
 
   mediaResolvePath: (mediaUrl: string) =>
     ipcRenderer.invoke(IPC.MEDIA_RESOLVE_PATH, mediaUrl),

@@ -119,7 +119,9 @@ const fileBlockNodeView: NodeViewFactory = (initialNode, view, getPos) => {
   const ingestFile = async (dataUrl: string, file?: File) => {
     if (!api?.mediaPutBase64) return;
     const mime = (file?.type || dataUrl.match(/^data:([^;]+);/)?.[1] || 'application/octet-stream');
-    const r = await api.mediaPutBase64(dataUrl, mime);
+    // Pass the original filename so the store picks the correct
+    // extension — critical for macOS Finder handlers (pdf/docx/...).
+    const r = await api.mediaPutBase64(dataUrl, mime, file?.name);
     if (r?.success && r.mediaUrl) {
       updateAttrs({
         src: r.mediaUrl,

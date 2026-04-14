@@ -23,6 +23,7 @@ const SIZE_LIMITS: Record<string, number> = {
 };
 
 const MIME_TO_EXT: Record<string, string> = {
+  // audio
   'audio/mpeg': 'mp3',
   'audio/ogg': 'ogg',
   'audio/wav': 'wav',
@@ -30,11 +31,39 @@ const MIME_TO_EXT: Record<string, string> = {
   'audio/aac': 'aac',
   'audio/flac': 'flac',
   'audio/mp4': 'm4a',
+  // image
   'image/jpeg': 'jpg',
   'image/png': 'png',
   'image/gif': 'gif',
   'image/webp': 'webp',
   'image/svg+xml': 'svg',
+  // video
+  'video/mp4': 'mp4',
+  'video/webm': 'webm',
+  'video/quicktime': 'mov',
+  // documents
+  'application/pdf': 'pdf',
+  'application/zip': 'zip',
+  'application/x-tar': 'tar',
+  'application/gzip': 'gz',
+  'application/x-7z-compressed': '7z',
+  'application/json': 'json',
+  'application/xml': 'xml',
+  'application/msword': 'doc',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+  'application/vnd.ms-excel': 'xls',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+  'application/vnd.ms-powerpoint': 'ppt',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
+  // text
+  'text/plain': 'txt',
+  'text/html': 'html',
+  'text/css': 'css',
+  'text/csv': 'csv',
+  'text/markdown': 'md',
+  'text/javascript': 'js',
+  'application/javascript': 'js',
+  'application/typescript': 'ts',
 };
 
 function ensureDirs(): void {
@@ -156,18 +185,25 @@ export const mediaSurrealStore = {
 
   /**
    * Store a base64 blob (e.g. an AI-extracted Imagen / DALL·E / matplotlib
-   * image) on disk, index it in SurrealDB, and return a `media://...` URL
-   * that renderers can embed directly.
+   * image, or a user-picked file) on disk, index it in SurrealDB, and
+   * return a `media://...` URL that renderers can embed directly.
    *
-   * Deduplicated by SHA-256 of the decoded bytes — feeding the same image
+   * Deduplicated by SHA-256 of the decoded bytes — feeding the same file
    * in twice yields the same mediaUrl without writing the file again.
    *
    * Accepts either a full `data:<mime>;base64,<b64>` URL or a raw base64
    * string together with an explicit `mimeType`.
+   *
+   * The on-disk filename uses the original file's extension when
+   * available (`hintedFilename`), falling back to a MIME-table lookup,
+   * and then to `bin` as a last resort. This matters on macOS: without
+   * a recognized extension Finder launches Archive Utility which tries
+   * to decompress the bytes and fails, even for perfectly valid PDFs.
    */
   async putBase64(
     input: string,
     explicitMime?: string,
+    hintedFilename?: string,
   ): Promise<{ success: boolean; mediaUrl?: string; mediaId?: string; error?: string }> {
     try {
       // Parse data URL vs raw base64
@@ -197,7 +233,15 @@ export const mediaSurrealStore = {
       }
 
       const hash = createHash('sha256').update(buffer).digest('hex').slice(0, 16);
-      const ext = extForMime(mimeType);
+      // Extension preference: original filename > MIME lookup > 'bin'.
+      // Preserving the user's original extension is critical on macOS,
+      // where Finder uses the extension (not the bytes) to pick a
+      // handler. A mislabeled `.bin` fires up Archive Utility even for
+      // valid PDFs.
+      const hintExt = hintedFilename && hintedFilename.includes('.')
+        ? hintedFilename.slice(hintedFilename.lastIndexOf('.') + 1).toLowerCase()
+        : '';
+      const ext = hintExt || extForMime(mimeType);
       const prefix = subDir === 'audio' ? 'audio' : subDir === 'images' ? 'img' : 'file';
       const mediaId = `${prefix}-${hash}`;
       const fileName = `${mediaId}.${ext}`;

@@ -311,10 +311,10 @@ async function resolveAttachmentSrc(
 ): Promise<FileBlockContent> {
   if (rawSrc.startsWith('data:') && rawSrc.includes(';base64,')) {
     try {
-      const r = await mediaSurrealStore.putBase64(rawSrc);
+      const mimeMatch = rawSrc.match(/^data:([^;]+);/);
+      const mime = mimeMatch ? mimeMatch[1] : 'application/octet-stream';
+      const r = await mediaSurrealStore.putBase64(rawSrc, mime, filename);
       if (r.success && r.mediaUrl) {
-        const mimeMatch = rawSrc.match(/^data:([^;]+);/);
-        const mime = mimeMatch ? mimeMatch[1] : 'application/octet-stream';
         return {
           mediaId: r.mediaId || '',
           src: r.mediaUrl,

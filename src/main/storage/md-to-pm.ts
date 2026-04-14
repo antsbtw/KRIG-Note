@@ -265,10 +265,10 @@ async function resolvePMAttachmentSrc(
 ): Promise<{ src: string; mediaId: string; filename: string; mimeType: string }> {
   if (rawSrc.startsWith('data:') && rawSrc.includes(';base64,')) {
     try {
-      const r = await mediaSurrealStore.putBase64(rawSrc);
+      const mimeMatch = rawSrc.match(/^data:([^;]+);/);
+      const mime = mimeMatch ? mimeMatch[1] : 'application/octet-stream';
+      const r = await mediaSurrealStore.putBase64(rawSrc, mime, filename);
       if (r.success && r.mediaUrl) {
-        const mimeMatch = rawSrc.match(/^data:([^;]+);/);
-        const mime = mimeMatch ? mimeMatch[1] : 'application/octet-stream';
         return { src: r.mediaUrl, mediaId: r.mediaId || '', filename, mimeType: mime };
       }
     } catch { /* fall through */ }

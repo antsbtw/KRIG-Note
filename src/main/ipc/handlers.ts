@@ -692,9 +692,9 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
   // store and return a `media://...` URL. Renderer uses this when the
   // user uploads a file via a fileBlock/externalRef placeholder — we
   // don't want to embed the base64 into note JSON.
-  ipcMain.handle(IPC.MEDIA_PUT_BASE64, async (_e, params: { input: string; mimeType?: string }) => {
+  ipcMain.handle(IPC.MEDIA_PUT_BASE64, async (_e, params: { input: string; mimeType?: string; filename?: string }) => {
     const { mediaSurrealStore } = await import('../media/media-surreal-store');
-    return mediaSurrealStore.putBase64(params.input, params.mimeType);
+    return mediaSurrealStore.putBase64(params.input, params.mimeType, params.filename);
   });
 
   // MEDIA_RESOLVE_PATH: turn `media://bucket/name.ext` into the real disk
