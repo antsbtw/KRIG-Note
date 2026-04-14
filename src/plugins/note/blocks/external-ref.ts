@@ -63,9 +63,6 @@ const externalRefNodeView: NodeViewFactory = (initialNode, view, getPos) => {
   dom.classList.add('render-block', 'render-block--externalRef');
   dom.dataset.atomType = 'externalRef';
 
-  dom.addEventListener('mouseenter', () => dom.classList.add('render-block--hovered'));
-  dom.addEventListener('mouseleave', () => dom.classList.remove('render-block--hovered'));
-
   const api = (window as any).viewAPI;
 
   const updateAttrs = (attrs: Record<string, unknown>) => {
@@ -213,8 +210,10 @@ export const externalRefBlock: BlockDef = {
   name: 'externalRef',
   group: 'block',
   nodeSpec: {
+    // See fileBlock — non-atom with empty text content to keep PM
+    // mouse events flowing for block-handle hover.
+    content: 'text*',
     group: 'block',
-    atom: true,
     draggable: true,
     selectable: true,
     attrs: {

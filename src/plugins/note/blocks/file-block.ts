@@ -103,9 +103,6 @@ const fileBlockNodeView: NodeViewFactory = (initialNode, view, getPos) => {
   dom.classList.add('render-block', 'render-block--fileBlock');
   dom.dataset.atomType = 'fileBlock';
 
-  dom.addEventListener('mouseenter', () => dom.classList.add('render-block--hovered'));
-  dom.addEventListener('mouseleave', () => dom.classList.remove('render-block--hovered'));
-
   const api = (window as any).viewAPI;
 
   /** Update the underlying PM node's attributes. */
@@ -250,8 +247,14 @@ export const fileBlockBlock: BlockDef = {
   name: 'fileBlock',
   group: 'block',
   nodeSpec: {
+    // NOT `atom: true`. ProseMirror doesn't dispatch mousemove into
+    // atoms — the global block-handle plugin would never locate the
+    // block under the cursor. A single-line text content (like
+    // mathBlock uses) makes the block "enterable" from PM's view
+    // while keeping the UI strictly read-only (our NodeView never
+    // exposes contentDOM, so the text is inaccessible to the user).
+    content: 'text*',
     group: 'block',
-    atom: true,
     draggable: true,
     selectable: true,
     attrs: {

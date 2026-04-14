@@ -115,6 +115,7 @@ export async function markdownToProseMirror(md: string): Promise<PMNode[]> {
           size:     null,
           source:   null,
         },
+        // text* content — empty; see fileBlock nodeSpec comment.
       });
       i++;
       continue;
@@ -135,6 +136,7 @@ export async function markdownToProseMirror(md: string): Promise<PMNode[]> {
           size: null,
           modifiedAt: null,
         },
+        // text* content — empty.
       });
       i++;
       continue;
