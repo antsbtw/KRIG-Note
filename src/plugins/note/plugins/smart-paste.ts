@@ -1,32 +1,49 @@
 /**
- * smart-paste — normalize clipboard content into KRIG markdown atoms.
+ * smart-paste — Shift-triggered "paste with formatting" for rich content.
  *
- * Clipboard data comes in two common flavors:
+ * Design (like Google Docs / Notion):
  *
- *   text/plain
- *     AI assistants (Claude / ChatGPT / Gemini), GitHub code viewers,
- *     and anything that treats text as source tend to put **Markdown**
- *     in text/plain. If we feed that through md-to-pm the result is
- *     a proper block tree (code fences, math, lists, etc).
+ *   Cmd+V  (default)      → plain text paste
+ *                           Default ProseMirror behavior: insert the
+ *                           clipboard's text/plain verbatim, preserving
+ *                           line breaks as paragraph splits but NOT
+ *                           interpreting markdown markers. Links are
+ *                           lost as plain text, but pastes are
+ *                           predictable and never surprise the user.
  *
- *   text/html
- *     Wiki / blog / docs / most browsers put rendered HTML here. The
- *     text/plain flavor for those is usually a flat single-paragraph
- *     string with all links and inline marks stripped. To preserve
- *     structure we parse the HTML back to Markdown first and then
- *     feed it to md-to-pm.
+ *   Cmd+Shift+V            → smart paste
+ *                           This plugin kicks in. We pick the best
+ *                           source in the clipboard:
+ *                             - text/plain if it already looks like
+ *                               Markdown (has newlines or markdown
+ *                               markers)  → feed to md-to-pm
+ *                             - else text/html if it has structural
+ *                               tags  → html → markdown → md-to-pm
+ *                             - else fall back to plain behavior
+ *                           The result is a proper ProseMirror block
+ *                           fragment (headings, code, math, images,
+ *                           links, tables, …).
  *
- * Dispatcher:
- *   1. Images in clipboard  → let paste-media handle it (earlier in
- *      NoteEditor.buildPlugins).
- *   2. `text/plain` looks like Markdown (has newlines or common
- *      markdown markers) → use text/plain directly.
- *   3. Else if `text/html` has structural elements → html → markdown.
- *   4. Else (boring plain text, single word, etc) → default PM paste.
+ * ─────────────────────────────────────────────────────────────
+ * How Shift is detected
+ * ─────────────────────────────────────────────────────────────
+ * ClipboardEvent doesn't expose modifier keys. We install a global
+ * keydown/keyup listener on `window` that tracks shiftDown. When a
+ * paste fires, we read that flag. The listener is installed lazily
+ * on first plugin construction and kept alive for the lifetime of
+ * the editor (no cleanup needed — it's cheap and the editor lives
+ * as long as the renderer).
  *
- * Both Markdown sources go through the same md-to-pm pipeline via
- * the MD_TO_PM_NODES IPC, producing a ProseMirror fragment that
- * replaces the current selection in-place.
+ * ─────────────────────────────────────────────────────────────
+ * Interaction with other paste plugins
+ * ─────────────────────────────────────────────────────────────
+ *   - paste-media (image/* files) runs first and handles images
+ *     regardless of Shift state.
+ *   - We skip when an image is in the clipboard.
+ *
+ * Shortcut reminder: on macOS Cmd+Shift+V is the browser convention
+ * for "paste and match style" in Google Docs / Slack / most editors.
+ * Familiar enough that no UI hint is needed.
  */
 
 import { Plugin } from 'prosemirror-state';
@@ -37,10 +54,27 @@ interface ViewAPILike {
   markdownToPMNodes?: (markdown: string) => Promise<unknown[]>;
 }
 
+// Global shift tracker. Installed once on first plugin instance.
+let shiftDown = false;
+let trackerInstalled = false;
+function installShiftTracker() {
+  if (trackerInstalled) return;
+  trackerInstalled = true;
+  window.addEventListener('keydown', (e) => { if (e.key === 'Shift') shiftDown = true; });
+  window.addEventListener('keyup', (e) => { if (e.key === 'Shift') shiftDown = false; });
+  // Reset on focus loss — if user alt-tabs while holding shift, the
+  // keyup may never reach us.
+  window.addEventListener('blur', () => { shiftDown = false; });
+}
+
 export function smartPastePlugin(): Plugin {
+  installShiftTracker();
   return new Plugin({
     props: {
       handlePaste(view, event) {
+        // Only activate on Cmd+Shift+V. Plain Cmd+V stays default.
+        if (!shiftDown) return false;
+
         const cd = event.clipboardData;
         if (!cd) return false;
 
@@ -52,35 +86,27 @@ export function smartPastePlugin(): Plugin {
         const plain = cd.getData('text/plain');
         const html = cd.getData('text/html');
 
-        // Path 1: text/plain looks like raw Markdown → use it directly.
-        // Path 2: text/html has rich structure → html → markdown.
-        // Else: let PM's default handler insert the plain text.
+        // Pick the best markdown source: prefer text/plain if it
+        // already reads as markdown (AI assistants, code sites);
+        // otherwise convert text/html → markdown (wiki, blog).
         let markdown = '';
         if (plain && looksLikeMarkdown(plain)) {
           markdown = plain;
         } else if (html && looksLikeRichHtml(html)) {
           markdown = htmlToMarkdown(html);
+        } else if (plain) {
+          markdown = plain;
         }
         if (!markdown || !markdown.trim()) return false;
 
-        // Convert asynchronously via existing pipeline; we've already
-        // told ProseMirror we handled the event (return true) so default
-        // paste is cancelled.
         const api: ViewAPILike | undefined = (window as any).viewAPI;
-        if (!api?.markdownToPMNodes) {
-          // Pipeline not wired yet; fall back to inserting raw markdown
-          // as plain text (better than losing content entirely).
-          const tr = view.state.tr.insertText(markdown, view.state.selection.from, view.state.selection.to);
-          view.dispatch(tr);
-          return true;
-        }
+        if (!api?.markdownToPMNodes) return false;
 
         api.markdownToPMNodes(markdown).then(nodes => {
           if (!Array.isArray(nodes) || nodes.length === 0) return;
           try {
             const { state } = view;
             const { schema } = state;
-            // Hydrate PM nodes from the JSON shapes main sent back.
             const pmNodes = nodes
               .map(n => {
                 try { return schema.nodeFromJSON(n as any); }
@@ -89,11 +115,6 @@ export function smartPastePlugin(): Plugin {
               .filter((n): n is NonNullable<typeof n> => !!n);
             if (pmNodes.length === 0) return;
 
-            // Insert all nodes in one replace, using a Slice built from a
-            // Fragment. This is the only correct way to paste multiple
-            // block-level nodes: it preserves order (manual insert() in a
-            // loop would reverse them because the insert pos never moves
-            // forward), and PM handles the block-boundary splitting.
             const fragment = Fragment.from(pmNodes);
             const slice = new Slice(fragment, 0, 0);
             const tr = state.tr.replaceSelection(slice).scrollIntoView();
@@ -111,24 +132,11 @@ export function smartPastePlugin(): Plugin {
   });
 }
 
-/**
- * Heuristic to decide when to invoke the markdown pipeline.
- *
- * If the text is multi-line, or contains any common markdown marker
- * (heading, fenced code, list bullet, table pipe, math delimiter,
- * image/link syntax), treat as markdown.  Otherwise let ProseMirror
- * do its normal caret-insertion so short word/phrase pastes aren't
- * surprising.
- */
 function looksLikeMarkdown(text: string): boolean {
   if (/\n/.test(text)) return true;
   return /(^|\s)(#{1,3}\s|[-*]\s|\d+\.\s|>\s|```|\$\$|!\[|\[[^\]]+\]\()/m.test(text);
 }
 
-/**
- * Decide whether an HTML payload is worth parsing to Markdown. Plain
- * text wrapped in a single <span> isn't, Wiki's <p>+<a>+<b> layout is.
- */
 function looksLikeRichHtml(html: string): boolean {
   return /<\s*(h[1-6]|ul|ol|li|pre|code|blockquote|table|img|a\s|strong|b\s|b>|em\s|em>|i\s|i>)/i.test(html);
 }
