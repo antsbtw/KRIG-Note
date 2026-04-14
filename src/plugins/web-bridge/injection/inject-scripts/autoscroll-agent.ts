@@ -45,7 +45,7 @@ export function getAutoscrollAgentScript(
   assistantMessageSelector: string,
 ): string {
   return `(function() {
-  var VERSION = 3;
+  var VERSION = 2;
   if (window.__krig_autoscroll_version === VERSION) return 'already-installed';
   // If an older version is running, tear it down so the new listeners replace it.
   if (window.__krig_autoscroll_cleanup) {
@@ -86,15 +86,18 @@ export function getAutoscrollAgentScript(
   }
 
   /**
-   * Logical distance to "bottom" = distance to the resting position
-   * (REST_BUFFER_PX above the real bottom). When the agent is
-   * following, it parks the container there; the logical distance is
-   * 0, so the host-side jump button stays hidden. Clamped to >= 0.
+   * Logical distance to "bottom" = distance to our preferred resting
+   * position (30% above the real bottom). When the agent is following,
+   * it parks the container at that resting position; the logical
+   * distance there is 0, which the host uses to hide the jump button.
+   * A negative value (user somehow below resting position) is clamped
+   * to 0 for simpler downstream checks.
    */
   function distanceToBottom() {
     if (!container) return 0;
+    var restBuffer = Math.floor(container.clientHeight * 0.3);
     var real = container.scrollHeight - container.scrollTop - container.clientHeight;
-    return Math.max(0, real - REST_BUFFER_PX);
+    return Math.max(0, real - restBuffer);
   }
 
   function publishState() {
@@ -106,18 +109,18 @@ export function getAutoscrollAgentScript(
   }
 
   /**
-   * Rest a small fixed buffer above the true bottom so the newest
-   * line lands just above the prompt input box instead of flush
-   * against the viewport edge. 80px keeps about two text lines of
-   * breathing room — enough not to feel cramped, little enough that
-   * streaming content remains near the input (where the user's
-   * attention is).
+   * Scroll so that the newest content sits slightly below the viewport
+   * center rather than pinned to the very bottom. Pinning hard to the
+   * bottom feels "top-heavy" — the latest sentence lands at the top
+   * edge while the input box occupies the bottom, leaving the middle
+   * blank. Stopping ~30% of a viewport-height above the actual bottom
+   * keeps the streaming text near the middle, which is much easier
+   * on the eye.
    */
-  var REST_BUFFER_PX = 80;
-
   function scrollToBottom() {
     if (!container) return;
-    var target = container.scrollHeight - container.clientHeight - REST_BUFFER_PX;
+    var bottomOffset = Math.floor(container.clientHeight * 0.3);
+    var target = container.scrollHeight - container.clientHeight - bottomOffset;
     container.scrollTop = Math.max(0, target);
   }
 
