@@ -63,6 +63,7 @@ interface AIWebViewProps {
 }
 
 const LAST_SERVICE_KEY = 'krig.ai.lastService';
+const SYNC_ENABLED_KEY_PREFIX = 'krig.ai.syncEnabled.'; // + serviceId
 
 /** Read the last-used AI service from localStorage; fall back to default if missing/invalid. */
 function loadLastService(): AIServiceId {
@@ -75,6 +76,20 @@ function loadLastService(): AIServiceId {
   return DEFAULT_AI_SERVICE;
 }
 
+/** Per-service sync toggle persistence. Default: on (enter sync mode = wants sync). */
+function loadSyncEnabled(serviceId: AIServiceId): boolean {
+  try {
+    const v = localStorage.getItem(SYNC_ENABLED_KEY_PREFIX + serviceId);
+    if (v === '0') return false;
+    if (v === '1') return true;
+  } catch {}
+  return true;
+}
+
+function saveSyncEnabled(serviceId: AIServiceId, enabled: boolean): void {
+  try { localStorage.setItem(SYNC_ENABLED_KEY_PREFIX + serviceId, enabled ? '1' : '0'); } catch {}
+}
+
 export function AIWebView({ workModeId = '' }: AIWebViewProps) {
   const isSyncMode = workModeId === 'ai-sync';
   const webviewRef = useRef<Electron.WebviewTag | null>(null);
@@ -83,8 +98,25 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
   const [loading, setLoading] = useState(true);
   const [showServiceMenu, setShowServiceMenu] = useState(false);
   const [aiStatus, setAiStatus] = useState<'idle' | 'injecting' | 'waiting' | 'capturing'>('idle');
-  const [syncEnabled, setSyncEnabled] = useState(isSyncMode);
+  const [syncEnabled, setSyncEnabledState] = useState(() =>
+    isSyncMode && loadSyncEnabled(loadLastService()),
+  );
   const [syncCount, setSyncCount] = useState(0);
+
+  /** Toggle and persist per-service. */
+  const setSyncEnabled = useCallback((next: boolean | ((prev: boolean) => boolean)) => {
+    setSyncEnabledState(prev => {
+      const v = typeof next === 'function' ? next(prev) : next;
+      saveSyncEnabled(currentService, v);
+      return v;
+    });
+  }, [currentService]);
+
+  // When the active service changes, load that service's own saved toggle.
+  useEffect(() => {
+    if (!isSyncMode) return;
+    setSyncEnabledState(loadSyncEnabled(currentService));
+  }, [currentService, isSyncMode]);
   const lastSyncedCountRef = useRef(0);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -149,6 +181,9 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
   const noteOpenRef = useRef(false);
   const lastTypedAtRef = useRef(0);
   const [noteOpen, setNoteOpen] = useState(false);
+  // Last insert failure surfaced from NoteView (e.g. note deleted / view
+  // destroyed). Displayed inline in the toolbar; cleared by re-enabling sync.
+  const [syncError, setSyncError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isSyncMode || !syncEnabled) return;
@@ -197,6 +232,12 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
         noteOpenRef.current = open;
         if (t > lastTypedAtRef.current) lastTypedAtRef.current = t;
         setNoteOpen(open);
+      } else if (msg.protocol === 'ai-sync' && msg.action === 'as:insert-failed') {
+        const reason = String(msg.payload?.reason ?? 'unknown');
+        console.warn('[AIWebView Sync] Insert failed:', reason);
+        setSyncError(reason === 'no-active-note' ? '无可用笔记' : '插入失败');
+        // Pause the toggle so we stop sending more turns into the void.
+        setSyncEnabled(false);
       }
     });
 
@@ -656,17 +697,30 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
         {isSyncMode && (
           <button
             style={{
-              background: !syncEnabled ? '#555' : (noteOpen ? '#1b5e20' : '#8a6d3b'),
+              background: syncError ? '#8b1e1e'
+                : !syncEnabled ? '#555'
+                : noteOpen ? '#1b5e20' : '#8a6d3b',
               border: 'none', borderRadius: 4, color: '#fff',
               fontSize: 11, padding: '3px 8px', cursor: 'pointer',
               display: 'flex', alignItems: 'center', gap: 4,
             }}
-            onClick={() => setSyncEnabled(!syncEnabled)}
-            title={!syncEnabled ? '恢复同步' : noteOpen ? '暂停同步' : '等待 NoteView 打开'}
+            onClick={() => {
+              setSyncError(null);
+              setSyncEnabled(!syncEnabled);
+            }}
+            title={
+              syncError ? `同步已停止：${syncError}（点击重试）`
+              : !syncEnabled ? '恢复同步'
+              : noteOpen ? '暂停同步'
+              : '等待 NoteView 打开'
+            }
           >
-            <span>{!syncEnabled ? '⏸' : noteOpen ? '●' : '⏸'}</span>
+            <span>{syncError ? '⚠' : !syncEnabled ? '⏸' : noteOpen ? '●' : '⏸'}</span>
             <span>
-              {!syncEnabled ? '已暂停' : noteOpen ? `同步中 (${syncCount})` : `等待笔记 (${syncCount})`}
+              {syncError ? `同步失败：${syncError}`
+                : !syncEnabled ? '已暂停'
+                : noteOpen ? `同步中 (${syncCount})`
+                : `等待笔记 (${syncCount})`}
             </span>
           </button>
         )}

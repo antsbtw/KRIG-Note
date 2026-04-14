@@ -654,10 +654,26 @@ export function NoteEditor() {
       if (msg.protocol === 'ai-sync' && msg.action === 'as:append-turn') {
         queue = queue.then(async () => {
           const view = viewRef.current;
-          if (!view || view.isDestroyed) return;
+          if (!view || view.isDestroyed || !currentNoteIdRef.current) {
+            // No target note (view torn down, note deleted) — tell peer so
+            // it can pause the sync toggle and surface a warning.
+            viewAPI.sendToOtherSlot({
+              protocol: 'ai-sync',
+              action: 'as:insert-failed',
+              payload: { reason: 'no-active-note' },
+            });
+            return;
+          }
           const { insertTurnIntoNote } = await import('../ai-workflow/sync-note-receiver');
           await insertTurnIntoNote(view, msg.payload);
-        }).catch(err => console.warn('[SyncNote] insert failed:', err));
+        }).catch(err => {
+          console.warn('[SyncNote] insert failed:', err);
+          viewAPI.sendToOtherSlot({
+            protocol: 'ai-sync',
+            action: 'as:insert-failed',
+            payload: { reason: String(err) },
+          });
+        });
       } else if (msg.protocol === 'ai-sync' && msg.action === 'as:probe') {
         // Peer asks "are you open?" — reply immediately.
         viewAPI.sendToOtherSlot({
