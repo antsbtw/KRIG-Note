@@ -45,7 +45,7 @@ export function getAutoscrollAgentScript(
   assistantMessageSelector: string,
 ): string {
   return `(function() {
-  var VERSION = 2;
+  var VERSION = 4;
   if (window.__krig_autoscroll_version === VERSION) return 'already-installed';
   // If an older version is running, tear it down so the new listeners replace it.
   if (window.__krig_autoscroll_cleanup) {
@@ -55,6 +55,15 @@ export function getAutoscrollAgentScript(
 
   var THRESHOLD = 300; // px — follow the bottom when within this many
   var HIDE_BUTTON_AT = 80; // host hides the floating button when below this
+  /**
+   * Fraction of the visible container height left empty below the
+   * resting position. 0 = pin to the true bottom; 0.05 = newest line
+   * stops ~5% above the real bottom (roughly one or two lines of
+   * breathing room); 0.3 = stops near viewport center. Tweaked here
+   * in one place — both scrollToBottom() and distanceToBottom() read
+   * this constant, so they stay in sync.
+   */
+  var REST_BUFFER_FRAC = 0.05;
 
   var assistantSel = ${JSON.stringify(assistantMessageSelector)};
   var container = null;
@@ -95,7 +104,7 @@ export function getAutoscrollAgentScript(
    */
   function distanceToBottom() {
     if (!container) return 0;
-    var restBuffer = Math.floor(container.clientHeight * 0.3);
+    var restBuffer = Math.floor(container.clientHeight * REST_BUFFER_FRAC);
     var real = container.scrollHeight - container.scrollTop - container.clientHeight;
     return Math.max(0, real - restBuffer);
   }
@@ -119,7 +128,7 @@ export function getAutoscrollAgentScript(
    */
   function scrollToBottom() {
     if (!container) return;
-    var bottomOffset = Math.floor(container.clientHeight * 0.3);
+    var bottomOffset = Math.floor(container.clientHeight * REST_BUFFER_FRAC);
     var target = container.scrollHeight - container.clientHeight - bottomOffset;
     container.scrollTop = Math.max(0, target);
   }
