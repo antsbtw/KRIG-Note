@@ -57,10 +57,14 @@ function fileToFileHref(file: File): string {
 const externalRefNodeView: NodeViewFactory = (initialNode, view, getPos) => {
   let node = initialNode;
 
+  // Follow KRIG render-block convention so global block-handle plugin
+  // and hover styles work automatically (matches image/video/tweet).
   const dom = document.createElement('div');
-  dom.classList.add('external-ref');
-  dom.setAttribute('contenteditable', 'false');
+  dom.classList.add('render-block', 'render-block--externalRef');
   dom.dataset.atomType = 'externalRef';
+
+  dom.addEventListener('mouseenter', () => dom.classList.add('render-block--hovered'));
+  dom.addEventListener('mouseleave', () => dom.classList.remove('render-block--hovered'));
 
   const api = (window as any).viewAPI;
 
@@ -76,6 +80,10 @@ const externalRefNodeView: NodeViewFactory = (initialNode, view, getPos) => {
 
   const renderCard = (n: PMNode) => {
     dom.innerHTML = '';
+    const content = document.createElement('div');
+    content.classList.add('render-block__content', 'external-ref');
+    dom.appendChild(content);
+
     const kind = (n.attrs.kind as 'file' | 'url') || 'url';
     const href = (n.attrs.href as string) || '';
     const title = (n.attrs.title as string) || '';
@@ -136,11 +144,14 @@ const externalRefNodeView: NodeViewFactory = (initialNode, view, getPos) => {
     }
 
     inner.appendChild(actions);
-    dom.appendChild(inner);
+    content.appendChild(inner);
   };
 
   const renderPlaceholder = () => {
     dom.innerHTML = '';
+    const content = document.createElement('div');
+    content.classList.add('render-block__content', 'external-ref');
+    dom.appendChild(content);
     const placeholder = createPlaceholder({
       icon: '🔗',
       uploadLabel: 'Pick a file',
@@ -174,7 +185,7 @@ const externalRefNodeView: NodeViewFactory = (initialNode, view, getPos) => {
         updateAttrs({ kind: isFile ? 'file' : 'url', href, title: '' });
       },
     });
-    dom.appendChild(placeholder);
+    content.appendChild(placeholder);
   };
 
   const paint = (n: PMNode) => {

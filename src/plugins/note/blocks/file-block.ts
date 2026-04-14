@@ -97,10 +97,14 @@ function formatSize(bytes?: number): string {
 const fileBlockNodeView: NodeViewFactory = (initialNode, view, getPos) => {
   let node = initialNode;
 
+  // Follow KRIG render-block convention so global block-handle plugin
+  // and hover styles work automatically (matches image/video/tweet).
   const dom = document.createElement('div');
-  dom.classList.add('file-block');
-  dom.setAttribute('contenteditable', 'false');
+  dom.classList.add('render-block', 'render-block--fileBlock');
   dom.dataset.atomType = 'fileBlock';
+
+  dom.addEventListener('mouseenter', () => dom.classList.add('render-block--hovered'));
+  dom.addEventListener('mouseleave', () => dom.classList.remove('render-block--hovered'));
 
   const api = (window as any).viewAPI;
 
@@ -137,6 +141,9 @@ const fileBlockNodeView: NodeViewFactory = (initialNode, view, getPos) => {
   /** Render "filled" card state (have src) into the dom. */
   const renderCard = (n: PMNode) => {
     dom.innerHTML = '';
+    const content = document.createElement('div');
+    content.classList.add('render-block__content', 'file-block');
+    dom.appendChild(content);
     const inner = document.createElement('div');
     inner.classList.add('file-block__inner');
 
@@ -190,12 +197,15 @@ const fileBlockNodeView: NodeViewFactory = (initialNode, view, getPos) => {
     actions.appendChild(revealBtn);
 
     inner.appendChild(actions);
-    dom.appendChild(inner);
+    content.appendChild(inner);
   };
 
   /** Render placeholder state (no src) — upload button + URL embed. */
   const renderPlaceholder = () => {
     dom.innerHTML = '';
+    const content = document.createElement('div');
+    content.classList.add('render-block__content', 'file-block');
+    dom.appendChild(content);
     const placeholder = createPlaceholder({
       icon: '📎',
       uploadLabel: 'Choose file',
@@ -207,7 +217,7 @@ const fileBlockNodeView: NodeViewFactory = (initialNode, view, getPos) => {
         updateAttrs({ src: url, filename: (node.attrs.filename as string) || 'file' });
       },
     });
-    dom.appendChild(placeholder);
+    content.appendChild(placeholder);
   };
 
   const paint = (n: PMNode) => {
