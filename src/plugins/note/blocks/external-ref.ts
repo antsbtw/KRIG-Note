@@ -1,5 +1,6 @@
 import type { BlockDef, NodeViewFactory } from '../types';
 import type { Node as PMNode } from 'prosemirror-model';
+import { createPlaceholder } from './render-block-base';
 
 /**
  * externalRef — 对外部资源的一等引用（block）
@@ -36,91 +37,146 @@ function decodeHref(href: string): { kind: 'file' | 'url'; display: string; loca
   }
 }
 
-const externalRefNodeView: NodeViewFactory = (node, _view, _getPos) => {
+/**
+ * Encode a browser-picked File path into a `file:///...` URI.
+ * `file.webkitRelativePath` is usually empty in the <input type=file>
+ * case; `file.path` (Electron non-standard) is what we need. Falls
+ * back to a pure-name `file://` if path is unavailable.
+ */
+function fileToFileHref(file: File): string {
+  const p: string = (file as any).path || '';
+  if (p) {
+    const enc = p.split('/').map(s => s ? encodeURIComponent(s) : '').join('/');
+    return `file://${enc}`;
+  }
+  return `file://${encodeURIComponent(file.name)}`;
+}
+
+const externalRefNodeView: NodeViewFactory = (initialNode, view, getPos) => {
+  let node = initialNode;
+
   const dom = document.createElement('div');
   dom.classList.add('external-ref');
   dom.setAttribute('contenteditable', 'false');
   dom.dataset.atomType = 'externalRef';
 
-  const inner = document.createElement('div');
-  inner.classList.add('external-ref__inner');
-  dom.appendChild(inner);
+  const api = (window as any).viewAPI;
 
-  const iconEl = document.createElement('div');
-  iconEl.classList.add('external-ref__icon');
-  inner.appendChild(iconEl);
+  const updateAttrs = (attrs: Record<string, unknown>) => {
+    const pos = typeof getPos === 'function' ? getPos() : undefined;
+    if (pos == null) return;
+    let tr = view.state.tr;
+    for (const [key, value] of Object.entries(attrs)) {
+      tr = tr.setNodeAttribute(pos, key, value);
+    }
+    view.dispatch(tr);
+  };
 
-  const meta = document.createElement('div');
-  meta.classList.add('external-ref__meta');
-  inner.appendChild(meta);
-
-  const titleEl = document.createElement('div');
-  titleEl.classList.add('external-ref__title');
-  meta.appendChild(titleEl);
-
-  const subEl = document.createElement('div');
-  subEl.classList.add('external-ref__sub');
-  meta.appendChild(subEl);
-
-  const actions = document.createElement('div');
-  actions.classList.add('external-ref__actions');
-  inner.appendChild(actions);
-
-  const openBtn = document.createElement('button');
-  openBtn.classList.add('external-ref__btn');
-  openBtn.textContent = '打开';
-  actions.appendChild(openBtn);
-
-  const revealBtn = document.createElement('button');
-  revealBtn.classList.add('external-ref__btn');
-  revealBtn.textContent = '在 Finder 显示';
-  actions.appendChild(revealBtn);
-
-  function render(n: PMNode) {
+  const renderCard = (n: PMNode) => {
+    dom.innerHTML = '';
     const kind = (n.attrs.kind as 'file' | 'url') || 'url';
     const href = (n.attrs.href as string) || '';
     const title = (n.attrs.title as string) || '';
-
     const decoded = decodeHref(href);
+
+    const inner = document.createElement('div');
+    inner.classList.add('external-ref__inner');
+
+    const iconEl = document.createElement('div');
+    iconEl.classList.add('external-ref__icon');
     iconEl.textContent = kind === 'file' ? '📁' : '🌐';
+    inner.appendChild(iconEl);
+
+    const meta = document.createElement('div');
+    meta.classList.add('external-ref__meta');
+    const titleEl = document.createElement('div');
+    titleEl.classList.add('external-ref__title');
     titleEl.textContent = title || decoded.display || '(无标题)';
+    meta.appendChild(titleEl);
+    const subEl = document.createElement('div');
+    subEl.classList.add('external-ref__sub');
     subEl.textContent = kind === 'file' ? (decoded.localPath || '') : (decoded.display || '');
+    meta.appendChild(subEl);
+    inner.appendChild(meta);
 
-    openBtn.disabled = !href;
-    // Reveal 只对本机文件有意义
-    revealBtn.style.display = kind === 'file' ? '' : 'none';
-    revealBtn.disabled = !href;
-  }
+    const actions = document.createElement('div');
+    actions.classList.add('external-ref__actions');
 
-  render(node);
+    const openBtn = document.createElement('button');
+    openBtn.classList.add('external-ref__btn');
+    openBtn.textContent = '打开';
+    openBtn.addEventListener('click', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      const h = (node.attrs.href as string) || '';
+      if (h) api?.openExternal?.(h);
+    });
+    actions.appendChild(openBtn);
 
-  const api = (window as any).viewAPI;
-
-  openBtn.addEventListener('click', (e) => {
-    e.preventDefault(); e.stopPropagation();
-    const href = (node.attrs.href as string) || '';
-    if (!href) return;
-    // Electron 的 shell.openExternal 既能处理 https:// 也能处理 file://
-    // ，按需分流。
-    api?.openExternal?.(href);
-  });
-
-  revealBtn.addEventListener('click', (e) => {
-    e.preventDefault(); e.stopPropagation();
-    const kind = (node.attrs.kind as 'file' | 'url') || 'url';
-    if (kind !== 'file') return;
-    const href = (node.attrs.href as string) || '';
-    const decoded = decodeHref(href);
-    if (decoded.localPath) {
-      api?.showItemInFolder?.(decoded.localPath);
+    if (kind === 'file') {
+      const revealBtn = document.createElement('button');
+      revealBtn.classList.add('external-ref__btn');
+      revealBtn.textContent = '在 Finder 显示';
+      revealBtn.addEventListener('click', (e) => {
+        e.preventDefault(); e.stopPropagation();
+        const d = decodeHref((node.attrs.href as string) || '');
+        if (d.localPath) api?.showItemInFolder?.(d.localPath);
+      });
+      actions.appendChild(revealBtn);
     }
-  });
+
+    inner.appendChild(actions);
+    dom.appendChild(inner);
+  };
+
+  const renderPlaceholder = () => {
+    dom.innerHTML = '';
+    const placeholder = createPlaceholder({
+      icon: '🔗',
+      uploadLabel: 'Pick a file',
+      uploadAccept: '*/*',
+      embedLabel: 'URL',
+      embedPlaceholder: 'https://... or file:///...',
+      onUpload: (_dataUrl, file) => {
+        if (!file) return;
+        const href = fileToFileHref(file);
+        updateAttrs({
+          kind: 'file',
+          href,
+          title: file.name,
+          mimeType: file.type || '',
+          size: file.size ?? null,
+          modifiedAt: (file as any).lastModified ?? null,
+        });
+      },
+      onEmbed: (raw) => {
+        const trimmed = raw.trim();
+        if (!trimmed) return;
+        const isFile = trimmed.startsWith('file:') || trimmed.startsWith('/');
+        const href = isFile && trimmed.startsWith('/')
+          ? `file://${trimmed.split('/').map(s => s ? encodeURIComponent(s) : '').join('/')}`
+          : trimmed;
+        updateAttrs({ kind: isFile ? 'file' : 'url', href, title: '' });
+      },
+    });
+    dom.appendChild(placeholder);
+  };
+
+  const paint = (n: PMNode) => {
+    if (n.attrs.href) renderCard(n);
+    else renderPlaceholder();
+  };
+
+  paint(node);
 
   return {
     dom,
     update(updated) {
       if (updated.type.name !== 'externalRef') return false;
-      render(updated);
+      const hadHref = !!node.attrs.href;
+      const hasHref = !!updated.attrs.href;
+      node = updated;
+      if (hadHref !== hasHref) paint(node);
+      else if (hasHref) renderCard(node);
       return true;
     },
   };

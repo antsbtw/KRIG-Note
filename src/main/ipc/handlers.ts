@@ -688,6 +688,15 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
     return mediaStore.download(url, type as 'audio' | 'image');
   });
 
+  // MEDIA_PUT_BASE64: persist a base64/data-URL payload into the media
+  // store and return a `media://...` URL. Renderer uses this when the
+  // user uploads a file via a fileBlock/externalRef placeholder — we
+  // don't want to embed the base64 into note JSON.
+  ipcMain.handle(IPC.MEDIA_PUT_BASE64, async (_e, params: { input: string; mimeType?: string }) => {
+    const { mediaSurrealStore } = await import('../media/media-surreal-store');
+    return mediaSurrealStore.putBase64(params.input, params.mimeType);
+  });
+
   ipcMain.handle(IPC.MEDIA_OPEN_EXTERNAL, async (_e, url: string) => {
     await shell.openExternal(url);
     return { success: true };

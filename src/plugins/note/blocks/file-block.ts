@@ -1,5 +1,6 @@
 import type { BlockDef, NodeViewFactory } from '../types';
 import type { Node as PMNode } from 'prosemirror-model';
+import { createPlaceholder } from './render-block-base';
 
 /**
  * fileBlock — 通用附件（RenderBlock）
@@ -56,94 +57,138 @@ function formatSize(bytes?: number): string {
  * right MIME; the browser opens/renders it in a new window.
  */
 
-const fileBlockNodeView: NodeViewFactory = (node, _view, _getPos) => {
+const fileBlockNodeView: NodeViewFactory = (initialNode, view, getPos) => {
+  let node = initialNode;
+
   const dom = document.createElement('div');
   dom.classList.add('file-block');
   dom.setAttribute('contenteditable', 'false');
   dom.dataset.atomType = 'fileBlock';
 
-  const inner = document.createElement('div');
-  inner.classList.add('file-block__inner');
-  dom.appendChild(inner);
-
-  const iconEl = document.createElement('div');
-  iconEl.classList.add('file-block__icon');
-  inner.appendChild(iconEl);
-
-  const meta = document.createElement('div');
-  meta.classList.add('file-block__meta');
-  inner.appendChild(meta);
-
-  const nameEl = document.createElement('div');
-  nameEl.classList.add('file-block__name');
-  meta.appendChild(nameEl);
-
-  const subEl = document.createElement('div');
-  subEl.classList.add('file-block__sub');
-  meta.appendChild(subEl);
-
-  const actions = document.createElement('div');
-  actions.classList.add('file-block__actions');
-  inner.appendChild(actions);
-
-  const openBtn = document.createElement('button');
-  openBtn.classList.add('file-block__btn');
-  openBtn.textContent = '打开';
-  actions.appendChild(openBtn);
-
-  const revealBtn = document.createElement('button');
-  revealBtn.classList.add('file-block__btn');
-  revealBtn.textContent = '在 Finder 显示';
-  actions.appendChild(revealBtn);
-
-  function render(n: PMNode) {
-    const src = (n.attrs.src as string) || '';
-    const filename = (n.attrs.filename as string) || '(未命名)';
-    const mimeType = (n.attrs.mimeType as string) || '';
-    const size = n.attrs.size as number | null | undefined;
-
-    iconEl.textContent = iconForMime(mimeType);
-    nameEl.textContent = filename;
-    const bits: string[] = [];
-    if (mimeType) bits.push(mimeType);
-    const s = formatSize(size ?? undefined);
-    if (s) bits.push(s);
-    subEl.textContent = bits.join(' · ');
-
-    openBtn.disabled = !src;
-    revealBtn.disabled = !src;
-  }
-
-  render(node);
-
   const api = (window as any).viewAPI;
 
-  openBtn.addEventListener('click', (e) => {
-    e.preventDefault(); e.stopPropagation();
-    const src = (node.attrs.src as string) || '';
-    if (!src) return;
-    // media:// URLs render via the registered protocol handler; Electron
-    // will open them in the default browser (or shell) which handles most
-    // common types (pdf/html/image/text). For obscure types this still
-    // works because the protocol returns the raw bytes with mimeType.
-    api?.openExternal?.(src);
-  });
+  /** Update the underlying PM node's attributes. */
+  const updateAttrs = (attrs: Record<string, unknown>) => {
+    const pos = typeof getPos === 'function' ? getPos() : undefined;
+    if (pos == null) return;
+    let tr = view.state.tr;
+    for (const [key, value] of Object.entries(attrs)) {
+      tr = tr.setNodeAttribute(pos, key, value);
+    }
+    view.dispatch(tr);
+  };
 
-  revealBtn.addEventListener('click', (e) => {
-    e.preventDefault(); e.stopPropagation();
-    const src = (node.attrs.src as string) || '';
-    if (!src) return;
-    // main 侧的 showItemInFolder 需要真实磁盘路径。我们传 media:// URL
-    // 过去；main handler 可以之后增强做解析。暂时用 openExternal 作为
-    // 兜底行为（打开文件本身而非 folder）。
-    api?.showItemInFolder?.(src);
-  });
+  /** Push a picked File through the media store and fill block attrs. */
+  const ingestFile = async (dataUrl: string, file?: File) => {
+    if (!api?.mediaPutBase64) return;
+    const mime = (file?.type || dataUrl.match(/^data:([^;]+);/)?.[1] || 'application/octet-stream');
+    const r = await api.mediaPutBase64(dataUrl, mime);
+    if (r?.success && r.mediaUrl) {
+      updateAttrs({
+        src: r.mediaUrl,
+        mediaId: r.mediaId || '',
+        filename: file?.name || (node.attrs.filename as string) || 'file',
+        mimeType: mime,
+        size: file?.size ?? null,
+        source: 'user-uploaded',
+      });
+    }
+  };
+
+  /** Render "filled" card state (have src) into the dom. */
+  const renderCard = (n: PMNode) => {
+    dom.innerHTML = '';
+    const inner = document.createElement('div');
+    inner.classList.add('file-block__inner');
+
+    const iconEl = document.createElement('div');
+    iconEl.classList.add('file-block__icon');
+    iconEl.textContent = iconForMime((n.attrs.mimeType as string) || '');
+    inner.appendChild(iconEl);
+
+    const meta = document.createElement('div');
+    meta.classList.add('file-block__meta');
+    inner.appendChild(meta);
+
+    const nameEl = document.createElement('div');
+    nameEl.classList.add('file-block__name');
+    nameEl.textContent = (n.attrs.filename as string) || '(未命名)';
+    meta.appendChild(nameEl);
+
+    const subEl = document.createElement('div');
+    subEl.classList.add('file-block__sub');
+    const bits: string[] = [];
+    if (n.attrs.mimeType) bits.push(n.attrs.mimeType as string);
+    const s = formatSize((n.attrs.size as number | undefined) ?? undefined);
+    if (s) bits.push(s);
+    subEl.textContent = bits.join(' · ');
+    meta.appendChild(subEl);
+
+    const actions = document.createElement('div');
+    actions.classList.add('file-block__actions');
+
+    const openBtn = document.createElement('button');
+    openBtn.classList.add('file-block__btn');
+    openBtn.textContent = '打开';
+    openBtn.addEventListener('click', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      const src = (node.attrs.src as string) || '';
+      if (src) api?.openExternal?.(src);
+    });
+    actions.appendChild(openBtn);
+
+    const revealBtn = document.createElement('button');
+    revealBtn.classList.add('file-block__btn');
+    revealBtn.textContent = '在 Finder 显示';
+    revealBtn.addEventListener('click', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      const src = (node.attrs.src as string) || '';
+      if (src) api?.showItemInFolder?.(src);
+    });
+    actions.appendChild(revealBtn);
+
+    inner.appendChild(actions);
+    dom.appendChild(inner);
+  };
+
+  /** Render placeholder state (no src) — upload button + URL embed. */
+  const renderPlaceholder = () => {
+    dom.innerHTML = '';
+    const placeholder = createPlaceholder({
+      icon: '📎',
+      uploadLabel: 'Choose file',
+      uploadAccept: '*/*',
+      embedLabel: 'media:// URL',
+      embedPlaceholder: 'media://files/...',
+      onUpload: (dataUrl, file) => { void ingestFile(dataUrl, file); },
+      onEmbed: (url) => {
+        updateAttrs({ src: url, filename: (node.attrs.filename as string) || 'file' });
+      },
+    });
+    dom.appendChild(placeholder);
+  };
+
+  const paint = (n: PMNode) => {
+    if (n.attrs.src) renderCard(n);
+    else renderPlaceholder();
+  };
+
+  paint(node);
 
   return {
     dom,
     update(updated) {
       if (updated.type.name !== 'fileBlock') return false;
-      render(updated);
+      const hadSrc = !!node.attrs.src;
+      const hasSrc = !!updated.attrs.src;
+      node = updated;
+      // Switch between placeholder and card when src toggles
+      if (hadSrc !== hasSrc) {
+        paint(node);
+      } else if (hasSrc) {
+        // Same card, just refresh attrs (filename/size/mime may have changed)
+        renderCard(node);
+      }
       return true;
     },
   };

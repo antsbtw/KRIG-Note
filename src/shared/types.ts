@@ -230,6 +230,7 @@ export const IPC = {
 
   // 媒体操作
   MEDIA_DOWNLOAD: 'media:download',              // 下载远程媒体到本地
+  MEDIA_PUT_BASE64: 'media:put-base64',          // 将 base64/data URL 存入 media store，返回 media://... URL
   MEDIA_OPEN_EXTERNAL: 'media:open-external',    // 用系统浏览器打开 URL
   SHOW_ITEM_IN_FOLDER: 'media:show-in-folder',   // 在 Finder 中显示文件
 
