@@ -1,28 +1,27 @@
 /**
- * smart-paste — Shift-triggered "paste with formatting" for rich content.
+ * smart-paste — clipboard text → KRIG blocks.
  *
- * Design (like Google Docs / Notion):
+ * Design (inverse of Google Docs / Slack, matching the user's request
+ * that "markdown syntax is the default"):
  *
- *   Cmd+V  (default)      → plain text paste
- *                           Default ProseMirror behavior: insert the
- *                           clipboard's text/plain verbatim, preserving
- *                           line breaks as paragraph splits but NOT
- *                           interpreting markdown markers. Links are
- *                           lost as plain text, but pastes are
- *                           predictable and never surprise the user.
+ *   Cmd+V (default)       → interpret clipboard's text/plain as Markdown.
+ *                           AI assistants (Claude, ChatGPT, Gemini) and
+ *                           most dev-oriented sites put canonical
+ *                           Markdown in text/plain; feeding it through
+ *                           md-to-pm produces the correct block tree
+ *                           (math, code fences, lists, tables, …).
+ *                           text/html is intentionally ignored — rich
+ *                           HTML (Wikipedia, blogs) would otherwise
+ *                           fragment one <a> per block and ruin the
+ *                           layout.
  *
- *   Cmd+Shift+V            → smart paste
- *                           This plugin kicks in. We pick the best
- *                           source in the clipboard:
- *                             - text/plain if it already looks like
- *                               Markdown (has newlines or markdown
- *                               markers)  → feed to md-to-pm
- *                             - else text/html if it has structural
- *                               tags  → html → markdown → md-to-pm
- *                             - else fall back to plain behavior
- *                           The result is a proper ProseMirror block
- *                           fragment (headings, code, math, images,
- *                           links, tables, …).
+ *   Cmd+Shift+V           → plain text paste. Every character goes
+ *                           in verbatim, split on blank lines into
+ *                           paragraphs, \n becomes a hardBreak. Useful
+ *                           escape hatch when markdown interpretation
+ *                           would misread the content (e.g. pasting a
+ *                           raw text log that happens to contain a # or
+ *                           looks like a bullet).
  *
  * ─────────────────────────────────────────────────────────────
  * How Shift is detected
@@ -41,14 +40,17 @@
  *     regardless of Shift state.
  *   - We skip when an image is in the clipboard.
  *
- * Shortcut reminder: on macOS Cmd+Shift+V is the browser convention
- * for "paste and match style" in Google Docs / Slack / most editors.
- * Familiar enough that no UI hint is needed.
+ * text/html is deliberately unused. An earlier iteration fell back to
+ * html-to-markdown for Wiki-style sources, but the results were worse
+ * than plain text (every link became its own block). Users who want
+ * to preserve links/bold from such sources should paste into an
+ * external markdown converter first. The html-to-markdown module
+ * still exists in utils/ for future flows (saved pages, AI scraped
+ * HTML, etc.) but isn't wired here.
  */
 
 import { Plugin } from 'prosemirror-state';
 import { Slice, Fragment } from 'prosemirror-model';
-import { htmlToMarkdown } from '../utils/html-to-markdown';
 
 interface ViewAPILike {
   markdownToPMNodes?: (markdown: string) => Promise<unknown[]>;
@@ -80,36 +82,26 @@ export function smartPastePlugin(): Plugin {
           if (item.kind === 'file' && item.type.startsWith('image/')) return false;
         }
 
-        // ── Plain paste branch (Cmd+V) ────────────────────────────
-        // ProseMirror's default paste handler will parse any text/html
-        // present in the clipboard, which for rich sources like Wikipedia
-        // produces a fragmented mess (each <a> becomes its own textBlock,
-        // etc). We want Cmd+V to behave like "paste as plain text": drop
-        // structure, keep paragraph breaks.
-        if (!shiftDown) {
-          const plain = cd.getData('text/plain');
-          if (!plain) return false;
+        const plain = cd.getData('text/plain');
+        if (!plain || !plain.trim()) return false;
+
+        // ── Shift branch (Cmd+Shift+V) — plain text only ──────────
+        // Explicit opt-out of markdown interpretation. Users who want
+        // "just drop the characters in" reach for the same shortcut
+        // every other editor uses for the same purpose.
+        if (shiftDown) {
           insertAsPlainText(view, plain);
           return true;
         }
 
-        // ── Smart paste branch (Cmd+Shift+V) ──────────────────────
-
-        const plain = cd.getData('text/plain');
-        const html = cd.getData('text/html');
-
-        // Pick the best markdown source: prefer text/plain if it
-        // already reads as markdown (AI assistants, code sites);
-        // otherwise convert text/html → markdown (wiki, blog).
-        let markdown = '';
-        if (plain && looksLikeMarkdown(plain)) {
-          markdown = plain;
-        } else if (html && looksLikeRichHtml(html)) {
-          markdown = htmlToMarkdown(html);
-        } else if (plain) {
-          markdown = plain;
-        }
-        if (!markdown || !markdown.trim()) return false;
+        // ── Default branch (Cmd+V) — markdown interpretation ──────
+        // Feed text/plain through md-to-pm. This is source-of-truth
+        // for AI assistants (Claude/ChatGPT/Gemini) and most dev
+        // tools: they put standard Markdown in text/plain. We
+        // deliberately ignore text/html — Wikipedia's rich HTML is
+        // where paste went off the rails before (each <a> became its
+        // own block). text/plain is the common denominator.
+        const markdown = plain;
 
         const api: ViewAPILike | undefined = (window as any).viewAPI;
         if (!api?.markdownToPMNodes) return false;
@@ -191,11 +183,3 @@ function insertAsPlainText(view: any, text: string) {
   view.dispatch(tr);
 }
 
-function looksLikeMarkdown(text: string): boolean {
-  if (/\n/.test(text)) return true;
-  return /(^|\s)(#{1,3}\s|[-*]\s|\d+\.\s|>\s|```|\$\$|!\[|\[[^\]]+\]\()/m.test(text);
-}
-
-function looksLikeRichHtml(html: string): boolean {
-  return /<\s*(h[1-6]|ul|ol|li|pre|code|blockquote|table|img|a\s|strong|b\s|b>|em\s|em>|i\s|i>)/i.test(html);
-}
