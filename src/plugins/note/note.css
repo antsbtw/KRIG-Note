@@ -1126,7 +1126,11 @@
 .ProseMirror table.pm-table {
   border-collapse: collapse;
   width: 100%;
-  table-layout: fixed;
+  /* `auto` lets columns size by their content, matching typical
+     doc-editor behavior (Notion / Word / Google Docs). Combined with
+     first-column `width: max-content`-ish constraint below, the label
+     column stays narrow and the value column gets the rest. */
+  table-layout: auto;
 }
 
 .ProseMirror table.pm-table td,
@@ -1136,6 +1140,15 @@
   min-width: 80px;
   vertical-align: top;
   position: relative;
+}
+
+/* First column acts as a row-label (Word / Notion convention): narrow,
+ * shrink-to-fit, no stretching even when the table is full-width. The
+ * `white-space: nowrap` keeps short labels on one line. */
+.ProseMirror table.pm-table tr > td:first-child,
+.ProseMirror table.pm-table tr > th:first-child {
+  width: 1%;
+  white-space: nowrap;
 }
 
 .ProseMirror table.pm-table th {
@@ -1149,11 +1162,23 @@
 /* First-column emphasis — matches typical Word / doc conventions where
  * the leftmost column acts as a row label / key. Markdown can't encode
  * this directly (tables only have a single header row), so we style it
- * unconditionally: all tables get a bolder first column. */
+ * unconditionally: all tables get a bolder first column.
+ *
+ * `color` is explicit to override any cascaded rule that might dim the
+ * text (some themes default `td` inside a styled-bg cell to a muted
+ * color). White text on the darker cell bg keeps contrast high. */
 .ProseMirror table.pm-table tr > td:first-child,
 .ProseMirror table.pm-table tr > th:first-child {
   font-weight: 600;
   background: #262626;
+  color: #e8eaed;
+}
+
+/* Any descendants inside the label cell (p, spans, …) inherit the
+ * bright color — belt-and-suspenders against a stray inline color. */
+.ProseMirror table.pm-table tr > td:first-child *,
+.ProseMirror table.pm-table tr > th:first-child * {
+  color: inherit;
 }
 
 .ProseMirror table.pm-table td > *:first-child,
