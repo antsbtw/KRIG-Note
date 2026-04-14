@@ -51,6 +51,7 @@
 
 import { Plugin } from 'prosemirror-state';
 import { Slice, Fragment } from 'prosemirror-model';
+import { htmlToMarkdown } from '../utils/html-to-markdown';
 
 interface ViewAPILike {
   markdownToPMNodes?: (markdown: string) => Promise<unknown[]>;
@@ -83,25 +84,37 @@ export function smartPastePlugin(): Plugin {
         }
 
         const plain = cd.getData('text/plain');
-        if (!plain || !plain.trim()) return false;
+        const html = cd.getData('text/html');
 
         // ── Shift branch (Cmd+Shift+V) — plain text only ──────────
         // Explicit opt-out of markdown interpretation. Users who want
         // "just drop the characters in" reach for the same shortcut
         // every other editor uses for the same purpose.
         if (shiftDown) {
+          if (!plain || !plain.trim()) return false;
           insertAsPlainText(view, plain);
           return true;
         }
 
-        // ── Default branch (Cmd+V) — markdown interpretation ──────
-        // Feed text/plain through md-to-pm. This is source-of-truth
-        // for AI assistants (Claude/ChatGPT/Gemini) and most dev
-        // tools: they put standard Markdown in text/plain. We
-        // deliberately ignore text/html — Wikipedia's rich HTML is
-        // where paste went off the rails before (each <a> became its
-        // own block). text/plain is the common denominator.
-        const markdown = plain;
+        // ── Default branch (Cmd+V) ────────────────────────────────
+        // Source selection:
+        //   - structural HTML (tables, headings) — e.g. Word / Excel /
+        //     rich doc editors  → html → markdown. Preserves table
+        //     structure that text/plain would flatten.
+        //   - everything else  → text/plain fed to md-to-pm. AI
+        //     assistants and markdown-native sources work; Wikipedia /
+        //     blog pages land as plain paragraphs (links lost but no
+        //     per-word fragmentation).
+        // Link-heavy HTML without real structure is deliberately NOT
+        // parsed — that was the Wikipedia scenario where every <a>
+        // turned into its own block.
+        let markdown = '';
+        if (html && hasStructuralHtml(html)) {
+          markdown = htmlToMarkdown(html);
+        } else if (plain) {
+          markdown = plain;
+        }
+        if (!markdown || !markdown.trim()) return false;
 
         const api: ViewAPILike | undefined = (window as any).viewAPI;
         if (!api?.markdownToPMNodes) return false;
@@ -134,6 +147,17 @@ export function smartPastePlugin(): Plugin {
       },
     },
   });
+}
+
+/**
+ * Whether an HTML payload is worth converting to Markdown. The target
+ * case is Word / Excel / any editor that produces real tables and
+ * heading hierarchy. We deliberately NOT trigger on plain anchor-heavy
+ * HTML (Wikipedia paragraphs) because those fragmented badly when run
+ * through the converter — there a simple text/plain paste was better.
+ */
+function hasStructuralHtml(html: string): boolean {
+  return /<\s*(table|thead|tbody|tr|th|td|h[1-6])\b/i.test(html);
 }
 
 /**
