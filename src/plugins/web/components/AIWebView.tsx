@@ -1,11 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { getSSECaptureScript } from '../../web-bridge/injection/inject-scripts/sse-capture';
 import { getArtifactPostMessageHookScript } from '../../web-bridge/injection/inject-scripts/artifact-postmessage-hook';
-import {
-  getAutoscrollAgentScript,
-  getAutoscrollStateScript,
-  getAutoscrollJumpScript,
-} from '../../web-bridge/injection/inject-scripts/autoscroll-agent';
 import { debugExtractFirstArtifact } from '../../web-bridge/capabilities/claude-artifact-extractor';
 import { debugExtractContent as debugExtractChatGPTContent } from '../../web-bridge/capabilities/chatgpt-content-extractor';
 import { debugExtractContent as debugExtractGeminiContent } from '../../web-bridge/capabilities/gemini-content-extractor';
@@ -87,9 +82,6 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
   } | null>(null);
   const [showExtractDetail, setShowExtractDetail] = useState(false);
   const [cdpActive, setCdpActive] = useState(false);
-  // Autoscroll state: distanceToBottom published by the in-page agent.
-  // >300px → show the floating "jump to bottom" button.
-  const [distanceToBottom, setDistanceToBottom] = useState(0);
   const [cdpResult, setCdpResult] = useState<{ count: number; responses: Array<{ url: string; bodyLength: number; bodyPreview: string | null; mimeType: string; statusCode: number }> } | null>(null);
   const [showCdpPanel, setShowCdpPanel] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -112,66 +104,20 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
       } catch {}
     };
 
-    // Install the autoscroll agent for whatever AI service is current.
-    // The agent is idempotent and cheap, so it's safe to re-run on every
-    // nav event — each call replaces any older-version install.
-    const injectAutoscrollAgent = () => {
-      try {
-        const u = el.getURL?.() || '';
-        const detected = detectAIServiceByUrl(u);
-        if (!detected) return;
-        const profile = getAIServiceProfile(detected.id);
-        const selector = profile.selectors.assistantMessage;
-        el.executeJavaScript(getAutoscrollAgentScript(selector)).catch(() => {});
-      } catch {}
-    };
-
     el.addEventListener('did-navigate', (_e: any) => {
       setCurrentUrl(el.getURL());
       const detected = detectAIServiceByUrl(el.getURL());
       if (detected) setCurrentService(detected.id);
       injectArtifactHookIfClaude();
-      injectAutoscrollAgent();
     });
     el.addEventListener('did-navigate-in-page', () => {
       setCurrentUrl(el.getURL());
       injectArtifactHookIfClaude();
-      injectAutoscrollAgent();
     });
-    el.addEventListener('dom-ready', () => {
-      injectArtifactHookIfClaude();
-      injectAutoscrollAgent();
-    });
+    el.addEventListener('dom-ready', injectArtifactHookIfClaude);
 
     setCurrentUrl(initialUrl);
   }, [initialUrl]);
-
-  // ── Autoscroll state poll ──
-  // The in-page agent publishes `window.__krig_autoscroll_state` whenever
-  // the user scrolls or the message list mutates. We poll it at 500ms
-  // (cheap — a single executeJavaScript call returning a small object)
-  // to drive the floating "jump to bottom" button's visibility.
-  useEffect(() => {
-    const iv = setInterval(async () => {
-      const webview = webviewRef.current;
-      if (!webview) return;
-      try {
-        const state = await webview.executeJavaScript(getAutoscrollStateScript());
-        if (state && typeof state.distanceToBottom === 'number') {
-          setDistanceToBottom(state.distanceToBottom);
-        }
-      } catch { /* guest not ready yet; agent not installed; ignore */ }
-    }, 500);
-    return () => clearInterval(iv);
-  }, []);
-
-  /** Invoked by the floating button — force a jump to bottom in guest. */
-  const handleJumpToBottom = useCallback(async () => {
-    const webview = webviewRef.current;
-    if (!webview) return;
-    try { await webview.executeJavaScript(getAutoscrollJumpScript()); }
-    catch { /* ignore */ }
-  }, []);
 
   // ── 切换 AI 服务 ──
   const switchService = useCallback((serviceId: AIServiceId) => {
@@ -1016,30 +962,6 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
           // @ts-ignore
           allowpopups="true"
         />
-
-        {/* Floating "jump to bottom" button — shown only when the user
-         *  has scrolled far enough up that the autoscroll agent stopped
-         *  following. Clicking it forces the guest to scroll and
-         *  re-enables follow-mode. */}
-        {distanceToBottom > 300 && (
-          <button
-            onClick={handleJumpToBottom}
-            title="跳到最新"
-            style={{
-              position: 'absolute', right: 20, bottom: 20,
-              width: 40, height: 40, borderRadius: 20,
-              background: 'rgba(60, 60, 60, 0.85)',
-              color: '#e8eaed',
-              border: '1px solid rgba(255,255,255,0.1)',
-              fontSize: 18, cursor: 'pointer',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
-              zIndex: 100,
-            }}
-          >
-            ↓
-          </button>
-        )}
 
         {/* CDP Capture Panel — 显示所有捕获的 HTTP 请求 */}
         {showCdpPanel && cdpResult && (

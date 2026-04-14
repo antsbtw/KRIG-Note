@@ -222,49 +222,40 @@ AI webview 注入脚本 hook `copy` 事件：
 
 ---
 
-## 8. 自动滚动（策略 1 + 策略 3）
+## 8. 自动滚动 — 不做
 
-### 8.1 现状问题
+### 8.1 最初的担心
 
-Electron webview 中，AI 网页回复超长时**不再自动滚动**到底部（Chrome 中
-正常）。用户必须手动往下拖，体验差。
+Electron webview 中 AI 回复过长时看起来"滚动不到位"，怀疑 `<webview>`
+和原生 Chrome 的行为有差异。基于这个假设最初设计了 autoscroll agent
++ 浮动"↓ 跳到最新"按钮。
 
-### 8.2 策略 1：near-bottom 自动跟随
+### 8.2 实际验证结论
 
-每个 AI service profile 配一个 `scrollContainerSelector`（对话主滚动容器）。
+对比了同样版本的 ChatGPT 在：
+- 系统 Chrome 直接打开 `chatgpt.com`
+- KRIG 的 `<webview>` 里打开
 
-KRIG 向 webview 注入 auto-scroll agent：
+两者行为**完全一致**：AI 生成完回复后，最后一段停在视口中上部，
+输入框下方留出 300–400px 空白。这是 **ChatGPT/Claude 刻意的 UX 设计**：
 
-```
-streaming = 当前是否有 assistant message 在 streaming (SSE hook 已有)
-distanceToBottom = scrollContainer.scrollHeight - (scrollTop + clientHeight)
+- 长 AI 消息的末尾自然有"继续阅读"的空间
+- 输入框固定在视口底部，用户回复新消息时旧消息末尾位于视口中部
+- streaming 时最新 token 显示在屏幕中上部而非被推到边缘
 
-if streaming and distanceToBottom < 300px:
-  scrollContainer.scrollTop = scrollContainer.scrollHeight
-```
+Claude 也是同样模式（空白区域可能略大）。
 
-**关键**：用户主动往上滚（distanceToBottom >= 300px）时**暂停跟随**，不打扰。
-直到用户回到底部附近（< 300px）或新一轮 streaming 开始，恢复跟随。
+### 8.3 决策：撤销 Step 3，相信原生行为
 
-### 8.3 策略 3：浮动 "↓ 跳到最新" 按钮
+不做任何 autoscroll 干预。`<webview>` 就是一个嵌入的 Chromium，所有
+AI 站点的内置滚动逻辑在其中都正常工作；我们"填满空白"反而会打破人家
+精心设计的阅读节奏。
 
-- **渲染位置**：KRIG host 层在 webview 右下角叠加一个浮动 div
-- **显示条件**：`streaming === true AND distanceToBottom > 300px`
-- **点击**：`executeJavaScript` 一次滚到底 + 重置 auto-scroll 状态
-- **样式**：半透明圆形按钮，hover 时加深，不盖 AI 发送按钮
+相关实现已经 revert（见 git history "revert(autoscroll)…" 提交）。
+本设计文档保留本节作为历史记录，避免未来再次误判"需要 autoscroll"。
 
-### 8.4 配置
-
-每个 service profile 新增字段：
-```ts
-scrollContainer: string;  // CSS selector
-```
-
-- Claude: `main div[class*="overflow-y-auto"]`（待确认）
-- ChatGPT: `main div[class*="scrollTop"]`（待确认）
-- Gemini: `.chat-history` 或类似（待确认）
-
-实施时先跑 DevTools 确认准确 selector。
+如果将来发现某个特定 AI 站点的**原生滚动真的失效**（不是视觉习惯不
+符，是真的动都不动），那时再单独立项，不要往本节里补代码。
 
 ---
 
@@ -372,10 +363,10 @@ scrollContainer: string;  // CSS selector
 - 范围：§7.1
 - 验收：从网页 copy 富文本 → 粘贴到 note → 保留结构
 
-### Step 3 — 自动滚动
-- 文件：新模块 `autoscroll-manager.ts` + 每个 service profile 加 selector
-- 范围：§8 全部
-- 验收：AI 生成长回复 → 页面持续跟随到底；往上滚 → 不打扰；底部"↓"按钮工作
+### Step 3 — 自动滚动（已撤销）
+- 决策：`<webview>` 行为和 Chrome 一致，AI 站点原生的滚动逻辑已经
+  合理；不做任何 autoscroll 干预。
+- 范围：§8。详情见该节。
 
 ### Step 4 — 实时同步重构（模式 A）
 - 文件：新模块 `insert-turn.ts`（核心插入器）+ 重构现有 sync-driver
