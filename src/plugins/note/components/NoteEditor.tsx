@@ -314,7 +314,11 @@ export function NoteEditor() {
             viewAPI.sendToOtherSlot({
               protocol: 'ai-sync',
               action: 'as:note-status',
-              payload: { open: true, lastTypedAt: Date.now() },
+              payload: {
+                open: true,
+                lastTypedAt: Date.now(),
+                noteId: currentNoteIdRef.current,
+              },
             });
           }
           scheduleSaveRef.current();
@@ -381,6 +385,14 @@ export function NoteEditor() {
       }
       currentNoteIdRef.current = noteId;
       setCurrentNote(noteId);
+
+      // Tell the AI sync engine the active note changed so it can reset
+      // its per-note dedup state and re-sync history into the fresh note.
+      viewAPI.sendToOtherSlot({
+        protocol: 'ai-sync',
+        action: 'as:note-status',
+        payload: { open: true, lastTypedAt: 0, noteId },
+      });
 
       // 从 doc 中提取 noteTitle 实际文本，同步到 toolbar 和文件名
       const v = viewRef.current;
@@ -679,7 +691,7 @@ export function NoteEditor() {
         viewAPI.sendToOtherSlot({
           protocol: 'ai-sync',
           action: 'as:note-status',
-          payload: { open: true, lastTypedAt: 0 },
+          payload: { open: true, lastTypedAt: 0, noteId: currentNoteIdRef.current },
         });
       }
     });
@@ -687,18 +699,20 @@ export function NoteEditor() {
   }, []);
 
   // Broadcast open/close so the AI sync engine can pause when the note
-  // view is unmounted (user closed the right slot).
+  // view is unmounted (user closed the right slot). Note switches inside
+  // this component are announced from within loadNote() — no extra effect
+  // needed here.
   useEffect(() => {
     viewAPI.sendToOtherSlot({
       protocol: 'ai-sync',
       action: 'as:note-status',
-      payload: { open: true, lastTypedAt: 0 },
+      payload: { open: true, lastTypedAt: 0, noteId: currentNoteIdRef.current },
     });
     return () => {
       viewAPI.sendToOtherSlot({
         protocol: 'ai-sync',
         action: 'as:note-status',
-        payload: { open: false, lastTypedAt: 0 },
+        payload: { open: false, lastTypedAt: 0, noteId: null },
       });
     };
   }, []);

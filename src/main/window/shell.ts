@@ -91,6 +91,14 @@ function createViewForWorkMode(workModeId: string): WebContentsView {
 
   // webviewTag 启用时，拦截 guest 弹窗
   if (config.webPreferences?.webviewTag) {
+    view.webContents.on('will-attach-webview', (_event, webPreferences) => {
+      // Inject the guest preload (context-menu signal + CSP bypass).
+      // This is the only reliable way to keep our listener alive across
+      // SPA navigations that replace the document object.
+      webPreferences.preload = path.join(__dirname, 'web-content.js');
+      webPreferences.contextIsolation = true;
+      webPreferences.nodeIntegration = false;
+    });
     view.webContents.on('did-attach-webview', (_event, guestWebContents) => {
       // 弹窗策略：target=_blank → 内部导航，OAuth → 允许子窗口
       guestWebContents.setWindowOpenHandler(({ url, disposition }) => {

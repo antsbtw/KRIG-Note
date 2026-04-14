@@ -1,9 +1,9 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { getSSECaptureScript } from '../../web-bridge/injection/inject-scripts/sse-capture';
 import { getArtifactPostMessageHookScript } from '../../web-bridge/injection/inject-scripts/artifact-postmessage-hook';
 import { getDomToMarkdownScript } from '../../web-bridge/injection/inject-scripts/dom-to-markdown';
-import { getContextMenuInjectScript, CONTEXT_MENU_MARKER } from '../../web-bridge/injection/inject-scripts/context-menu-inject';
 import { SlotToggle } from '../../../shared/components/SlotToggle';
+import { WebViewContextMenu, type ContextMenuItem, type MenuContext } from '../context-menu';
 import {
   extractClaudeConversation,
   extractLatestClaudeResponse,
@@ -13,9 +13,11 @@ import {
   readCapturedArtifactMessages,
   collectArtifactSources,
   fillArtifactPlaceholders,
+  fillArtifactPlaceholdersWithImages,
   fetchClaudeArtifactVersions,
   extractArtifactVersionSource,
 } from '../../web-bridge/capabilities/claude-api-extractor';
+import { extractAll as extractAllClaudeArtifacts } from '../../web-bridge/capabilities/claude-artifact-extractor';
 import { extractContent as extractChatGPTContent } from '../../web-bridge/capabilities/chatgpt-content-extractor';
 import { extractContent as extractGeminiContent } from '../../web-bridge/capabilities/gemini-content-extractor';
 import { getAIServiceProfile, getAIServiceList, DEFAULT_AI_SERVICE, detectAIServiceByUrl } from '../../../shared/types/ai-service-types';
@@ -123,14 +125,6 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
   const lastSyncedCountRef = useRef(0);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  // Context menu state for "📥 提取到笔记" — populated by guest's contextmenu handler
-  const [ctxMenu, setCtxMenu] = useState<{
-    x: number;
-    y: number;
-    msgIndex: number;
-  } | null>(null);
-  const [ctxBusy, setCtxBusy] = useState(false);
-
   const initialUrl = getAIServiceProfile(currentService).newChatUrl;
 
   // ── webview 事件绑定 ──
@@ -149,46 +143,10 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
       } catch {}
     };
 
-    // Install the contextmenu inject for whichever service the guest is on
-    // so right-click on assistant messages surfaces the custom menu.
-    const installContextMenu = () => {
-      try {
-        const u = el.getURL?.() || '';
-        const profile = detectAIServiceByUrl(u);
-        if (!profile) return;
-        const script = getContextMenuInjectScript(
-          profile.selectors.assistantMessage,
-          profile.selectors.userMessage,
-        );
-        el.executeJavaScript(script)
-          .then((r: any) => console.log('[AIWebView] ctx-menu inject:', r, 'selector=', profile.selectors.assistantMessage))
-          .catch((err: any) => console.warn('[AIWebView] ctx-menu inject failed:', err));
-      } catch (err) {
-        console.warn('[AIWebView] ctx-menu install exception:', err);
-      }
-    };
-
-    // Guest's contextmenu handler signals via console.log with a marker.
-    // Electron console-message event shape: {message, level, line, sourceId}
-    // — but version-dependent. Also try `e.args` for newer versions.
-    el.addEventListener('console-message', (e: any) => {
-      const text: string =
-        (typeof e?.message === 'string' ? e.message : '') ||
-        (typeof e?.message?.text === 'string' ? e.message.text : '') ||
-        '';
-      if (!text) return;
-      if (text.indexOf(CONTEXT_MENU_MARKER) < 0) return;
-      const start = text.indexOf(CONTEXT_MENU_MARKER) + CONTEXT_MENU_MARKER.length;
-      try {
-        const payload = JSON.parse(text.slice(start));
-        console.log('[AIWebView] ctx-menu payload:', payload);
-        if (typeof payload?.msgIndex === 'number') {
-          setCtxMenu({ x: payload.x | 0, y: payload.y | 0, msgIndex: payload.msgIndex });
-        }
-      } catch (err) {
-        console.warn('[AIWebView] ctx-menu parse failed:', err, 'text=', text);
-      }
-    });
+    // Right-click menu is handled by the shared WebViewContextMenu. The
+    // guest preload (web-content.ts) owns the document listener and the
+    // signal is forwarded via ipc-message, so no per-navigation install
+    // is needed here.
 
     el.addEventListener('did-navigate', (_e: any) => {
       setCurrentUrl(el.getURL());
@@ -198,16 +156,13 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
         try { localStorage.setItem(LAST_SERVICE_KEY, detected.id); } catch {}
       }
       injectArtifactHookIfClaude();
-      installContextMenu();
     });
     el.addEventListener('did-navigate-in-page', () => {
       setCurrentUrl(el.getURL());
       injectArtifactHookIfClaude();
-      installContextMenu();
     });
     el.addEventListener('dom-ready', () => {
       injectArtifactHookIfClaude();
-      installContextMenu();
     });
 
     setCurrentUrl(initialUrl);
@@ -226,17 +181,49 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
   }, []);
 
   // ── Mode B: Right-click extract ──
+  // Compute the 0-based assistantMessage index at the given viewport
+  // coordinates by asking the guest page itself — document.elementFromPoint
+  // is the one reliable way since DOM layout differs by service and by
+  // viewport size.
+  const resolveMsgIndex = useCallback(async (
+    webview: Electron.WebviewTag,
+    x: number,
+    y: number,
+    assistantSelector: string,
+  ): Promise<number> => {
+    const script = `(function() {
+      var sel = ${JSON.stringify(assistantSelector)};
+      var parts = sel.split(',').map(function(s) { return s.trim(); });
+      var el = document.elementFromPoint(${x}, ${y});
+      var hit = null;
+      for (var i = 0; i < parts.length && !hit; i++) {
+        hit = el && el.closest ? el.closest(parts[i]) : null;
+      }
+      if (!hit) return -1;
+      var list = [];
+      for (var j = 0; j < parts.length; j++) {
+        var nodes = document.querySelectorAll(parts[j]);
+        for (var k = 0; k < nodes.length; k++) list.push(nodes[k]);
+      }
+      return list.indexOf(hit);
+    })()`;
+    try {
+      const r = await webview.executeJavaScript(script);
+      return typeof r === 'number' ? r : -1;
+    } catch {
+      return -1;
+    }
+  }, []);
+
   // Extract the assistant message at the given DOM index by calling the
   // service's own extractor (API source, not DOM scrape) and emit a
   // standard as:append-turn so the insert path is identical to real-time sync.
-  const extractTurnByIndex = useCallback(async (msgIndex: number) => {
-    const webview = webviewRef.current;
-    if (!webview) return;
-    const url = webview.getURL?.() || '';
+  const extractTurnAt = useCallback(async (ctx: MenuContext, msgIndex: number) => {
+    const webview = ctx.webview;
+    const url = ctx.url;
     const profile = detectAIServiceByUrl(url);
     if (!profile) return;
 
-    setCtxBusy(true);
     try {
       // Ensure right slot (NoteView) exists so the insert has a target.
       await viewAPI.ensureRightSlot('demo-a');
@@ -391,11 +378,40 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
       console.log(`[AIWebView Extract] Sent turn #${msgIndex}: ${markdown.length} chars`);
     } catch (err) {
       console.warn('[AIWebView Extract] Failed:', err);
-    } finally {
-      setCtxBusy(false);
-      setCtxMenu(null);
     }
   }, []);
+
+  // Context-menu item list contributed by the AI variant. The base
+  // WebViewContextMenu appends the built-ins (reload, inspect).
+  const aiContextItems = useMemo<ContextMenuItem[]>(() => [
+    {
+      id: 'extract-to-note',
+      icon: '📥',
+      label: '提取到笔记',
+      // Only meaningful when the click landed inside an assistant message.
+      visible: (ctx: MenuContext) => {
+        const profile = detectAIServiceByUrl(ctx.url);
+        return !!profile; // on any AI page
+      },
+      enabled: (ctx: MenuContext) => {
+        // Cheap pre-filter from the targetHtml snapshot; the real
+        // selector match happens inside onClick via executeJavaScript.
+        const profile = detectAIServiceByUrl(ctx.url);
+        if (!profile) return false;
+        return true;
+      },
+      onClick: async (ctx: MenuContext) => {
+        const profile = detectAIServiceByUrl(ctx.url);
+        if (!profile) return;
+        const idx = await resolveMsgIndex(ctx.webview, ctx.x, ctx.y, profile.selectors.assistantMessage);
+        if (idx < 0) {
+          console.warn('[AIWebView Extract] Right-click was not inside an assistant message');
+          return;
+        }
+        await extractTurnAt(ctx, idx);
+      },
+    },
+  ], [resolveMsgIndex, extractTurnAt]);
 
   // ── Sync Engine（场景 C：实时同步到 NoteView）──
   // Tracks per-service sync state by conversationId → set of synced response ids
@@ -409,10 +425,14 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
   // Peer (NoteView) status — updated via 'as:note-status' ViewMessage
   const noteOpenRef = useRef(false);
   const lastTypedAtRef = useRef(0);
+  const currentNoteIdRef = useRef<string | null>(null);
   const [noteOpen, setNoteOpen] = useState(false);
   // Last insert failure surfaced from NoteView (e.g. note deleted / view
   // destroyed). Displayed inline in the toolbar; cleared by re-enabling sync.
   const [syncError, setSyncError] = useState<string | null>(null);
+  // Transient "switched notes, re-syncing" banner state. Cleared on a
+  // timer so it auto-fades once the fresh note catches up.
+  const [reSyncing, setReSyncing] = useState(false);
 
   useEffect(() => {
     if (!isSyncMode || !syncEnabled) return;
@@ -458,8 +478,29 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
       if (msg.protocol === 'ai-sync' && msg.action === 'as:note-status') {
         const open = !!msg.payload?.open;
         const t = Number(msg.payload?.lastTypedAt) || 0;
+        const newNoteId: string | null = msg.payload?.noteId ?? null;
         noteOpenRef.current = open;
         if (t > lastTypedAtRef.current) lastTypedAtRef.current = t;
+        // When the active note changes, forget previously synced turns
+        // so the new note receives the full conversation history (per
+        // the design: "新 note → 从头重新导入").
+        if (newNoteId && newNoteId !== currentNoteIdRef.current) {
+          const wasFirstBinding = currentNoteIdRef.current === null;
+          console.log('[AIWebView Sync] Note switched:', currentNoteIdRef.current, '→', newNoteId, '— resetting dedup state');
+          currentNoteIdRef.current = newNoteId;
+          syncedResponsesRef.current.clear();
+          lastSyncedCountRef.current = 0;
+          setSyncCount(0);
+          // Show a transient "re-syncing into new note" hint — but only
+          // when this is a genuine user-initiated switch, not the very
+          // first noteId binding right after sync mode opens.
+          if (!wasFirstBinding) {
+            setReSyncing(true);
+            setTimeout(() => setReSyncing(false), 5000);
+          }
+        } else if (!currentNoteIdRef.current && newNoteId) {
+          currentNoteIdRef.current = newNoteId;
+        }
         setNoteOpen(open);
       } else if (msg.protocol === 'ai-sync' && msg.action === 'as:insert-failed') {
         const reason = String(msg.payload?.reason ?? 'unknown');
@@ -616,25 +657,22 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
       if (!apiResult || !apiResult.raw) return;
 
       const conv = apiResult.raw;
-      const humanCount = conv.messages.filter(m => m.sender === 'human').length;
+      const convId = conv.uuid || 'unknown';
+      const synced = getSyncedSet(convId);
 
-      while (humanCount > lastSyncedCountRef.current) {
-        const idx = lastSyncedCountRef.current;
+      // Pair each human message with the next assistant message; emit
+      // any pair whose human uuid we haven't synced yet.
+      let turnIdx = synced.size;
+      for (let i = 0; i < conv.messages.length; i++) {
+        const m = conv.messages[i];
+        if (m.sender !== 'human') continue;
+        if (synced.has(m.uuid)) continue;
 
-        // Find the idx-th human message and its next assistant response
-        let humanFound = -1;
-        let humanMsg = '';
+        const humanMsg = m.text;
         let assistantMsg = '';
-        for (let i = 0; i < conv.messages.length; i++) {
-          if (conv.messages[i].sender === 'human') humanFound++;
-          if (humanFound === idx && conv.messages[i].sender === 'human') {
-            humanMsg = conv.messages[i].text;
-            for (let j = i + 1; j < conv.messages.length; j++) {
-              if (conv.messages[j].sender === 'assistant') {
-                assistantMsg = conv.messages[j].text;
-                break;
-              }
-            }
+        for (let j = i + 1; j < conv.messages.length; j++) {
+          if (conv.messages[j].sender === 'assistant') {
+            assistantMsg = conv.messages[j].text;
             break;
           }
         }
@@ -643,6 +681,8 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
           // Streaming not finished yet — wait for next poll
           break;
         }
+
+        const idx = turnIdx;
 
         // Replace Artifact placeholders: prefer captured postMessage
         // source, fall back to callout for any that weren't captured.
@@ -668,23 +708,45 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
           const sources = [...versionSources.slice().reverse(), ...capturedSources];
           const filled = fillArtifactPlaceholders(assistantMsg, sources);
           console.log(`[Claude/Artifact] versions=${versionSources.length} captured=${capturedSources.length}`);
-          finalMarkdown = filled.remaining > 0
-            ? replaceArtifactPlaceholders(filled.text, webview.getURL())
-            : filled.text;
+          finalMarkdown = filled.text;
+
+          // Remaining placeholders couldn't be filled from source — fall
+          // back to rendered PNG via the Copy-to-clipboard extractor so
+          // the note at least shows the artifact visually.
+          if (filled.remaining > 0) {
+            try {
+              const artifacts = await extractAllClaudeArtifacts(webview, viewAPI as any, { image: true });
+              const imgs = artifacts.map(a => a.image?.dataUrl).filter((s): s is string => !!s);
+              if (imgs.length > 0) {
+                const imgFill = fillArtifactPlaceholdersWithImages(finalMarkdown, imgs);
+                finalMarkdown = imgFill.text;
+                console.log(`[Claude/Artifact] image fallback filled ${imgFill.filled}/${imgs.length}, remaining ${imgFill.remaining}`);
+                if (imgFill.remaining > 0) {
+                  finalMarkdown = replaceArtifactPlaceholders(finalMarkdown, webview.getURL());
+                }
+              } else {
+                finalMarkdown = replaceArtifactPlaceholders(finalMarkdown, webview.getURL());
+              }
+            } catch (err) {
+              console.warn('[Claude/Artifact] image fallback failed:', err);
+              finalMarkdown = replaceArtifactPlaceholders(finalMarkdown, webview.getURL());
+            }
+          }
           console.log(`[Claude/Artifact] Response #${idx}: ${artifactCount} placeholder(s), filled ${filled.filled}, remaining ${filled.remaining}`);
         }
 
         console.log(`[AIWebView Sync/Claude] Response #${idx}: ${finalMarkdown.length} chars`);
 
         sendTurn({
-          responseId: `claude-${idx}`,
+          responseId: m.uuid,
           index: idx,
           userMessage: humanMsg,
           markdown: finalMarkdown,
           serviceId: 'claude',
           serviceName,
         });
-        lastSyncedCountRef.current = idx + 1;
+        synced.add(m.uuid);
+        turnIdx += 1;
       }
     }
 
@@ -928,6 +990,7 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
             style={{
               background: syncError ? '#8b1e1e'
                 : !syncEnabled ? '#555'
+                : reSyncing ? '#1e5a8a'
                 : noteOpen ? '#1b5e20' : '#8a6d3b',
               border: 'none', borderRadius: 4, color: '#fff',
               fontSize: 11, padding: '3px 8px', cursor: 'pointer',
@@ -940,14 +1003,16 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
             title={
               syncError ? `同步已停止：${syncError}（点击重试）`
               : !syncEnabled ? '恢复同步'
+              : reSyncing ? '切换笔记中，正在重新同步历史到新笔记'
               : noteOpen ? '暂停同步'
               : '等待 NoteView 打开'
             }
           >
-            <span>{syncError ? '⚠' : !syncEnabled ? '⏸' : noteOpen ? '●' : '⏸'}</span>
+            <span>{syncError ? '⚠' : !syncEnabled ? '⏸' : reSyncing ? '↻' : noteOpen ? '●' : '⏸'}</span>
             <span>
               {syncError ? `同步失败：${syncError}`
                 : !syncEnabled ? '已暂停'
+                : reSyncing ? `重新同步 (${syncCount})`
                 : noteOpen ? `同步中 (${syncCount})`
                 : `等待笔记 (${syncCount})`}
             </span>
@@ -995,87 +1060,7 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
           // @ts-ignore
           allowpopups="true"
         />
-
-        {ctxMenu && (
-          <>
-            {/* Click-outside dismiss overlay */}
-            <div
-              style={{
-                position: 'absolute', inset: 0, zIndex: 999,
-              }}
-              onClick={() => setCtxMenu(null)}
-              onContextMenu={(e) => { e.preventDefault(); setCtxMenu(null); }}
-            />
-            <div
-              style={{
-                position: 'absolute',
-                left: Math.min(ctxMenu.x, 99999),
-                top: Math.min(ctxMenu.y, 99999),
-                background: '#2a2a2a',
-                border: '1px solid #444',
-                borderRadius: 8,
-                padding: 4,
-                boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
-                minWidth: 160,
-                zIndex: 1000,
-              }}
-            >
-              {(() => {
-                const canExtract = ctxMenu.msgIndex >= 0 && !ctxBusy;
-                const itemStyle = (disabled: boolean): React.CSSProperties => ({
-                  display: 'flex', alignItems: 'center', gap: 8, width: '100%',
-                  padding: '6px 12px', background: 'transparent',
-                  border: 'none',
-                  color: disabled ? '#666' : '#e8eaed',
-                  fontSize: 13,
-                  cursor: disabled ? 'not-allowed' : 'pointer',
-                  borderRadius: 4,
-                  textAlign: 'left',
-                });
-                const hover = (e: React.MouseEvent<HTMLButtonElement>, on: boolean) => {
-                  (e.currentTarget).style.background = on ? '#3a3a3a' : 'transparent';
-                };
-                const sep = () => (
-                  <div style={{ height: 1, background: '#444', margin: '4px 0' }} />
-                );
-                return (
-                  <>
-                    <button
-                      disabled={!canExtract}
-                      style={itemStyle(!canExtract)}
-                      onClick={() => canExtract && extractTurnByIndex(ctxMenu.msgIndex)}
-                      onMouseEnter={(e) => canExtract && hover(e, true)}
-                      onMouseLeave={(e) => hover(e, false)}
-                      title={ctxMenu.msgIndex < 0 ? '请在 AI 回答的消息上右键' : ''}
-                    >
-                      <span>📥</span>
-                      <span>{ctxBusy ? '提取中...' : '提取到笔记'}</span>
-                    </button>
-                    {sep()}
-                    <button
-                      style={itemStyle(false)}
-                      onClick={() => { webviewRef.current?.reload(); setCtxMenu(null); }}
-                      onMouseEnter={(e) => hover(e, true)}
-                      onMouseLeave={(e) => hover(e, false)}
-                    >
-                      <span>↻</span>
-                      <span>刷新页面</span>
-                    </button>
-                    <button
-                      style={itemStyle(false)}
-                      onClick={() => { webviewRef.current?.openDevTools(); setCtxMenu(null); }}
-                      onMouseEnter={(e) => hover(e, true)}
-                      onMouseLeave={(e) => hover(e, false)}
-                    >
-                      <span>🛠</span>
-                      <span>检查元素</span>
-                    </button>
-                  </>
-                );
-              })()}
-            </div>
-          </>
-        )}
+        <WebViewContextMenu webviewRef={webviewRef} items={aiContextItems} />
       </div>
     </div>
   );
