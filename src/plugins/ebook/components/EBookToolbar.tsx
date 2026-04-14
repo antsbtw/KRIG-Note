@@ -1,4 +1,12 @@
 import { useState, useCallback, KeyboardEvent } from 'react';
+import { SlotToggle } from '../../../shared/components/SlotToggle';
+import { OpenFilePopup } from '../../../shared/components/OpenFilePopup';
+import type { FileItem } from '../../../shared/components/OpenFilePopup';
+
+declare const viewAPI: {
+  ebookBookshelfList: () => Promise<Array<{ id: string; displayName: string }>>;
+  ebookBookshelfOpen: (id: string) => Promise<unknown>;
+};
 
 type AnnotationMode = 'off' | 'rect' | 'underline';
 
@@ -24,6 +32,8 @@ interface EBookToolbarProps {
   onFontSizeChange?: (delta: number) => void;
   isBookmarked?: boolean;
   onBookmarkToggle?: () => void;
+  onExtract?: () => void;
+  onCloseSlot?: () => void;
 }
 
 const ZOOM_PRESETS = [
@@ -55,6 +65,8 @@ export function EBookToolbar({
   onFontSizeChange,
   isBookmarked,
   onBookmarkToggle,
+  onExtract,
+  onCloseSlot,
 }: EBookToolbarProps) {
   const [pageInput, setPageInput] = useState('');
   const [editingPage, setEditingPage] = useState(false);
@@ -62,14 +74,12 @@ export function EBookToolbar({
   const handlePrevPage = useCallback(() => {
     if (currentPage > 1) {
       onPageChange(currentPage - 1);
-      window.dispatchEvent(new CustomEvent('ebook:goto-page', { detail: currentPage - 1 }));
     }
   }, [currentPage, onPageChange]);
 
   const handleNextPage = useCallback(() => {
     if (currentPage < pageCount) {
       onPageChange(currentPage + 1);
-      window.dispatchEvent(new CustomEvent('ebook:goto-page', { detail: currentPage + 1 }));
     }
   }, [currentPage, pageCount, onPageChange]);
 
@@ -83,7 +93,6 @@ export function EBookToolbar({
     const page = parseInt(pageInput, 10);
     if (!isNaN(page) && page >= 1 && page <= pageCount) {
       onPageChange(page);
-      window.dispatchEvent(new CustomEvent('ebook:goto-page', { detail: page }));
     }
   }, [pageInput, pageCount, onPageChange]);
 
@@ -114,6 +123,15 @@ export function EBookToolbar({
     const next = Math.max(scale - 0.25, 0.25);
     onScaleChange(Math.round(next * 100) / 100);
   }, [scale, onScaleChange]);
+
+  const loadBookList = useCallback(async (): Promise<FileItem[]> => {
+    const list = await viewAPI.ebookBookshelfList();
+    return list.map((b: any) => ({ id: b.id, title: b.displayName || b.display_name || b.fileName || '' }));
+  }, []);
+
+  const handleOpenBook = useCallback((bookId: string) => {
+    viewAPI.ebookBookshelfOpen(bookId);
+  }, []);
 
   return (
     <div className="ebook-toolbar">
@@ -168,7 +186,7 @@ export function EBookToolbar({
         <div className="ebook-toolbar__section ebook-toolbar__section--center">
           <button className="ebook-toolbar__btn" onClick={onPrevChapter} title="上一页 (←)">‹</button>
           {epubProgress && (
-            <span className="ebook-toolbar__page-info" style={{ margin: '0 8px', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <span className="ebook-toolbar__epub-progress">
               {epubProgress.chapter || ''} · {Math.round(epubProgress.percentage * 100)}%
             </span>
           )}
@@ -180,10 +198,9 @@ export function EBookToolbar({
       {renderMode === 'reflowable' && (
         <div className="ebook-toolbar__section ebook-toolbar__section--right">
           <button
-            className="ebook-toolbar__btn"
+            className={`ebook-toolbar__btn ${isBookmarked ? 'ebook-toolbar__btn--bookmark-active' : ''}`}
             onClick={onBookmarkToggle}
             title={isBookmarked ? '移除书签 (⌘D)' : '添加书签 (⌘D)'}
-            style={{ color: isBookmarked ? '#ffd43b' : undefined }}
           >
             {isBookmarked ? '★' : '☆'}
           </button>
@@ -194,7 +211,7 @@ export function EBookToolbar({
 
       {/* Annotation mode + bookmark (fixed-page only) */}
       {renderMode === 'fixed-page' && pageCount > 0 && (
-        <div className="ebook-toolbar__section" style={{ gap: 2 }}>
+        <div className="ebook-toolbar__section ebook-toolbar__section--annotation">
           <button
             className={`ebook-toolbar__btn ${annotationMode === 'rect' ? 'ebook-toolbar__btn--active' : ''}`}
             onClick={() => onAnnotationModeChange(annotationMode === 'rect' ? 'off' : 'rect')}
@@ -210,13 +227,21 @@ export function EBookToolbar({
             ▁
           </button>
           <button
-            className="ebook-toolbar__btn"
+            className={`ebook-toolbar__btn ${isBookmarked ? 'ebook-toolbar__btn--bookmark-active' : ''}`}
             onClick={onBookmarkToggle}
             title={isBookmarked ? '移除书签 (⌘D)' : '添加书签 (⌘D)'}
-            style={{ color: isBookmarked ? '#ffd43b' : undefined }}
           >
             {isBookmarked ? '★' : '☆'}
           </button>
+          {onExtract && (
+            <button
+              className="ebook-toolbar__btn"
+              onClick={onExtract}
+              title="提取到 Note (上传 PDF 到 Platform)"
+            >
+              📤
+            </button>
+          )}
         </div>
       )}
 
@@ -246,6 +271,22 @@ export function EBookToolbar({
           </button>
         </div>
       )}
+
+      {/* Open + SlotToggle + Close slot */}
+      <div className="ebook-toolbar__section ebook-toolbar__section--close" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+        <OpenFilePopup
+          label="Open"
+          placeholder="搜索书籍..."
+          loadItems={loadBookList}
+          onSelect={handleOpenBook}
+        />
+        <SlotToggle />
+        {onCloseSlot && (
+          <button className="ebook-toolbar__btn ebook-toolbar__btn--close-slot" onClick={onCloseSlot} title="关闭此面板">
+            ×
+          </button>
+        )}
+      </div>
     </div>
   );
 }

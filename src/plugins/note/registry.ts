@@ -11,6 +11,12 @@
 import { Schema, type NodeSpec, type MarkSpec } from 'prosemirror-model';
 import type { Plugin } from 'prosemirror-state';
 import type { BlockDef, SlashItemDef, NodeViewFactory } from './types';
+import { converterRegistry } from './converters/registry';
+import { textBlockConverter } from './converters/text-block-converter';
+import { bulletListConverter, orderedListConverter, taskListConverter, taskItemConverter, listItemConverter } from './converters/list-converter';
+import { codeBlockConverter, mathBlockConverter, imageConverter, videoConverter, audioConverter, tweetConverter, horizontalRuleConverter, pageAnchorConverter, fileBlockConverter, externalRefConverter } from './converters/render-block-converters';
+import { blockquoteConverter, calloutConverter, toggleListConverter, frameBlockConverter, tableConverter, tableRowConverter, tableCellConverter, tableHeaderConverter, columnListConverter, columnConverter } from './converters/container-converters';
+import { mathVisualConverter } from './converters/math-visual-converter';
 
 class BlockRegistry {
   private blocks = new Map<string, BlockDef>();
@@ -59,13 +65,13 @@ class BlockRegistry {
 
     for (const block of this.blocks.values()) {
       const spec = { ...block.nodeSpec };
-      // 所有 block group 节点自动注入 indent attr（视觉缩进基类能力）
-      if (spec.group === 'block' && spec.attrs) {
-        if (!('indent' in spec.attrs)) {
-          spec.attrs = { ...spec.attrs, indent: { default: 0 } };
-        }
-      } else if (spec.group === 'block' && !spec.attrs) {
-        spec.attrs = { indent: { default: 0 } };
+      // 所有 block group 节点自动注入通用 attrs
+      if (spec.group === 'block') {
+        spec.attrs = {
+          ...(spec.attrs || {}),
+          indent: spec.attrs?.indent ?? { default: 0 },
+          fromPage: { default: null },  // from.pdfPage — 来源页码，用于 eBook↔Note 锚定同步
+        };
       }
       nodes[block.name] = spec;
     }
@@ -115,6 +121,26 @@ class BlockRegistry {
           return ['mark', { 'data-color': mark.attrs.color, style: `background-color: ${mark.attrs.color}` }, 0];
         },
       },
+      thought: {
+        attrs: {
+          thoughtId: {},
+          thoughtType: { default: 'thought' },
+        },
+        inclusive: false,
+        parseDOM: [{ tag: 'span[data-thought-id]', getAttrs(dom: HTMLElement) {
+          return {
+            thoughtId: dom.getAttribute('data-thought-id'),
+            thoughtType: dom.getAttribute('data-thought-type') || 'thought',
+          };
+        }}],
+        toDOM(mark: any) {
+          return ['span', {
+            'data-thought-id': mark.attrs.thoughtId,
+            'data-thought-type': mark.attrs.thoughtType || 'thought',
+            class: 'thought-anchor',
+          }, 0];
+        },
+      },
     };
 
     return new Schema({ nodes, marks });
@@ -154,6 +180,31 @@ class BlockRegistry {
       }
     }
     return rules;
+  }
+
+  // ── Converter 注册 ──
+
+  /** 初始化 ConverterRegistry：注册所有 Converter */
+  initConverters(): void {
+    // 先从 BlockDef.converter 收集（如果有挂上的话）
+    converterRegistry.init(Array.from(this.blocks.values()));
+
+    // 直接注册所有已实现的 Converter
+    const converters = [
+      textBlockConverter,
+      bulletListConverter, orderedListConverter, taskListConverter, taskItemConverter, listItemConverter,
+      codeBlockConverter, mathBlockConverter, mathVisualConverter, imageConverter,
+      videoConverter, audioConverter, tweetConverter, horizontalRuleConverter, pageAnchorConverter,
+      fileBlockConverter, externalRefConverter,
+      blockquoteConverter, calloutConverter, toggleListConverter, frameBlockConverter,
+      tableConverter, tableRowConverter, tableCellConverter, tableHeaderConverter,
+      columnListConverter, columnConverter,
+    ];
+    for (const c of converters) {
+      converterRegistry.registerConverter(c);
+    }
+
+    console.log(`[BlockRegistry] Converters initialized: ${converters.length} registered`);
   }
 }
 

@@ -1,15 +1,32 @@
 import { getDB } from './client';
 import type { INoteStore, NoteRecord, NoteListItem } from './types';
+import { createAtom } from '../../shared/types/atom-types';
+import type { Atom, NoteTitleContent, ParagraphContent } from '../../shared/types/atom-types';
 
 /**
  * NoteStore — NoteFile CRUD
  *
  * SurrealDB record id 格式：note:⟨xxx⟩
  * 对外暴露纯字符串 id（不含 table 前缀和角括号）
+ *
+ * doc_content 存储 Atom[] 格式（不是 ProseMirror JSON）。
+ * Atom ↔ PM 转换在 renderer 端的 NoteEditor 中完成。
  */
 
 function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** 创建空文档的默认 Atom[]（noteTitle + 空段落） */
+function createDefaultAtoms(title?: string): Atom[] {
+  return [
+    createAtom('noteTitle', {
+      children: title ? [{ type: 'text', text: title }] : [],
+    } as NoteTitleContent),
+    createAtom('paragraph', {
+      children: [],
+    } as ParagraphContent),
+  ];
 }
 
 /** 清理 SurrealDB record id → 纯字符串 */
@@ -24,15 +41,11 @@ export const noteStore: INoteStore = {
 
     const id = generateId();
     const now = Date.now();
-    const defaultContent = [
-      { type: 'textBlock', attrs: { isTitle: true }, content: title ? [{ type: 'text', text: title }] : [] },
-      { type: 'textBlock' },
-    ];
 
     const record: NoteRecord = {
       id,
       title: title || 'Untitled',
-      doc_content: defaultContent,
+      doc_content: createDefaultAtoms(title),
       folder_id: folderId ?? null,
       created_at: now,
       updated_at: now,

@@ -2,10 +2,12 @@
    Note 编辑器样式（暗色主题）
    重建版 — 三基类架构
    ═══════════════════════════════════════════════════════════ */
+@import '../../shared/theme/tokens.css';
 
 /* ── ProseMirror 基础 ── */
 .ProseMirror {
   outline: none;
+  white-space: pre-wrap;  /* ProseMirror 要求，影响 IME composition 正确性 */
   padding: 24px 48px 24px 72px;
   min-height: 100%;
   color: #e8eaed;
@@ -30,6 +32,9 @@
   line-height: 1.2;
   padding: 0;
   margin: 0;
+}
+.note-title.is-empty .note-title__content {
+  min-height: 1.2em;         /* 空状态保留可点击区域 */
 }
 .note-title.is-empty .note-title__content::before {
   content: 'Untitled';
@@ -261,12 +266,18 @@
   outline: 2px solid #8ab4f8;
   outline-offset: -1px;
 }
-/* toolbar / tab-bar 统一显示规则 */
+/* toolbar / tab-bar 统一显示规则 — 浮动菜单，不占文档流 */
 .render-block__toolbar,
 .video-block__tab-bar,
 .tweet-block__tab-bar {
-  display: none;
+  display: flex;
   align-items: center;
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  z-index: 10;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
 }
 .render-block:hover > .render-block__toolbar,
 .render-block--selected > .render-block__toolbar,
@@ -276,12 +287,14 @@
 .render-block--editing .video-block__tab-bar,
 .render-block--hovered .tweet-block__tab-bar,
 .render-block--selected .tweet-block__tab-bar,
-.render-block--editing .tweet-block__tab-bar { display: flex; }
+.render-block--editing .tweet-block__tab-bar {
+  opacity: 1;
+  pointer-events: auto;
+}
 
 .render-block__toolbar {
   padding: 4px 8px;
-  background: #252525;
-  border-bottom: 1px solid #333;
+  background: rgba(30, 30, 30, 0.7);
   border-radius: 6px 6px 0 0;
   min-height: 32px;
 }
@@ -799,8 +812,8 @@
    video Block
    ═══════════════════════════════════════════════════════════ */
 .video-block__tab-bar {
-  padding: 0 8px; background: #252525; border-bottom: 1px solid #333;
-  position: relative;
+  padding: 0 8px; background: rgba(30, 30, 30, 0.7);
+  border-radius: 6px 6px 0 0;
 }
 .video-block__tab-btn {
   padding: 6px 12px; background: transparent; border: none; border-bottom: 2px solid transparent;
@@ -900,7 +913,8 @@
    tweet Block
    ═══════════════════════════════════════════════════════════ */
 .tweet-block__tab-bar {
-  padding: 0 8px; background: #252525; border-bottom: 1px solid #333;
+  padding: 0 8px; background: rgba(30, 30, 30, 0.7);
+  border-radius: 6px 6px 0 0;
 }
 .tweet-block__tab-btn {
   padding: 6px 12px; background: transparent; border: none; border-bottom: 2px solid transparent;
@@ -1032,6 +1046,31 @@
   border: none; border-top: 1px solid #444; margin: 1.5em 0;
 }
 
+/* ── pageAnchor — PDF 页码锚点 ── */
+.ProseMirror .page-anchor {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0.5em 0;
+  font-size: 11px;
+  color: #666;
+  user-select: none;
+  cursor: pointer;
+}
+.ProseMirror .page-anchor::before,
+.ProseMirror .page-anchor::after {
+  content: '';
+  flex: 1;
+  border-top: 1px dashed #333;
+}
+.ProseMirror .page-anchor:hover {
+  color: #8ab4f8;
+}
+.ProseMirror .page-anchor:hover::before,
+.ProseMirror .page-anchor:hover::after {
+  border-color: #8ab4f8;
+}
+
 /* ═══════════════════════════════════════════════════════════
    Phase 7 — toggleList / frameBlock / table / columnList / inline
    ═══════════════════════════════════════════════════════════ */
@@ -1073,23 +1112,170 @@
 .frame-block__content { flex: 1; min-width: 0; }
 
 /* ── table ── */
-.ProseMirror table {
+
+.ProseMirror .table-block-wrapper {
+  position: relative;
+  margin: 12px 0;
+  margin-bottom: 28px;   /* space for +row button below */
+}
+
+.ProseMirror .table-block__scroll {
+  overflow-x: auto;
+}
+
+.ProseMirror table.pm-table {
   border-collapse: collapse;
   width: 100%;
-  margin: 0.5em 0;
+  /* `auto` lets columns size by their content, matching typical
+     doc-editor behavior (Notion / Word / Google Docs). Combined with
+     first-column `width: max-content`-ish constraint below, the label
+     column stays narrow and the value column gets the rest. */
+  table-layout: auto;
 }
-.ProseMirror th, .ProseMirror td {
-  border: 1px solid #444;
+
+.ProseMirror table.pm-table td,
+.ProseMirror table.pm-table th {
+  border: 1px solid #3c3c3c;
   padding: 8px 12px;
-  text-align: left;
+  min-width: 80px;
   vertical-align: top;
+  position: relative;
 }
-.ProseMirror th {
-  background: #2a2a2a;
+
+/* First column acts as a row-label (Word / Notion convention): narrow,
+ * shrink-to-fit, no stretching even when the table is full-width. The
+ * `white-space: nowrap` keeps short labels on one line. */
+.ProseMirror table.pm-table tr > td:first-child,
+.ProseMirror table.pm-table tr > th:first-child {
+  width: 1%;
+  white-space: nowrap;
+}
+
+.ProseMirror table.pm-table th {
+  background: #2d2d2d;
   font-weight: 600;
+  color: #e8eaed; /* force same bright text color as td; overrides any
+                     inherited muted color from the editor or a theme
+                     default that renders <th> dimmer than <td> */
 }
-.ProseMirror td { background: #1e1e1e; }
-.ProseMirror .selectedCell { background: rgba(74, 158, 255, 0.15); }
+
+/* First-column emphasis — matches typical Word / doc conventions where
+ * the leftmost column acts as a row label / key. Markdown can't encode
+ * this directly (tables only have a single header row), so we style it
+ * unconditionally: all tables get a bolder first column.
+ *
+ * `color` is explicit to override any cascaded rule that might dim the
+ * text (some themes default `td` inside a styled-bg cell to a muted
+ * color). White text on the darker cell bg keeps contrast high. */
+.ProseMirror table.pm-table tr > td:first-child,
+.ProseMirror table.pm-table tr > th:first-child {
+  font-weight: 600;
+  background: #262626;
+  color: #e8eaed;
+}
+
+/* Any descendants inside the label cell (p, spans, …) inherit the
+ * bright color — belt-and-suspenders against a stray inline color. */
+.ProseMirror table.pm-table tr > td:first-child *,
+.ProseMirror table.pm-table tr > th:first-child * {
+  color: inherit;
+}
+
+.ProseMirror table.pm-table td > *:first-child,
+.ProseMirror table.pm-table th > *:first-child {
+  margin-top: 0;
+}
+
+.ProseMirror table.pm-table td > *:last-child,
+.ProseMirror table.pm-table th > *:last-child {
+  margin-bottom: 0;
+}
+
+/* prosemirror-tables selected cell overlay */
+.ProseMirror table.pm-table .selectedCell::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(138, 180, 248, 0.15);
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* +Column button — Notion style: narrow strip right of table */
+.ProseMirror .table-block__add-col-btn {
+  position: absolute;
+  right: -24px;
+  top: 0;
+  bottom: 0;
+  width: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px dashed transparent;
+  border-radius: 4px;
+  color: #5f6368;
+  cursor: pointer;
+  font-size: 16px;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s;
+}
+
+.ProseMirror .table-block-wrapper:hover .table-block__add-col-btn {
+  opacity: 1;
+  border-color: #3c3c3c;
+}
+
+.ProseMirror .table-block__add-col-btn:hover {
+  background: rgba(138, 180, 248, 0.1);
+  color: #8ab4f8;
+}
+
+/* +Row button — Notion style: narrow strip below table */
+.ProseMirror .table-block__add-row-btn {
+  position: absolute;
+  left: 0;
+  bottom: -24px;
+  right: 0;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px dashed transparent;
+  border-radius: 4px;
+  color: #5f6368;
+  cursor: pointer;
+  font-size: 16px;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s;
+}
+
+.ProseMirror .table-block-wrapper:hover .table-block__add-row-btn {
+  opacity: 1;
+  border-color: #3c3c3c;
+}
+
+.ProseMirror .table-block__add-row-btn:hover {
+  background: rgba(138, 180, 248, 0.1);
+  color: #8ab4f8;
+}
+
+/* Table column resize handle (prosemirror-tables) */
+.ProseMirror .column-resize-handle {
+  position: absolute;
+  right: -2px;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: #1976d2;
+  pointer-events: none;
+  z-index: 20;
+}
+
+.ProseMirror.resize-cursor {
+  cursor: col-resize;
+}
 
 /* ── columnList ── */
 
@@ -1591,4 +1777,1301 @@
   white-space: pre-wrap;
   max-height: 120px;
   overflow-y: auto;
+}
+/* ─── MathVisual Block ────────────────────────────────── */
+
+.math-visual-block {
+  margin: 12px 0;
+  border: 1px solid #3a3a3a;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #1e1e1e;
+}
+
+.math-visual-block.ProseMirror-selectednode {
+  border-color: #2D7FF9;
+  box-shadow: 0 0 0 2px rgba(45, 127, 249, 0.3);
+}
+
+
+
+.math-visual {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 顶部区域（函数列表 + hover 控制栏） */
+.mv-header {
+  position: relative;
+  border-bottom: 1px solid #333;
+}
+
+.mv-fn-list {
+  padding: 8px 12px;
+}
+
+/* 浮动工具栏（覆盖在画布底部） */
+.mv-floating-toolbar {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  background: rgba(26, 26, 26, 0.92);
+  backdrop-filter: blur(8px);
+  border: 1px solid #3a3a3a;
+  border-radius: 8px;
+  opacity: 0;
+  transition: opacity 0.15s;
+  pointer-events: none;
+  z-index: 10;
+  flex-wrap: wrap;
+}
+
+.mv-canvas:hover .mv-floating-toolbar,
+.mv-floating-toolbar:focus-within {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.mv-fn-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+}
+
+.mv-fn-color {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.mv-fn-color--clickable {
+  cursor: pointer;
+  transition: transform 0.1s;
+}
+
+.mv-fn-color--clickable:hover {
+  transform: scale(1.3);
+}
+
+/* 颜色/线型弹出面板 */
+.mv-style-popover {
+  position: absolute;
+  z-index: 100;
+  background: #252525;
+  border: 1px solid #444;
+  border-radius: 8px;
+  padding: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 180px;
+}
+
+.mv-style-colors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.mv-style-swatch {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition: border-color 0.1s;
+}
+
+.mv-style-swatch:hover {
+  border-color: #888;
+}
+
+.mv-style-swatch--active {
+  border-color: #fff;
+}
+
+.mv-style-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mv-style-label {
+  font-size: 11px;
+  color: #888;
+  min-width: 28px;
+}
+
+.mv-style-slider {
+  flex: 1;
+  height: 3px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: #444;
+  border-radius: 2px;
+  outline: none;
+}
+
+.mv-style-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #2D7FF9;
+  cursor: pointer;
+}
+
+.mv-style-value {
+  font-size: 11px;
+  color: #888;
+  min-width: 20px;
+  text-align: right;
+  font-family: 'SF Mono', monospace;
+}
+
+.mv-style-btns {
+  display: flex;
+  gap: 2px;
+}
+
+.mv-style-btn {
+  background: #333;
+  border: 1px solid #444;
+  border-radius: 4px;
+  color: #aaa;
+  font-size: 11px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+.mv-style-btn:hover {
+  background: #3a3a3a;
+}
+
+.mv-style-btn--active {
+  background: #1a3a5c;
+  border-color: #2D7FF9;
+  color: #7bb8ff;
+}
+
+.mv-fn-label {
+  font-size: 13px;
+  color: #aaa;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  white-space: nowrap;
+}
+
+.mv-fn-expr {
+  flex: 1;
+  font-size: 13px;
+  color: #e0e0e0;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  cursor: text;
+  padding: 2px 6px;
+  border-radius: 4px;
+  min-width: 60px;
+}
+
+.mv-fn-expr:hover {
+  background: #2a2a2a;
+}
+
+.mv-fn-row--error .mv-fn-expr {
+  color: #f87171;
+}
+
+.mv-fn-error {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #ef4444;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+  cursor: default;
+}
+
+.mv-fn-expr-tex .katex {
+  font-size: 1.05em;
+}
+
+.mv-fn-expr-text {
+  color: #666;
+  font-style: italic;
+}
+
+.mv-fn-input {
+  flex: 1;
+  background: #2a2a2a;
+  border: 1px solid #555;
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-size: 13px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  padding: 2px 6px;
+  outline: none;
+}
+
+.mv-fn-input:focus {
+  border-color: #2D7FF9;
+}
+
+.mv-fn-btn {
+  background: none;
+  border: 1px solid transparent;
+  color: #888;
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.mv-fn-btn:hover {
+  background: #333;
+  color: #ddd;
+}
+
+.mv-fn-btn--active {
+  color: #2D7FF9;
+  border-color: #2D7FF9;
+}
+
+.mv-fn-btn-tex .katex {
+  font-size: 0.85em;
+}
+
+.mv-fn-btn--hidden {
+  opacity: 0.4;
+}
+
+.mv-fn-btn--remove {
+  color: #888;
+  font-size: 16px;
+  padding: 0 4px;
+}
+
+.mv-fn-btn--remove:hover {
+  color: #ff4444;
+}
+
+.mv-add-fn {
+  background: none;
+  border: 1px dashed #444;
+  color: #888;
+  font-size: 12px;
+  padding: 4px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-top: 4px;
+  width: 100%;
+}
+
+.mv-add-fn:hover {
+  border-color: #666;
+  color: #bbb;
+}
+
+/* 参数滑块 */
+.mv-params {
+  padding: 6px 12px;
+  border-bottom: 1px solid #333;
+}
+
+.mv-param-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+}
+
+.mv-param-name {
+  font-size: 13px;
+  color: #aaa;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  min-width: 16px;
+  text-align: right;
+}
+
+.mv-param-slider {
+  flex: 1;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: #444;
+  border-radius: 2px;
+  outline: none;
+}
+
+.mv-param-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #2D7FF9;
+  cursor: pointer;
+}
+
+.mv-param-value {
+  font-size: 12px;
+  color: #888;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  min-width: 42px;
+  text-align: right;
+}
+
+/* 画布 */
+.mv-canvas {
+  padding: 4px;
+  min-height: 300px;
+}
+
+.mv-canvas svg {
+  border-radius: 4px;
+  touch-action: none;
+  cursor: grab;
+}
+
+.mv-canvas svg:active {
+  cursor: grabbing;
+}
+
+/* 范围输入组 */
+.mv-range-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.mv-range-label {
+  font-size: 12px;
+  color: #888;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-style: italic;
+  min-width: 10px;
+}
+
+.mv-range-input {
+  width: 48px;
+  background: #2a2a2a;
+  border: 1px solid #444;
+  border-radius: 3px;
+  color: #ddd;
+  font-size: 12px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  padding: 2px 4px;
+  text-align: center;
+  outline: none;
+}
+
+.mv-range-input:focus {
+  border-color: #2D7FF9;
+}
+
+.mv-range-sep {
+  font-size: 12px;
+  color: #666;
+}
+
+/* 设置面板 */
+.mv-settings {
+  padding: 8px 12px;
+  border-top: 1px solid #333;
+  background: #1a1a1a;
+}
+
+.mv-settings--floating {
+  position: absolute;
+  bottom: 48px;
+  right: 8px;
+  z-index: 20;
+  border: 1px solid #3a3a3a;
+  border-radius: 8px;
+  background: rgba(26, 26, 26, 0.95);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  max-width: 380px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.mv-settings-section {
+  font-size: 11px;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 6px 0 2px;
+  border-bottom: 1px solid #2a2a2a;
+  margin-bottom: 4px;
+}
+
+.mv-settings-section:first-child {
+  padding-top: 0;
+}
+
+.mv-settings-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.mv-settings-label {
+  font-size: 12px;
+  color: #888;
+  min-width: 56px;
+  flex-shrink: 0;
+}
+
+.mv-settings-btns {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.mv-settings-btn {
+  background: #2a2a2a;
+  border: 1px solid #444;
+  border-radius: 4px;
+  color: #bbb;
+  font-size: 11px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+
+.mv-settings-btn:hover {
+  border-color: #666;
+  color: #ddd;
+}
+
+.mv-settings-btn--active {
+  background: #2D7FF9;
+  border-color: #2D7FF9;
+  color: #fff;
+}
+
+.mv-settings-unit {
+  font-size: 11px;
+  color: #666;
+}
+
+.mv-settings-check {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: #bbb;
+  cursor: pointer;
+}
+
+.mv-settings-check input {
+  accent-color: #2D7FF9;
+}
+
+/* Mafs 暗色主题覆盖 */
+.math-visual .MafsView {
+  --mafs-bg: #1e1e1e;
+  --mafs-fg: #888;
+  --mafs-line-color: #333;
+  background: #1e1e1e !important;
+}
+
+/* ─── 全屏按钮（Block 右上角） ─── */
+.mv-fullscreen-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 10;
+  background: rgba(30, 30, 30, 0.8);
+  border: 1px solid #555;
+  color: #aaa;
+  font-size: 16px;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.math-visual:hover .mv-fullscreen-btn,
+.mv-fullscreen-btn:focus {
+  opacity: 1;
+}
+
+.mv-fullscreen-btn:hover {
+  background: #333;
+  color: #fff;
+  border-color: #2D7FF9;
+}
+
+/* ─── 全屏 Overlay ─── */
+.mv-fullscreen-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: #181818;
+  display: flex;
+  flex-direction: column;
+  color: #e0e0e0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+/* 顶部栏 */
+.mv-fullscreen-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  border-bottom: 1px solid #333;
+  background: #1e1e1e;
+  flex-shrink: 0;
+}
+
+.mv-fullscreen-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: #bbb;
+}
+
+.mv-fullscreen-close {
+  background: none;
+  border: 1px solid transparent;
+  color: #888;
+  font-size: 20px;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mv-fullscreen-close:hover {
+  background: #333;
+  color: #fff;
+}
+
+/* 三栏主体 */
+.mv-fullscreen-body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+
+/* ─── 左侧面板 ─── */
+.mv-fullscreen-left {
+  width: 220px;
+  flex-shrink: 0;
+  border-right: 1px solid #333;
+  background: #1e1e1e;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.mv-fl-section {
+  padding: 12px;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.mv-fl-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+
+/* 函数卡片 */
+.mv-fl-fn-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mv-fl-fn-card {
+  background: #252525;
+  border: 1px solid #333;
+  border-radius: 6px;
+  padding: 8px;
+}
+
+.mv-fl-fn-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.mv-fl-fn-color {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.mv-fl-fn-label {
+  font-size: 12px;
+  color: #aaa;
+}
+
+.mv-fl-fn-label .katex {
+  font-size: 0.95em;
+}
+
+.mv-fl-fn-btn {
+  background: none;
+  border: none;
+  color: #888;
+  font-size: 12px;
+  padding: 2px 4px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.mv-fl-fn-btn:hover {
+  background: #333;
+  color: #ddd;
+}
+
+.mv-fl-fn-btn--active {
+  color: #2D7FF9;
+}
+
+.mv-fl-fn-btn--hidden {
+  opacity: 0.4;
+}
+
+.mv-fl-fn-btn--remove:hover {
+  color: #ff4444;
+}
+
+.mv-fl-fn-btn-tex .katex {
+  font-size: 0.85em;
+}
+
+.mv-fl-fn-expr-area {
+  min-height: 24px;
+}
+
+.mv-fl-fn-expr {
+  display: block;
+  font-size: 13px;
+  color: #e0e0e0;
+  cursor: text;
+  padding: 2px 4px;
+  border-radius: 3px;
+}
+
+.mv-fl-fn-expr:hover {
+  background: #2a2a2a;
+}
+
+.mv-fl-fn-input {
+  width: 100%;
+  background: #2a2a2a;
+  border: 1px solid #555;
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-size: 13px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  padding: 3px 6px;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.mv-fl-fn-input:focus {
+  border-color: #2D7FF9;
+}
+
+.mv-fl-add-btn {
+  width: 100%;
+  background: none;
+  border: 1px dashed #444;
+  color: #888;
+  font-size: 12px;
+  padding: 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-top: 6px;
+}
+
+.mv-fl-add-btn:hover {
+  border-color: #666;
+  color: #bbb;
+}
+
+/* 参数滑块 */
+.mv-fl-param-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+}
+
+.mv-fl-param-name {
+  font-size: 13px;
+  color: #aaa;
+  font-family: 'SF Mono', monospace;
+  min-width: 16px;
+  text-align: right;
+}
+
+.mv-fl-param-slider {
+  flex: 1;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: #444;
+  border-radius: 2px;
+  outline: none;
+}
+
+.mv-fl-param-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #2D7FF9;
+  cursor: pointer;
+}
+
+.mv-fl-param-value {
+  font-size: 12px;
+  color: #888;
+  font-family: 'SF Mono', monospace;
+  min-width: 40px;
+  text-align: right;
+}
+
+/* ─── 工具栏 ─── */
+.mv-fl-tools {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+
+.mv-fl-tool-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: #252525;
+  border: 1px solid #333;
+  border-radius: 5px;
+  color: #aaa;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.mv-fl-tool-btn:hover {
+  background: #2a2a2a;
+  border-color: #555;
+  color: #ddd;
+}
+
+.mv-fl-tool-btn--active {
+  background: #1a3a5c;
+  border-color: #2D7FF9;
+  color: #7bb8ff;
+}
+
+.mv-fl-tool-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.mv-fl-tool-label {
+  font-size: 12px;
+}
+
+.mv-fl-action-btn {
+  width: 100%;
+  padding: 6px 8px;
+  background: #252525;
+  border: 1px solid #333;
+  border-radius: 5px;
+  color: #aaa;
+  font-size: 12px;
+  cursor: pointer;
+  margin-top: 6px;
+}
+
+.mv-fl-action-btn:hover {
+  background: #2a2a2a;
+  border-color: #555;
+  color: #ddd;
+}
+
+.mv-fl-export-group {
+  display: flex;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.mv-fl-export-group .mv-fl-action-btn {
+  margin-top: 0;
+}
+
+/* ─── 中央画布 ─── */
+.mv-fullscreen-canvas {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+}
+
+.mv-fullscreen-canvas .MafsView {
+  --mafs-bg: #181818;
+  --mafs-fg: #888;
+  --mafs-line-color: #333;
+  background: #181818 !important;
+  flex: 1;
+}
+
+.mv-fullscreen-canvas svg {
+  width: 100%;
+  height: 100%;
+}
+
+/* 底部坐标栏 */
+.mv-fullscreen-coords {
+  display: flex;
+  gap: 24px;
+  padding: 6px 16px;
+  background: #1e1e1e;
+  border-top: 1px solid #333;
+  font-size: 12px;
+  color: #666;
+  font-family: 'SF Mono', monospace;
+  flex-shrink: 0;
+}
+
+/* ─── 右侧属性面板 ─── */
+.mv-fullscreen-right {
+  width: 200px;
+  flex-shrink: 0;
+  border-left: 1px solid #333;
+  background: #1e1e1e;
+  overflow-y: auto;
+}
+
+.mv-fullscreen-right--empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mv-fr-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  color: #555;
+}
+
+.mv-fr-placeholder-icon {
+  font-size: 24px;
+}
+
+.mv-fr-placeholder-text {
+  font-size: 12px;
+}
+
+/* 工具模式下画布光标 */
+.mv-fullscreen-canvas--tool {
+  cursor: crosshair;
+}
+
+/* 右侧面板：属性编辑 */
+.mv-fr-section {
+  padding: 12px;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.mv-fr-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+
+.mv-fr-hint {
+  font-size: 12px;
+  color: #666;
+  padding: 4px 0;
+}
+
+.mv-fr-props {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mv-fr-prop-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mv-fr-prop-label {
+  font-size: 12px;
+  color: #aaa;
+  min-width: 24px;
+  font-family: 'SF Mono', monospace;
+}
+
+.mv-fr-prop-input {
+  flex: 1;
+  background: #252525;
+  border: 1px solid #444;
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-size: 12px;
+  font-family: 'SF Mono', monospace;
+  padding: 3px 6px;
+  outline: none;
+  max-width: 100px;
+}
+
+.mv-fr-prop-input:focus {
+  border-color: #2D7FF9;
+}
+
+.mv-fr-prop-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #aaa;
+  cursor: pointer;
+}
+
+.mv-fr-prop-check input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+}
+
+.mv-fr-remove-btn {
+  width: 100%;
+  padding: 5px 8px;
+  background: none;
+  border: 1px solid #444;
+  border-radius: 4px;
+  color: #ff6b6b;
+  font-size: 12px;
+  cursor: pointer;
+  margin-top: 4px;
+}
+
+.mv-fr-remove-btn:hover {
+  background: #3a1a1a;
+  border-color: #ff4444;
+}
+
+/* 底部坐标栏工具提示 */
+.mv-fullscreen-coords-tool {
+  color: #2D7FF9;
+  margin-left: auto;
+}
+
+/* 框选光标 */
+.mv-fullscreen-canvas--select {
+  cursor: crosshair;
+}
+
+/* 框选矩形 */
+.mv-box-select-rect {
+  position: absolute;
+  border: 1.5px dashed #2D7FF9;
+  background: rgba(45, 127, 249, 0.08);
+  pointer-events: none;
+  z-index: 10;
+}
+
+/* ─── 标注列表 ─── */
+.mv-fr-ann-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.mv-fr-ann-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background 0.1s;
+}
+
+.mv-fr-ann-item:hover {
+  background: #2a2a2a;
+}
+
+.mv-fr-ann-item--selected {
+  background: #1a3a5c;
+  outline: 1px solid #2D7FF9;
+}
+
+.mv-fr-ann-item--multi {
+  background: #2a2a3c;
+  outline: 1px solid #7b7bff;
+}
+
+.mv-fr-ann-label {
+  font-weight: 600;
+  color: #FF6B35;
+  min-width: 16px;
+  font-family: 'SF Mono', monospace;
+}
+
+.mv-fr-ann-coord {
+  flex: 1;
+  color: #888;
+  font-family: 'SF Mono', monospace;
+  font-size: 11px;
+}
+
+.mv-fr-ann-del {
+  background: none;
+  border: none;
+  color: #666;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1;
+}
+
+.mv-fr-ann-del:hover {
+  color: #ff4444;
+}
+
+/* ─── 图表标题 ─── */
+.mv-fullscreen-chart-title {
+  color: #ddd;
+  font-size: 14px;
+  font-weight: 500;
+  margin-left: 16px;
+  opacity: 0.9;
+}
+
+/* ─── 标题输入框 ─── */
+.mv-fl-title-input {
+  margin-bottom: 4px;
+}
+
+/* ─── 动画播放按钮 ─── */
+.mv-fl-anim-btn {
+  width: 22px;
+  height: 22px;
+  font-size: 10px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mv-fl-anim-btn--active {
+  background: rgba(45, 127, 249, 0.3) !important;
+  color: #2D7FF9 !important;
+}
+
+/* ─── 图例 overlay ─── */
+.mv-legend-overlay {
+  position: absolute;
+  top: 8px;
+  right: 212px;
+  background: rgba(30, 30, 30, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  padding: 6px 10px;
+  pointer-events: none;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mv-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mv-legend-svg {
+  flex-shrink: 0;
+}
+
+.mv-legend-label {
+  color: #ccc;
+  font-size: 11px;
+  font-family: 'SF Mono', monospace;
+  white-space: nowrap;
+}
+
+/* ─── Block 内嵌视图标题 ─── */
+.mv-block-title {
+  color: #ddd;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: center;
+  padding: 4px 0 0;
+}
+
+/* ── Thought 锚点样式 ── */
+/* 直线下划线，颜色跟随 data-thought-type */
+
+.thought-anchor {
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+  text-decoration-style: solid;
+  cursor: pointer;
+  transition: text-decoration-color 0.15s;
+}
+
+/* 默认 thought = 蓝色 */
+.thought-anchor                                         { text-decoration-color: #4a9eff; }
+.thought-anchor[data-thought-type="thought"]            { text-decoration-color: #4a9eff; }
+.thought-anchor[data-thought-type="question"]           { text-decoration-color: #ff5252; }
+.thought-anchor[data-thought-type="important"]          { text-decoration-color: #ffab40; }
+.thought-anchor[data-thought-type="todo"]               { text-decoration-color: #4caf50; }
+.thought-anchor[data-thought-type="analysis"]           { text-decoration-color: #ab47bc; }
+
+.thought-anchor--active {
+  animation: thought-flash 0.4s ease-in-out 3;
+}
+
+.thought-anchor--resolved {
+  text-decoration-style: dashed;
+  opacity: 0.5;
+}
+
+@keyframes thought-flash {
+  50% { opacity: 0.4; }
+}
+
+/* Node 锚点（image, codeBlock 等） */
+[data-thought-id].thought-anchor-node {
+  outline: 2px solid #ffd400;
+  outline-offset: 2px;
+  cursor: pointer;
+}
+
+[data-thought-id].thought-anchor-node:hover {
+  outline-width: 3px;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════
+ * fileBlock & externalRef — AI-Note Step 0b
+ *
+ * Outer frame (border/background/margin) comes from .render-block.
+ * These classes are inner content only — no duplicate border.
+ * ═══════════════════════════════════════════════════════════════ */
+
+.file-block,
+.external-ref {
+  user-select: none;
+}
+
+.file-block__inner,
+.external-ref__inner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+}
+
+.file-block__icon,
+.external-ref__icon {
+  flex: 0 0 auto;
+  font-size: 28px;
+  line-height: 1;
+}
+
+.file-block__meta,
+.external-ref__meta {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.file-block__name,
+.external-ref__title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-text-primary, #ddd);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-block__sub,
+.external-ref__sub {
+  font-size: 11px;
+  color: var(--color-text-secondary, #888);
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-block__actions,
+.external-ref__actions {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 6px;
+}
+
+.file-block__btn,
+.external-ref__btn {
+  font-size: 12px;
+  padding: 4px 10px;
+  background: transparent;
+  border: 0.5px solid var(--color-border-tertiary, rgba(255,255,255,0.15));
+  border-radius: 4px;
+  color: var(--color-text-primary, #ddd);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.file-block__btn:hover:not(:disabled),
+.external-ref__btn:hover:not(:disabled) {
+  background: rgba(255,255,255,0.08);
+}
+
+.file-block__btn:disabled,
+.external-ref__btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }

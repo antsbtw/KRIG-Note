@@ -1,8 +1,8 @@
-import { app } from 'electron';
+import { app, nativeTheme, dialog } from 'electron';
+import fs from 'node:fs';
 import { createShell, getMainWindow } from './window/shell';
 import { registerIpcHandlers } from './ipc/handlers';
 import { setupDividerController } from './slot/divider';
-import { getNavSideWidth, setNavSideWidth } from './slot/layout';
 import { workspaceManager } from './workspace/manager';
 import { workModeRegistry } from './workmode/registry';
 import { protocolRegistry } from './protocol/registry';
@@ -11,10 +11,14 @@ import { menuRegistry } from './menu/registry';
 import { loadSession, saveSession, buildSession } from './storage/session-store';
 import { initSurrealDB, shutdownSurrealDB, isDBReady } from './storage/client';
 import { initSchema } from './storage/schema';
+import { migrateJsonToSurreal } from './storage/migrate-json-to-surreal';
 import { surrealSessionStore } from './storage/surreal-session-store';
 import { activityStore } from './storage/activity-store';
 import { initKrigNoteDocs, createBlockTaskDoc, reimportTestDocs } from './storage/init-docs';
-import { mediaStore } from './media/media-store';
+import { mediaSurrealStore as mediaStore } from './media/media-surreal-store';
+import { setupExtractionInterceptor } from '../plugins/web/main/extraction-handler';
+import { setupCSPBypass } from '../plugins/web-bridge/infrastructure/csp-bypass';
+import { registerGuest } from '../plugins/web-bridge/infrastructure/guest-registry';
 
 /**
  * KRIG Note — 应用入口
@@ -55,6 +59,70 @@ function registerPlugins(): void {
     order: 3,
   });
 
+  workModeRegistry.register({
+    id: 'extraction',
+    viewType: 'web',
+    variant: 'extraction',
+    icon: '📤',
+    label: 'Extraction',
+    order: 4,
+    hidden: true,   // 仅作为 right slot，不在 NavSide tab 中显示
+    onViewCreated: (_view, guestWebContents) => {
+      setupExtractionInterceptor(guestWebContents);
+    },
+  });
+
+  workModeRegistry.register({
+    id: 'web-translate',
+    viewType: 'web',
+    variant: 'translate',
+    icon: '🌐',
+    label: 'Translate',
+    order: 5,
+    hidden: true,
+    onViewCreated: (_view, guestWebContents) => {
+      setupCSPBypass(guestWebContents);
+    },
+  });
+
+  workModeRegistry.register({
+    id: 'ai-web',
+    viewType: 'web',
+    variant: 'ai',
+    icon: '🤖',
+    label: 'AI',
+    order: 6,
+    hidden: true,   // 仅作为 right slot（场景 A 标注模式）
+    onViewCreated: (view, guestWebContents) => {
+      setupCSPBypass(guestWebContents);
+      registerGuest(view.webContents, guestWebContents);
+    },
+  });
+
+  // 场景 C：AI 浏览同步模式 — Left Slot: AIWebView, Right Slot: NoteView
+  workModeRegistry.register({
+    id: 'ai-sync',
+    viewType: 'web',
+    variant: 'ai',
+    icon: '🤖',
+    label: 'AI',
+    order: 4,
+    hidden: false,   // 在 NavSide tab 中显示
+    onViewCreated: (view, guestWebContents) => {
+      setupCSPBypass(guestWebContents);
+      registerGuest(view.webContents, guestWebContents);
+    },
+  });
+
+  workModeRegistry.register({
+    id: 'thought',
+    viewType: 'thought',
+    icon: '💭',
+    label: 'Thought',
+    order: 10,
+    hidden: true,   // 不在 NavSide tab 中显示，仅作为 right slot
+  });
+
   // NavSide 内容注册
   navSideRegistry.register({
     workModeId: 'demo-a',
@@ -74,6 +142,22 @@ function registerPlugins(): void {
     contentType: 'ebook-bookshelf',
   });
 
+  navSideRegistry.register({
+    workModeId: 'demo-c',
+    actionBar: { title: '网页', actions: [
+      { id: 'create-web-folder', label: '+ 文件夹' },
+      { id: 'add-web-bookmark', label: '+ 书签' },
+    ]},
+    contentType: 'web-bookmarks',
+  });
+
+  // AI Sync NavSide — 显示 AI 服务选择（简化版）
+  navSideRegistry.register({
+    workModeId: 'ai-sync',
+    actionBar: { title: 'AI 对话', actions: [] },
+    contentType: 'ai-services',
+  });
+
   // 协同协议注册
   protocolRegistry.register({
     id: 'demo-sync',
@@ -84,6 +168,33 @@ function registerPlugins(): void {
     id: 'demo-sync-reverse',
     match: { left: { type: 'ebook' }, right: { type: 'note' } },
   });
+
+  protocolRegistry.register({
+    id: 'ebook-extraction',
+    match: { left: { type: 'ebook' }, right: { type: 'web', variant: 'extraction' } },
+  });
+
+  protocolRegistry.register({
+    id: 'note-thought',
+    match: { left: { type: 'note' }, right: { type: 'thought' } },
+  });
+
+  // Cross-View Toggle 协议：允许任意 View 组合通信
+  protocolRegistry.register({ id: 'note-web',    match: { left: { type: 'note' },  right: { type: 'web' } } });
+  protocolRegistry.register({ id: 'web-note',    match: { left: { type: 'web' },   right: { type: 'note' } } });
+  protocolRegistry.register({ id: 'web-ebook',   match: { left: { type: 'web' },   right: { type: 'ebook' } } });
+  protocolRegistry.register({ id: 'ebook-web',   match: { left: { type: 'ebook' }, right: { type: 'web' } } });
+  protocolRegistry.register({ id: 'note-note',   match: { left: { type: 'note' },  right: { type: 'note' } } });
+  protocolRegistry.register({ id: 'ebook-ebook', match: { left: { type: 'ebook' }, right: { type: 'ebook' } } });
+  protocolRegistry.register({ id: 'web-web',     match: { left: { type: 'web' },   right: { type: 'web' } } });
+  protocolRegistry.register({ id: 'web-translate', match: { left: { type: 'web' }, right: { type: 'web', variant: 'translate' } } });
+
+  // AI Workflow 协议
+  protocolRegistry.register({ id: 'note-ai', match: { left: { type: 'note' }, right: { type: 'web', variant: 'ai' } } });
+  protocolRegistry.register({ id: 'ebook-ai', match: { left: { type: 'ebook' }, right: { type: 'web', variant: 'ai' } } });
+
+  // AI Sync 协议：左侧 AIWebView ↔ 右侧 NoteView（实时同步对话记录）
+  protocolRegistry.register({ id: 'ai-sync', match: { left: { type: 'web', variant: 'ai' }, right: { type: 'note' } } });
 
   // ── DevTools 辅助函数 ──
   function openDevToolsByName(name: string): void {
@@ -123,10 +234,13 @@ function registerPlugins(): void {
       { id: 'devtools-ebook', label: 'DevTools (eBook)', accelerator: 'CmdOrCtrl+Alt+F', handler: () => {
         openDevToolsByName('ebook');
       }},
+      { id: 'devtools-web', label: 'DevTools (Web)', accelerator: 'CmdOrCtrl+Alt+W', handler: () => {
+        openDevToolsByName('web');
+      }},
       { id: 'devtools-navside', label: 'DevTools (NavSide)', accelerator: 'CmdOrCtrl+Alt+S', handler: () => {
         openDevToolsByName('navside');
       }},
-      { id: 'devtools-shell', label: 'DevTools (Shell)', accelerator: 'CmdOrCtrl+Alt+W', handler: () => {
+      { id: 'devtools-shell', label: 'DevTools (Shell)', accelerator: 'CmdOrCtrl+Alt+H', handler: () => {
         openDevToolsByName('shell');
       }},
       { id: 'devtools-focused', label: 'DevTools (Focused)', accelerator: 'CmdOrCtrl+Alt+I', handler: () => {
@@ -151,6 +265,27 @@ function registerPlugins(): void {
       { id: 'new-note', label: 'New Note', accelerator: 'CmdOrCtrl+N', handler: () => console.log('New Note') },
       { id: 'save-note', label: 'Save', accelerator: 'CmdOrCtrl+S', handler: () => console.log('Save Note') },
       { id: 'sep1', label: '', separator: true, handler: () => {} },
+      { id: 'import-json', label: 'Import JSON...', handler: async () => {
+        const win = getMainWindow();
+        if (!win) return;
+        const result = await dialog.showOpenDialog(win as any, {
+          title: 'Import JSON',
+          filters: [{ name: 'JSON', extensions: ['json'] }],
+          properties: ['openFile'],
+        });
+        if (result.canceled || result.filePaths.length === 0) return;
+        try {
+          const raw = fs.readFileSync(result.filePaths[0], 'utf-8');
+          const data = JSON.parse(raw);
+          for (const child of win.contentView.children) {
+            if ('webContents' in child) {
+              (child as any).webContents.send('note:import-json', data);
+            }
+          }
+        } catch (err) {
+          console.error('[Menu] Import JSON failed:', err);
+        }
+      }},
       { id: 'export-md', label: 'Export as Markdown', handler: () => console.log('Export MD') },
     ],
   });
@@ -307,7 +442,10 @@ function registerPlugins(): void {
 // ── 应用生命周期 ──
 
 app.whenReady().then(() => {
-  // 0. 注册自定义协议（必须在 app.whenReady 后）
+  // 0. 暗色主题（确保 webview 内的网页识别 prefers-color-scheme: dark）
+  nativeTheme.themeSource = 'dark';
+
+  // 0b. 注册自定义协议（必须在 app.whenReady 后）
   mediaStore.registerProtocol();
 
   // 1. 插件注册
@@ -320,30 +458,27 @@ app.whenReady().then(() => {
   // 3. 恢复 Session 或创建默认 Workspace
   const session = loadSession();
   if (session && session.workspaces.length > 0) {
-    // 恢复已有 Session
+    // 恢复已有 Session（保留原始 Workspace ID）
     for (const ws of session.workspaces) {
-      const created = workspaceManager.create(ws.label);
-      workspaceManager.update(created.id, {
+      workspaceManager.restore({
+        id: ws.id,
+        label: ws.label,
+        customLabel: ws.customLabel ?? false,
         workModeId: ws.workModeId,
         navSideVisible: ws.navSideVisible,
+        navSideWidth: ws.navSideWidth ?? session.navSideWidth ?? null,
         dividerRatio: ws.dividerRatio,
         activeNoteId: ws.activeNoteId ?? null,
         expandedFolders: ws.expandedFolders ?? [],
         activeBookId: ws.activeBookId ?? null,
         ebookExpandedFolders: ws.ebookExpandedFolders ?? [],
-        customLabel: ws.customLabel ?? false,
+        slotBinding: ws.slotBinding ?? { left: null, right: null },
       });
     }
-    // 恢复活跃 Workspace（用索引，因为 ID 会重新生成）
-    const all = workspaceManager.getAll();
-    const activeIndex = session.workspaces.findIndex(
-      (ws) => ws.id === session.activeWorkspaceId,
-    );
-    const activeWs = all[activeIndex >= 0 ? activeIndex : 0];
+    // 恢复活跃 Workspace（直接按 ID 匹配）
+    const activeWs = workspaceManager.get(session.activeWorkspaceId ?? '')
+      ?? workspaceManager.getAll()[0];
     if (activeWs) workspaceManager.setActive(activeWs.id);
-
-    // 恢复 NavSide 宽度
-    if (session.navSideWidth) setNavSideWidth(session.navSideWidth);
   } else {
     // 首次启动：创建默认 Workspace
     const defaultWorkspace = workspaceManager.create('Workspace 1');
@@ -359,6 +494,7 @@ app.whenReady().then(() => {
   // 6. 异步启动 SurrealDB（不阻塞窗口）
   initSurrealDB()
     .then(() => initSchema())
+    .then(() => migrateJsonToSurreal())
     .then(() => {
       console.log('[KRIG] SurrealDB ready');
       activityStore.log('app.start');
@@ -385,7 +521,6 @@ function persistSession(): void {
   saveSession(buildSession(
     workspaceManager.getAll(),
     workspaceManager.getActiveId(),
-    getNavSideWidth(),
   ));
 }
 

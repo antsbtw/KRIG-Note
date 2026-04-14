@@ -1,7 +1,7 @@
 // ─── L3: View 基础类型 ───
 
 /** View 的基础类型分类（插件注册） */
-export type ViewType = 'note' | 'ebook' | 'web' | 'graph';
+export type ViewType = 'note' | 'ebook' | 'web' | 'graph' | 'thought';
 
 /** View 实例 ID（格式: '{type}-{workspaceId}-{counter}'） */
 export type ViewInstanceId = string;
@@ -24,6 +24,7 @@ export interface WorkspaceState {
   customLabel: boolean;              // true = 用户手动命名，不自动跟随笔记标题
   workModeId: string;
   navSideVisible: boolean;
+  navSideWidth: number | null;       // 每个 Workspace 独立的 NavSide 宽度，null = 使用默认值
   dividerRatio: number;
   activeNoteId: string | null;        // NoteView 当前打开的笔记 ID
   expandedFolders: string[];          // NavSide 展开的文件夹 ID 列表
@@ -88,6 +89,16 @@ export interface ViewTypeRegistration {
   tier: LicenseTier;
 }
 
+/** ViewType 的渲染器配置 */
+export interface ViewTypeRendererConfig {
+  devServerUrl?: string;           // Vite dev server URL（开发模式）
+  htmlFile: string;                // 生产模式 HTML 文件名（相对 renderer 目录）
+  prodDir: string;                 // 生产模式子目录名（如 'note_view'）
+  webPreferences?: {
+    webviewTag?: boolean;          // 是否启用 webview 标签
+  };
+}
+
 /** WorkMode 注册 */
 export interface WorkModeRegistration {
   id: string;
@@ -96,6 +107,8 @@ export interface WorkModeRegistration {
   icon: string;
   label: string;
   order: number;
+  hidden?: boolean;            // true = 不在 NavSide tab 中显示（仅作为 right slot 使用）
+  onViewCreated?: (view: import('electron').WebContentsView, guestWebContents: import('electron').WebContents) => void;
 }
 
 /** NavSide 内容注册（按 WorkMode 驱动） */
@@ -148,6 +161,8 @@ export const IPC = {
   // Slot 操作
   SLOT_OPEN_RIGHT: 'slot:open-right',
   SLOT_CLOSE_RIGHT: 'slot:close-right',
+  SLOT_ENSURE_RIGHT: 'slot:ensure-right', // 确保 Right Slot 打开（不 toggle）
+  SLOT_CLOSE: 'slot:close',             // View 关闭自己所在的 slot
   SLOT_DIVIDER_CHANGED: 'slot:divider-changed',
 
   // Divider 拖拽
@@ -179,6 +194,7 @@ export const IPC = {
 
   // NoteFile 编辑器操作
   NOTE_OPEN_IN_EDITOR: 'note:open-in-editor',
+  NOTE_PENDING_OPEN: 'note:pending-open',    // NoteEditor ready 后拉取待打开的 noteId
   NOTE_TITLE_CHANGED: 'note:title-changed',  // NavSide → NoteView: 文件名变更同步到 noteTitle
 
   // Folder 操作
@@ -214,7 +230,10 @@ export const IPC = {
 
   // 媒体操作
   MEDIA_DOWNLOAD: 'media:download',              // 下载远程媒体到本地
+  MEDIA_PUT_BASE64: 'media:put-base64',          // 将 base64/data URL 存入 media store，返回 media://... URL
+  MEDIA_RESOLVE_PATH: 'media:resolve-path',      // 将 media:// URL 解析为本地磁盘路径（给 shell.openPath 用）
   MEDIA_OPEN_EXTERNAL: 'media:open-external',    // 用系统浏览器打开 URL
+  MEDIA_OPEN_PATH: 'media:open-path',            // 用系统默认程序打开本地文件（shell.openPath）
   SHOW_ITEM_IN_FOLDER: 'media:show-in-folder',   // 在 Finder 中显示文件
 
   // Tweet 数据获取
@@ -267,6 +286,60 @@ export const IPC = {
   EBOOK_SAVE_PROGRESS: 'ebook:save-progress',
   EBOOK_RESTORE: 'ebook:restore',
   EBOOK_SET_EXPANDED_FOLDERS: 'ebook:set-expanded-folders',
+
+  // Web 书签
+  WEB_BOOKMARK_LIST: 'web:bookmark-list',
+  WEB_BOOKMARK_ADD: 'web:bookmark-add',
+  WEB_BOOKMARK_REMOVE: 'web:bookmark-remove',
+  WEB_BOOKMARK_UPDATE: 'web:bookmark-update',
+  WEB_BOOKMARK_MOVE: 'web:bookmark-move',
+
+  // Web 书签文件夹
+  WEB_FOLDER_CREATE: 'web:folder-create',
+  WEB_FOLDER_RENAME: 'web:folder-rename',
+  WEB_FOLDER_DELETE: 'web:folder-delete',
+  WEB_FOLDER_LIST: 'web:folder-list',
+
+  // Web 浏览历史
+  WEB_HISTORY_ADD: 'web:history-add',
+  WEB_HISTORY_LIST: 'web:history-list',
+  WEB_HISTORY_CLEAR: 'web:history-clear',
+
+  // PDF Extraction (Platform)
+  EXTRACTION_OPEN: 'extraction:open',              // 打开 ExtractionView + 上传当前 PDF
+  EXTRACTION_IMPORT: 'extraction:import',           // 导入 JSON 数据 → 创建文件夹+Note → 切换到 NoteView
+
+  // Thought 操作
+  THOUGHT_CREATE: 'thought:create',
+  THOUGHT_SAVE: 'thought:save',
+  THOUGHT_LOAD: 'thought:load',
+  THOUGHT_DELETE: 'thought:delete',
+  THOUGHT_LIST_BY_NOTE: 'thought:list-by-note',
+  THOUGHT_RELATE: 'thought:relate',
+  THOUGHT_UNRELATE: 'thought:unrelate',
+
+  // Web Translate
+  WEB_TRANSLATE_FETCH_ELEMENT_JS: 'web-translate:fetch-element-js',
+
+  // AI Workflow
+  AI_ASK: 'ai:ask',                   // renderer → main：发送 AI 提问（Orchestrator 用后台 webview）
+  AI_ASK_VISIBLE: 'ai:ask-visible',   // renderer → main：发送 AI 提问（用户可见，Right Slot WebView）
+  AI_STATUS: 'ai:status',             // renderer → main：查询后台 AI 状态
+  AI_NAVIGATE: 'ai:navigate',         // main → web renderer：导航到 AI 服务
+  AI_INJECT_AND_SEND: 'ai:inject-and-send', // main → web renderer：注入 SSE + 粘贴 + 发送
+  AI_RESPONSE_CAPTURED: 'ai:response-captured', // web renderer → main：SSE 拦截到回复
+  AI_EXTRACT_DEBUG: 'ai:extract-debug',         // renderer → main：调试用，解析 Markdown 并返回统计
+  AI_PARSE_MARKDOWN: 'ai:parse-markdown',       // renderer → main：解析 Markdown → Atom[]
+  MD_TO_PM_NODES: 'md:to-pm-nodes',             // renderer → main：Markdown 字符串 → ProseMirror node JSON 数组（smart paste 用）
+  AI_READ_CLIPBOARD: 'ai:read-clipboard',       // renderer → main：读取系统剪贴板文本
+  WB_CDP_START: 'wb:cdp-start',                 // renderer → main：启动 CDP 拦截器（调试用）
+  WB_CDP_STOP: 'wb:cdp-stop',                   // renderer → main：停止 CDP 拦截器
+  WB_CDP_GET_RESPONSES: 'wb:cdp-get-responses', // renderer → main：获取已捕获的响应
+  WB_CDP_FIND_RESPONSE: 'wb:cdp-find-response', // renderer → main：按 URL substring 取匹配响应的完整 body（ChatGPT 提取用）
+  WB_SEND_MOUSE: 'wb:send-mouse',               // renderer → main：向 guest webContents 合成鼠标事件（CDP Input.dispatchMouseEvent）
+  WB_READ_CLIPBOARD_IMAGE: 'wb:read-clipboard-image', // renderer → main：读剪贴板图片（PNG dataURL）— Claude Artifact 复制的是渲染图像
+  WB_CAPTURE_DOWNLOAD_ONCE: 'wb:capture-download-once', // renderer → main：一次性拦截下次 download，返回文件内容（Artifact "Download file" 提取源码用）
+  WB_FETCH_BINARY: 'wb:fetch-binary',                 // renderer → main：main 进程 fetch URL（绕过 CORS / 页面 CSP），返回 base64 + mime（Gemini Imagen 图像下载用）
 
   // yt-dlp
   YTDLP_CHECK_STATUS: 'ytdlp:check-status',

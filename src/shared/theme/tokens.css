@@ -1,0 +1,61 @@
+/*
+ * KRIG-Note 全局主题 Tokens
+ *
+ * 所有颜色、间距、圆角等视觉属性的单一源头。
+ * 各 renderer 进程的 CSS 应引用这些变量，而非硬编码十六进制值。
+ *
+ * 使用方法：在各 renderer 入口 CSS 中 @import 此文件，
+ * 或在 HTML 中 <link> 引入。
+ */
+
+:root {
+  /* ── 背景 ── */
+  --krig-bg-base: #1e1e1e;
+  --krig-bg-surface: #1a1a1a;
+  --krig-bg-elevated: #252525;
+  --krig-bg-input: #2a2a2a;
+  --krig-bg-input-alt: #333;
+  --krig-bg-hover: #3a3a3a;
+  --krig-bg-active: #264f78;
+  --krig-bg-active-subtle: rgba(74, 158, 255, 0.15);
+
+  /* ── 文字 ── */
+  --krig-text-primary: #e8eaed;
+  --krig-text-secondary: #ccc;
+  --krig-text-muted: #999;
+  --krig-text-dim: #888;
+  --krig-text-faint: #666;
+  --krig-text-placeholder: #555;
+
+  /* ── 边框 ── */
+  --krig-border: #333;
+  --krig-border-light: #444;
+  --krig-border-input: #555;
+
+  /* ── 强调色 ── */
+  --krig-accent: #4a9eff;
+  --krig-accent-bg: #264f78;
+  --krig-accent-secondary: #c8a96e;
+  --krig-accent-border: #6b9fff;
+
+  /* ── 语义色 ── */
+  --krig-danger: #f87171;
+  --krig-bookmark-active: #ffd43b;
+
+  /* ── 阴影 ── */
+  --krig-shadow-menu: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --krig-shadow-overlay: rgba(0, 0, 0, 0.5);
+
+  /* ── 间距 ── */
+  --krig-radius-sm: 3px;
+  --krig-radius-md: 4px;
+  --krig-radius-lg: 6px;
+  --krig-radius-pill: 13px;
+
+  /* ── 字号 ── */
+  --krig-font-xs: 11px;
+  --krig-font-sm: 12px;
+  --krig-font-md: 13px;
+  --krig-font-lg: 14px;
+  --krig-font-xl: 15px;
+}

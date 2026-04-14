@@ -3,7 +3,7 @@ import { IPC } from '../../shared/types';
 import { APP_CONFIG } from '../../shared/app-config';
 import { workspaceManager } from '../workspace/manager';
 import { updateLayout } from '../window/shell';
-import { getNavSideWidth } from './layout';
+import { getDefaultNavSideWidth } from './layout';
 
 /**
  * Divider 拖拽控制器
@@ -37,7 +37,7 @@ export function setupDividerController(getMainWindow: () => BaseWindow | null): 
 
     // 计算新的 dividerRatio
     const { width: windowWidth } = mainWindow.getContentBounds();
-    const navSideWidth = active.navSideVisible ? getNavSideWidth() : APP_CONFIG.layout.toggleWidth;
+    const navSideWidth = active.navSideVisible ? (active.navSideWidth ?? getDefaultNavSideWidth()) : APP_CONFIG.layout.toggleWidth;
     const slotAreaWidth = windowWidth - navSideWidth;
     if (slotAreaWidth <= 0) return;
 

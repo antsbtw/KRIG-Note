@@ -4,12 +4,14 @@ import { useState, useCallback, useRef, useEffect } from 'react';
  * SearchBar — 文本搜索栏（Cmd+F 触发）
  *
  * 在 EBookView 顶部显示，搜索所有页面的文本内容。
+ * 样式使用 CSS 类（.search-bar__*），颜色引用 CSS 变量。
  */
 
 export interface SearchResult {
   pageNum: number;
   index: number;       // 在该页文本中的字符偏移
   text: string;        // 匹配的文本片段（含上下文）
+  cfi?: string;        // EPUB 搜索结果的 CFI 定位
 }
 
 interface SearchBarProps {
@@ -50,63 +52,21 @@ export function SearchBar({ visible, results, currentIndex, onSearch, onNext, on
   if (!visible) return null;
 
   return (
-    <div style={styles.bar}>
+    <div className="search-bar">
       <input
         ref={inputRef}
-        style={styles.input}
+        className="search-bar__input"
         value={query}
         onChange={handleChange}
         onKeyDown={handleKeyDown}
         placeholder="搜索..."
       />
-      <span style={styles.count}>
+      <span className="search-bar__count">
         {results.length > 0 ? `${currentIndex + 1} / ${results.length}` : query ? '无结果' : ''}
       </span>
-      <button style={styles.btn} onClick={onPrev} disabled={results.length === 0} title="上一个 (Shift+Enter)">‹</button>
-      <button style={styles.btn} onClick={onNext} disabled={results.length === 0} title="下一个 (Enter)">›</button>
-      <button style={styles.btn} onClick={onClose} title="关闭 (Esc)">✕</button>
+      <button className="search-bar__btn" onClick={onPrev} disabled={results.length === 0} title="上一个 (Shift+Enter)">‹</button>
+      <button className="search-bar__btn" onClick={onNext} disabled={results.length === 0} title="下一个 (Enter)">›</button>
+      <button className="search-bar__btn" onClick={onClose} title="关闭 (Esc)">✕</button>
     </div>
   );
 }
-
-const styles: Record<string, React.CSSProperties> = {
-  bar: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 6,
-    padding: '4px 12px',
-    background: '#2a2a2a',
-    borderBottom: '1px solid #444',
-    flexShrink: 0,
-  },
-  input: {
-    flex: 1,
-    maxWidth: 240,
-    height: 24,
-    background: '#333',
-    border: '1px solid #555',
-    borderRadius: 4,
-    color: '#e8eaed',
-    fontSize: 13,
-    padding: '0 8px',
-    outline: 'none',
-  },
-  count: {
-    fontSize: 12,
-    color: '#888',
-    minWidth: 60,
-  },
-  btn: {
-    width: 24,
-    height: 24,
-    background: 'transparent',
-    border: 'none',
-    borderRadius: 4,
-    color: '#ccc',
-    fontSize: 14,
-    cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-};

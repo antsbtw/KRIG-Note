@@ -1,0 +1,1 @@
+export { MathVisualFullscreen } from './MathVisualFullscreen';

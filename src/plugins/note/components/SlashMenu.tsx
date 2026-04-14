@@ -21,98 +21,116 @@ export function SlashMenu({ view }: SlashMenuProps) {
   const [coords, setCoords] = useState<{ left: number; top: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
+  // dispatch patch 只跟 view 绑定，不随 items/selectedIdx 重复 patch
   useEffect(() => {
     if (!view) return;
 
-    const update = () => {
-      const state = slashCommandKey.getState(view.state);
-      if (!state?.active) {
-        setCoords(null);
-        return;
-      }
-
-      // 过滤候选项
-      const query = state.query.toLowerCase();
-      const allItems = blockRegistry.getSlashItems().map((item) => ({
-        id: item.id,
-        label: item.label,
-        icon: item.icon,
-        blockName: item.blockName,
-        attrs: item.attrs,
-        order: item.order,
-        keywords: item.keywords,
-      }));
-
-      let filtered = allItems
-        .filter((item) => {
-          if (!query) return true;
-          return item.label.toLowerCase().includes(query)
-            || item.keywords.some((k) => k.includes(query));
-        })
-        .sort((a, b) => a.order - b.order);
-
-      // /code <partial> → 前缀匹配已知语言，显示完整语言名
-      const codeMatch = query.match(/^code\s+(\S+)/i);
-      if (codeMatch) {
-        const partial = codeMatch[1].toLowerCase();
-        const matches = CODE_LANGUAGES.filter(l => l && l.startsWith(partial));
-        if (matches.length > 0) {
-          filtered = matches.map(lang => ({
-            id: `codeBlock-${lang}`,
-            label: `Code ${lang}`,
-            icon: '</>',
-            blockName: 'codeBlock',
-            attrs: { language: lang },
-            order: 0,
-            keywords: [],
-          }));
-        } else {
-          // 没有匹配的已知语言 → 用输入内容作为自定义语言
-          filtered = [{
-            id: `codeBlock-${partial}`,
-            label: `Code ${partial}`,
-            icon: '</>',
-            blockName: 'codeBlock',
-            attrs: { language: partial },
-            order: 0,
-            keywords: [],
-          }];
-        }
-      }
-
-      setItems(filtered);
-      setSelectedIdx(0);
-
-      // 定位菜单
-      try {
-        const coordsAt = view.coordsAtPos(state.from);
-        setCoords({ left: coordsAt.left, top: coordsAt.bottom + 4 });
-      } catch {
-        setCoords(null);
-      }
-    };
-
-    // 监听编辑器状态变化
     const origDispatch = view.dispatch.bind(view);
     view.dispatch = (tr) => {
       origDispatch(tr);
-      setTimeout(update, 0);
+      setTimeout(() => updateRef.current(), 0);
     };
 
-    // 键盘导航
+    return () => {
+      // 只在 view 未被销毁时恢复（销毁后 dom 不在文档中）
+      if (view.dom?.parentNode) {
+        view.dispatch = origDispatch;
+      }
+    };
+  }, [view]);
+
+  // update 函数用 ref 保持最新，避免 dispatch patch 依赖 items/selectedIdx
+  const updateRef = useRef(() => {});
+  updateRef.current = () => {
+    if (!view) return;
+    const state = slashCommandKey.getState(view.state);
+    if (!state?.active) {
+      setCoords(null);
+      return;
+    }
+
+    // 过滤候选项
+    const query = state.query.toLowerCase();
+    const allItems = blockRegistry.getSlashItems().map((item) => ({
+      id: item.id,
+      label: item.label,
+      icon: item.icon,
+      blockName: item.blockName,
+      attrs: item.attrs,
+      order: item.order,
+      keywords: item.keywords,
+    }));
+
+    let filtered = allItems
+      .filter((item) => {
+        if (!query) return true;
+        return item.label.toLowerCase().includes(query)
+          || item.keywords.some((k) => k.includes(query));
+      })
+      .sort((a, b) => a.order - b.order);
+
+    // /code <partial> → 前缀匹配已知语言，显示完整语言名
+    const codeMatch = query.match(/^code\s+(\S+)/i);
+    if (codeMatch) {
+      const partial = codeMatch[1].toLowerCase();
+      const matches = CODE_LANGUAGES.filter(l => l && l.startsWith(partial));
+      if (matches.length > 0) {
+        filtered = matches.map(lang => ({
+          id: `codeBlock-${lang}`,
+          label: `Code ${lang}`,
+          icon: '</>',
+          blockName: 'codeBlock',
+          attrs: { language: lang },
+          order: 0,
+          keywords: [],
+        }));
+      } else {
+        filtered = [{
+          id: `codeBlock-${partial}`,
+          label: `Code ${partial}`,
+          icon: '</>',
+          blockName: 'codeBlock',
+          attrs: { language: partial },
+          order: 0,
+          keywords: [],
+        }];
+      }
+    }
+
+    setItems(filtered);
+    setSelectedIdx(0);
+
+    // 定位菜单
+    try {
+      const coordsAt = view.coordsAtPos(state.from);
+      setCoords({ left: coordsAt.left, top: coordsAt.bottom + 4 });
+    } catch {
+      setCoords(null);
+    }
+  };
+
+  // 键盘导航（单独 effect，items/selectedIdx 变化时只更新 keyHandler）
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
+  const selectedIdxRef = useRef(selectedIdx);
+  selectedIdxRef.current = selectedIdx;
+
+  useEffect(() => {
+    if (!view) return;
+
     const keyHandler = (e: KeyboardEvent) => {
       const state = slashCommandKey.getState(view.state);
       if (!state?.active) return;
 
       if (e.key === 'ArrowDown') {
         e.preventDefault();
-        setSelectedIdx((prev) => Math.min(prev + 1, items.length - 1));
+        setSelectedIdx((prev) => Math.min(prev + 1, itemsRef.current.length - 1));
       } else if (e.key === 'ArrowUp') {
         e.preventDefault();
         setSelectedIdx((prev) => Math.max(prev - 1, 0));
       } else if (e.key === 'Enter') {
         e.preventDefault();
-        if (items[selectedIdx]) executeItem(items[selectedIdx]);
+        if (itemsRef.current[selectedIdxRef.current]) executeItem(itemsRef.current[selectedIdxRef.current]);
       }
     };
 
@@ -120,7 +138,7 @@ export function SlashMenu({ view }: SlashMenuProps) {
     return () => {
       view.dom.removeEventListener('keydown', keyHandler);
     };
-  }, [view, items, selectedIdx]);
+  }, [view]);
 
   function executeItem(item: { blockName: string; attrs?: Record<string, unknown> }) {
     if (!view) return;

@@ -9,26 +9,49 @@ import {
   closeWorkspaceViews,
   openRightSlot,
   closeRightSlot,
+  closeSlot,
+  getSlotBySenderId,
   getActiveViewWebContentsIds,
   getActiveProtocol,
+  hasRightSlot,
+  isRightSlotMode,
 } from '../window/shell';
-import { getNavSideWidth, setNavSideWidth } from '../slot/layout';
+import { clampNavSideWidth, getDefaultNavSideWidth } from '../slot/layout';
 import { noteStore } from '../storage/note-store';
+import { thoughtStore } from '../storage/thought-store';
+import { graphStore } from '../association/graph-store';
 import { folderStore } from '../storage/folder-store';
 import { activityStore } from '../storage/activity-store';
 import { isDBReady } from '../storage/client';
 import { lookupWord } from '../learning/dictionary-service';
 import { googleTranslate, googleTTS } from '../learning/providers/google-translate';
 import { vocabStore } from '../learning/vocabulary-store';
-import { mediaStore } from '../media/media-store';
+import { mediaSurrealStore as mediaStore } from '../media/media-surreal-store';
 import { checkStatus as ytdlpCheckStatus, install as ytdlpInstall } from '../ytdlp/binary-manager';
 import { downloadVideo, getVideoInfo, saveTranslationSubtitle } from '../ytdlp/downloader';
 import { loadEBook, getEBookData, closeEBook } from '../ebook/file-loader';
-import { bookshelfStore } from '../ebook/bookshelf-store';
-import { annotationStore } from '../ebook/annotation-store';
+import { ebookStore as bookshelfStore } from '../ebook/bookshelf-surreal-store';
+import { annotationSurrealStore as annotationStore } from '../ebook/annotation-surreal-store';
 import { navSideRegistry } from '../navside/registry';
+import { bookmarkSurrealStore as webBookmarkStore } from '../../plugins/web/main/bookmark-surreal-store';
+import { historySurrealStore as webHistoryStore } from '../../plugins/web/main/history-surreal-store';
+
+// 待打开的 noteId（导入完成后设置，NoteEditor ready 后拉取）
+let pendingNoteId: string | null = null;
+
+export function setPendingNoteId(noteId: string): void {
+  pendingNoteId = noteId;
+}
 
 export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): void {
+  // NoteEditor ready 后拉取待打开的 noteId
+  ipcMain.handle(IPC.NOTE_PENDING_OPEN, () => {
+    const id = pendingNoteId;
+    pendingNoteId = null;
+    console.log('[IPC] NOTE_PENDING_OPEN:', id ?? '(none)');
+    return id;
+  });
+
   // ── Workspace 操作 ──
 
   ipcMain.handle(IPC.WORKSPACE_LIST, () => {
@@ -66,6 +89,8 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
             (child as any).webContents.send(IPC.RESTORE_WORKSPACE_STATE, {
               activeNoteId: workspace.activeNoteId,
               expandedFolders: workspace.expandedFolders,
+              activeBookId: workspace.activeBookId,
+              ebookExpandedFolders: workspace.ebookExpandedFolders,
             });
           }
         }
@@ -100,7 +125,8 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
   // ── WorkMode 操作 ──
 
   ipcMain.handle(IPC.WORKMODE_LIST, () => {
-    return workModeRegistry.getAll();
+    // 剥离 onViewCreated 等函数字段（函数无法通过 IPC 序列化）
+    return workModeRegistry.getAll().map(({ onViewCreated, ...rest }) => rest);
   });
 
   ipcMain.handle(IPC.WORKMODE_SWITCH, (_event, workModeId: string) => {
@@ -118,8 +144,24 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
     broadcastWorkspaceState(getMainWindow());
   });
 
+  // 确保 Right Slot 打开（不 toggle：已打开同类 view 时不关闭）
+  ipcMain.handle(IPC.SLOT_ENSURE_RIGHT, (_event, workModeId: string) => {
+    if (!hasRightSlot() || !isRightSlotMode(workModeId)) {
+      openRightSlot(workModeId);
+      broadcastWorkspaceState(getMainWindow());
+    }
+  });
+
   ipcMain.handle(IPC.SLOT_CLOSE_RIGHT, () => {
     closeRightSlot();
+    broadcastWorkspaceState(getMainWindow());
+  });
+
+  // View 关闭自己所在的 slot（自动检测 sender 在哪个 slot）
+  ipcMain.handle(IPC.SLOT_CLOSE, (event) => {
+    const side = getSlotBySenderId(event.sender.id);
+    if (!side) return;
+    closeSlot(side);
     broadcastWorkspaceState(getMainWindow());
   });
 
@@ -127,14 +169,21 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
 
   ipcMain.on(IPC.VIEW_MESSAGE_SEND, (event, message: ViewMessage) => {
     const mainWindow = getMainWindow();
-    if (!mainWindow) return;
+    if (!mainWindow) {
+      console.log('[IPC:ViewMessage] No main window');
+      return;
+    }
 
     // 协议匹配检查：只有注册了协议的 View 组合才允许通信
     const activeProtocol = getActiveProtocol();
-    if (activeProtocol === null) return; // 未匹配 = 不转发
+    if (activeProtocol === null) {
+      console.log('[IPC:ViewMessage] No active protocol, message dropped:', message.action);
+      return;
+    }
 
     const { leftId, rightId } = getActiveViewWebContentsIds();
     const senderId = event.sender.id;
+    console.log(`[IPC:ViewMessage] protocol=${activeProtocol}, sender=${senderId}, left=${leftId}, right=${rightId}, action=${message.action}`);
 
     // 路由到"对面"的 View
     let targetId: number | null = null;
@@ -144,12 +193,16 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
       targetId = leftId;
     }
 
-    if (targetId === null) return;
+    if (targetId === null) {
+      console.log('[IPC:ViewMessage] Sender not in any slot, dropped');
+      return;
+    }
 
     // 在所有 child views 中找到目标并发送
     for (const child of mainWindow.contentView.children) {
-      if ('webContents' in child && child.webContents.id === targetId) {
-        child.webContents.send(IPC.VIEW_MESSAGE_RECEIVE, message);
+      if ('webContents' in child && (child as any).webContents.id === targetId) {
+        (child as any).webContents.send(IPC.VIEW_MESSAGE_RECEIVE, message);
+        console.log(`[IPC:ViewMessage] Forwarded to target=${targetId}`);
         break;
       }
     }
@@ -180,7 +233,10 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
     navResizeLastX = screenX;
     if (deltaX === 0) return;
 
-    setNavSideWidth(getNavSideWidth() + deltaX);
+    const active = workspaceManager.getActive();
+    if (!active) return;
+    const currentWidth = active.navSideWidth ?? getDefaultNavSideWidth();
+    workspaceManager.update(active.id, { navSideWidth: clampNavSideWidth(currentWidth + deltaX) });
     updateLayout();
   });
 
@@ -273,6 +329,46 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
     broadcastNoteList(getMainWindow());
   });
 
+  // ── Thought 操作 ──
+
+  ipcMain.handle(IPC.THOUGHT_CREATE, async (_event, thought: any) => {
+    if (!isDBReady()) return null;
+    const record = await thoughtStore.create(thought);
+    activityStore.log('thought.create', record.id);
+    return record;
+  });
+
+  ipcMain.handle(IPC.THOUGHT_SAVE, async (_event, id: string, updates: any) => {
+    if (!isDBReady()) return;
+    await thoughtStore.save(id, updates);
+  });
+
+  ipcMain.handle(IPC.THOUGHT_LOAD, async (_event, id: string) => {
+    if (!isDBReady()) return null;
+    return thoughtStore.get(id);
+  });
+
+  ipcMain.handle(IPC.THOUGHT_DELETE, async (_event, id: string) => {
+    if (!isDBReady()) return;
+    await thoughtStore.delete(id);
+    activityStore.log('thought.delete', id);
+  });
+
+  ipcMain.handle(IPC.THOUGHT_LIST_BY_NOTE, async (_event, noteId: string) => {
+    if (!isDBReady()) return [];
+    return thoughtStore.listByNote(noteId);
+  });
+
+  ipcMain.handle(IPC.THOUGHT_RELATE, async (_event, noteId: string, thoughtId: string, edge: any) => {
+    if (!isDBReady()) return;
+    await graphStore.relateNoteToThought(noteId, thoughtId, edge);
+  });
+
+  ipcMain.handle(IPC.THOUGHT_UNRELATE, async (_event, noteId: string, thoughtId: string) => {
+    if (!isDBReady()) return;
+    await graphStore.removeNoteToThought(noteId, thoughtId);
+  });
+
   // ── Folder 操作 ──
 
   ipcMain.handle(IPC.FOLDER_CREATE, async (_event, title: string, parentId?: string | null) => {
@@ -325,7 +421,7 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
 
   // ── eBook 书架操作 ──
 
-  ipcMain.handle(IPC.EBOOK_BOOKSHELF_LIST, () => {
+  ipcMain.handle(IPC.EBOOK_BOOKSHELF_LIST, async () => {
     return bookshelfStore.list();
   });
 
@@ -354,8 +450,8 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
   ipcMain.handle(IPC.EBOOK_BOOKSHELF_ADD, async (_event, filePath: string, fileType: string, storage: 'managed' | 'link') => {
     const ft = fileType as 'pdf' | 'epub' | 'djvu' | 'cbz';
     const entry = storage === 'managed'
-      ? bookshelfStore.addManaged(filePath, ft)
-      : bookshelfStore.addLinked(filePath, ft);
+      ? await bookshelfStore.addManaged(filePath, ft)
+      : await bookshelfStore.addLinked(filePath, ft);
 
     broadcastBookshelfChanged(getMainWindow());
 
@@ -371,67 +467,64 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
   });
 
   ipcMain.handle(IPC.EBOOK_BOOKSHELF_OPEN, async (_event, id: string) => {
-    const entry = bookshelfStore.get(id);
+    const entry = await bookshelfStore.get(id);
     if (!entry) return { success: false, error: 'Entry not found' };
 
     const exists = await bookshelfStore.checkExists(id);
     if (!exists) return { success: false, error: 'File not found' };
 
-    bookshelfStore.updateOpened(id);
+    await bookshelfStore.updateOpened(id);
     await loadEBook(entry.filePath);
     broadcastEBookLoaded(getMainWindow(), {
       bookId: entry.id,
       fileName: entry.displayName,
       fileType: entry.fileType,
-      lastPage: entry.lastPage,
-      lastScale: entry.lastScale,
-      lastFitWidth: entry.lastFitWidth,
-      lastCFI: entry.lastCFI,
+      lastPosition: entry.lastPosition,
     });
     broadcastBookshelfChanged(getMainWindow());
 
     return { success: true };
   });
 
-  ipcMain.handle(IPC.EBOOK_BOOKSHELF_REMOVE, (_event, id: string) => {
-    bookshelfStore.remove(id);
+  ipcMain.handle(IPC.EBOOK_BOOKSHELF_REMOVE, async (_event, id: string) => {
+    await bookshelfStore.remove(id);
     broadcastBookshelfChanged(getMainWindow());
   });
 
-  ipcMain.handle(IPC.EBOOK_BOOKSHELF_RENAME, (_event, id: string, displayName: string) => {
-    bookshelfStore.rename(id, displayName);
+  ipcMain.handle(IPC.EBOOK_BOOKSHELF_RENAME, async (_event, id: string, displayName: string) => {
+    await bookshelfStore.rename(id, displayName);
     broadcastBookshelfChanged(getMainWindow());
   });
 
-  ipcMain.handle(IPC.EBOOK_BOOKSHELF_MOVE, (_event, id: string, folderId: string | null) => {
-    bookshelfStore.moveToFolder(id, folderId);
+  ipcMain.handle(IPC.EBOOK_BOOKSHELF_MOVE, async (_event, id: string, folderId: string | null) => {
+    await bookshelfStore.moveToFolder(id, folderId);
     broadcastBookshelfChanged(getMainWindow());
   });
 
   // ── eBook 文件夹操作 ──
 
-  ipcMain.handle(IPC.EBOOK_FOLDER_LIST, () => {
+  ipcMain.handle(IPC.EBOOK_FOLDER_LIST, async () => {
     return bookshelfStore.folderList();
   });
 
-  ipcMain.handle(IPC.EBOOK_FOLDER_CREATE, (_event, title: string, parentId?: string | null) => {
-    const folder = bookshelfStore.folderCreate(title, parentId);
+  ipcMain.handle(IPC.EBOOK_FOLDER_CREATE, async (_event, title: string, parentId?: string | null) => {
+    const folder = await bookshelfStore.folderCreate(title, parentId);
     broadcastBookshelfChanged(getMainWindow());
     return folder;
   });
 
-  ipcMain.handle(IPC.EBOOK_FOLDER_RENAME, (_event, id: string, title: string) => {
-    bookshelfStore.folderRename(id, title);
+  ipcMain.handle(IPC.EBOOK_FOLDER_RENAME, async (_event, id: string, title: string) => {
+    await bookshelfStore.folderRename(id, title);
     broadcastBookshelfChanged(getMainWindow());
   });
 
-  ipcMain.handle(IPC.EBOOK_FOLDER_DELETE, (_event, id: string) => {
-    bookshelfStore.folderDelete(id);
+  ipcMain.handle(IPC.EBOOK_FOLDER_DELETE, async (_event, id: string) => {
+    await bookshelfStore.folderDelete(id);
     broadcastBookshelfChanged(getMainWindow());
   });
 
-  ipcMain.handle(IPC.EBOOK_FOLDER_MOVE, (_event, id: string, parentId: string | null) => {
-    bookshelfStore.folderMove(id, parentId);
+  ipcMain.handle(IPC.EBOOK_FOLDER_MOVE, async (_event, id: string, parentId: string | null) => {
+    await bookshelfStore.folderMove(id, parentId);
     broadcastBookshelfChanged(getMainWindow());
   });
 
@@ -450,7 +543,7 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
     const active = workspaceManager.getActive();
     if (!active?.activeBookId) return null;
 
-    const entry = bookshelfStore.get(active.activeBookId);
+    const entry = await bookshelfStore.get(active.activeBookId);
     if (!entry) return null;
 
     const exists = await bookshelfStore.checkExists(entry.id);
@@ -461,49 +554,46 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
       bookId: entry.id,
       fileName: entry.displayName,
       fileType: entry.fileType,
-      lastPage: entry.lastPage,
-      lastScale: entry.lastScale,
-      lastFitWidth: entry.lastFitWidth,
-      lastCFI: entry.lastCFI,
+      lastPosition: entry.lastPosition,
     };
   });
 
   // ── eBook 书签 ──
 
-  ipcMain.handle(IPC.EBOOK_BOOKMARK_TOGGLE, (_event, bookId: string, page: number) => {
+  ipcMain.handle(IPC.EBOOK_BOOKMARK_TOGGLE, async (_event, bookId: string, page: number) => {
     return bookshelfStore.toggleBookmark(bookId, page);
   });
 
-  ipcMain.handle(IPC.EBOOK_BOOKMARK_LIST, (_event, bookId: string) => {
+  ipcMain.handle(IPC.EBOOK_BOOKMARK_LIST, async (_event, bookId: string) => {
     return bookshelfStore.getBookmarks(bookId);
   });
 
   // ── eBook CFI 书签（EPUB）──
 
-  ipcMain.handle(IPC.EBOOK_CFI_BOOKMARK_ADD, (_event, bookId: string, cfi: string, label: string) => {
+  ipcMain.handle(IPC.EBOOK_CFI_BOOKMARK_ADD, async (_event, bookId: string, cfi: string, label: string) => {
     return bookshelfStore.addCFIBookmark(bookId, cfi, label);
   });
 
-  ipcMain.handle(IPC.EBOOK_CFI_BOOKMARK_REMOVE, (_event, bookId: string, cfi: string) => {
+  ipcMain.handle(IPC.EBOOK_CFI_BOOKMARK_REMOVE, async (_event, bookId: string, cfi: string) => {
     return bookshelfStore.removeCFIBookmark(bookId, cfi);
   });
 
-  ipcMain.handle(IPC.EBOOK_CFI_BOOKMARK_LIST, (_event, bookId: string) => {
+  ipcMain.handle(IPC.EBOOK_CFI_BOOKMARK_LIST, async (_event, bookId: string) => {
     return bookshelfStore.getCFIBookmarks(bookId);
   });
 
   // ── eBook 标注 ──
 
-  ipcMain.handle(IPC.EBOOK_ANNOTATION_LIST, (_event, bookId: string) => {
+  ipcMain.handle(IPC.EBOOK_ANNOTATION_LIST, async (_event, bookId: string) => {
     return annotationStore.list(bookId);
   });
 
-  ipcMain.handle(IPC.EBOOK_ANNOTATION_ADD, (_event, bookId: string, ann: any) => {
+  ipcMain.handle(IPC.EBOOK_ANNOTATION_ADD, async (_event, bookId: string, ann: any) => {
     return annotationStore.add(bookId, ann);
   });
 
-  ipcMain.handle(IPC.EBOOK_ANNOTATION_REMOVE, (_event, bookId: string, annotationId: string) => {
-    annotationStore.remove(bookId, annotationId);
+  ipcMain.handle(IPC.EBOOK_ANNOTATION_REMOVE, async (_event, bookId: string, annotationId: string) => {
+    await annotationStore.remove(bookId, annotationId);
   });
 
   // NavSide 保存书架文件夹展开状态
@@ -524,8 +614,8 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
   });
 
   // EBookView 保存阅读进度
-  ipcMain.handle(IPC.EBOOK_SAVE_PROGRESS, (_event, bookId: string, page: number, scale?: number, fitWidth?: boolean, lastCFI?: string) => {
-    bookshelfStore.updateProgress(bookId, page, scale, fitWidth, lastCFI);
+  ipcMain.handle(IPC.EBOOK_SAVE_PROGRESS, async (_event, bookId: string, position: { page?: number; scale?: number; fitWidth?: boolean; cfi?: string }) => {
+    await bookshelfStore.updateProgress(bookId, position);
   });
 
   // ── 文件保存对话框 ──
@@ -545,6 +635,21 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
     const buffer = Buffer.from(options.data, 'base64');
     await writeFile(result.filePath, buffer);
     return { canceled: false, filePath: result.filePath };
+  });
+
+  // ── Web Translate ──
+
+  ipcMain.handle(IPC.WEB_TRANSLATE_FETCH_ELEMENT_JS, async () => {
+    try {
+      const { net } = await import('electron');
+      const resp = await net.fetch(
+        'https://translate.google.com/translate_a/element.js?cb=googleTranslateElementInit',
+      );
+      if (!resp.ok) return null;
+      return await resp.text();
+    } catch {
+      return null;
+    }
   });
 
   // ── 学习模块 ──
@@ -583,13 +688,583 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
     return mediaStore.download(url, type as 'audio' | 'image');
   });
 
+  // MEDIA_PUT_BASE64: persist a base64/data-URL payload into the media
+  // store and return a `media://...` URL. Renderer uses this when the
+  // user uploads a file via a fileBlock/externalRef placeholder — we
+  // don't want to embed the base64 into note JSON.
+  ipcMain.handle(IPC.MEDIA_PUT_BASE64, async (_e, params: { input: string; mimeType?: string; filename?: string }) => {
+    const { mediaSurrealStore } = await import('../media/media-surreal-store');
+    return mediaSurrealStore.putBase64(params.input, params.mimeType, params.filename);
+  });
+
+  // MEDIA_RESOLVE_PATH: turn `media://bucket/name.ext` into the real disk
+  // path at `{userData}/krig-data/media/bucket/name.ext`. The media://
+  // protocol is only registered in Electron's renderer — the OS (and
+  // therefore shell.openExternal) doesn't know it, so we resolve to a
+  // filesystem path whenever we need shell.openPath / showItemInFolder.
+  ipcMain.handle(IPC.MEDIA_RESOLVE_PATH, async (_e, mediaUrl: string) => {
+    try {
+      const { app } = await import('electron');
+      const path = await import('node:path');
+      const fs = await import('node:fs');
+      if (!mediaUrl.startsWith('media://')) return { success: false, error: 'not a media:// URL' };
+      const rel = mediaUrl.slice('media://'.length);
+      const abs = path.join(app.getPath('userData'), 'krig-data', 'media', rel);
+      if (!fs.existsSync(abs)) return { success: false, error: 'file not found', path: abs };
+      return { success: true, path: abs };
+    } catch (err) {
+      return { success: false, error: String(err) };
+    }
+  });
+
+  // MEDIA_OPEN_PATH: open a local file with the system default handler.
+  // Use after MEDIA_RESOLVE_PATH (or with any pre-resolved absolute path).
+  ipcMain.handle(IPC.MEDIA_OPEN_PATH, async (_e, filePath: string) => {
+    const result = await shell.openPath(filePath);
+    // shell.openPath returns '' on success, error string on failure.
+    return { success: !result, error: result || undefined };
+  });
+
   ipcMain.handle(IPC.MEDIA_OPEN_EXTERNAL, async (_e, url: string) => {
     await shell.openExternal(url);
     return { success: true };
   });
 
+  // MD_TO_PM_NODES: convert a Markdown string to ProseMirror-node JSON
+  // blocks. Used by the renderer's smart-paste plugin after turning the
+  // clipboard's text/html into Markdown.
+  ipcMain.handle(IPC.MD_TO_PM_NODES, async (_e, markdown: string) => {
+    try {
+      const { markdownToProseMirror } = await import('../storage/md-to-pm');
+      return await markdownToProseMirror(markdown);
+    } catch (err) {
+      console.warn('[MD_TO_PM_NODES] failed:', err);
+      return [];
+    }
+  });
+
   ipcMain.handle(IPC.SHOW_ITEM_IN_FOLDER, (_e, filePath: string) => {
     shell.showItemInFolder(filePath);
+  });
+
+  // ── AI Workflow ──
+
+  // AI_ASK: Orchestrator / background mode (BackgroundAIWebview)
+  ipcMain.handle(IPC.AI_ASK, async (_event, params: {
+    serviceId: string;
+    prompt: string;
+    noteId?: string;
+    thoughtId?: string;
+  }) => {
+    try {
+      const { askAI } = await import('../../plugins/web-bridge/capabilities/ai-interaction');
+      const result = await askAI(params.serviceId as any, params.prompt);
+      return result;
+    } catch (err) {
+      return { success: false, error: String(err) };
+    }
+  });
+
+  // AI_ASK_VISIBLE: User-facing mode — use Right Slot WebView
+  // Opens Right Slot with WebView, waits for renderer to load,
+  // then sends AI_INJECT_AND_SEND to the renderer.
+  ipcMain.handle(IPC.AI_ASK_VISIBLE, async (_event, params: {
+    serviceId: string;
+    prompt: string;
+    noteId: string;
+    thoughtId: string;
+  }) => {
+    try {
+      console.log('[AI_ASK_VISIBLE] Starting...', { serviceId: params.serviceId, promptLen: params.prompt.length });
+
+      const mainWindow = getMainWindow();
+      if (!mainWindow) return { success: false, error: 'No main window' };
+
+      // 1. Open Right Slot with AI WebView (ai-web variant)
+      const rightView = openRightSlot('ai-web');
+      console.log('[AI_ASK_VISIBLE] Step 1: openRightSlot result:', rightView ? 'OK' : 'null (toggle?)');
+      if (!rightView) {
+        const retryView = openRightSlot('ai-web');
+        console.log('[AI_ASK_VISIBLE] Step 1 retry:', retryView ? 'OK' : 'FAILED');
+        if (!retryView) return { success: false, error: 'Failed to open Right Slot' };
+      }
+
+      // 2. Find the Right Slot's webContents
+      const rightSlotIds = getActiveViewWebContentsIds();
+      console.log('[AI_ASK_VISIBLE] Step 2: rightSlotIds =', rightSlotIds);
+      if (!rightSlotIds || !rightSlotIds.rightId) {
+        return { success: false, error: 'Right Slot not open after creation' };
+      }
+
+      const rightWC = (mainWindow as any).contentView.children.find(
+        (v: any) => v.webContents?.id === rightSlotIds.rightId
+      )?.webContents;
+
+      if (!rightWC) {
+        console.log('[AI_ASK_VISIBLE] Step 2: webContents NOT found for rightId =', rightSlotIds.rightId);
+        return { success: false, error: 'Right Slot webContents not found' };
+      }
+      console.log('[AI_ASK_VISIBLE] Step 2: webContents found, id =', rightWC.id);
+
+      // 3. Wait for the renderer to finish loading
+      console.log('[AI_ASK_VISIBLE] Step 3: Waiting for renderer load... isLoading =', rightWC.isLoading());
+      await new Promise<void>((resolve) => {
+        if (!rightWC.isLoading()) {
+          setTimeout(resolve, 1500);
+        } else {
+          rightWC.once('did-finish-load', () => {
+            setTimeout(resolve, 1500);
+          });
+        }
+      });
+      console.log('[AI_ASK_VISIBLE] Step 3: Renderer ready, sending AI_INJECT_AND_SEND...');
+
+      // 4. Send AI request to the Right Slot renderer
+      return new Promise((resolve) => {
+        const responseChannel = `ai:response:${params.thoughtId}`;
+        let resolved = false;
+
+        const listener = async (_e: any, result: any) => {
+          if (resolved) return;
+          resolved = true;
+          ipcMain.removeListener(responseChannel, listener);
+          console.log('[AI_ASK_VISIBLE] Step 4: Got response from renderer:', { success: result?.success, mdLen: result?.markdown?.length ?? 0, error: result?.error });
+
+          // Parse markdown → Atoms and save to ThoughtStore
+          if (result?.success && result?.markdown) {
+            try {
+              const { ResultParser } = await import('../../plugins/web-bridge/pipeline/result-parser');
+              const { createAtomsFromExtracted } = await import('../../plugins/web-bridge/pipeline/content-to-atoms');
+
+              console.log('[AI_ASK_VISIBLE] Parsing markdown, length:', result.markdown.length);
+              console.log('[AI_ASK_VISIBLE] Markdown preview:', result.markdown.slice(0, 200));
+
+              const parser = new ResultParser();
+              const blocks = parser.parse(result.markdown);
+              console.log('[AI_ASK_VISIBLE] Parsed blocks:', blocks.length, blocks.map((b: any) => b.type));
+
+              const atoms = createAtomsFromExtracted(blocks);
+              console.log('[AI_ASK_VISIBLE] Created atoms:', atoms.length, atoms.map((a: any) => `${a.type}(${a.id?.slice(0,8)})`));
+
+              // Remove the document root and noteTitle — Thought only needs content atoms
+              const contentAtoms = atoms.filter((a: any) => a.type !== 'document' && a.type !== 'noteTitle');
+              console.log('[AI_ASK_VISIBLE] Content atoms (after filter):', contentAtoms.length);
+
+              // Fix parentId: Thought's atomsToDoc expects top-level atoms without parentId,
+              // or with parentId pointing to a root document.
+              // Since we removed the document atom, clear parentId of top-level atoms.
+              const docAtom = atoms.find((a: any) => a.type === 'document');
+              const docId = docAtom?.id;
+              for (const atom of contentAtoms) {
+                if (atom.parentId === docId) {
+                  atom.parentId = undefined;
+                }
+              }
+
+              console.log('[AI_ASK_VISIBLE] First content atom:', JSON.stringify(contentAtoms[0])?.slice(0, 300));
+
+              await thoughtStore.save(params.thoughtId, { doc_content: contentAtoms });
+              console.log('[AI_ASK_VISIBLE] Saved', contentAtoms.length, 'atoms to ThoughtStore');
+            } catch (parseErr) {
+              console.error('[AI_ASK_VISIBLE] Failed to parse/save AI response:', parseErr);
+              // Fallback: save raw markdown as single paragraph
+              await thoughtStore.save(params.thoughtId, {
+                doc_content: [{
+                  id: `atom-${Date.now()}`,
+                  type: 'paragraph',
+                  content: { children: [{ type: 'text', text: result.markdown }] },
+                  meta: { createdAt: Date.now(), updatedAt: Date.now(), dirty: false },
+                }],
+              });
+              console.log('[AI_ASK_VISIBLE] Fallback: saved raw markdown as single paragraph');
+            }
+          } else {
+            console.log('[AI_ASK_VISIBLE] No markdown to parse:', { success: result?.success, hasMarkdown: !!result?.markdown });
+          }
+
+          resolve(result);
+        };
+
+        ipcMain.on(responseChannel, listener);
+
+        console.log('[AI_ASK_VISIBLE] Step 4: Sending IPC.AI_INJECT_AND_SEND to rightWC id =', rightWC.id);
+        rightWC.send(IPC.AI_INJECT_AND_SEND, {
+          ...params,
+          responseChannel,
+        });
+
+        // Timeout after 90 seconds
+        setTimeout(() => {
+          if (resolved) return;
+          resolved = true;
+          ipcMain.removeListener(responseChannel, listener);
+          console.log('[AI_ASK_VISIBLE] Step 4: TIMEOUT after 90s');
+          resolve({ success: false, error: 'AI response timed out (90s)' });
+        }, 90_000);
+      });
+    } catch (err) {
+      return { success: false, error: String(err) };
+    }
+  });
+
+  ipcMain.handle(IPC.AI_STATUS, async () => {
+    const { backgroundAI } = await import('../../plugins/web-bridge/capabilities/background-webview');
+    return backgroundAI.getStatus();
+  });
+
+  // AI_READ_CLIPBOARD: Read system clipboard text (for Copy button extraction)
+  ipcMain.handle(IPC.AI_READ_CLIPBOARD, async () => {
+    const { clipboard } = await import('electron');
+    return clipboard.readText();
+  });
+
+  // WB_CAPTURE_DOWNLOAD_ONCE: Arm a one-shot will-download handler on the
+  // sender's guest webContents session. The NEXT download triggered on
+  // that session is intercepted: saved to a temp path, read into memory,
+  // deleted, and returned to the caller. Used by the Artifact "Download
+  // file" extraction path. Auto-clears after the download arrives or the
+  // timeout elapses, so it can be safely re-armed.
+  ipcMain.handle(IPC.WB_CAPTURE_DOWNLOAD_ONCE, async (event, timeoutMs?: number) => {
+    try {
+      const { getGuest } = await import('../../plugins/web-bridge/infrastructure/guest-registry');
+      const { app } = await import('electron');
+      const fs = await import('node:fs');
+      const path = await import('node:path');
+      const os = await import('node:os');
+
+      const guest = getGuest(event.sender.id);
+      if (!guest) return { success: false, error: 'no guest for sender' };
+      const session = guest.session;
+
+      return await new Promise<{ success: boolean; filename?: string; mimeType?: string; content?: string; error?: string }>((resolve) => {
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'krig-artifact-'));
+        let settled = false;
+        const timer = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          session.removeListener('will-download', listener);
+          try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+          resolve({ success: false, error: 'timeout waiting for download' });
+        }, timeoutMs ?? 10_000);
+
+        const listener = (_ev: Electron.Event, item: Electron.DownloadItem) => {
+          // One-shot: detach immediately so later downloads behave normally.
+          session.removeListener('will-download', listener);
+
+          const filename = item.getFilename();
+          const mimeType = item.getMimeType();
+          const savePath = path.join(tmpDir, filename);
+          item.setSavePath(savePath);
+
+          item.on('done', (_e, state) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            if (state === 'completed') {
+              try {
+                const buf = fs.readFileSync(savePath);
+                resolve({ success: true, filename, mimeType, content: buf.toString('utf8') });
+              } catch (err) {
+                resolve({ success: false, error: 'read failed: ' + String(err) });
+              }
+            } else {
+              resolve({ success: false, error: 'download ' + state });
+            }
+            try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+          });
+        };
+        session.on('will-download', listener);
+
+        // Silence "unused" lint — app is imported for future use (e.g. app.getPath).
+        void app;
+      });
+    } catch (err) {
+      return { success: false, error: String(err) };
+    }
+  });
+
+  // WB_FETCH_BINARY: fetch a URL from the main process and return the body
+  // as base64. Used to download assets that the renderer can't fetch itself
+  // because of CORS (e.g. Gemini's lh3.googleusercontent.com Imagen outputs,
+  // which reject cross-origin fetch and also fail img.onerror under
+  // crossOrigin="anonymous"). Main-process net.fetch has no CORS.
+  ipcMain.handle(IPC.WB_FETCH_BINARY, async (_event, params: {
+    url: string;
+    headers?: Record<string, string>;
+    timeoutMs?: number;
+  }) => {
+    try {
+      const { net } = await import('electron');
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), params.timeoutMs ?? 15_000);
+      try {
+        const resp = await net.fetch(params.url, {
+          method: 'GET',
+          headers: params.headers,
+          redirect: 'follow',
+          signal: controller.signal,
+        });
+        if (!resp.ok) return { success: false, error: `http ${resp.status}` };
+        const buf = Buffer.from(await resp.arrayBuffer());
+        const mimeType = resp.headers.get('content-type') || 'application/octet-stream';
+        return {
+          success: true,
+          base64: buf.toString('base64'),
+          mimeType: mimeType.split(';')[0].trim(),
+          bodyLength: buf.length,
+        };
+      } finally {
+        clearTimeout(timer);
+      }
+    } catch (err) {
+      return { success: false, error: String(err) };
+    }
+  });
+
+  // WB_READ_CLIPBOARD_IMAGE: Read clipboard as PNG data URL.
+  // Claude "Copy to clipboard" on an Artifact writes the rendered image, not source.
+  ipcMain.handle(IPC.WB_READ_CLIPBOARD_IMAGE, async () => {
+    const { clipboard } = await import('electron');
+    const img = clipboard.readImage();
+    if (img.isEmpty()) return { success: false, empty: true };
+    const size = img.getSize();
+    return {
+      success: true,
+      dataUrl: img.toDataURL(),
+      width: size.width,
+      height: size.height,
+    };
+  });
+
+  // ── WebBridge CDP Interceptor (Debug) ──
+  // Attach Chrome DevTools Protocol to the sender's guest webview and capture network responses.
+  // Used to inspect Claude Artifact API traffic and any other server responses.
+  let cdpInstance: import('../../plugins/web-bridge/capabilities/cdp-interceptor').CDPInterceptor | null = null;
+
+  ipcMain.handle(IPC.WB_CDP_START, async (event, urlFilters?: string[]) => {
+    try {
+      const { getGuest } = await import('../../plugins/web-bridge/infrastructure/guest-registry');
+      const { CDPInterceptor } = await import('../../plugins/web-bridge/capabilities/cdp-interceptor');
+
+      const senderId = event.sender.id;
+      const guest = getGuest(senderId);
+      if (!guest) {
+        return { success: false, error: 'No guest webview found for sender ' + senderId };
+      }
+
+      // Stop previous instance if any
+      if (cdpInstance) {
+        cdpInstance.stop();
+        cdpInstance = null;
+      }
+
+      const filters = (urlFilters || []).map(f => f.startsWith('/') && f.endsWith('/') ? new RegExp(f.slice(1, -1)) : f);
+      cdpInstance = new CDPInterceptor(guest, {
+        urlFilters: filters,
+        maxCacheSize: 200,
+        captureBodies: true,
+      });
+      const ok = cdpInstance.start();
+      return {
+        success: ok,
+        guestUrl: guest.getURL(),
+        guestId: guest.id,
+        filters: urlFilters || [],
+      };
+    } catch (err) {
+      return { success: false, error: String(err) };
+    }
+  });
+
+  // WB_SEND_MOUSE: synthesize native mouse events into the sender's guest webview
+  // via CDP (Input.dispatchMouseEvent). Used to trigger Radix UI hover menus
+  // (e.g. Claude Artifact "..." menu) that don't respond to JS-layer dispatchEvent.
+  ipcMain.handle(IPC.WB_SEND_MOUSE, async (event, events: Array<{
+    type: string; x: number; y: number;
+    button?: string; buttons?: number; clickCount?: number;
+  }>) => {
+    try {
+      const { getGuest } = await import('../../plugins/web-bridge/infrastructure/guest-registry');
+      const senderId = event.sender.id;
+      const guest = getGuest(senderId);
+      if (!guest) return { success: false, error: 'No guest for sender ' + senderId };
+
+      // Attach debugger if not already attached. Safe to call repeatedly;
+      // if another debugger is attached we silently ignore.
+      const dbg = guest.debugger;
+      if (!dbg.isAttached()) {
+        try { dbg.attach('1.3'); } catch (e) { /* another debugger may be attached */ }
+      }
+
+      for (const ev of events) {
+        await dbg.sendCommand('Input.dispatchMouseEvent', {
+          type: ev.type,
+          x: ev.x,
+          y: ev.y,
+          button: ev.button ?? 'none',
+          buttons: ev.buttons ?? 0,
+          clickCount: ev.clickCount ?? 0,
+          pointerType: 'mouse',
+        });
+      }
+      return { success: true, count: events.length };
+    } catch (err) {
+      return { success: false, error: String(err) };
+    }
+  });
+
+  ipcMain.handle(IPC.WB_CDP_STOP, async () => {
+    if (cdpInstance) {
+      cdpInstance.stop();
+      cdpInstance = null;
+    }
+    return { success: true };
+  });
+
+  ipcMain.handle(IPC.WB_CDP_GET_RESPONSES, async () => {
+    if (!cdpInstance) return { success: false, error: 'CDP not started', responses: [] };
+    const responses = cdpInstance.getResponses();
+    // Return truncated body previews to avoid massive IPC payloads
+    const preview = responses.map(r => ({
+      requestId: r.requestId,
+      url: r.url,
+      statusCode: r.statusCode,
+      mimeType: r.mimeType,
+      bodyLength: r.body?.length ?? 0,
+      bodyPreview: r.body?.slice(0, 2000) ?? null,
+      timestamp: r.timestamp,
+    }));
+    return { success: true, count: responses.length, responses: preview };
+  });
+
+  // WB_CDP_FIND_RESPONSE: Return full bodies of captured CDP responses
+  // matching a URL substring. Used by content extractors (e.g. ChatGPT)
+  // that need the raw JSON / base64 payload rather than a 2KB preview.
+  //
+  // `urlSubstring`: case-sensitive substring match against response URL.
+  // `mode`:
+  //   'all'    → every match, in capture order (default)
+  //   'latest' → only the most recent match
+  //   'first'  → only the earliest match
+  ipcMain.handle(IPC.WB_CDP_FIND_RESPONSE, async (_event, params: {
+    urlSubstring: string;
+    mode?: 'all' | 'latest' | 'first';
+  }) => {
+    if (!cdpInstance) return { success: false, error: 'CDP not started', matches: [] };
+    const all = cdpInstance.getResponses().filter(r => r.url.includes(params.urlSubstring));
+    let picked = all;
+    if (params.mode === 'latest') picked = all.slice(-1);
+    else if (params.mode === 'first') picked = all.slice(0, 1);
+    return {
+      success: true,
+      count: picked.length,
+      matches: picked.map(r => ({
+        url: r.url, statusCode: r.statusCode, mimeType: r.mimeType,
+        body: r.body, bodyLength: r.body?.length ?? 0, timestamp: r.timestamp,
+      })),
+    };
+  });
+
+  // AI_PARSE_MARKDOWN: Parse markdown → Atom[] (used by SyncNote receiver)
+  ipcMain.handle(IPC.AI_PARSE_MARKDOWN, async (_event, markdown: string) => {
+    try {
+      const { ResultParser } = await import('../../plugins/web-bridge/pipeline/result-parser');
+      const { createAtomsFromExtracted } = await import('../../plugins/web-bridge/pipeline/content-to-atoms');
+
+      const parser = new ResultParser();
+      const blocks = parser.parse(markdown);
+      // Pass a title to prevent createAtomsFromExtracted from consuming the first heading
+      const atoms = createAtomsFromExtracted(blocks, '__skip_title__');
+
+      // Remove document root + noteTitle — only content atoms needed
+      const docAtom = atoms.find((a: any) => a.type === 'document');
+      const docId = docAtom?.id;
+      const contentAtoms = atoms.filter((a: any) => a.type !== 'document' && a.type !== 'noteTitle');
+      for (const atom of contentAtoms) {
+        if (atom.parentId === docId) atom.parentId = undefined;
+      }
+
+      return { success: true, atoms: contentAtoms };
+    } catch (err) {
+      console.error('[AI_PARSE_MARKDOWN] Error:', err);
+      return { success: false, error: String(err), atoms: [] };
+    }
+  });
+
+  // AI_EXTRACT_DEBUG: Parse markdown and return stats (for debugging extraction quality)
+  ipcMain.handle(IPC.AI_EXTRACT_DEBUG, async (_event, params: { markdown: string; serviceId: string }) => {
+    try {
+      const { ResultParser } = await import('../../plugins/web-bridge/pipeline/result-parser');
+      const { createAtomsFromExtracted } = await import('../../plugins/web-bridge/pipeline/content-to-atoms');
+
+      const parser = new ResultParser();
+      const blocks = parser.parse(params.markdown);
+
+      console.log('[AI_EXTRACT_DEBUG] Parsed blocks:', blocks.length);
+
+      // Build detailed block info for the debug panel
+      const blockDetails = blocks.map((b: any, i: number) => {
+        const info: any = { index: i, type: b.type, textLength: b.text?.length ?? 0 };
+        if (b.language) info.language = b.language;
+        if (b.headingLevel) info.headingLevel = b.headingLevel;
+        if (b.src) info.src = b.src;
+        if (b.items) info.itemCount = b.items.length;
+        if (b.tableRows) info.rows = b.tableRows.length;
+        if (b.inlines) info.inlineCount = b.inlines.length;
+        info.textPreview = b.text?.slice(0, 120) || '';
+        console.log(`  [${i}] ${b.type}${b.language ? `(${b.language})` : ''}: "${info.textPreview.slice(0, 60)}"`);
+        return info;
+      });
+
+      const atoms = createAtomsFromExtracted(blocks);
+      const contentAtoms = atoms.filter((a: any) => a.type !== 'document' && a.type !== 'noteTitle');
+
+      const docAtom = atoms.find((a: any) => a.type === 'document');
+      const docId = docAtom?.id;
+      for (const atom of contentAtoms) {
+        if (atom.parentId === docId) atom.parentId = undefined;
+      }
+
+      console.log('[AI_EXTRACT_DEBUG] Content atoms:', contentAtoms.length);
+      const atomDetails = contentAtoms.map((a: any, i: number) => {
+        const info: any = { index: i, type: a.type, id: a.id?.slice(0, 15) };
+        if (a.parentId) info.parentId = a.parentId.slice(0, 15);
+        // Extract text preview from content
+        const content = a.content as any;
+        if (content?.children) {
+          const parts = content.children.map((c: any) => {
+            if (c.type === 'text') return c.text || '';
+            if (c.type === 'math-inline') return `$${c.latex}$`;
+            if (c.type === 'code-inline') return `\`${c.code}\``;
+            if (c.type === 'link') return `[${c.children?.map((ch: any) => ch.text).join('') || ''}](${c.href})`;
+            return `[${c.type}]`;
+          }).join('');
+          info.textPreview = parts.slice(0, 120);
+          info.inlineTypes = content.children.map((c: any) => c.type);
+        } else if (content?.latex) {
+          info.textPreview = `[LaTeX] ${content.latex.slice(0, 60)}`;
+        } else if (content?.language) {
+          info.textPreview = `[Code:${content.language}]`;
+        } else if (content?.src) {
+          info.textPreview = `[Image] ${content.src.slice(0, 60)}`;
+        }
+        return info;
+      });
+
+      return {
+        success: true,
+        blocks: blocks.length,
+        atomCount: contentAtoms.length,
+        preview: JSON.stringify(contentAtoms[0]?.content).slice(0, 200),
+        blockTypes: blocks.map((b: any) => b.type),
+        atomTypes: contentAtoms.map((a: any) => a.type),
+        blockDetails,
+        atomDetails,
+      };
+    } catch (err) {
+      console.error('[AI_EXTRACT_DEBUG] Error:', err);
+      return { success: false, error: String(err) };
+    }
   });
 
   // ── Tweet 数据获取 ──
@@ -680,6 +1355,140 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
       return { success: false, error: String(err) };
     }
   });
+
+  // ── Web 书签 ──
+
+  ipcMain.handle(IPC.WEB_BOOKMARK_LIST, async () => {
+    return webBookmarkStore.list();
+  });
+
+  ipcMain.handle(IPC.WEB_BOOKMARK_ADD, async (_event, url: string, title: string, favicon?: string) => {
+    return webBookmarkStore.add(url, title, favicon);
+  });
+
+  ipcMain.handle(IPC.WEB_BOOKMARK_REMOVE, async (_event, id: string) => {
+    await webBookmarkStore.remove(id);
+  });
+
+  ipcMain.handle(IPC.WEB_BOOKMARK_UPDATE, async (_event, id: string, fields: { title?: string; url?: string; favicon?: string }) => {
+    await webBookmarkStore.update(id, fields);
+  });
+
+  ipcMain.handle(IPC.WEB_BOOKMARK_MOVE, async (_event, id: string, folderId: string | null) => {
+    await webBookmarkStore.move(id, folderId);
+  });
+
+  ipcMain.handle('web:bookmark-find-by-url', async (_event, url: string) => {
+    return webBookmarkStore.findByUrl(url);
+  });
+
+  // Web 书签文件夹
+  ipcMain.handle(IPC.WEB_FOLDER_CREATE, async (_event, title: string) => {
+    return webBookmarkStore.folderCreate(title);
+  });
+
+  ipcMain.handle(IPC.WEB_FOLDER_RENAME, async (_event, id: string, title: string) => {
+    await webBookmarkStore.folderRename(id, title);
+  });
+
+  ipcMain.handle(IPC.WEB_FOLDER_DELETE, async (_event, id: string) => {
+    await webBookmarkStore.folderDelete(id);
+  });
+
+  ipcMain.handle(IPC.WEB_FOLDER_LIST, async () => {
+    return webBookmarkStore.folderList();
+  });
+
+  // Web 浏览历史
+  ipcMain.handle(IPC.WEB_HISTORY_ADD, async (_event, url: string, title: string, favicon?: string) => {
+    return webHistoryStore.add(url, title, favicon);
+  });
+
+  ipcMain.handle(IPC.WEB_HISTORY_LIST, async (_event, limit?: number) => {
+    return webHistoryStore.list(limit);
+  });
+
+  ipcMain.handle(IPC.WEB_HISTORY_CLEAR, async () => {
+    await webHistoryStore.clear();
+  });
+
+  // ── PDF Extraction (Platform) ──
+
+  ipcMain.handle(IPC.EXTRACTION_OPEN, async () => {
+    console.log('[Extraction] EXTRACTION_OPEN handler triggered');
+
+    // 1. 打开 ExtractionView 到 Right Slot（加载 Platform Web UI）
+    openRightSlot('extraction');
+
+    // 2. 并行上传当前 PDF 到 Platform
+    const ebookData = getEBookData();
+    if (!ebookData) {
+      return { uploaded: false, reason: 'no-file' };
+    }
+    if (!ebookData.filePath.toLowerCase().endsWith('.pdf')) {
+      return { uploaded: false, reason: 'not-pdf' };
+    }
+
+    // 从书架获取显示名（而非 UUID 文件名）
+    const allEntries = await bookshelfStore.list();
+    const entry = allEntries.find((e) => e.filePath === ebookData.filePath);
+    const displayName = entry?.displayName || ebookData.fileName.replace(/\.pdf$/i, '');
+    console.log('[Extraction] Uploading:', displayName, `(${ebookData.filePath})`);
+
+    try {
+      const { uploadPdfToPlatform } = await import('../extraction/upload-service');
+      const result = await uploadPdfToPlatform(ebookData.filePath, displayName);
+
+      // 上传完成后，通知 ExtractionView 导航到书籍详情页
+      const mainWindow = getMainWindow();
+      if (mainWindow) {
+        for (const view of mainWindow.contentView.children) {
+          if ('webContents' in view) {
+            (view as any).webContents.send('extraction:navigate', result.md5);
+          }
+        }
+      }
+
+      return { uploaded: true, md5: result.md5, alreadyExists: result.alreadyExists };
+    } catch (err) {
+      console.error('[Extraction] Upload failed:', err);
+      return { uploaded: false, reason: String(err) };
+    }
+  });
+
+  ipcMain.handle(IPC.EXTRACTION_IMPORT, async (_event, data: any) => {
+    try {
+      const { importExtractionData } = await import('../extraction/import-service');
+
+      // 批次格式：{ type: 'batch', chapters: [{ bookName, title, pageStart, pageEnd, pages }] }
+      // 从第一个 chapter 提取 bookName
+      if (data.type === 'batch' && !data.bookName && data.chapters?.[0]?.bookName) {
+        data.bookName = data.chapters[0].bookName;
+      }
+
+      // 附加当前打开的 bookId（用于建立 Graph 关系）
+      const active = workspaceManager.getActive();
+      if (active?.activeBookId && !data.bookId) {
+        data.bookId = active.activeBookId;
+      }
+
+      const result = await importExtractionData(data);
+
+      // 广播列表变更（让 NavSide 立即刷新文件夹/笔记树）
+      broadcastContentTree(getMainWindow());
+
+      // 有新笔记时，跳转到最新导入的笔记
+      if (result.noteId) {
+        setPendingNoteId(result.noteId);
+        openRightSlot('demo-a');
+      }
+
+      return { success: true, ...result };
+    } catch (err) {
+      console.error('[Extraction] Import failed:', err);
+      return { success: false, error: String(err) };
+    }
+  });
 }
 
 /** 广播 NoteFile 列表变更 */
@@ -691,7 +1500,9 @@ function broadcastNoteList(mainWindow: BaseWindow | null): void {
         (view as any).webContents.send(IPC.NOTE_LIST_CHANGED, list);
       }
     }
-  }).catch(() => {});
+  }).catch((err) => {
+    console.warn('[IPC] Failed to broadcast note list:', err);
+  });
 }
 
 /** 广播完整内容树（folder + note 列表同时刷新） */
@@ -909,18 +1720,21 @@ const EXTRACT_TWEET_JS = `
 /** 广播书架变更（→ NavSide） */
 function broadcastBookshelfChanged(mainWindow: BaseWindow | null): void {
   if (!mainWindow) return;
-  const list = bookshelfStore.list();
-  for (const view of mainWindow.contentView.children) {
-    if ('webContents' in view) {
-      (view as any).webContents.send(IPC.EBOOK_BOOKSHELF_CHANGED, list);
+  bookshelfStore.list().then((list) => {
+    for (const view of mainWindow.contentView.children) {
+      if ('webContents' in view) {
+        (view as any).webContents.send(IPC.EBOOK_BOOKSHELF_CHANGED, list);
+      }
     }
-  }
+  }).catch((err) => {
+    console.warn('[IPC] Failed to broadcast bookshelf list:', err);
+  });
 }
 
 /** 通知 EBookView 文件已加载 */
 function broadcastEBookLoaded(mainWindow: BaseWindow | null, info: {
   bookId: string; fileName: string; fileType: string;
-  lastPage?: number; lastScale?: number; lastFitWidth?: boolean; lastCFI?: string;
+  lastPosition?: { page?: number; scale?: number; fitWidth?: boolean; cfi?: string };
 }): void {
   if (!mainWindow) return;
   for (const view of mainWindow.contentView.children) {
@@ -938,5 +1752,7 @@ function broadcastVocabChanged(mainWindow: BaseWindow | null): void {
         (view as any).webContents.send(IPC.LEARNING_VOCAB_CHANGED, entries);
       }
     }
-  }).catch(() => {});
+  }).catch((err) => {
+    console.warn('[IPC] Failed to broadcast vocab list:', err);
+  });
 }

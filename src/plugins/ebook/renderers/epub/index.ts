@@ -250,10 +250,15 @@ export class EPUBRenderer implements IReflowableRenderer {
   // ── 标注 ──
 
   private annotationCallback: ((info: { cfi: string; text: string; x: number; y: number }) => void) | null = null;
+  private selectionDismissCallback: (() => void) | null = null;
   private annotationClickCallback: ((cfi: string) => void) | null = null;
 
   onTextSelected(callback: (info: { cfi: string; text: string; x: number; y: number }) => void): void {
     this.annotationCallback = callback;
+  }
+
+  onSelectionDismiss(callback: () => void): void {
+    this.selectionDismissCallback = callback;
   }
 
   onAnnotationClick(callback: (cfi: string) => void): void {
@@ -267,6 +272,11 @@ export class EPUBRenderer implements IReflowableRenderer {
       if (!doc || doc.__ebookMouseupAttached) return;
       doc.__ebookMouseupAttached = true;
 
+      // mousedown 时关闭 picker（如果点击后没有产生新选区）
+      doc.addEventListener('mousedown', () => {
+        this.selectionDismissCallback?.();
+      });
+
       doc.addEventListener('mouseup', (e: MouseEvent) => {
         const sel = doc.getSelection();
         if (!sel || sel.isCollapsed || !sel.rangeCount) return;
@@ -278,10 +288,13 @@ export class EPUBRenderer implements IReflowableRenderer {
         const cfi = this.view.getCFI(index, range);
         if (cfi && this.annotationCallback) {
           // 获取选区末尾坐标（相对于 eBook view 容器）
+          // range.getBoundingClientRect() 返回 iframe 内坐标，需加上 iframe 在主窗口中的偏移
           const rect = range.getBoundingClientRect();
-          const viewRect = this.container?.getBoundingClientRect();
-          const x = rect.left + rect.width / 2 - (viewRect?.left ?? 0);
-          const y = rect.bottom - (viewRect?.top ?? 0);
+          const iframeEl = doc.defaultView?.frameElement as HTMLElement | null;
+          const iframeRect = iframeEl?.getBoundingClientRect() ?? { left: 0, top: 0 };
+          const viewRect = this.container?.getBoundingClientRect() ?? { left: 0, top: 0 };
+          const x = rect.left + rect.width / 2 + iframeRect.left - viewRect.left;
+          const y = rect.bottom + iframeRect.top - viewRect.top;
           this.annotationCallback({ cfi, text, x, y });
         }
       });

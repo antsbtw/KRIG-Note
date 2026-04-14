@@ -3,7 +3,8 @@ import path from 'node:path';
 import { folderStore } from './folder-store';
 import { noteStore } from './note-store';
 import { isDBReady } from './client';
-import { mdToDocContent } from './md-to-pm';
+import { mdToAtoms } from './md-to-atoms';
+import { createAtom, type Atom, type NoteTitleContent, type HeadingContent, type ListContent, type ListItemContent, type ParagraphContent } from '../../shared/types/atom-types';
 
 /**
  * 初始化 KRIG-Note 文档库
@@ -132,7 +133,7 @@ export async function initKrigNoteDocs(): Promise<{ created: number }> {
       try {
         const mdContent = readFileSync(file.fullPath, 'utf-8');
         const title = file.name;
-        const docContent = mdToDocContent(mdContent, title);
+        const docContent = await mdToAtoms(mdContent, title);
 
         const note = await noteStore.create(title, subFolder.id);
         await noteStore.save(note.id, docContent, title);
@@ -170,47 +171,49 @@ const BLOCK_GROUPS: { heading: string; names: string[] }[] = [
   { heading: '系统设计', names: ['horizontal-rule', 'marks', 'block-action', 'block-relation-model', 'block-selection', 'indent-system', 'container-nesting-design', 'todo-system', 'media-blocks-plan'] },
 ];
 
-function buildBlockTaskDocContent(allNotes: NoteListItem[]): unknown[] {
+function buildBlockTaskDocContent(allNotes: NoteListItem[]): Atom[] {
   const nameToNote: Record<string, { id: string; title: string }> = {};
   for (const n of allNotes) {
     const normalized = n.title.toLowerCase().replace(/[- ]/g, '');
     nameToNote[normalized] = { id: n.id, title: n.title };
   }
 
-  const content: unknown[] = [
-    { type: 'textBlock', attrs: { isTitle: true }, content: [{ type: 'text', text: 'Block 测试工作任务' }] },
+  const atoms: Atom[] = [
+    createAtom('noteTitle', {
+      children: [{ type: 'text', text: 'Block 测试工作任务' }],
+    } as NoteTitleContent),
   ];
 
   for (const group of BLOCK_GROUPS) {
-    // 分组标题（H2）
-    content.push({
-      type: 'textBlock', attrs: { level: 2 },
-      content: [{ type: 'text', text: group.heading }],
-    });
+    atoms.push(createAtom('heading', {
+      level: 2,
+      children: [{ type: 'text', text: group.heading }],
+    } as HeadingContent));
 
-    // 每个 block 一个 task
-    const taskItems: unknown[] = [];
+    const listAtom = createAtom('taskList', { listType: 'task' } as ListContent);
+    atoms.push(listAtom);
+
     for (const name of group.names) {
       const normalized = name.toLowerCase().replace(/[- ]/g, '');
       const match = nameToNote[normalized];
 
-      // 用 link mark 链接到设计文档
-      const paraContent: unknown[] = match
-        ? [{ type: 'text', text: `${name} 优化`, marks: [{ type: 'link', attrs: { href: `krig://note/${match.id}` } }] }]
-        : [{ type: 'text', text: `${name} 优化` }];
+      const children = match
+        ? [{ type: 'link' as const, href: `krig://note/${match.id}`, children: [{ type: 'text' as const, text: `${name} 优化` }] }]
+        : [{ type: 'text' as const, text: `${name} 优化` }];
 
-      taskItems.push({
-        type: 'taskItem',
-        attrs: { checked: false },
-        content: [{ type: 'textBlock', content: paraContent }],
-      });
+      const itemAtom = createAtom('taskItem', {
+        children,
+        checked: false,
+      } as ListItemContent);
+      itemAtom.parentId = listAtom.id;
+      atoms.push(itemAtom);
     }
-
-    content.push({ type: 'taskList', content: taskItems });
   }
 
-  content.push({ type: 'textBlock' });
-  return content;
+  atoms.push(createAtom('paragraph', { children: [] } as ParagraphContent));
+
+  atoms.forEach((a, i) => { a.order = i; });
+  return atoms;
 }
 
 /** 重新导入"测试"文件夹下的所有 .md 文档（增量更新） */
@@ -247,7 +250,7 @@ export async function reimportTestDocs(): Promise<boolean> {
     try {
       const mdContent = readFileSync(file.fullPath, 'utf-8');
       const title = file.name;
-      const docContent = mdToDocContent(mdContent, title);
+      const docContent = await mdToAtoms(mdContent, title);
       const note = await noteStore.create(title, testFolder.id);
       await noteStore.save(note.id, docContent, title);
       created++;

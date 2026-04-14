@@ -52,7 +52,7 @@ contextBridge.exposeInMainWorld('navSideAPI', {
 
   // Workspace 状态同步
   setExpandedFolders: (folderIds: string[]) => ipcRenderer.invoke(IPC.SET_EXPANDED_FOLDERS, folderIds),
-  onRestoreWorkspaceState: (callback: (state: { activeNoteId: string | null; expandedFolders: string[] }) => void) => {
+  onRestoreWorkspaceState: (callback: (state: { activeNoteId: string | null; expandedFolders: string[]; activeBookId?: string | null; ebookExpandedFolders?: string[] }) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, state: any) => callback(state);
     ipcRenderer.on(IPC.RESTORE_WORKSPACE_STATE, listener);
     return () => ipcRenderer.removeListener(IPC.RESTORE_WORKSPACE_STATE, listener);
@@ -105,4 +105,14 @@ contextBridge.exposeInMainWorld('navSideAPI', {
     ipcRenderer.on(IPC.EBOOK_BOOKSHELF_CHANGED, listener);
     return () => ipcRenderer.removeListener(IPC.EBOOK_BOOKSHELF_CHANGED, listener);
   },
+
+  // ── Web 书签 ──
+
+  webBookmarkList: () => ipcRenderer.invoke(IPC.WEB_BOOKMARK_LIST),
+  webBookmarkRemove: (id: string) => ipcRenderer.invoke(IPC.WEB_BOOKMARK_REMOVE, id),
+  webFolderCreate: (title: string) => ipcRenderer.invoke(IPC.WEB_FOLDER_CREATE, title),
+  webFolderList: () => ipcRenderer.invoke(IPC.WEB_FOLDER_LIST),
+  webFolderRename: (id: string, title: string) => ipcRenderer.invoke(IPC.WEB_FOLDER_RENAME, id, title),
+  webFolderDelete: (id: string) => ipcRenderer.invoke(IPC.WEB_FOLDER_DELETE, id),
+  webHistoryList: (limit?: number) => ipcRenderer.invoke(IPC.WEB_HISTORY_LIST, limit),
 });

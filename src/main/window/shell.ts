@@ -5,7 +5,8 @@ import { workspaceManager } from '../workspace/manager';
 import { workModeRegistry } from '../workmode/registry';
 import { protocolRegistry } from '../protocol/registry';
 import { DIVIDER_HTML } from '../slot/divider';
-import type { WorkspaceId } from '../../shared/types';
+import { IPC } from '../../shared/types';
+import type { WorkspaceId, ViewType, ViewTypeRendererConfig } from '../../shared/types';
 
 /**
  * Shell — 应用的主窗口
@@ -29,9 +30,9 @@ let dividerView: WebContentsView | null = null;
 // ── Workspace 隔离的 View 实例池 ──
 
 interface WorkspaceViewPool {
-  leftViews: Map<string, WebContentsView>;   // workModeId → Left View
-  rightView: WebContentsView | null;          // Right Slot View（当前只支持一个）
-  rightWorkModeId: string | null;             // Right View 的 workModeId
+  leftViews: Map<string, WebContentsView>;    // workModeId → Left View
+  rightViews: Map<string, WebContentsView>;   // workModeId → Right View（缓存池）
+  rightWorkModeId: string | null;             // 当前显示的 Right View workModeId
   activeLeftId: string | null;                // 当前 Left Slot 显示的 workModeId
 }
 
@@ -40,62 +41,73 @@ const workspaceViewPools: Map<WorkspaceId, WorkspaceViewPool> = new Map();
 function getViewPool(workspaceId: WorkspaceId): WorkspaceViewPool {
   let pool = workspaceViewPools.get(workspaceId);
   if (!pool) {
-    pool = { leftViews: new Map(), rightView: null, rightWorkModeId: null, activeLeftId: null };
+    pool = { leftViews: new Map(), rightViews: new Map(), rightWorkModeId: null, activeLeftId: null };
     workspaceViewPools.set(workspaceId, pool);
   }
   return pool;
 }
 
+/** ViewType → 渲染器配置映射 */
+const viewTypeRenderers: Record<ViewType | 'default', ViewTypeRendererConfig> = {
+  note:  { devServerUrl: NOTE_VIEW_VITE_DEV_SERVER_URL,  htmlFile: 'note.html',      prodDir: 'note_view' },
+  ebook: { devServerUrl: EBOOK_VIEW_VITE_DEV_SERVER_URL, htmlFile: 'ebook.html',     prodDir: 'ebook_view' },
+  web:   { devServerUrl: WEB_VIEW_VITE_DEV_SERVER_URL,   htmlFile: 'web.html',       prodDir: 'web_view',   webPreferences: { webviewTag: true } },
+  thought: { devServerUrl: THOUGHT_VIEW_VITE_DEV_SERVER_URL, htmlFile: 'thought.html', prodDir: 'thought_view' },
+  graph: { devServerUrl: DEMO_VIEW_VITE_DEV_SERVER_URL,  htmlFile: 'demo-view.html', prodDir: 'demo_view' },
+  default: { devServerUrl: DEMO_VIEW_VITE_DEV_SERVER_URL, htmlFile: 'demo-view.html', prodDir: 'demo_view' },
+};
+
 /** 懒创建 View 实例 — 根据 WorkMode 的 viewType 选择 renderer */
 function createViewForWorkMode(workModeId: string): WebContentsView {
+  const mode = workModeRegistry.get(workModeId);
+  const viewType = mode?.viewType ?? 'note';
+  const config = viewTypeRenderers[viewType] ?? viewTypeRenderers.default;
+
   const view = new WebContentsView({
     webPreferences: {
       preload: path.join(__dirname, 'view.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      webviewTag: config.webPreferences?.webviewTag ?? false,
     },
   });
   view.setBackgroundColor('#1e1e1e');
 
-  // 根据 WorkMode 的 viewType 选择对应的 renderer
-  const mode = workModeRegistry.get(workModeId);
-  const viewType = mode?.viewType ?? 'note';
+  // 构建查询参数
+  const variant = mode?.variant ?? '';
+  const query: Record<string, string> = { workModeId };
+  if (variant) query.variant = variant;
 
-  if (viewType === 'note') {
-    // NoteView — ProseMirror 编辑器
-    if (NOTE_VIEW_VITE_DEV_SERVER_URL) {
-      const url = `${NOTE_VIEW_VITE_DEV_SERVER_URL}/note.html?workModeId=${workModeId}`;
-      view.webContents.loadURL(url);
-    } else {
-      view.webContents.loadFile(
-        path.join(__dirname, `../renderer/note_view/note.html`),
-        { query: { workModeId } },
-      );
-    }
-  } else if (viewType === 'ebook') {
-    // EBookView — 电子书阅读器
-    if (EBOOK_VIEW_VITE_DEV_SERVER_URL) {
-      view.webContents.loadURL(
-        `${EBOOK_VIEW_VITE_DEV_SERVER_URL}/ebook.html?workModeId=${workModeId}`,
-      );
-    } else {
-      view.webContents.loadFile(
-        path.join(__dirname, `../renderer/ebook_view/ebook.html`),
-        { query: { workModeId } },
-      );
-    }
+  // 加载 renderer
+  if (config.devServerUrl) {
+    const params = new URLSearchParams(query).toString();
+    view.webContents.loadURL(`${config.devServerUrl}/${config.htmlFile}?${params}`);
   } else {
-    // 其他类型用 DemoView
-    if (DEMO_VIEW_VITE_DEV_SERVER_URL) {
-      view.webContents.loadURL(
-        `${DEMO_VIEW_VITE_DEV_SERVER_URL}/demo-view.html?workModeId=${workModeId}`,
-      );
-    } else {
-      view.webContents.loadFile(
-        path.join(__dirname, `../renderer/demo_view/demo-view.html`),
-        { query: { workModeId } },
-      );
-    }
+    view.webContents.loadFile(
+      path.join(__dirname, `../renderer/${config.prodDir}/${config.htmlFile}`),
+      { query },
+    );
+  }
+
+  // webviewTag 启用时，拦截 guest 弹窗
+  if (config.webPreferences?.webviewTag) {
+    view.webContents.on('did-attach-webview', (_event, guestWebContents) => {
+      // 弹窗策略：target=_blank → 内部导航，OAuth → 允许子窗口
+      guestWebContents.setWindowOpenHandler(({ url, disposition }) => {
+        if (!url || url === 'about:blank') return { action: 'allow' };
+        if (disposition === 'foreground-tab' || disposition === 'background-tab') {
+          // 延迟 loadURL — 在 setWindowOpenHandler 回调中同步调用会导致死锁
+          setTimeout(() => {
+            guestWebContents.loadURL(url).catch(() => {});
+          }, 0);
+          return { action: 'deny' };
+        }
+        return { action: 'allow' };
+      });
+
+      // 调用插件注册的 onViewCreated hook
+      mode?.onViewCreated?.(view, guestWebContents);
+    });
   }
 
   mainWindow?.contentView.addChildView(view);
@@ -132,40 +144,68 @@ export function switchLeftSlotView(workModeId: string): void {
   newView.setVisible(true);
   pool.activeLeftId = workModeId;
 
+  // 同步 slotBinding.left 到 WorkspaceState
+  workspaceManager.update(active.id, {
+    slotBinding: { ...active.slotBinding, left: workModeId },
+  });
+
   updateLayout();
 }
 
-/** 打开 Right Slot */
-export function openRightSlot(workModeId: string): void {
-  if (!mainWindow) return;
+/** 获取当前显示中的 Right View（如果有） */
+function getActiveRightView(pool: WorkspaceViewPool): WebContentsView | null {
+  if (!pool.rightWorkModeId) return null;
+  return pool.rightViews.get(pool.rightWorkModeId) ?? null;
+}
+
+/** 打开 Right Slot — 缓存池模式，切换时隐藏而非销毁 */
+export function openRightSlot(workModeId: string): WebContentsView | null {
+  if (!mainWindow) return null;
   const active = workspaceManager.getActive();
-  if (!active) return;
+  if (!active) return null;
 
   const pool = getViewPool(active.id);
+  const currentRight = getActiveRightView(pool);
 
-  // 如果已有 Right View 且是同一个 workModeId，关闭它（toggle 行为）
-  if (pool.rightView && pool.rightWorkModeId === workModeId) {
+  // 如果当前显示的就是目标 workModeId，关闭它（toggle 行为）
+  if (currentRight && pool.rightWorkModeId === workModeId) {
     closeRightSlot();
-    return;
+    return null;
   }
 
-  // 关闭旧的 Right View
-  if (pool.rightView) {
-    pool.rightView.setVisible(false);
-    mainWindow.contentView.removeChildView(pool.rightView);
-    pool.rightView.webContents.close();
+  // 隐藏当前的 Right View（不销毁，保留在缓存池中）
+  if (currentRight) {
+    currentRight.setVisible(false);
+    mainWindow.contentView.removeChildView(currentRight);
   }
 
-  // 创建新的 Right View
-  pool.rightView = createViewForWorkMode(workModeId);
+  // 从缓存池取已有的 View，或创建新的
+  let targetView = pool.rightViews.get(workModeId);
+  if (!targetView || targetView.webContents.isDestroyed()) {
+    targetView = createViewForWorkMode(workModeId);
+    pool.rightViews.set(workModeId, targetView);
+
+    // 诊断：监听 renderer 崩溃
+    targetView.webContents.on('render-process-gone', (_e, details) => {
+      console.error('[RightSlot] Renderer process gone:', details.reason, details.exitCode);
+    });
+  }
+
   pool.rightWorkModeId = workModeId;
-  pool.rightView.setVisible(true);
+  targetView.setVisible(true);
+  mainWindow.contentView.addChildView(targetView);
+
+  // 同步 slotBinding.right 到 WorkspaceState
+  workspaceManager.update(active.id, {
+    slotBinding: { ...active.slotBinding, right: workModeId },
+  });
 
   // 显示 Divider
   ensureDivider();
   dividerView?.setVisible(true);
 
   updateLayout();
+  return targetView;
 }
 
 /** 关闭 Right Slot */
@@ -176,13 +216,18 @@ export function closeRightSlot(): void {
 
   const pool = getViewPool(active.id);
 
-  if (pool.rightView) {
-    pool.rightView.setVisible(false);
-    mainWindow.contentView.removeChildView(pool.rightView);
-    pool.rightView.webContents.close();
-    pool.rightView = null;
-    pool.rightWorkModeId = null;
+  const currentRight = getActiveRightView(pool);
+  if (currentRight) {
+    currentRight.setVisible(false);
+    mainWindow.contentView.removeChildView(currentRight);
+    // 不销毁 — 保留在缓存池中
   }
+  pool.rightWorkModeId = null;
+
+  // 同步 slotBinding.right 到 WorkspaceState
+  workspaceManager.update(active.id, {
+    slotBinding: { ...active.slotBinding, right: null },
+  });
 
   // 隐藏 Divider
   dividerView?.setVisible(false);
@@ -199,7 +244,8 @@ export function switchWorkspace(oldId: WorkspaceId | null, newId: WorkspaceId): 
     const oldPool = workspaceViewPools.get(oldId);
     if (oldPool) {
       for (const view of oldPool.leftViews.values()) view.setVisible(false);
-      if (oldPool.rightView) oldPool.rightView.setVisible(false);
+      const oldRight = getActiveRightView(oldPool);
+      if (oldRight) oldRight.setVisible(false);
     }
   }
 
@@ -218,10 +264,17 @@ export function switchWorkspace(oldId: WorkspaceId | null, newId: WorkspaceId): 
     }
 
     // 恢复 Right Slot
-    if (pool.rightView) {
-      pool.rightView.setVisible(true);
+    const restoredRight = getActiveRightView(pool);
+    if (restoredRight) {
+      restoredRight.setVisible(true);
       ensureDivider();
       dividerView?.setVisible(true);
+    } else if (newWorkspace.slotBinding?.right) {
+      // 首次切换到此 workspace，从 slotBinding 恢复右槽
+      const rightModeId = newWorkspace.slotBinding.right;
+      if (workModeRegistry.get(rightModeId)) {
+        openRightSlot(rightModeId);
+      }
     }
   }
 
@@ -241,14 +294,69 @@ export function closeWorkspaceViews(workspaceId: WorkspaceId): void {
     view.webContents.close();
   }
 
-  if (pool.rightView) {
-    if (mainWindow.contentView.children.includes(pool.rightView)) {
-      mainWindow.contentView.removeChildView(pool.rightView);
+  for (const rv of pool.rightViews.values()) {
+    if (mainWindow.contentView.children.includes(rv)) {
+      mainWindow.contentView.removeChildView(rv);
     }
-    pool.rightView.webContents.close();
+    rv.webContents.close();
   }
 
   workspaceViewPools.delete(workspaceId);
+}
+
+/** 根据 webContentsId 判断 View 在哪个 slot（用于 SLOT_CLOSE 自动检测） */
+export function getSlotBySenderId(senderId: number): 'left' | 'right' | null {
+  const active = workspaceManager.getActive();
+  if (!active) return null;
+  const pool = workspaceViewPools.get(active.id);
+  if (!pool) return null;
+  if (pool.activeLeftId) {
+    const leftView = pool.leftViews.get(pool.activeLeftId);
+    if (leftView?.webContents.id === senderId) return 'left';
+  }
+  const activeRight = getActiveRightView(pool);
+  if (activeRight?.webContents.id === senderId) return 'right';
+  // Also check all cached right views
+  for (const rv of pool.rightViews.values()) {
+    if (rv.webContents.id === senderId) return 'right';
+  }
+  return null;
+}
+
+/** 关闭指定 side 的 slot — 对面 View 自动全屏 */
+export function closeSlot(side: 'left' | 'right'): void {
+  if (side === 'right') {
+    closeRightSlot();
+    return;
+  }
+  // 关闭 left → right 晋升为 left
+  if (!mainWindow) return;
+  const active = workspaceManager.getActive();
+  if (!active) return;
+  const pool = getViewPool(active.id);
+  const currentRight = getActiveRightView(pool);
+  if (!currentRight || !pool.rightWorkModeId) return;
+
+  // 销毁 left view
+  if (pool.activeLeftId) {
+    const leftView = pool.leftViews.get(pool.activeLeftId);
+    if (leftView) {
+      leftView.setVisible(false);
+      mainWindow.contentView.removeChildView(leftView);
+      leftView.webContents.close();
+    }
+    pool.leftViews.delete(pool.activeLeftId);
+  }
+  // right 晋升为 left
+  const promotedView = currentRight;
+  const promotedModeId = pool.rightWorkModeId;
+  pool.rightViews.delete(promotedModeId);
+  pool.leftViews.set(promotedModeId, promotedView);
+  pool.activeLeftId = promotedModeId;
+  pool.rightWorkModeId = null;
+  workspaceManager.update(active.id, { workModeId: promotedModeId });
+  dividerView?.setVisible(false);
+  updateLayout();
 }
 
 /** 获取当前 Workspace 是否有 Right Slot */
@@ -256,7 +364,15 @@ export function hasRightSlot(): boolean {
   const active = workspaceManager.getActive();
   if (!active) return false;
   const pool = workspaceViewPools.get(active.id);
-  return pool?.rightView !== null && pool?.rightView !== undefined;
+  return pool?.rightWorkModeId !== null && pool?.rightWorkModeId !== undefined;
+}
+
+/** 检查当前 Right Slot 是否是指定 workModeId */
+export function isRightSlotMode(workModeId: string): boolean {
+  const active = workspaceManager.getActive();
+  if (!active) return false;
+  const pool = workspaceViewPools.get(active.id);
+  return pool?.rightWorkModeId === workModeId;
 }
 
 /** 获取当前活跃的 Left 和 Right View 的 webContents ID（用于消息路由） */
@@ -269,7 +385,7 @@ export function getActiveViewWebContentsIds(): { leftId: number | null; rightId:
   const leftView = pool.activeLeftId ? pool.leftViews.get(pool.activeLeftId) : null;
   return {
     leftId: leftView?.webContents.id ?? null,
-    rightId: pool.rightView?.webContents.id ?? null,
+    rightId: getActiveRightView(pool)?.webContents.id ?? null,
   };
 }
 
@@ -397,6 +513,14 @@ export function createShell(): BaseWindow {
     switchLeftSlotView(workModeId);
   }
 
+  // 恢复 Right Slot（如果 Session 中有 slotBinding.right）
+  if (active?.slotBinding?.right) {
+    const rightModeId = active.slotBinding.right;
+    if (workModeRegistry.get(rightModeId)) {
+      openRightSlot(rightModeId);
+    }
+  }
+
   mainWindow.on('resize', () => updateLayout());
   mainWindow.on('enter-full-screen', () => updateLayout());
   mainWindow.on('leave-full-screen', () => updateLayout());
@@ -426,7 +550,8 @@ export function updateLayout(): void {
   const dividerRatio = active?.dividerRatio ?? 0.5;
 
   const isFullScreen = mainWindow.isFullScreen();
-  const layout = calculateLayout(windowWidth, windowHeight, navSideVisible, rightSlotOpen, dividerRatio, isFullScreen);
+  const wsNavSideWidth = active?.navSideWidth ?? undefined;
+  const layout = calculateLayout(windowWidth, windowHeight, navSideVisible, rightSlotOpen, dividerRatio, isFullScreen, wsNavSideWidth);
 
   toggleView.setBounds(layout.toggle);
   shellView.setBounds(layout.workspaceBar);
@@ -460,8 +585,9 @@ export function updateLayout(): void {
     }
 
     // Right Slot + Divider
-    if (pool?.rightView && layout.rightSlot && layout.divider) {
-      pool.rightView.setBounds(layout.rightSlot);
+    const activeRight = pool ? getActiveRightView(pool) : null;
+    if (activeRight && layout.rightSlot && layout.divider) {
+      activeRight.setBounds(layout.rightSlot);
       if (dividerView) dividerView.setBounds(layout.divider);
     }
   }
@@ -545,3 +671,5 @@ declare const NAVSIDE_VITE_DEV_SERVER_URL: string | undefined;
 declare const DEMO_VIEW_VITE_DEV_SERVER_URL: string | undefined;
 declare const NOTE_VIEW_VITE_DEV_SERVER_URL: string | undefined;
 declare const EBOOK_VIEW_VITE_DEV_SERVER_URL: string | undefined;
+declare const WEB_VIEW_VITE_DEV_SERVER_URL: string | undefined;
+declare const THOUGHT_VIEW_VITE_DEV_SERVER_URL: string | undefined;

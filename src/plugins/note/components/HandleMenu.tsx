@@ -3,6 +3,9 @@ import type { EditorView } from 'prosemirror-view';
 import { TextSelection } from 'prosemirror-state';
 import { blockRegistry } from '../registry';
 import { toggleHeadingCollapse } from '../plugins/heading-collapse';
+import { askAI } from '../commands/ask-ai-command';
+import { DEFAULT_AI_SERVICE } from '../../../shared/types/ai-service-types';
+import type { AIServiceId } from '../../../shared/types/ai-service-types';
 
 /**
  * HandleMenu — 手柄点击后的操作菜单
@@ -22,7 +25,7 @@ interface MenuState {
   coords: { left: number; top: number };
 }
 
-type SubMenu = 'turnInto' | 'color' | null;
+type SubMenu = 'turnInto' | 'color' | 'format' | null;
 
 // ── 颜色定义（复用 ColorPicker） ──
 
@@ -129,6 +132,23 @@ export function HandleMenu({ view }: HandleMenuProps) {
     if (node) {
       const text = node.textContent;
       if (text) navigator.clipboard.writeText(text);
+    }
+    close();
+  };
+
+  const askAIBlock = () => {
+    const node = view.state.doc.nodeAt(menu.pos);
+    if (node) {
+      // Select the entire block so askAI can pick up the selection
+      const from = menu.pos;
+      const to = menu.pos + node.nodeSize;
+      const tr = view.state.tr.setSelection(TextSelection.create(view.state.doc, from + 1, to - 1));
+      view.dispatch(tr);
+      // Open the AI panel — use a small delay so the selection is applied
+      setTimeout(() => {
+        // Trigger the FloatingToolbar's AI panel via custom event
+        view.dom.dispatchEvent(new CustomEvent('ask-ai-from-handle', { detail: { pos: menu.pos } }));
+      }, 100);
     }
     close();
   };
@@ -336,6 +356,23 @@ export function HandleMenu({ view }: HandleMenuProps) {
           <span style={styles.arrow}>▸</span>
         </div>
 
+        {/* Format — only for textBlock */}
+        {(() => {
+          const node = view.state.doc.nodeAt(menu.pos);
+          if (node?.type.name !== 'textBlock' || node.attrs.isTitle) return null;
+          return (
+            <div
+              style={styles.item}
+              onMouseEnter={(e) => { e.currentTarget.style.background = '#3a3a3a'; setSubMenu('format'); }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+            >
+              <span style={styles.icon}>¶</span>
+              <span style={{ flex: 1 }}>Format</span>
+              <span style={styles.arrow}>▸</span>
+            </div>
+          );
+        })()}
+
         {/* Collapse/Expand — only for headings */}
         {(() => {
           const node = view.state.doc.nodeAt(menu.pos);
@@ -372,6 +409,19 @@ export function HandleMenu({ view }: HandleMenuProps) {
           <span style={styles.icon}>📋</span>
           <span>Copy</span>
         </div>
+
+        {/* Ask AI */}
+        <div
+          style={styles.item}
+          onMouseDown={(e) => { e.preventDefault(); askAIBlock(); }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = '#3a3a3a'; setSubMenu(null); }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+        >
+          <span style={styles.icon}>🤖</span>
+          <span>Ask AI</span>
+        </div>
+
+        <div style={styles.separator} />
 
         {/* Delete */}
         <div
@@ -431,6 +481,67 @@ export function HandleMenu({ view }: HandleMenuProps) {
               />
             ))}
           </div>
+        </div>
+      )}
+
+      {/* Format 子菜单 */}
+      {subMenu === 'format' && (
+        <div
+          ref={subMenuRef}
+          className="handle-submenu"
+          style={{ ...getSubMenuStyle(), minWidth: '180px' }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onMouseEnter={() => setSubMenu('format')}
+        >
+          {(() => {
+            const node = view.state.doc.nodeAt(menu.pos);
+            const currentIndent = node?.attrs.textIndent ?? false;
+            const currentAlign = node?.attrs.align ?? 'left';
+
+            const toggleTextIndent = () => {
+              if (!node) return;
+              view.dispatch(view.state.tr.setNodeMarkup(menu.pos, undefined, { ...node.attrs, textIndent: !currentIndent }));
+              close();
+            };
+
+            const setAlign = (value: string) => {
+              if (!node) return;
+              view.dispatch(view.state.tr.setNodeMarkup(menu.pos, undefined, { ...node.attrs, align: value }));
+              close();
+            };
+
+            return (
+              <>
+                <div
+                  style={{ ...styles.item, ...(currentIndent ? { background: '#3a3a3a' } : {}) }}
+                  onMouseDown={(e) => { e.preventDefault(); toggleTextIndent(); }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = '#3a3a3a'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = currentIndent ? '#3a3a3a' : 'transparent'; }}
+                >
+                  <span style={styles.icon}>⇥</span>
+                  <span style={{ flex: 1 }}>Text Indent</span>
+                  <span style={{ fontSize: 11, color: '#888' }}>⇧⌘I</span>
+                </div>
+                <div style={styles.separator} />
+                {([
+                  ['left', 'Align Left', <svg key="l" width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="3" width="12" height="1.5" rx=".5" fill="#e8eaed"/><rect x="2" y="7" width="8" height="1.5" rx=".5" fill="#e8eaed"/><rect x="2" y="11" width="12" height="1.5" rx=".5" fill="#e8eaed"/></svg>],
+                  ['center', 'Align Center', <svg key="c" width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="3" width="12" height="1.5" rx=".5" fill="#e8eaed"/><rect x="4" y="7" width="8" height="1.5" rx=".5" fill="#e8eaed"/><rect x="2" y="11" width="12" height="1.5" rx=".5" fill="#e8eaed"/></svg>],
+                  ['right', 'Align Right', <svg key="r" width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="3" width="12" height="1.5" rx=".5" fill="#e8eaed"/><rect x="6" y="7" width="8" height="1.5" rx=".5" fill="#e8eaed"/><rect x="2" y="11" width="12" height="1.5" rx=".5" fill="#e8eaed"/></svg>],
+                ] as const).map(([value, label, icon]) => (
+                  <div
+                    key={value}
+                    style={{ ...styles.item, ...(currentAlign === value ? { background: '#3a3a3a' } : {}) }}
+                    onMouseDown={(e) => { e.preventDefault(); setAlign(value); }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = '#3a3a3a'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = currentAlign === value ? '#3a3a3a' : 'transparent'; }}
+                  >
+                    <span style={styles.icon}>{icon}</span>
+                    <span>{label}</span>
+                  </div>
+                ))}
+              </>
+            );
+          })()}
         </div>
       )}
     </>

@@ -13,8 +13,9 @@ export function pasteMediaPlugin(): Plugin {
   return new Plugin({
     props: {
       handlePaste(view, event) {
-        const items = event.clipboardData?.items;
-        if (!items) return false;
+        const cd = event.clipboardData;
+        const items = cd?.items;
+        if (!cd || !items) return false;
 
         // 找到图片文件
         let imageFile: File | null = null;
@@ -25,6 +26,17 @@ export function pasteMediaPlugin(): Plugin {
           }
         }
         if (!imageFile) return false;
+
+        // Word / Excel copy a structured region and bundle a PNG render
+        // as a fallback next to text/html. Without this check we'd always
+        // insert the bitmap, losing the actual table/heading structure.
+        // Only yield to smart-paste when the HTML has structural markup
+        // (tables or headings) — a plain-formatted text snippet would
+        // mis-render as fragmented text nodes (the Wikipedia case).
+        const html = cd.getData('text/html') || '';
+        if (/<\s*(table|thead|tbody|tr|th|td|h[1-6])\b/i.test(html)) {
+          return false; // defer to smart-paste
+        }
 
         // 读取为 data URL
         const reader = new FileReader();

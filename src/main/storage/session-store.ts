@@ -15,7 +15,7 @@ import type { WorkspaceState, WorkspaceId } from '../../shared/types';
 interface PersistedSession {
   activeWorkspaceId: string | null;
   workspaces: WorkspaceState[];
-  navSideWidth: number;
+  navSideWidth?: number;  // 已废弃：迁移用，新版本中 navSideWidth 存在各 WorkspaceState 中
 }
 
 const SESSION_FILE = 'session.json';
@@ -54,11 +54,9 @@ export function saveSession(session: PersistedSession): void {
 export function buildSession(
   workspaces: WorkspaceState[],
   activeId: string | null,
-  navSideWidth: number,
 ): PersistedSession {
   return {
     activeWorkspaceId: activeId,
     workspaces,
-    navSideWidth,
   };
 }

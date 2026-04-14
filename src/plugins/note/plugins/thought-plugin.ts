@@ -1,0 +1,155 @@
+import { Plugin, PluginKey } from 'prosemirror-state';
+import type { EditorView } from 'prosemirror-view';
+import { THOUGHT_ACTION } from '../../thought/thought-protocol';
+
+/**
+ * thoughtPlugin — Note 侧的 Thought 交互插件
+ *
+ * 处理：
+ * 1. 点击 thought mark → 发送 activate 消息到 Thought 面板
+ * 2. 接收 delete 消息 → 移除对应 mark / node attr
+ * 3. 接收 scroll-to-anchor 消息 → 滚动到锚点位置并闪烁
+ * 4. 接收 type-change 消息 → 更新 mark 的 thoughtType attr（颜色同步）
+ */
+
+const viewAPI = () => (window as any).viewAPI as {
+  sendToOtherSlot: (msg: any) => void;
+  onMessage: (cb: (msg: any) => void) => () => void;
+} | undefined;
+
+export const thoughtPluginKey = new PluginKey('thought');
+
+export function thoughtPlugin(): Plugin {
+  let unsubMessage: (() => void) | null = null;
+
+  return new Plugin({
+    key: thoughtPluginKey,
+
+    view(editorView: EditorView) {
+      const api = viewAPI();
+      if (api) {
+        unsubMessage = api.onMessage((msg) => {
+          if (msg.action === THOUGHT_ACTION.DELETE) {
+            removeThoughtMark(editorView, (msg.payload as any).thoughtId);
+          }
+          if (msg.action === THOUGHT_ACTION.SCROLL_TO_ANCHOR) {
+            scrollToThoughtAnchor(editorView, (msg.payload as any).thoughtId);
+          }
+          if (msg.action === THOUGHT_ACTION.TYPE_CHANGE) {
+            const { thoughtId, newType } = msg.payload as any;
+            updateThoughtType(editorView, thoughtId, newType);
+          }
+        });
+      }
+
+      return {
+        destroy() {
+          unsubMessage?.();
+        },
+      };
+    },
+
+    props: {
+      handleClick(view: EditorView, _pos: number, event: MouseEvent) {
+        const target = event.target as HTMLElement;
+        const anchor = target.closest('[data-thought-id]') as HTMLElement | null;
+        if (!anchor) return false;
+
+        const thoughtId = anchor.getAttribute('data-thought-id');
+        if (!thoughtId) return false;
+
+        const api = viewAPI();
+        if (api) {
+          api.sendToOtherSlot({
+            protocol: 'note-thought',
+            action: THOUGHT_ACTION.ACTIVATE,
+            payload: { thoughtId },
+          });
+        }
+
+        return false;
+      },
+    },
+  });
+}
+
+/** 移除文档中指定 thoughtId 的 mark 和 node attr */
+function removeThoughtMark(view: EditorView, thoughtId: string): void {
+  const { state } = view;
+  const { tr } = state;
+  const thoughtMarkType = state.schema.marks.thought;
+  let changed = false;
+
+  if (thoughtMarkType) {
+    state.doc.descendants((node, pos) => {
+      node.marks.forEach((mark) => {
+        if (mark.type === thoughtMarkType && mark.attrs.thoughtId === thoughtId) {
+          tr.removeMark(pos, pos + node.nodeSize, mark);
+          changed = true;
+        }
+      });
+    });
+  }
+
+  state.doc.descendants((node, pos) => {
+    if (node.attrs.thoughtId === thoughtId) {
+      tr.setNodeMarkup(pos, undefined, { ...node.attrs, thoughtId: null });
+      changed = true;
+    }
+  });
+
+  if (changed) {
+    view.dispatch(tr);
+  }
+}
+
+/** 更新 thought mark 的 thoughtType 属性（颜色跟随类型变化） */
+function updateThoughtType(view: EditorView, thoughtId: string, newType: string): void {
+  const { state } = view;
+  const { tr } = state;
+  const thoughtMarkType = state.schema.marks.thought;
+  let changed = false;
+
+  if (thoughtMarkType) {
+    state.doc.descendants((node, pos) => {
+      node.marks.forEach((mark) => {
+        if (mark.type === thoughtMarkType && mark.attrs.thoughtId === thoughtId) {
+          // 移除旧 mark，添加新 mark（ProseMirror 中更新 mark attrs 的标准方式）
+          tr.removeMark(pos, pos + node.nodeSize, mark);
+          tr.addMark(pos, pos + node.nodeSize, thoughtMarkType.create({
+            thoughtId,
+            thoughtType: newType,
+          }));
+          changed = true;
+        }
+      });
+    });
+  }
+
+  if (changed) {
+    view.dispatch(tr);
+  }
+}
+
+/** 滚动到指定 thought 锚点并闪烁高亮 */
+function scrollToThoughtAnchor(view: EditorView, thoughtId: string): void {
+  const el = view.dom.querySelector(`[data-thought-id="${thoughtId}"]`) as HTMLElement | null;
+  if (el) {
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    el.classList.add('thought-anchor--active');
+    setTimeout(() => el.classList.remove('thought-anchor--active'), 1500);
+    return;
+  }
+
+  view.state.doc.descendants((node, pos) => {
+    if (node.attrs.thoughtId === thoughtId) {
+      const dom = view.nodeDOM(pos) as HTMLElement | null;
+      if (dom) {
+        dom.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        dom.classList.add('thought-anchor--active');
+        setTimeout(() => dom.classList.remove('thought-anchor--active'), 1500);
+      }
+      return false;
+    }
+  });
+}

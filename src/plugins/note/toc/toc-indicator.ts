@@ -53,7 +53,7 @@ export function createTocIndicator(
   function scanHeadings(): TocEntry[] {
     const result: TocEntry[] = [];
     const doc = view.state.doc;
-    doc.forEach((node, offset) => {
+    doc.descendants((node, pos) => {
       if (
         node.type.name === 'textBlock' &&
         !node.attrs.isTitle &&
@@ -64,9 +64,11 @@ export function createTocIndicator(
         result.push({
           level: node.attrs.level as 1 | 2 | 3,
           text: node.textContent || `Heading ${node.attrs.level}`,
-          pos: offset,
+          pos,
         });
+        return false; // 不需要进入 textBlock 内部
       }
+      return true; // 继续遍历子节点（进入 columnList/column 等）
     });
     return result;
   }
@@ -92,38 +94,12 @@ export function createTocIndicator(
     }
   }
 
-  // ── 计算指示器纵向位置（和正文第一行对齐）──
-  function positionIndicator() {
-    if (entries.length === 0) return;
-
-    // 找第一个 heading 的 DOM 位置，和它水平对齐
-    try {
-      const firstPos = entries[0].pos + 1;
-      const domPos = view.domAtPos(firstPos);
-      const el = domPos.node instanceof HTMLElement
-        ? domPos.node
-        : domPos.node.parentElement;
-      const blockEl = el?.closest('h1, h2, h3') as HTMLElement | null;
-      if (blockEl) {
-        const rect = blockEl.getBoundingClientRect();
-        indicatorEl.style.top = `${rect.top}px`;
-        return;
-      }
-    } catch { /* fallback below */ }
-
-    // fallback：用 ProseMirror 区域估算
-    const pmEl = editorContainer.querySelector('.ProseMirror') as HTMLElement;
-    if (pmEl) {
-      const titleEl = pmEl.querySelector('.note-title') as HTMLElement;
-      if (titleEl) {
-        indicatorEl.style.top = `${titleEl.getBoundingClientRect().bottom + 8}px`;
-      } else {
-        indicatorEl.style.top = `${pmEl.getBoundingClientRect().top + 24}px`;
-      }
-    }
-  }
-
   // ── IntersectionObserver：跟踪当前可见 heading ──
+
+  // 用 WeakMap 存储 heading DOM → toc index 映射，
+  // 避免修改 ProseMirror 管理的 DOM 属性（dataset 变更会触发 DOMObserver → 全量 NodeView 重建）
+  const tocIdxMap = new WeakMap<Element, number>();
+
   function setupObserver() {
     if (observer) observer.disconnect();
 
@@ -139,10 +115,7 @@ export function createTocIndicator(
 
         for (const ioEntry of ioEntries) {
           if (!ioEntry.isIntersecting) continue;
-          const idx = parseInt(
-            (ioEntry.target as HTMLElement).dataset.tocIdx || '-1',
-            10,
-          );
+          const idx = tocIdxMap.get(ioEntry.target) ?? -1;
           if (idx >= 0 && ioEntry.boundingClientRect.top < bestTop) {
             bestTop = ioEntry.boundingClientRect.top;
             bestIdx = idx;
@@ -162,7 +135,6 @@ export function createTocIndicator(
       },
     );
 
-    // 给每个 heading DOM 元素打上 data-toc-idx，然后 observe
     observeHeadings();
   }
 
@@ -179,7 +151,7 @@ export function createTocIndicator(
         // 向上找到 block 级元素（h1/h2/h3）
         const blockEl = el?.closest('h1, h2, h3') as HTMLElement | null;
         if (blockEl) {
-          blockEl.dataset.tocIdx = String(i);
+          tocIdxMap.set(blockEl, i);
           observer.observe(blockEl);
         }
       } catch {
@@ -193,6 +165,7 @@ export function createTocIndicator(
     if (entries.length === 0) return;
     if (isMenuVisible) return;
     isMenuVisible = true;
+    indicatorEl.classList.add('toc-indicator--menu-open');
 
     if (!menuEl) {
       menuEl = document.createElement('div');
@@ -204,12 +177,13 @@ export function createTocIndicator(
 
     renderMenu();
     positionMenu();
-    menuEl.style.display = 'block';
+    menuEl.style.display = 'flex';
   }
 
   function hideMenu() {
     if (!isMenuVisible) return;
     isMenuVisible = false;
+    indicatorEl.classList.remove('toc-indicator--menu-open');
     if (menuEl) menuEl.style.display = 'none';
   }
 
@@ -217,7 +191,10 @@ export function createTocIndicator(
     if (!menuEl) return;
     menuEl.innerHTML = '';
 
-    // 目录条目
+    // 可滚动的目录条目容器
+    const listEl = document.createElement('div');
+    listEl.classList.add('toc-menu__list');
+
     for (let i = 0; i < entries.length; i++) {
       const entry = entries[i];
       const btn = document.createElement('button');
@@ -235,10 +212,20 @@ export function createTocIndicator(
         hideMenu();
       });
 
-      menuEl.appendChild(btn);
+      listEl.appendChild(btn);
     }
 
-    // 展开级别按钮：1 2 3 *
+    menuEl.appendChild(listEl);
+
+    // 滚动到当前高亮项
+    if (activeIndex >= 0) {
+      requestAnimationFrame(() => {
+        const activeBtn = listEl.querySelector('.toc-menu__item--active') as HTMLElement | null;
+        activeBtn?.scrollIntoView({ block: 'center' });
+      });
+    }
+
+    // 展开级别按钮：1 2 3 *（固定在底部）
     const currentLevel = getCurrentExpandLevel(view);
     const levels: { label: string; value: number }[] = [
       { label: 'h1', value: 1 },
@@ -273,17 +260,9 @@ export function createTocIndicator(
   function positionMenu() {
     if (!menuEl) return;
     const rect = indicatorEl.getBoundingClientRect();
+    menuEl.style.position = 'fixed';
     menuEl.style.left = `${rect.right + 8}px`;
     menuEl.style.top = `${rect.top}px`;
-
-    // 确保不超出视口底部
-    requestAnimationFrame(() => {
-      if (!menuEl) return;
-      const menuRect = menuEl.getBoundingClientRect();
-      if (menuRect.bottom > window.innerHeight - 8) {
-        menuEl.style.top = `${window.innerHeight - 8 - menuRect.height}px`;
-      }
-    });
   }
 
   // ── 跳转 ──
@@ -355,35 +334,34 @@ export function createTocIndicator(
     }, 200);
   }
 
-  // ── 滚动时重新定位指示器 ──
-  // NoteEditor 的 container div（overflow: auto）就是滚动容器
-  const scrollContainer = editorContainer.parentElement as HTMLElement | null;
-  function onScroll() {
-    positionIndicator();
-    if (isMenuVisible) positionMenu();
-  }
+  // ── update：文档变化时调用（防抖 + composing 跳过）──
+  let updateTimer: ReturnType<typeof setTimeout> | null = null;
 
-  // 监听滚动容器（container div）
-  if (scrollContainer) {
-    scrollContainer.addEventListener('scroll', onScroll, { passive: true });
-  }
-
-  // ── update：文档变化时调用 ──
   function update() {
-    entries = scanHeadings();
+    if (updateTimer) clearTimeout(updateTimer);
+    updateTimer = setTimeout(() => {
+      // IME composition 期间不更新，避免 DOM 变更打断输入法
+      if (view.composing) return;
 
-    // 重置 activeIndex
-    if (activeIndex >= entries.length) activeIndex = entries.length - 1;
+      const newEntries = scanHeadings();
 
-    renderLines();
-    positionIndicator();
-    setupObserver();
+      // 只在 heading 列表实际变化时才重建
+      const changed = newEntries.length !== entries.length ||
+        newEntries.some((e, i) => e.pos !== entries[i].pos || e.level !== entries[i].level || e.text !== entries[i].text);
+      if (!changed) return;
 
-    if (isMenuVisible) renderMenu();
+      entries = newEntries;
+      if (activeIndex >= entries.length) activeIndex = entries.length - 1;
+
+      renderLines();
+      setupObserver();
+      if (isMenuVisible) renderMenu();
+    }, 300);
   }
 
   // ── destroy ──
   function destroy() {
+    if (updateTimer) clearTimeout(updateTimer);
     if (observer) observer.disconnect();
     indicatorEl.remove();
     if (menuEl) {
@@ -392,7 +370,6 @@ export function createTocIndicator(
       menuEl.remove();
       menuEl = null;
     }
-    scrollContainer?.removeEventListener('scroll', onScroll);
   }
 
   // ── 初始化（等 DOM 渲染完成）──

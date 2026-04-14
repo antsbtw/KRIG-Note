@@ -25,6 +25,9 @@ import { imageBlock } from './image';
 import { videoBlockBlock } from './video-block';
 import { audioBlockBlock } from './audio-block';
 import { tweetBlockBlock } from './tweet-block';
+import { mathVisualBlock } from './math-visual';
+import { fileBlockBlock } from './file-block';
+import { externalRefBlock } from './external-ref';
 
 // ── Inline ──
 import { hardBreakBlock } from './hard-break';
@@ -32,6 +35,7 @@ import { mathInlineBlock } from './math-inline';
 
 // ── 特殊 ──
 import { horizontalRuleBlock } from './horizontal-rule';
+import { pageAnchorBlock } from './page-anchor';
 
 export function registerAllBlocks(): void {
   // ── TextBlock ──
@@ -72,6 +76,9 @@ export function registerAllBlocks(): void {
   blockRegistry.register(videoBlockBlock);
   blockRegistry.register(audioBlockBlock);
   blockRegistry.register(tweetBlockBlock);
+  blockRegistry.register(mathVisualBlock);
+  blockRegistry.register(fileBlockBlock);
+  blockRegistry.register(externalRefBlock);
 
   // ── Inline ──
   blockRegistry.register(hardBreakBlock);
@@ -79,6 +86,7 @@ export function registerAllBlocks(): void {
 
   // ── 特殊 ──
   blockRegistry.register(horizontalRuleBlock);
+  blockRegistry.register(pageAnchorBlock);
 
   // ── 额外 SlashMenu ──
   blockRegistry.registerSlashItem({

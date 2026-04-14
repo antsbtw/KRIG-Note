@@ -28,7 +28,7 @@ export class PDFRenderer implements IFixedPageRenderer {
   // 渲染队列
   private rendering = false;
   private queue: Array<{ pageNum: number; canvas: HTMLCanvasElement; scale: number; resolve: () => void }> = [];
-  private rendered = new Map<number, number>(); // pageNum → scale
+  private rendered = new Map<number, { scale: number; canvas: HTMLCanvasElement }>(); // pageNum → {scale, canvas}
   private activeTask: RenderTask | null = null;
 
   async load(data: ArrayBuffer): Promise<void> {
@@ -168,13 +168,14 @@ export class PDFRenderer implements IFixedPageRenderer {
   // ── Text Layer ──
 
   private textLayers = new Map<number, TextLayer>();
-  private textLayerRendered = new Map<number, number>(); // pageNum → scale
+  private textLayerRendered = new Map<number, { scale: number; container: HTMLElement }>(); // pageNum → {scale, container}
 
   async renderTextLayer(pageNum: number, container: HTMLElement, scale: number): Promise<void> {
     if (!this.doc) return;
 
-    // 缓存检查：相同 scale 不重复渲染
-    if (this.textLayerRendered.get(pageNum) === scale) return;
+    // 缓存检查：相同 scale + 同一 container 不重复渲染
+    const prevTL = this.textLayerRendered.get(pageNum);
+    if (prevTL && prevTL.scale === scale && prevTL.container === container) return;
 
     this.clearTextLayer(pageNum);
 
@@ -194,7 +195,7 @@ export class PDFRenderer implements IFixedPageRenderer {
 
     await textLayer.render();
     this.textLayers.set(pageNum, textLayer);
-    this.textLayerRendered.set(pageNum, scale);
+    this.textLayerRendered.set(pageNum, { scale, container });
   }
 
   async searchText(query: string): Promise<Array<{ pageNum: number; index: number; text: string }>> {
@@ -258,8 +259,9 @@ export class PDFRenderer implements IFixedPageRenderer {
       const task = this.queue.shift()!;
       const { pageNum, canvas, scale, resolve } = task;
 
-      // 已渲染过相同 scale 则跳过
-      if (this.rendered.get(pageNum) === scale) {
+      // 已渲染过相同 scale + 同一 canvas 则跳过
+      const prev = this.rendered.get(pageNum);
+      if (prev && prev.scale === scale && prev.canvas === canvas) {
         resolve();
         continue;
       }
@@ -281,7 +283,7 @@ export class PDFRenderer implements IFixedPageRenderer {
         await renderTask.promise;
         this.activeTask = null;
 
-        this.rendered.set(pageNum, scale);
+        this.rendered.set(pageNum, { scale, canvas });
       } catch (err: any) {
         if (err.name !== 'RenderingCancelledException') {
           console.error(`[PDFRenderer] Failed to render page ${pageNum}:`, err);

@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC } from '../../shared/types';
 import type { ViewMessage } from '../../shared/types';
 
@@ -19,17 +19,21 @@ contextBridge.exposeInMainWorld('viewAPI', {
     return () => ipcRenderer.removeListener(IPC.VIEW_MESSAGE_RECEIVE, listener);
   },
 
-  // Right Slot 操作
+  // Slot 操作
   openRightSlot: (workModeId: string) => ipcRenderer.invoke(IPC.SLOT_OPEN_RIGHT, workModeId),
+  ensureRightSlot: (workModeId: string) => ipcRenderer.invoke(IPC.SLOT_ENSURE_RIGHT, workModeId),
   closeRightSlot: () => ipcRenderer.invoke(IPC.SLOT_CLOSE_RIGHT),
+  closeSlot: () => ipcRenderer.invoke(IPC.SLOT_CLOSE),  // 关闭自己所在的 slot
 
   // NoteFile 操作
   noteCreate: (title?: string) => ipcRenderer.invoke(IPC.NOTE_CREATE, title),
   noteSave: (id: string, docContent: unknown[], title: string) => ipcRenderer.invoke(IPC.NOTE_SAVE, id, docContent, title),
   noteLoad: (id: string) => ipcRenderer.invoke(IPC.NOTE_LOAD, id),
+  noteRename: (id: string, title: string) => ipcRenderer.invoke(IPC.NOTE_RENAME, id, title),
   noteDelete: (id: string) => ipcRenderer.invoke(IPC.NOTE_DELETE, id),
   noteList: () => ipcRenderer.invoke(IPC.NOTE_LIST),
   noteOpenInEditor: (id: string) => ipcRenderer.invoke(IPC.NOTE_OPEN_IN_EDITOR, id),
+  notePendingOpen: () => ipcRenderer.invoke(IPC.NOTE_PENDING_OPEN),
 
   // NoteFile 列表变更监听
   onNoteListChanged: (callback: (list: unknown[]) => void) => {
@@ -64,6 +68,10 @@ contextBridge.exposeInMainWorld('viewAPI', {
 
   // Workspace 状态同步
   setActiveNote: (noteId: string | null, noteTitle?: string) => ipcRenderer.invoke(IPC.SET_ACTIVE_NOTE, noteId, noteTitle),
+  getActiveNoteId: async (): Promise<string | null> => {
+    const data = await ipcRenderer.invoke(IPC.WORKSPACE_LIST);
+    return data?.active?.activeNoteId ?? null;
+  },
 
   onRestoreWorkspaceState: (callback: (state: { activeNoteId: string | null }) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, state: any) => callback(state);
@@ -89,8 +97,20 @@ contextBridge.exposeInMainWorld('viewAPI', {
     return () => ipcRenderer.removeListener(IPC.WORKSPACE_STATE_CHANGED, listener);
   },
 
+  // ── Thought 操作 ──
+
+  thoughtCreate: (thought: any) => ipcRenderer.invoke(IPC.THOUGHT_CREATE, thought),
+  thoughtSave: (id: string, updates: any) => ipcRenderer.invoke(IPC.THOUGHT_SAVE, id, updates),
+  thoughtLoad: (id: string) => ipcRenderer.invoke(IPC.THOUGHT_LOAD, id),
+  thoughtDelete: (id: string) => ipcRenderer.invoke(IPC.THOUGHT_DELETE, id),
+  thoughtListByNote: (noteId: string) => ipcRenderer.invoke(IPC.THOUGHT_LIST_BY_NOTE, noteId),
+  thoughtRelate: (noteId: string, thoughtId: string, edge: any) => ipcRenderer.invoke(IPC.THOUGHT_RELATE, noteId, thoughtId, edge),
+  thoughtUnrelate: (noteId: string, thoughtId: string) => ipcRenderer.invoke(IPC.THOUGHT_UNRELATE, noteId, thoughtId),
+
   // ── eBook 操作 ──
 
+  ebookBookshelfList: () => ipcRenderer.invoke(IPC.EBOOK_BOOKSHELF_LIST),
+  ebookBookshelfOpen: (id: string) => ipcRenderer.invoke(IPC.EBOOK_BOOKSHELF_OPEN, id),
   ebookGetData: () => ipcRenderer.invoke(IPC.EBOOK_GET_DATA),
   ebookClose: () => ipcRenderer.invoke(IPC.EBOOK_CLOSE),
 
@@ -105,14 +125,19 @@ contextBridge.exposeInMainWorld('viewAPI', {
   ebookAnnotationRemove: (bookId: string, annotationId: string) => ipcRenderer.invoke(IPC.EBOOK_ANNOTATION_REMOVE, bookId, annotationId),
   ebookSetActiveBook: (bookId: string | null) =>
     ipcRenderer.invoke(IPC.EBOOK_SET_ACTIVE_BOOK, bookId),
-  ebookSaveProgress: (bookId: string, page: number, scale?: number, fitWidth?: boolean, lastCFI?: string) =>
-    ipcRenderer.invoke(IPC.EBOOK_SAVE_PROGRESS, bookId, page, scale, fitWidth, lastCFI),
+  ebookSaveProgress: (bookId: string, position: { page?: number; scale?: number; fitWidth?: boolean; cfi?: string }) =>
+    ipcRenderer.invoke(IPC.EBOOK_SAVE_PROGRESS, bookId, position),
 
   onEbookLoaded: (callback: (info: { fileName: string; fileType: string }) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, info: { fileName: string; fileType: string }) => callback(info);
     ipcRenderer.on(IPC.EBOOK_LOADED, listener);
     return () => ipcRenderer.removeListener(IPC.EBOOK_LOADED, listener);
   },
+
+  // ── Web Translate ──
+
+  translateFetchElementJs: () =>
+    ipcRenderer.invoke(IPC.WEB_TRANSLATE_FETCH_ELEMENT_JS),
 
   // ── 学习模块 ──
 
@@ -145,8 +170,30 @@ contextBridge.exposeInMainWorld('viewAPI', {
   downloadMedia: (url: string, mediaType: 'video' | 'audio') =>
     ipcRenderer.invoke(IPC.MEDIA_DOWNLOAD, url, mediaType),
 
+  mediaPutBase64: (input: string, mimeType?: string, filename?: string) =>
+    ipcRenderer.invoke(IPC.MEDIA_PUT_BASE64, { input, mimeType, filename }),
+
+  mediaResolvePath: (mediaUrl: string) =>
+    ipcRenderer.invoke(IPC.MEDIA_RESOLVE_PATH, mediaUrl),
+
+  mediaOpenPath: (filePath: string) =>
+    ipcRenderer.invoke(IPC.MEDIA_OPEN_PATH, filePath),
+
+  /**
+   * Resolve the absolute filesystem path of a `File` object (from
+   * <input type=file> or a drop event). Electron ≥ v32 no longer
+   * exposes `file.path` to renderer JS for security; the sanctioned
+   * replacement is `webUtils.getPathForFile` called from preload.
+   */
+  getFilePath: (file: File): string => {
+    try { return webUtils.getPathForFile(file); } catch { return ''; }
+  },
+
   openExternal: (url: string) =>
     ipcRenderer.invoke(IPC.MEDIA_OPEN_EXTERNAL, url),
+
+  markdownToPMNodes: (markdown: string) =>
+    ipcRenderer.invoke(IPC.MD_TO_PM_NODES, markdown),
 
   showItemInFolder: (filePath: string) =>
     ipcRenderer.invoke(IPC.SHOW_ITEM_IN_FOLDER, filePath),
@@ -186,4 +233,93 @@ contextBridge.exposeInMainWorld('viewAPI', {
     ipcRenderer.on(IPC.YTDLP_PROGRESS, listener);
     return () => ipcRenderer.removeListener(IPC.YTDLP_PROGRESS, listener);
   },
+
+  // ── PDF Extraction ──
+
+  extractionOpen: () =>
+    ipcRenderer.invoke(IPC.EXTRACTION_OPEN),
+
+  extractionImport: (data: unknown) =>
+    ipcRenderer.invoke(IPC.EXTRACTION_IMPORT, data),
+
+  onExtractionNavigate: (callback: (md5: string) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, md5: string) => callback(md5);
+    ipcRenderer.on('extraction:navigate', listener);
+    return () => ipcRenderer.removeListener('extraction:navigate', listener);
+  },
+
+  onExtractionImport: (callback: (data: unknown) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data);
+    ipcRenderer.on('extraction:import', listener);
+    return () => ipcRenderer.removeListener('extraction:import', listener);
+  },
+
+  // ── AI Workflow ──
+
+  aiAsk: (params: { serviceId: string; prompt: string; noteId?: string; thoughtId?: string }) =>
+    ipcRenderer.invoke(IPC.AI_ASK, params),
+
+  aiAskVisible: (params: { serviceId: string; prompt: string; noteId: string; thoughtId: string }) =>
+    ipcRenderer.invoke(IPC.AI_ASK_VISIBLE, params),
+
+  aiStatus: () =>
+    ipcRenderer.invoke(IPC.AI_STATUS),
+
+  aiReadClipboard: () =>
+    ipcRenderer.invoke(IPC.AI_READ_CLIPBOARD),
+
+  // ── WebBridge CDP 调试接口 ──
+  wbCdpStart: (urlFilters?: string[]) =>
+    ipcRenderer.invoke(IPC.WB_CDP_START, urlFilters),
+  wbCdpStop: () =>
+    ipcRenderer.invoke(IPC.WB_CDP_STOP),
+  wbCdpGetResponses: () =>
+    ipcRenderer.invoke(IPC.WB_CDP_GET_RESPONSES),
+  wbCdpFindResponse: (params: { urlSubstring: string; mode?: 'all' | 'latest' | 'first' }) =>
+    ipcRenderer.invoke(IPC.WB_CDP_FIND_RESPONSE, params),
+  wbSendMouse: (events: Array<{ type: string; x: number; y: number; button?: string; buttons?: number; clickCount?: number }>) =>
+    ipcRenderer.invoke(IPC.WB_SEND_MOUSE, events),
+  wbReadClipboardImage: () =>
+    ipcRenderer.invoke(IPC.WB_READ_CLIPBOARD_IMAGE),
+  wbCaptureDownloadOnce: (timeoutMs?: number) =>
+    ipcRenderer.invoke(IPC.WB_CAPTURE_DOWNLOAD_ONCE, timeoutMs),
+  wbFetchBinary: (params: { url: string; headers?: Record<string, string>; timeoutMs?: number }) =>
+    ipcRenderer.invoke(IPC.WB_FETCH_BINARY, params),
+
+  aiExtractDebug: (params: { markdown: string; serviceId: string }) =>
+    ipcRenderer.invoke(IPC.AI_EXTRACT_DEBUG, params),
+
+  aiParseMarkdown: (markdown: string) =>
+    ipcRenderer.invoke(IPC.AI_PARSE_MARKDOWN, markdown),
+
+  /** Listen for AI inject-and-send requests from main (WebView receives this) */
+  onAIInjectAndSend: (callback: (params: {
+    serviceId: string; prompt: string; noteId: string; thoughtId: string; responseChannel: string;
+  }) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, params: any) => callback(params);
+    ipcRenderer.on(IPC.AI_INJECT_AND_SEND, listener);
+    return () => ipcRenderer.removeListener(IPC.AI_INJECT_AND_SEND, listener);
+  },
+
+  /** Send AI response back to main */
+  aiSendResponse: (channel: string, result: { success: boolean; markdown?: string; error?: string }) =>
+    ipcRenderer.send(channel, result),
+
+  // ── Web 书签（WebView 用）──
+
+  webBookmarkAdd: (url: string, title: string, favicon?: string) =>
+    ipcRenderer.invoke(IPC.WEB_BOOKMARK_ADD, url, title, favicon),
+  webBookmarkRemove: (id: string) =>
+    ipcRenderer.invoke(IPC.WEB_BOOKMARK_REMOVE, id),
+  webBookmarkList: () =>
+    ipcRenderer.invoke(IPC.WEB_BOOKMARK_LIST),
+  webBookmarkFindByUrl: (url: string) =>
+    ipcRenderer.invoke('web:bookmark-find-by-url', url),
+  webHistoryAdd: (url: string, title: string, favicon?: string) =>
+    ipcRenderer.invoke(IPC.WEB_HISTORY_ADD, url, title, favicon),
+});
+
+// Bridge: forward IPC 'note:import-json' → DOM CustomEvent (for NoteEditor)
+ipcRenderer.on('note:import-json', (_event, data) => {
+  window.dispatchEvent(new CustomEvent('note:import-json', { detail: data }));
 });

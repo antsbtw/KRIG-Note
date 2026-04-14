@@ -3,6 +3,34 @@ import { Slice, Fragment } from 'prosemirror-model';
 import type { EditorView } from 'prosemirror-view';
 import type { Node as PMNode } from 'prosemirror-model';
 import { blockSelectionKey } from './block-selection';
+import { blockRegistry } from '../registry';
+
+/** 任意注册为容器（content: block+ 风格，有 containerRule）的 block 类型名 */
+function isContainerType(name: string): boolean {
+  const def = blockRegistry.get(name);
+  return !!def?.containerRule;
+}
+
+/**
+ * 找到鼠标位置对应的"手柄目标 block"的 depth。
+ *
+ * 规则：从 $pos 最深处向上，找到第一个 block 节点，其直接父节点是 doc 或容器
+ * （blockquote / callout / toggleList / frameBlock / column / 列表 / tableCell 等）。
+ * 这样嵌套容器内的子 block 也能显示自己的手柄，而不是容器本身的手柄。
+ *
+ * 折叠态 toggleList 的"整组手柄"语义在后续 PR 处理；本函数只负责通用定位。
+ */
+function findHandleTargetDepth($pos: import('prosemirror-model').ResolvedPos): number {
+  for (let d = $pos.depth; d >= 1; d--) {
+    const node = $pos.node(d);
+    if (node.isInline || node.type.name === 'text') continue;
+    const parent = $pos.node(d - 1);
+    if (parent.type.name === 'doc' || isContainerType(parent.type.name)) {
+      return d;
+    }
+  }
+  return 1;
+}
 
 /**
  * Block Handle Plugin — 鼠标悬停 Block 时显示手柄（+ ⠿）
@@ -15,7 +43,7 @@ import { blockSelectionKey } from './block-selection';
 export const blockHandleKey = new PluginKey('blockHandle');
 
 /** RenderBlock 类型集合 — coordsAtPos 会指向 caption 底部，需特殊处理 */
-const RENDER_BLOCK_TYPES = new Set(['image', 'audioBlock', 'videoBlock', 'tweetBlock']);
+const RENDER_BLOCK_TYPES = new Set(['image', 'audioBlock', 'videoBlock', 'tweetBlock', 'fileBlock', 'externalRef']);
 
 /** 找到 pos 所在的顶层 block 起始位置 */
 export function findTopBlockPos(doc: PMNode, pos: number): number | null {
@@ -29,7 +57,76 @@ export function findTopBlockPos(doc: PMNode, pos: number): number | null {
   return result;
 }
 
-/** 将 block 从 fromPos 移动到 targetPos */
+/**
+ * 解析 drop 目标：判断是顶层还是 column 内部。
+ * 返回 { type: 'top', pos } 或 { type: 'column', insertPos } 。
+ * insertPos 是 column 内精确的插入位置（某个子 block 之前）。
+ */
+function resolveDropTarget(doc: PMNode, pos: number): { type: 'top'; pos: number } | { type: 'column'; insertPos: number } | null {
+  try {
+    const $pos = doc.resolve(pos);
+    // 向上查找是否在 column 内
+    for (let d = $pos.depth; d >= 1; d--) {
+      if ($pos.node(d).type.name === 'column') {
+        // 找到 column，计算 column 内子 block 层级的插入位置
+        // column 的子 block 在 depth = d + 1
+        const childDepth = d + 1;
+        if ($pos.depth >= childDepth) {
+          // 光标在某个子 block 内部，插入到该子 block 之前
+          return { type: 'column', insertPos: $pos.before(childDepth) };
+        } else {
+          // 光标在 column 层但不在子 block 内，插入到 column 末尾
+          return { type: 'column', insertPos: $pos.end(d) };
+        }
+      }
+    }
+  } catch { /* fall through */ }
+  // 不在 column 内，回退到顶层
+  const topPos = findTopBlockPos(doc, pos);
+  if (topPos === null) return null;
+  return { type: 'top', pos: topPos };
+}
+
+/**
+ * 将 block 从 fromPos（任意层级）移动到 insertPos（任意层级）。
+ * 通用版本：直接删除源节点，插入到目标位置。
+ */
+function relocateBlockGeneral(view: EditorView, fromPos: number, insertPos: number): boolean {
+  const { state } = view;
+  const node = state.doc.nodeAt(fromPos);
+  if (!node) return false;
+
+  // 不能自己移到自己内部
+  if (insertPos > fromPos && insertPos < fromPos + node.nodeSize) return false;
+
+  // 检查目标位置的 parent 是否允许此节点类型
+  try {
+    const $insert = state.doc.resolve(insertPos);
+    const parentNode = $insert.parent;
+    if (!parentNode.type.contentMatch.matchType(node.type)) return false;
+  } catch { return false; }
+
+  // 检查是否原位（紧挨着源节点前后）
+  if (insertPos === fromPos || insertPos === fromPos + node.nodeSize) return false;
+
+  const tr = state.tr;
+  if (insertPos < fromPos) {
+    // 先插后删（避免位置偏移）
+    tr.insert(insertPos, node);
+    const mappedFrom = tr.mapping.map(fromPos);
+    const mappedNode = tr.doc.nodeAt(mappedFrom);
+    if (mappedNode) tr.delete(mappedFrom, mappedFrom + mappedNode.nodeSize);
+  } else {
+    // 先删后插
+    tr.delete(fromPos, fromPos + node.nodeSize);
+    const mappedInsert = tr.mapping.map(insertPos);
+    tr.insert(mappedInsert, node);
+  }
+  view.dispatch(tr);
+  return true;
+}
+
+/** 将 block 从 fromPos 移动到 targetPos（仅顶层 block 之间） */
 function relocateBlock(view: EditorView, fromPos: number, targetPos: number): boolean {
   const { state } = view;
   const node = state.doc.nodeAt(fromPos);
@@ -69,7 +166,7 @@ function relocateBlocks(view: EditorView, positions: number[], targetPos: number
   state.doc.forEach((_n: PMNode, offset: number) => allPositions.push(offset));
 
   // 去重排序
-  const sorted = [...new Set(positions)].sort((a, b) => a - b);
+  const sorted = Array.from(new Set(positions)).sort((a, b) => a - b);
 
   // 不能移到自己内部
   for (const pos of sorted) {
@@ -250,7 +347,10 @@ export function blockHandlePlugin(): Plugin {
     view(editorView) {
       handleDOM = createHandleDOM(editorView);
       return {
-        destroy() { handleDOM?.remove(); handleDOM = null; },
+        destroy() {
+          if (hideTimeout) { clearTimeout(hideTimeout); hideTimeout = null; }
+          handleDOM?.remove(); handleDOM = null;
+        },
       };
     },
 
@@ -279,38 +379,8 @@ export function blockHandlePlugin(): Plugin {
           if (pos) {
             try {
               const $pos = view.state.doc.resolve(pos.pos);
-              let depth = $pos.depth;
-              while (depth > 0 && ($pos.node(depth).isInline || $pos.node(depth).type.name === 'text')) depth--;
-
-              // 如果在 column 内部，钻入到 column 的直接子 block
-              // 结构: doc > columnList > column > textBlock
-              // 我们要定位到 column 的子 block（depth 对应 column 的子节点层）
-              if (depth >= 1) {
-                // 检查是否在 column 内部：向上找 column 祖先
-                let targetDepth = depth;
-                for (let d = depth; d >= 1; d--) {
-                  const ancestor = $pos.node(d);
-                  if (ancestor.type.name === 'column') {
-                    // 定位到 column 的直接子节点（depth = d + 1）
-                    if (depth > d) {
-                      targetDepth = d + 1;
-                    }
-                    break;
-                  }
-                  // 如果碰到 columnList 但没碰到 column，说明光标在 columnList 层级但不在 column 内
-                  if (ancestor.type.name === 'columnList') break;
-                }
-
-                // 对于非 column 场景，回退到顶层 block（depth=1）
-                if (targetDepth > 1) {
-                  // 在 column 内：用 targetDepth
-                  let inColumn = false;
-                  for (let d = targetDepth; d >= 1; d--) {
-                    if ($pos.node(d).type.name === 'column') { inColumn = true; break; }
-                  }
-                  if (!inColumn) targetDepth = 1;
-                }
-
+              const targetDepth = findHandleTargetDepth($pos);
+              if (targetDepth >= 1) {
                 blockStart = $pos.before(targetDepth);
                 blockNode = $pos.node(targetDepth);
                 const dom = view.nodeDOM(blockStart);
@@ -384,25 +454,25 @@ export function blockHandlePlugin(): Plugin {
 
               const topPx = textTop - containerRect.top + scrollTop + (lineHeight - handleHeight) / 2;
               // left：保持手柄和文字的相对距离一致
-              // 普通 block：editorLeft + 20，文字从 editorLeft + 72 开始 → 差 52px
-              // column 内 block：用 block DOM 的 left - 52，保持同样的视觉距离
+              // 顶层 block：editorLeft + 20（文字从 editorLeft + 72 开始 → 差 52px）
+              // 嵌套容器内 block（column / toggleList / frameBlock / 列表 / callout 等）：
+              //   贴 block DOM 左侧 - 52，保持与文字相同的视觉距离
               const editorLeft = view.dom.getBoundingClientRect().left - containerRect.left + container.scrollLeft;
-              const isInsideColumn = blockStart >= 0 && (() => {
+              const isNested = blockStart >= 0 && (() => {
                 try {
                   const $p = view.state.doc.resolve(blockStart);
+                  // $p.depth 是 block 的父节点深度；只要任一祖先（<= $p.depth）是容器就算嵌套
                   for (let d = $p.depth; d >= 1; d--) {
-                    if ($p.node(d).type.name === 'column') return true;
+                    if (isContainerType($p.node(d).type.name)) return true;
                   }
-                } catch {}
-                return false;
+                  return false;
+                } catch { return false; }
               })();
 
-              if (isInsideColumn) {
-                // column 内 block：手柄紧贴 block 文字左侧（叠加在文字上）
+              if (isNested) {
                 const blockLeftPx = blockRect.left - containerRect.left + container.scrollLeft;
                 handleDOM.style.left = `${blockLeftPx - 52}px`;
               } else {
-                // 普通 block：固定在编辑器左边缘
                 handleDOM.style.left = `${editorLeft + 20}px`;
               }
               handleDOM.style.top = `${topPx}px`;
@@ -426,8 +496,9 @@ export function blockHandlePlugin(): Plugin {
       handleDrop(view, event) {
         const dropResult = view.posAtCoords({ left: event.clientX, top: event.clientY });
         if (!dropResult) return false;
-        const targetPos = findTopBlockPos(view.state.doc, dropResult.pos);
-        if (targetPos === null) return false;
+
+        const target = resolveDropTarget(view.state.doc, dropResult.pos);
+        if (!target) return false;
 
         // 多 block 拖拽
         const multiData = event.dataTransfer?.getData('application/krig-multi-block');
@@ -436,7 +507,16 @@ export function blockHandlePlugin(): Plugin {
           try {
             const positions: number[] = JSON.parse(multiData);
             if (Array.isArray(positions) && positions.length > 0) {
-              return relocateBlocks(view, positions, targetPos);
+              if (target.type === 'column') {
+                // 多 block 拖入 column：逐个移入（从后往前以保持顺序）
+                let success = false;
+                const sorted = [...positions].sort((a, b) => a - b);
+                for (let i = sorted.length - 1; i >= 0; i--) {
+                  if (relocateBlockGeneral(view, sorted[i], target.insertPos)) success = true;
+                }
+                return success;
+              }
+              return relocateBlocks(view, positions, target.pos);
             }
           } catch {}
           return false;
@@ -449,7 +529,20 @@ export function blockHandlePlugin(): Plugin {
         const fromPos = parseInt(posData, 10);
         if (isNaN(fromPos)) return false;
 
-        return relocateBlock(view, fromPos, targetPos);
+        if (target.type === 'column') {
+          return relocateBlockGeneral(view, fromPos, target.insertPos);
+        }
+        // 源 block 可能在 column 内部（嵌套位置），此时用通用版本
+        const isSourceNested = (() => {
+          try {
+            const $from = view.state.doc.resolve(fromPos);
+            return $from.depth > 1;
+          } catch { return false; }
+        })();
+        if (isSourceNested) {
+          return relocateBlockGeneral(view, fromPos, target.pos);
+        }
+        return relocateBlock(view, fromPos, target.pos);
       },
     },
   });

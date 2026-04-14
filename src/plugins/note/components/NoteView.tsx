@@ -1,5 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { NoteEditor } from './NoteEditor';
+import { SlotToggle } from '../../../shared/components/SlotToggle';
+import { OpenFilePopup } from '../../../shared/components/OpenFilePopup';
+import type { FileItem } from '../../../shared/components/OpenFilePopup';
 import { canGoBack, canGoForward, goBack, goForward } from '../plugins/link-click';
 
 /**
@@ -14,28 +17,82 @@ import { canGoBack, canGoForward, goBack, goForward } from '../plugins/link-clic
  */
 
 declare const viewAPI: {
+  noteCreate: (title?: string) => Promise<{ id: string; title: string } | null>;
   noteLoad: (id: string) => Promise<{ title?: string } | null>;
+  noteList: () => Promise<Array<{ id: string; title: string }>>;
+  noteOpenInEditor: (id: string) => Promise<void>;
   onNoteOpenInEditor: (callback: (noteId: string) => void) => () => void;
   onNoteTitleChanged: (callback: (data: { noteId: string; title: string }) => void) => () => void;
+  sendToOtherSlot: (message: any) => void;
+  onMessage: (callback: (message: any) => void) => () => void;
 };
 
 export function NoteView() {
   const [noteTitle, setNoteTitle] = useState('');
   const [navState, setNavState] = useState({ back: false, forward: false });
   const [dirty, setDirty] = useState(false);
+  // Tracks whether the library has any notes at all. When false + no
+  // active note, we show the empty state with a big [+ 新建笔记] button
+  // instead of an empty editor. Refreshed on mount and whenever a note
+  // is created/opened.
+  const [libraryEmpty, setLibraryEmpty] = useState(false);
+  const [hasActiveNote, setHasActiveNote] = useState(false);
 
   const refreshNav = useCallback(() => {
     setNavState({ back: canGoBack(), forward: canGoForward() });
   }, []);
 
+  const loadNoteList = useCallback(async (): Promise<FileItem[]> => {
+    const list = await viewAPI.noteList();
+    return list.map((n) => ({ id: n.id, title: n.title }));
+  }, []);
+
+  const handleOpenNote = useCallback((noteId: string) => {
+    viewAPI.noteOpenInEditor(noteId);
+  }, []);
+
+  /**
+   * Create an untitled note and immediately open it in this editor.
+   * Used by the "+" toolbar button. Title is left empty so the user can
+   * fill it in; the title bar at the top of NoteEditor shows the placeholder.
+   */
+  const handleNewNote = useCallback(async () => {
+    const note = await viewAPI.noteCreate('');
+    if (note) {
+      await viewAPI.noteOpenInEditor(note.id);
+      setHasActiveNote(true);
+      setLibraryEmpty(false);
+    }
+  }, []);
+
+  /** Refresh the "library has notes" signal. Called on mount. */
+  const refreshLibrary = useCallback(async () => {
+    try {
+      const list = await viewAPI.noteList();
+      setLibraryEmpty(!Array.isArray(list) || list.length === 0);
+    } catch { /* ignore */ }
+  }, []);
+
   useEffect(() => {
+    // Initial library check on mount.
+    refreshLibrary();
+
     const unsubOpen = viewAPI.onNoteOpenInEditor(async (noteId) => {
       refreshNav();
+      setHasActiveNote(true);
+      setLibraryEmpty(false);
       // 加载笔记标题
       try {
         const record = await viewAPI.noteLoad(noteId);
         if (record?.title) setNoteTitle(record.title);
       } catch { /* ignore */ }
+
+      // 通知 Thought 面板加载对应 thoughts
+      viewAPI.sendToOtherSlot({
+        protocol: 'note-thought',
+        action: 'thought:note-loaded',
+        payload: { noteId },
+      });
     });
 
     const unsubTitle = viewAPI.onNoteTitleChanged((data) => {
@@ -51,6 +108,12 @@ export function NoteView() {
     };
     window.addEventListener('keydown', keyHandler);
 
+    // 监听编辑器内 noteTitle 实时变化
+    const onTitleChanged = (e: Event) => {
+      setNoteTitle((e as CustomEvent).detail);
+    };
+    window.addEventListener('note:title-changed', onTitleChanged);
+
     // 监听 dirty / saved 状态
     const onDirty = () => setDirty(true);
     const onSaved = () => setDirty(false);
@@ -60,10 +123,107 @@ export function NoteView() {
     return () => {
       unsubOpen(); unsubTitle();
       window.removeEventListener('keydown', keyHandler);
+      window.removeEventListener('note:title-changed', onTitleChanged);
       window.removeEventListener('note:dirty', onDirty);
       window.removeEventListener('note:saved', onSaved);
     };
   }, [refreshNav]);
+
+  // ── 锚定同步：eBook↔Note ──
+  // 规则：鼠标在哪个 slot，哪个 slot 发送；另一个只接收。
+  // 用 mouseenter/mouseleave 追踪鼠标是否在本 View 内。
+
+  useEffect(() => {
+    let scrollTimer: ReturnType<typeof setTimeout> | null = null;
+    let mouseInView = true;
+    const enter = () => { mouseInView = true; };
+    const leave = () => { mouseInView = false; };
+    document.addEventListener('mouseenter', enter);
+    document.addEventListener('mouseleave', leave);
+
+    // 1) 接收来自 eBook 的 anchor-sync → 滚动到对应 fromPage
+    const unsubMessage = viewAPI.onMessage((message: any) => {
+      console.log('[NoteView:anchor] onMessage received:', JSON.stringify(message));
+      if (message?.action !== 'anchor-sync') return;
+      const { anchorType, pdfPage } = message.payload || {};
+      if (anchorType === 'pdf-page' && typeof pdfPage === 'number') {
+        const anchors = document.querySelectorAll<HTMLElement>('[data-from-page]');
+        console.log(`[NoteView:anchor] Looking for pdfPage=${pdfPage}, found ${anchors.length} fromPage elements`);
+        let target: HTMLElement | null = null;
+        let closestDist = Infinity;
+        for (const el of anchors) {
+          const p = parseInt(el.getAttribute('data-from-page') || '0', 10);
+          const dist = Math.abs(p - pdfPage);
+          if (dist < closestDist) {
+            closestDist = dist;
+            target = el;
+          }
+        }
+        if (target) {
+          console.log(`[NoteView:anchor] Scrolling to fromPage, closest dist=${closestDist}`);
+          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        } else {
+          console.log('[NoteView:anchor] No matching fromPage found');
+        }
+      }
+    });
+
+    // 2) 滚动时检测当前可见的 fromPage → 发送回 eBook
+    const handleScroll = () => {
+      if (!mouseInView) return;
+      if (scrollTimer) clearTimeout(scrollTimer);
+      scrollTimer = setTimeout(() => {
+        const anchors = document.querySelectorAll<HTMLElement>('[data-from-page]');
+        console.log(`[NoteView:anchor] scroll handler: ${anchors.length} fromPages, mouseInView=${mouseInView}`);
+        if (anchors.length === 0) return;
+
+        let bestPage = 0;
+        let bestTop = Infinity;
+        for (const el of anchors) {
+          const rect = el.getBoundingClientRect();
+          if (rect.top < window.innerHeight && rect.top > -50) {
+            if (rect.top < bestTop) {
+              bestTop = rect.top;
+              bestPage = parseInt(el.getAttribute('data-from-page') || '0', 10);
+            }
+          }
+        }
+        console.log(`[NoteView:anchor] bestPage=${bestPage}, bestTop=${bestTop}`);
+        if (bestPage > 0) {
+          console.log(`[NoteView:anchor] Sending anchor-sync pdfPage=${bestPage}`);
+          viewAPI.sendToOtherSlot({
+            protocol: '',
+            action: 'anchor-sync',
+            payload: { anchorType: 'pdf-page', pdfPage: bestPage },
+          });
+        }
+      }, 300);
+    };
+
+    // 滚动容器是 NoteEditor 的 container div（overflow: auto）
+    // 延迟绑定，等 ProseMirror 渲染完成
+    let scrollTarget: Element | null = null;
+    const bindTimer = setTimeout(() => {
+      const pm = document.querySelector('.ProseMirror');
+      scrollTarget = pm?.parentElement?.parentElement ?? null;
+      console.log('[NoteView:anchor] Binding scroll listener:', {
+        pm: !!pm,
+        scrollTarget: scrollTarget?.tagName,
+        scrollTargetClass: scrollTarget?.className,
+        overflow: scrollTarget ? getComputedStyle(scrollTarget).overflow : 'N/A',
+      });
+      scrollTarget?.addEventListener('scroll', handleScroll);
+    }, 500);
+
+    return () => {
+      clearTimeout(bindTimer);
+      unsubMessage();
+      document.removeEventListener('mouseenter', enter);
+      document.removeEventListener('mouseleave', leave);
+      scrollTarget?.removeEventListener('scroll', handleScroll);
+      if (scrollTimer) clearTimeout(scrollTimer);
+    };
+  }, []);
 
   return (
     <div style={styles.container}>
@@ -95,10 +255,41 @@ export function NoteView() {
         >
           {dirty ? '保存' : '已保存'}
         </button>
+        <button
+          style={styles.newBtn}
+          onClick={handleNewNote}
+          title="新建笔记"
+        >
+          + 新建
+        </button>
+        <OpenFilePopup
+          label="Open"
+          placeholder="搜索笔记..."
+          loadItems={loadNoteList}
+          onSelect={handleOpenNote}
+        />
+        <SlotToggle />
+        <button
+          style={styles.closeSlotBtn}
+          onClick={() => (window as any).viewAPI.closeSlot()}
+          title="关闭此面板"
+        >
+          ×
+        </button>
       </div>
 
       {/* Content */}
-      <NoteEditor />
+      {libraryEmpty && !hasActiveNote ? (
+        <div style={styles.emptyState}>
+          <div style={styles.emptyStateIcon}>📝</div>
+          <div style={styles.emptyStateText}>还没有笔记</div>
+          <button style={styles.emptyStateBtn} onClick={handleNewNote}>
+            + 新建笔记
+          </button>
+        </div>
+      ) : (
+        <NoteEditor />
+      )}
     </div>
   );
 }
@@ -152,5 +343,52 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '2px 10px',
     cursor: 'pointer',
     flexShrink: 0,
+  },
+  newBtn: {
+    background: 'transparent',
+    border: '1px solid #555',
+    borderRadius: 4,
+    color: '#e8eaed',
+    fontSize: 12,
+    padding: '2px 10px',
+    cursor: 'pointer',
+    flexShrink: 0,
+  },
+  emptyState: {
+    flex: 1,
+    display: 'flex',
+    flexDirection: 'column' as const,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+    gap: 12,
+    color: '#888',
+  },
+  emptyStateIcon: {
+    fontSize: 48,
+    opacity: 0.5,
+  },
+  emptyStateText: {
+    fontSize: 14,
+  },
+  emptyStateBtn: {
+    marginTop: 8,
+    padding: '8px 20px',
+    background: '#3a3a3a',
+    border: '1px solid #555',
+    borderRadius: 6,
+    color: '#e8eaed',
+    fontSize: 14,
+    cursor: 'pointer',
+  },
+  closeSlotBtn: {
+    background: 'transparent',
+    border: 'none',
+    borderRadius: 4,
+    color: '#888',
+    fontSize: 16,
+    padding: '0 6px',
+    cursor: 'pointer',
+    flexShrink: 0,
+    lineHeight: '24px',
   },
 };

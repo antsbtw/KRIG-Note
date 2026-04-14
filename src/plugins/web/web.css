@@ -1,0 +1,203 @@
+/* WebView 暗色主题样式 */
+@import '../../shared/theme/tokens.css';
+
+.web-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--krig-bg-base);
+  color: var(--krig-text-primary);
+}
+
+/* ── Toolbar ── */
+
+.web-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 36px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--krig-border);
+  background: var(--krig-bg-elevated);
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.web-toolbar__section {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.web-toolbar__section--nav {
+  flex-shrink: 0;
+}
+
+.web-toolbar__section--url {
+  flex: 1;
+  min-width: 0;
+  margin: 0 8px;
+}
+
+.web-toolbar__section--actions {
+  flex-shrink: 0;
+}
+
+.web-toolbar__btn {
+  width: 28px;
+  height: 28px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--krig-text-primary);
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.web-toolbar__btn:hover:not(:disabled) {
+  background: var(--krig-bg-hover);
+}
+
+.web-toolbar__btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.web-toolbar__btn--close-slot { color: var(--krig-text-dim); font-size: 16px; width: auto; padding: 0 6px; }
+.web-toolbar__btn--close-slot:hover { color: var(--krig-text-primary); }
+
+.web-toolbar__url-input {
+  width: 100%;
+  height: 26px;
+  background: var(--krig-bg-input-alt);
+  border: 1px solid var(--krig-border-light);
+  border-radius: 13px;
+  color: var(--krig-text-primary);
+  font-size: 12px;
+  padding: 0 12px;
+  outline: none;
+}
+
+.web-toolbar__url-input:focus {
+  border-color: var(--krig-accent-border);
+  background: var(--krig-bg-input);
+}
+
+.web-toolbar__url-input::placeholder {
+  color: var(--krig-text-faint);
+}
+
+/* ── Content (webview container) ── */
+
+.web-view__content {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+
+.web-view__webview {
+  width: 100%;
+  height: 100%;
+  border: none;
+}
+
+/* ── Translate Toolbar ── */
+
+.translate-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  height: 36px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--krig-border);
+  background: var(--krig-bg-elevated);
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.translate-toolbar__lang-select {
+  height: 24px;
+  background: var(--krig-bg-input-alt);
+  border: 1px solid var(--krig-border-light);
+  border-radius: 4px;
+  color: var(--krig-text-primary);
+  font-size: 12px;
+  padding: 0 4px;
+  outline: none;
+  cursor: pointer;
+}
+
+.translate-toolbar__lang-select:focus {
+  border-color: var(--krig-accent-border);
+}
+
+/* ── Extraction Toolbar ── */
+
+.extraction-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 36px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--krig-border);
+  background: var(--krig-bg-elevated);
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.extraction-toolbar__title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--krig-text-primary);
+  white-space: nowrap;
+}
+
+.extraction-toolbar__url {
+  font-size: 11px;
+  color: var(--krig-text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.extraction-toolbar__close {
+  background: transparent;
+  border: none;
+  color: var(--krig-text-dim);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.extraction-toolbar__close:hover {
+  color: var(--krig-text-primary);
+  background: var(--krig-bg-hover);
+}
+
+/* ── Empty / Loading ── */
+
+.web-view__empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  color: var(--krig-text-faint);
+}
+
+.web-view__empty-icon {
+  font-size: 48px;
+  opacity: 0.4;
+}
+
+.web-view__empty-text {
+  font-size: 14px;
+}
