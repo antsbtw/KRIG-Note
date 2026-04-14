@@ -1146,6 +1146,16 @@
                      default that renders <th> dimmer than <td> */
 }
 
+/* First-column emphasis — matches typical Word / doc conventions where
+ * the leftmost column acts as a row label / key. Markdown can't encode
+ * this directly (tables only have a single header row), so we style it
+ * unconditionally: all tables get a bolder first column. */
+.ProseMirror table.pm-table tr > td:first-child,
+.ProseMirror table.pm-table tr > th:first-child {
+  font-weight: 600;
+  background: #262626;
+}
+
 .ProseMirror table.pm-table td > *:first-child,
 .ProseMirror table.pm-table th > *:first-child {
   margin-top: 0;
