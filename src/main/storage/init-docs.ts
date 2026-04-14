@@ -133,7 +133,7 @@ export async function initKrigNoteDocs(): Promise<{ created: number }> {
       try {
         const mdContent = readFileSync(file.fullPath, 'utf-8');
         const title = file.name;
-        const docContent = mdToAtoms(mdContent, title);
+        const docContent = await mdToAtoms(mdContent, title);
 
         const note = await noteStore.create(title, subFolder.id);
         await noteStore.save(note.id, docContent, title);
@@ -250,7 +250,7 @@ export async function reimportTestDocs(): Promise<boolean> {
     try {
       const mdContent = readFileSync(file.fullPath, 'utf-8');
       const title = file.name;
-      const docContent = mdToAtoms(mdContent, title);
+      const docContent = await mdToAtoms(mdContent, title);
       const note = await noteStore.create(title, testFolder.id);
       await noteStore.save(note.id, docContent, title);
       created++;

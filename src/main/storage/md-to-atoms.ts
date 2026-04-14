@@ -6,9 +6,21 @@
  *
  * 支持：heading、paragraph、code block、blockquote、
  *       bullet list、ordered list、task list、horizontal rule、
- *       table、inline marks（bold、italic、code、link）
+ *       table、image (``![alt](src)`` 独占一行)、
+ *       math block (`$$...$$` 独占一行或跨行)、
+ *       inline: bold / italic / code / link / math ($...$)
+ *
+ * 图像语法规则（重要）：
+ *   - `![alt](http(s)://...)`          → image atom，src 原样保留
+ *   - `![alt](media://...)`            → image atom，src 原样保留
+ *   - `![alt](data:image/...;base64)`  → 自动调用 mediaSurrealStore.putBase64
+ *                                        写入 media 表 + 磁盘，atom 存 `media://...`
+ *     这是把 AI 生成的 base64 图像落地到 KRIG 持久存储的唯一路径。
+ *
+ * 因为写 media 是异步的，整个转换器是 async 的。
  */
 
+import { mediaSurrealStore } from '../media/media-surreal-store';
 import {
   createAtom,
   type Atom,
@@ -24,12 +36,15 @@ import {
   type ListItemContent,
   type TableContent,
   type TableCellContent,
+  type ImageContent,
+  type MathBlockContent,
+  type MathInline,
 } from '../../shared/types/atom-types';
 
 /**
  * 从 Markdown 生成完整的 doc_content（Atom[]）
  */
-export function mdToAtoms(md: string, title: string): Atom[] {
+export async function mdToAtoms(md: string, title: string): Promise<Atom[]> {
   const atoms: Atom[] = [];
 
   // noteTitle
@@ -38,7 +53,7 @@ export function mdToAtoms(md: string, title: string): Atom[] {
   } as NoteTitleContent));
 
   // 解析 Markdown body
-  const bodyAtoms = parseMarkdownToAtoms(md);
+  const bodyAtoms = await parseMarkdownToAtoms(md);
   atoms.push(...bodyAtoms);
 
   // 设置 order
@@ -47,7 +62,7 @@ export function mdToAtoms(md: string, title: string): Atom[] {
   return atoms;
 }
 
-function parseMarkdownToAtoms(md: string): Atom[] {
+async function parseMarkdownToAtoms(md: string): Promise<Atom[]> {
   const lines = md.split('\n');
   const atoms: Atom[] = [];
   let i = 0;
@@ -71,6 +86,52 @@ function parseMarkdownToAtoms(md: string): Atom[] {
         code: codeLines.join('\n'),
         language: lang || '',
       } as CodeBlockContent));
+      continue;
+    }
+
+    // Math block: $$...$$ on its own (may span multiple lines).
+    // Recognized when the line starts with `$$` after trimming.
+    if (line.trim().startsWith('$$')) {
+      const buf: string[] = [];
+      // Strip the opening `$$` from the first line
+      let first = line.trim().slice(2);
+      // Single-line case: `$$...$$`
+      const closeIdx = first.indexOf('$$');
+      if (closeIdx >= 0) {
+        const latex = first.slice(0, closeIdx).trim();
+        if (latex) atoms.push(createAtom('mathBlock', { latex } as MathBlockContent));
+        i++;
+        continue;
+      }
+      if (first) buf.push(first);
+      i++;
+      while (i < lines.length) {
+        const curr = lines[i];
+        const end = curr.indexOf('$$');
+        if (end >= 0) {
+          const head = curr.slice(0, end).trimEnd();
+          if (head) buf.push(head);
+          i++;
+          break;
+        }
+        buf.push(curr);
+        i++;
+      }
+      const latex = buf.join('\n').trim();
+      if (latex) atoms.push(createAtom('mathBlock', { latex } as MathBlockContent));
+      continue;
+    }
+
+    // Block-level image: `![alt](src)` on its own line.
+    // Inline `![](...)` within a paragraph is not supported (image is a
+    // block-level node in the KRIG editor).
+    const imgMatch = line.trim().match(/^!\[([^\]]*)\]\(([^)]+)\)\s*$/);
+    if (imgMatch) {
+      const alt = imgMatch[1] || '';
+      const rawSrc = imgMatch[2];
+      const imageContent = await resolveImageSrc(rawSrc, alt);
+      atoms.push(createAtom('image', imageContent));
+      i++;
       continue;
     }
 
@@ -105,7 +166,7 @@ function parseMarkdownToAtoms(md: string): Atom[] {
       atoms.push(bqAtom);
 
       // 引用块内的内容作为子 Atom
-      const innerAtoms = parseMarkdownToAtoms(quoteLines.join('\n'));
+      const innerAtoms = await parseMarkdownToAtoms(quoteLines.join('\n'));
       for (const inner of innerAtoms) {
         inner.parentId = bqAtom.id;
         atoms.push(inner);
@@ -205,12 +266,55 @@ function parseMarkdownToAtoms(md: string): Atom[] {
   return atoms;
 }
 
-/** 解析 inline 格式 → InlineElement[] */
+/**
+ * Resolve an image `src` string into an ImageContent.
+ *
+ * - `data:<mime>;base64,...`       → persisted via mediaSurrealStore, src
+ *   rewritten to the returned `media://...` URL, and `mediaId` recorded
+ * - everything else (http(s), media://, file:, relative path)
+ *                                  → passed through unchanged
+ *
+ * Failure of the media-store write falls back to keeping the original
+ * data URL so the image still renders even if persistence failed — it
+ * just won't survive a note reopen.
+ */
+async function resolveImageSrc(rawSrc: string, alt: string): Promise<ImageContent> {
+  if (rawSrc.startsWith('data:') && rawSrc.includes(';base64,')) {
+    try {
+      const r = await mediaSurrealStore.putBase64(rawSrc);
+      if (r.success && r.mediaUrl) {
+        return { src: r.mediaUrl, alt, mediaId: r.mediaId };
+      }
+    } catch {
+      /* fall through to storing the data URL as-is */
+    }
+  }
+  return { src: rawSrc, alt };
+}
+
+/**
+ * 解析 inline 格式 → InlineElement[]
+ *
+ * Recognized constructs (in order):
+ *   **bold**, *italic*, `code`, [text](url), $math$
+ *
+ * `$...$` uses a heuristic regex that avoids the most common false-
+ * positives (e.g. `$50`, `price $5`). Bare dollar amounts remain plain
+ * text; adjacent letter or digit triggers the math match.
+ */
 function parseInline(text: string): InlineElement[] {
   if (!text?.trim()) return [];
 
   const elements: InlineElement[] = [];
-  const regex = /(\*\*(.+?)\*\*|\*(.+?)\*|`(.+?)`|\[([^\]]+)\]\(([^)]+)\))/g;
+  // Groups:
+  //   1: whole match
+  //   2: bold content         (**...**)
+  //   3: italic content       (*...*)
+  //   4: code content         (`...`)
+  //   5/6: link text / href   ([x](y))
+  //   7: inline math content  ($...$)  — no spaces immediately inside,
+  //       no `$` or newline inside; length ≥ 1
+  const regex = /(\*\*([\s\S]+?)\*\*|\*([^\*\n]+?)\*|`([^`\n]+?)`|\[([^\]]+)\]\(([^)]+)\)|\$([^\s$][^$\n]*?[^\s$]|[^\s$])\$)/g;
   let lastIndex = 0;
   let match;
 
@@ -218,11 +322,11 @@ function parseInline(text: string): InlineElement[] {
     if (match.index > lastIndex) {
       elements.push({ type: 'text', text: text.slice(lastIndex, match.index) } as TextNode);
     }
-    if (match[2]) {
+    if (match[2] !== undefined) {
       elements.push({ type: 'text', text: match[2], marks: [{ type: 'bold' }] } as TextNode);
-    } else if (match[3]) {
+    } else if (match[3] !== undefined) {
       elements.push({ type: 'text', text: match[3], marks: [{ type: 'italic' }] } as TextNode);
-    } else if (match[4]) {
+    } else if (match[4] !== undefined) {
       elements.push({ type: 'text', text: match[4], marks: [{ type: 'code' }] } as TextNode);
     } else if (match[5] && match[6]) {
       elements.push({
@@ -230,6 +334,8 @@ function parseInline(text: string): InlineElement[] {
         href: match[6],
         children: [{ type: 'text', text: match[5] }],
       } as any);
+    } else if (match[7] !== undefined) {
+      elements.push({ type: 'math-inline', latex: match[7] } as MathInline);
     }
     lastIndex = match.index + match[0].length;
   }

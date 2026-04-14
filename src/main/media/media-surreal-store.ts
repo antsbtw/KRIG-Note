@@ -48,6 +48,21 @@ function extFromUrl(url: string): string {
   return m?.[1] || '';
 }
 
+/**
+ * Map a MIME type to our on-disk extension. Falls back to `bin` for types
+ * we don't know about.
+ */
+function extForMime(mimeType: string): string {
+  const core = mimeType.split(';')[0].trim();
+  return MIME_TO_EXT[core] || 'bin';
+}
+
+/** Bucket a MIME type into 'image' | 'audio' (default 'image'). */
+function mediaTypeForMime(mimeType: string): 'image' | 'audio' {
+  const core = mimeType.split(';')[0].trim();
+  return core.startsWith('audio/') ? 'audio' : 'image';
+}
+
 export const mediaSurrealStore = {
   /** 注册 media:// 协议 */
   registerProtocol(): void {
@@ -122,6 +137,111 @@ export const mediaSurrealStore = {
       }
 
       return { success: true, mediaUrl: `media://${subDir}/${fileName}` };
+    } catch (err) {
+      return { success: false, error: String(err) };
+    }
+  },
+
+  /**
+   * Store a base64 blob (e.g. an AI-extracted Imagen / DALL·E / matplotlib
+   * image) on disk, index it in SurrealDB, and return a `media://...` URL
+   * that renderers can embed directly.
+   *
+   * Deduplicated by SHA-256 of the decoded bytes — feeding the same image
+   * in twice yields the same mediaUrl without writing the file again.
+   *
+   * Accepts either a full `data:<mime>;base64,<b64>` URL or a raw base64
+   * string together with an explicit `mimeType`.
+   */
+  async putBase64(
+    input: string,
+    explicitMime?: string,
+  ): Promise<{ success: boolean; mediaUrl?: string; mediaId?: string; error?: string }> {
+    try {
+      // Parse data URL vs raw base64
+      let b64: string;
+      let mimeType = explicitMime || '';
+      const m = input.match(/^data:([^;]+);base64,(.*)$/s);
+      if (m) {
+        mimeType = mimeType || m[1];
+        b64 = m[2];
+      } else {
+        b64 = input;
+      }
+      if (!b64) return { success: false, error: 'empty base64 payload' };
+      if (!mimeType) return { success: false, error: 'no mimeType for raw base64' };
+
+      ensureDirs();
+      const buffer = Buffer.from(b64, 'base64');
+      if (buffer.length === 0) return { success: false, error: 'decoded buffer is empty' };
+
+      const mediaType = mediaTypeForMime(mimeType);
+      const limit = SIZE_LIMITS[mediaType] || SIZE_LIMITS.image;
+      if (buffer.length > limit) {
+        return { success: false, error: `Data too large (${Math.round(buffer.length / 1024 / 1024)}MB > ${Math.round(limit / 1024 / 1024)}MB limit)` };
+      }
+
+      const hash = createHash('sha256').update(buffer).digest('hex').slice(0, 16);
+      const ext = extForMime(mimeType);
+      const prefix = mediaType === 'audio' ? 'audio' : 'img';
+      const mediaId = `${prefix}-${hash}`;
+      const subDir = mediaType === 'audio' ? 'audio' : 'images';
+      const fileName = `${mediaId}.${ext}`;
+      const filePath = path.join(MEDIA_DIR, subDir, fileName);
+      const mediaUrl = `media://${subDir}/${fileName}`;
+
+      // Dedup: if the file already exists on disk, treat as cached.
+      const db = getDB();
+      if (fs.existsSync(filePath)) {
+        // Ensure a DB row exists too (in case a previous run wrote disk but
+        // failed on DB); query-by-id is cheap.
+        if (db) {
+          try {
+            const rows = await db.query<[any[]]>(
+              `SELECT id FROM media WHERE id = $id LIMIT 1`,
+              { id: mediaId },
+            );
+            const exists = rows[0]?.[0];
+            if (!exists) {
+              await db.query(
+                `CREATE media SET id = $id, original_url = $url, local_path = $local_path, size = $size, mime_type = $mime_type, created_at = $created_at`,
+                {
+                  id: mediaId,
+                  url: mediaUrl,
+                  local_path: filePath,
+                  size: buffer.length,
+                  mime_type: mimeType,
+                  created_at: Date.now(),
+                },
+              );
+            }
+          } catch {
+            /* non-fatal: renderer can still load the file via protocol */
+          }
+        }
+        return { success: true, mediaUrl, mediaId };
+      }
+
+      fs.writeFileSync(filePath, buffer);
+      if (db) {
+        try {
+          await db.query(
+            `CREATE media SET id = $id, original_url = $url, local_path = $local_path, size = $size, mime_type = $mime_type, created_at = $created_at`,
+            {
+              id: mediaId,
+              url: mediaUrl,
+              local_path: filePath,
+              size: buffer.length,
+              mime_type: mimeType,
+              created_at: Date.now(),
+            },
+          );
+        } catch {
+          /* non-fatal */
+        }
+      }
+
+      return { success: true, mediaUrl, mediaId };
     } catch (err) {
       return { success: false, error: String(err) };
     }
