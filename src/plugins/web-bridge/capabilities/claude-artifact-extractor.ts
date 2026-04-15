@@ -464,10 +464,19 @@ export async function extractAll(
     }>;
   },
   opts: ExtractOptions = { image: true },
+  /**
+   * If set, only the LAST `tail` descriptors are processed. Used by sync
+   * mode to grab only the iframes belonging to the just-completed turn,
+   * since older artifacts from previous turns are still in the DOM.
+   */
+  tail?: number,
 ): Promise<ExtractedArtifact[]> {
   const descriptors = await listArtifacts(webview);
+  const slice = typeof tail === 'number' && tail > 0 && tail < descriptors.length
+    ? descriptors.slice(descriptors.length - tail)
+    : descriptors;
   const results: ExtractedArtifact[] = [];
-  for (const d of descriptors) {
+  for (const d of slice) {
     const row: ExtractedArtifact = { ...d };
     if (opts.image) row.image = await extractArtifactImage(webview, view, d.index);
     if (opts.source) row.source = await extractArtifactSource(webview, view, d.index);

@@ -163,6 +163,11 @@ async function processClaudeArtifacts(
         webview,
         viewAPI as any,
         { image: true },
+        // Only grab iframes belonging to the current turn — older ones
+        // from earlier turns are still in the DOM but already synced.
+        // Slight over-fetch (×2) to absorb side-panel / fullscreen
+        // duplicates, which dedupe-by-dataUrl below collapses anyway.
+        expectedIframes * 2,
       );
       const rawImgs = artifacts.map(a => a.image?.dataUrl).filter((s): s is string => !!s);
       // Dedupe by dataUrl: side-panel + inline + fullscreen often render

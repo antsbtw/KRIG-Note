@@ -113,6 +113,25 @@ function createViewForWorkMode(workModeId: string): WebContentsView {
         return { action: 'allow' };
       });
 
+      // Chromium-layer right-click. This fires for ANY click — including
+      // those inside cross-origin iframes (artifact panels, DALL·E
+      // containers) — because it comes from the browser layer, above
+      // the page-JS sandbox. Forward to the embedder renderer so
+      // WebViewContextMenu can render its overlay.
+      guestWebContents.on('context-menu', (_e, params) => {
+        view.webContents.send('krig:webview-context-menu', {
+          guestId: guestWebContents.id,
+          x: params.x,
+          y: params.y,
+          linkURL: params.linkURL,
+          srcURL: params.srcURL,
+          mediaType: params.mediaType,
+          selectionText: params.selectionText,
+          isEditable: params.isEditable,
+          frameURL: params.frameURL,
+        });
+      });
+
       // 调用插件注册的 onViewCreated hook
       mode?.onViewCreated?.(view, guestWebContents);
     });

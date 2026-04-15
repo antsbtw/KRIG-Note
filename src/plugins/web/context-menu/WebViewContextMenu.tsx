@@ -7,9 +7,12 @@
  */
 
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
-import type { WebviewTag } from 'electron';
 import type { ContextMenuItem, ContextMenuItems, GuestContextSignal, MenuContext, WebViewContextMenuProps } from './types';
 import { BUILTIN_ITEMS } from './built-in-items';
+
+declare const viewAPI: {
+  onWebviewContextMenu: (cb: (payload: any) => void) => () => void;
+};
 
 export function WebViewContextMenu({ webviewRef, items = [] }: WebViewContextMenuProps) {
   const [signal, setSignal] = useState<GuestContextSignal | null>(null);
@@ -23,23 +26,26 @@ export function WebViewContextMenu({ webviewRef, items = [] }: WebViewContextMen
   );
 
   useEffect(() => {
-    const el = webviewRef.current;
-    if (!el) return;
-
-    const handler = (e: any) => {
-      if (e?.channel !== 'krig:context-menu') return;
-      const payload = Array.isArray(e.args) ? e.args[0] : null;
-      if (!payload || typeof payload.x !== 'number') return;
+    // Subscribe to right-click events forwarded by main from EVERY guest
+    // webContents. Chromium fires `context-menu` at the browser layer,
+    // so this path covers cross-origin iframes (artifact panels, DALL·E
+    // image containers) — exactly like Chrome's built-in menu does.
+    // Filter by webContents id so each variant's menu only opens for
+    // its own <webview>.
+    const unsub = viewAPI.onWebviewContextMenu((payload) => {
+      const el = webviewRef.current;
+      if (!el) return;
+      const myId = (el as any).getWebContentsId?.();
+      if (typeof payload?.guestId === 'number' && payload.guestId !== myId) return;
+      if (typeof payload?.x !== 'number') return;
       setSignal({
         x: payload.x | 0,
         y: payload.y | 0,
-        targetTag: typeof payload.targetTag === 'string' ? payload.targetTag : null,
-        targetHtml: typeof payload.targetHtml === 'string' ? payload.targetHtml : '',
+        targetTag: null,
+        targetHtml: '',
       });
-    };
-
-    el.addEventListener('ipc-message', handler);
-    return () => { el.removeEventListener('ipc-message', handler); };
+    });
+    return unsub;
   }, [webviewRef]);
 
   if (!signal) return null;

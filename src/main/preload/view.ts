@@ -97,6 +97,16 @@ contextBridge.exposeInMainWorld('viewAPI', {
     return () => ipcRenderer.removeListener(IPC.WORKSPACE_STATE_CHANGED, listener);
   },
 
+  // Right-click events from any guest <webview> — including events
+  // inside cross-origin iframes — are forwarded by main via this
+  // channel. WebViewContextMenu uses it to drive its overlay so the
+  // menu works just like Chrome's built-in one (everywhere, always).
+  onWebviewContextMenu: (callback: (payload: any) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: any) => callback(payload);
+    ipcRenderer.on('krig:webview-context-menu', listener);
+    return () => ipcRenderer.removeListener('krig:webview-context-menu', listener);
+  },
+
   // ── Thought 操作 ──
 
   thoughtCreate: (thought: any) => ipcRenderer.invoke(IPC.THOUGHT_CREATE, thought),

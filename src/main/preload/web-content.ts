@@ -1,37 +1,24 @@
 /**
- * WebView Guest Preload — context-menu signal
+ * WebView Guest Preload
  *
- * Runs inside every `<webview>` guest page (attached via
- * did-attach-webview in shell.ts). Because it is a Chromium preload
- * script it is re-injected on *every* document load, including SPA
- * route changes that replace the document object. This is the ONLY
- * reliable way to keep our context-menu listener alive across all
- * AI site navigations; `webview.executeJavaScript` from the host
- * cannot do that because it fires only when the host observes
- * navigation events.
+ * Runs inside every <webview> guest page (attached via
+ * will-attach-webview in shell.ts). Re-injected on every document
+ * load — including SPA navigations and cross-origin iframes — by
+ * Chromium itself.
  *
  * Responsibilities:
- *   1. CSP bypass (strip meta[http-equiv=Content-Security-Policy])
- *   2. Right-click signal: forward viewport coordinates + a compact
- *      target descriptor to the host via ipcRenderer.sendToHost.
+ *   1. CSP bypass (strip meta[http-equiv=Content-Security-Policy]).
  *
- * The preload is intentionally business-agnostic. It neither renders
- * the menu nor knows about AI-specific selectors. The host-side
- * registry (see src/plugins/web/context-menu) decides what items to
- * show and when.
- *
- * Host channel:
- *   'krig:context-menu' → { x, y, targetTag, targetHtml }
+ * NOT responsible for context-menu handling: right-click is captured
+ * one layer up by Chromium and forwarded by the main process via
+ * `webContents.on('context-menu')`. That path covers cross-origin
+ * iframes too, which guest-side JS cannot reach.
  */
 
-import { ipcRenderer } from 'electron';
-
-// ─── CSP bypass (kept from prior version) ───────────────────────────
-// Preload runs before the document exists, so defer observer setup
-// until the document root is available. Without this guard the
+// Preload runs before the document exists in some sandboxed cases, so
+// defer observer setup until DOMContentLoaded. Without this guard the
 // preload throws a TypeError on `observe(null, ...)` and Chromium
-// silently drops the rest of the script — including the contextmenu
-// listeners below.
+// silently drops the rest of the script.
 function installCspBypass(): void {
   const root = document.head ?? document.documentElement;
   if (!root) return;
@@ -49,67 +36,9 @@ function installCspBypass(): void {
     }
   }).observe(root, { childList: true });
 }
+
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', installCspBypass, { once: true });
 } else {
   installCspBypass();
 }
-
-// ─── Context-menu signal ────────────────────────────────────────────
-//
-// Listen on document at capture phase for contextmenu, pointerdown,
-// and mousedown (button === 2). Using all three gives us a reliable
-// fall-through for sites that preventDefault on contextmenu (e.g. the
-// ChatGPT DALL·E image wrapper). Once any of them fires we report
-// once and suppress the trailing contextmenu so the native menu
-// doesn't race the custom one.
-
-let suppressNext = false;
-
-function report(ev: MouseEvent | PointerEvent): void {
-  // Skip editable regions — the user almost certainly wants the native
-  // input menu (spellcheck / select-all / cut / paste).
-  let t: HTMLElement | null = ev.target as HTMLElement | null;
-  while (t && t !== document.body) {
-    if (t.isContentEditable || t.tagName === 'INPUT' || t.tagName === 'TEXTAREA') return;
-    t = t.parentElement;
-  }
-
-  ev.preventDefault();
-  ev.stopPropagation();
-
-  const target = ev.target as HTMLElement | null;
-  const outer = target?.outerHTML?.slice(0, 200) ?? '';
-
-  try {
-    ipcRenderer.sendToHost('krig:context-menu', {
-      x: ev.clientX,
-      y: ev.clientY,
-      targetTag: target?.tagName ?? null,
-      targetHtml: outer,
-    });
-  } catch {
-    /* ignore — host may not be ready yet */
-  }
-}
-
-document.addEventListener('contextmenu', (ev) => {
-  if (suppressNext) {
-    suppressNext = false;
-    ev.preventDefault();
-    return;
-  }
-  report(ev);
-}, true);
-
-document.addEventListener('pointerdown', (ev) => {
-  if (ev.button !== 2) return;
-  report(ev);
-  suppressNext = true;
-}, true);
-
-document.addEventListener('mousedown', (ev) => {
-  if (ev.button !== 2) return;
-  report(ev);
-  suppressNext = true;
-}, true);
