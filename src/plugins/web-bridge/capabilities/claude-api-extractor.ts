@@ -498,10 +498,10 @@ export function replaceArtifactPlaceholders(
 ): string {
   const placeholderRegex = /```[^\n]*\n(?:[^\n]*\n)*?This block is not supported on your current device yet\.(?:[^\n]*\n)*?```/g;
   const linkText = conversationUrl
-    ? `> [在 Claude 中查看](${conversationUrl})`
-    : `> 请在原始 Claude 对话中查看`;
+    ? `> [在 Claude 中查看原图](${conversationUrl})`
+    : '';
   return messageText.replace(
     placeholderRegex,
-    `> [!note] Claude Artifact (交互式内容)\n> 这里是 Claude 生成的交互式 HTML/图表，无法自动提取到 Note。\n${linkText}`,
+    `> [!note] 📥 此处图片请点击 Claude 页面的拷贝按钮\n${linkText}`,
   );
 }

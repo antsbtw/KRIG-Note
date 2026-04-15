@@ -386,14 +386,6 @@ export function NoteEditor() {
       currentNoteIdRef.current = noteId;
       setCurrentNote(noteId);
 
-      // Tell the AI sync engine the active note changed so it can reset
-      // its per-note dedup state and re-sync history into the fresh note.
-      viewAPI.sendToOtherSlot({
-        protocol: 'ai-sync',
-        action: 'as:note-status',
-        payload: { open: true, lastTypedAt: 0, noteId },
-      });
-
       // 从 doc 中提取 noteTitle 实际文本，同步到 toolbar 和文件名
       const v = viewRef.current;
       const firstNode = v?.state.doc.firstChild;
