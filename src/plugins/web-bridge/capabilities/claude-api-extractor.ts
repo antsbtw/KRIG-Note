@@ -444,6 +444,41 @@ export function fillArtifactPlaceholders(
 }
 
 /**
+ * Replace Claude Artifact placeholders with rendered images.
+ *
+ * Used when the Copy-to-clipboard extractor has produced PNG dataUrls for
+ * each artifact card on the page. The i-th placeholder from the top of
+ * the message maps to the i-th image in document order (listArtifacts
+ * also walks the DOM top-down, so indices line up).
+ *
+ * Returns both the rewritten text and how many placeholders were filled
+ * so the caller can decide whether to further call
+ * `replaceArtifactPlaceholders` for any remaining ones.
+ */
+export function fillArtifactPlaceholdersWithImages(
+  messageText: string,
+  imageDataUrls: string[],
+): { text: string; filled: number; remaining: number } {
+  if (!messageText || imageDataUrls.length === 0) {
+    const remaining = countArtifactPlaceholders(messageText || '');
+    return { text: messageText, filled: 0, remaining };
+  }
+  const placeholderRegex = /```[^\n]*\n(?:[^\n]*\n)*?This block is not supported on your current device yet\.(?:[^\n]*\n)*?```/g;
+  const placeholders = messageText.match(placeholderRegex) || [];
+  const total = placeholders.length;
+  let filled = 0;
+  let idx = 0;
+  const result = messageText.replace(placeholderRegex, (block) => {
+    const url = imageDataUrls[idx];
+    idx += 1;
+    if (!url) return block;
+    filled += 1;
+    return `![Claude Artifact](${url})`;
+  });
+  return { text: result, filled, remaining: total - filled };
+}
+
+/**
  * Replace Claude Artifact placeholders with user-friendly callouts.
  *
  * Investigation conclusion (2026-04-13):
@@ -463,10 +498,10 @@ export function replaceArtifactPlaceholders(
 ): string {
   const placeholderRegex = /```[^\n]*\n(?:[^\n]*\n)*?This block is not supported on your current device yet\.(?:[^\n]*\n)*?```/g;
   const linkText = conversationUrl
-    ? `> [在 Claude 中查看](${conversationUrl})`
-    : `> 请在原始 Claude 对话中查看`;
+    ? `> [在 Claude 中查看原图](${conversationUrl})`
+    : '';
   return messageText.replace(
     placeholderRegex,
-    `> [!note] Claude Artifact (交互式内容)\n> 这里是 Claude 生成的交互式 HTML/图表，无法自动提取到 Note。\n${linkText}`,
+    `> [!note] 📥 此处图片请点击 Claude 页面的拷贝按钮\n${linkText}`,
   );
 }

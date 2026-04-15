@@ -1,22 +1,21 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { getSSECaptureScript } from '../../web-bridge/injection/inject-scripts/sse-capture';
 import { getArtifactPostMessageHookScript } from '../../web-bridge/injection/inject-scripts/artifact-postmessage-hook';
 import { getDomToMarkdownScript } from '../../web-bridge/injection/inject-scripts/dom-to-markdown';
-import {
-  extractLatestClaudeResponse,
-  isClaudeConversationPage,
-  countArtifactPlaceholders,
-  replaceArtifactPlaceholders,
-  readCapturedArtifactMessages,
-  collectArtifactSources,
-  fillArtifactPlaceholders,
-  fetchClaudeArtifactVersions,
-  extractArtifactVersionSource,
-} from '../../web-bridge/capabilities/claude-api-extractor';
+import { SlotToggle } from '../../../shared/components/SlotToggle';
+import { WebViewContextMenu, type ContextMenuItem, type MenuContext } from '../context-menu';
+import { extractClaudeConversation } from '../../web-bridge/capabilities/claude-api-extractor';
 import { extractContent as extractChatGPTContent } from '../../web-bridge/capabilities/chatgpt-content-extractor';
 import { extractContent as extractGeminiContent } from '../../web-bridge/capabilities/gemini-content-extractor';
-import { getAIServiceProfile, getAIServiceList, DEFAULT_AI_SERVICE, detectAIServiceByUrl } from '../../../shared/types/ai-service-types';
+import {
+  getAIServiceProfile,
+  getAIServiceList,
+  DEFAULT_AI_SERVICE,
+  detectAIServiceByUrl,
+} from '../../../shared/types/ai-service-types';
 import type { AIServiceId } from '../../../shared/types/ai-service-types';
+import { WEBVIEW_PARTITION } from '../../../shared/constants/webview-partition';
+import { processClaudeArtifactsFull, startSseTrigger } from '../../ai-note-bridge';
 import '../web.css';
 
 declare const viewAPI: {
@@ -33,36 +32,41 @@ declare const viewAPI: {
   aiReadClipboard: () => Promise<string>;
   wbCdpStart: (urlFilters?: string[]) => Promise<{ success: boolean; error?: string; guestUrl?: string; guestId?: number; filters?: string[] }>;
   wbCdpStop: () => Promise<{ success: boolean }>;
-  wbCdpGetResponses: () => Promise<{ success: boolean; error?: string; count?: number; responses?: Array<{ url: string; statusCode: number; mimeType: string; bodyLength: number; bodyPreview: string | null; timestamp: number }> }>;
   wbCdpFindResponse: (params: { urlSubstring: string; mode?: 'all' | 'latest' | 'first' }) =>
     Promise<{ success: boolean; error?: string; count?: number; matches?: Array<{ url: string; statusCode: number; mimeType: string; body: string | null; bodyLength: number; timestamp: number }> }>;
   wbSendMouse: (events: Array<{ type: string; x: number; y: number; button?: string; buttons?: number; clickCount?: number }>) =>
     Promise<{ success: boolean; error?: string; count?: number }>;
   wbReadClipboardImage: () =>
     Promise<{ success: boolean; empty?: boolean; dataUrl?: string; width?: number; height?: number }>;
-  wbCaptureDownloadOnce: (timeoutMs?: number) =>
-    Promise<{ success: boolean; filename?: string; mimeType?: string; content?: string; error?: string }>;
   wbFetchBinary: (params: { url: string; headers?: Record<string, string>; timeoutMs?: number }) =>
     Promise<{ success: boolean; base64?: string; mimeType?: string; bodyLength?: number; error?: string }>;
-  aiExtractDebug: (params: { markdown: string; serviceId: string }) =>
-    Promise<{ success: boolean; atomCount?: number; blocks?: number; error?: string; preview?: string; blockTypes?: string[]; atomTypes?: string[]; blockDetails?: any[]; atomDetails?: any[] }>;
   closeSlot: () => void;
 };
 
 /**
- * AIWebView — AI 专用 WebView 变体
+ * AIWebView — AI-specialized variant of WebView.
  *
- * 与普通 WebView 的区别：
- * - 无地址栏输入（AI 服务 URL 固定）
- * - 简化 toolbar（服务名 + 状态 + 关闭）
- * - 支持 AI_INJECT_AND_SEND IPC 消息
- * - 保持 AI 页面的登录状态和对话历史
+ * Differences from the generic WebView:
+ *   - No URL bar (services have fixed entry URLs).
+ *   - Service selector dropdown for Claude / ChatGPT / Gemini.
+ *   - Persists last-used service across sessions.
+ *   - Right-click "提取到笔记" item via the shared context-menu registry.
+ *   - Bridges AI_INJECT_AND_SEND IPC for the legacy NoteView "ask AI" flow.
+ *
+ * Sync engine, save-to-note button, and other AI↔Note behavior live in
+ * the dedicated `plugins/ai-note-bridge` module.
  */
 interface AIWebViewProps {
   workModeId?: string;
 }
 
+interface ClaudeRightClickTarget {
+  msgIndex: number;
+  artifactOrdinal: number | null;
+}
+
 const LAST_SERVICE_KEY = 'krig.ai.lastService';
+const LIVE_SYNC_ENABLED_KEY = 'krig.ai.liveSync.enabled';
 
 /** Read the last-used AI service from localStorage; fall back to default if missing/invalid. */
 function loadLastService(): AIServiceId {
@@ -75,28 +79,35 @@ function loadLastService(): AIServiceId {
   return DEFAULT_AI_SERVICE;
 }
 
-export function AIWebView({ workModeId = '' }: AIWebViewProps) {
-  const isSyncMode = workModeId === 'ai-sync';
+function loadLiveSyncEnabled(): boolean {
+  try {
+    return localStorage.getItem(LIVE_SYNC_ENABLED_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
+  void _workModeId; // workModeId is kept for prop-API stability; not used yet.
   const webviewRef = useRef<Electron.WebviewTag | null>(null);
   const [currentService, setCurrentService] = useState<AIServiceId>(loadLastService);
-  const [currentUrl, setCurrentUrl] = useState('');
   const [loading, setLoading] = useState(true);
   const [showServiceMenu, setShowServiceMenu] = useState(false);
   const [aiStatus, setAiStatus] = useState<'idle' | 'injecting' | 'waiting' | 'capturing'>('idle');
-  const [syncEnabled, setSyncEnabled] = useState(isSyncMode);
-  const [syncCount, setSyncCount] = useState(0);
-  const lastSyncedCountRef = useRef(0);
+  const [liveSyncEnabled, setLiveSyncEnabled] = useState<boolean>(loadLiveSyncEnabled);
   const menuRef = useRef<HTMLDivElement>(null);
 
   const initialUrl = getAIServiceProfile(currentService).newChatUrl;
 
-  // ── webview 事件绑定 ──
+  // ── webview lifecycle ──
   const setupWebview = useCallback((el: Electron.WebviewTag | null) => {
     if (!el || webviewRef.current === el) return;
     webviewRef.current = el;
-
     el.addEventListener('did-start-loading', () => setLoading(true));
     el.addEventListener('did-stop-loading', () => setLoading(false));
+
+    // Install Claude's postMessage hook so artifact source captures
+    // can be read later by the save-to-note path.
     const injectArtifactHookIfClaude = () => {
       try {
         const u = el.getURL?.() || '';
@@ -107,7 +118,6 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
     };
 
     el.addEventListener('did-navigate', (_e: any) => {
-      setCurrentUrl(el.getURL());
       const detected = detectAIServiceByUrl(el.getURL());
       if (detected) {
         setCurrentService(detected.id);
@@ -115,316 +125,364 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
       }
       injectArtifactHookIfClaude();
     });
-    el.addEventListener('did-navigate-in-page', () => {
-      setCurrentUrl(el.getURL());
-      injectArtifactHookIfClaude();
-    });
+    el.addEventListener('did-navigate-in-page', injectArtifactHookIfClaude);
     el.addEventListener('dom-ready', injectArtifactHookIfClaude);
+  }, []);
 
-    setCurrentUrl(initialUrl);
-  }, [initialUrl]);
-
-  // ── 切换 AI 服务 ──
+  // ── Service switch (dropdown) ──
   const switchService = useCallback((serviceId: AIServiceId) => {
     const webview = webviewRef.current;
     if (!webview) return;
     const profile = getAIServiceProfile(serviceId);
     webview.loadURL(profile.newChatUrl);
     setCurrentService(serviceId);
-    setCurrentUrl(profile.newChatUrl);
     setShowServiceMenu(false);
     try { localStorage.setItem(LAST_SERVICE_KEY, serviceId); } catch {}
   }, []);
 
-  // ── Sync Engine（场景 C：实时同步到 NoteView）──
-  // Tracks per-service sync state by conversationId → set of synced response ids
-  const syncedResponsesRef = useRef<Map<string, Set<string>>>(new Map());
-  const cdpStartedRef = useRef(false);
-  // Prevent overlapping poll invocations: a single poll pass can take longer
-  // than the 2 s interval (Claude artifact probe waits up to 4 s), so we
-  // must skip re-entry rather than let two passes race on lastSyncedCountRef
-  // and double-insert the same turn.
-  const pollInFlightRef = useRef(false);
-  // Peer (NoteView) status — updated via 'as:note-status' ViewMessage
-  const noteOpenRef = useRef(false);
-  const lastTypedAtRef = useRef(0);
-  const [noteOpen, setNoteOpen] = useState(false);
-
-  useEffect(() => {
-    if (!isSyncMode || !syncEnabled) return;
-
-    // AI-Note workflow Step 1: don't spam the user's notebook with a fresh
-    // "AI Sync — …" note every time they toggle sync. Instead reuse the
-    // workspace's lastActive note (already persisted as activeNoteId).
-    // Fallback chain: activeNoteId (if it still exists) → most-recently-
-    // updated note in the library → show Note view's empty state and let
-    // the user decide (new / open).
-    (async () => {
-      await viewAPI.ensureRightSlot('demo-a');
-      await new Promise(r => setTimeout(r, 1500));
-
-      const lastActiveId = await viewAPI.getActiveNoteId();
-      if (lastActiveId) {
-        const existing = await viewAPI.noteLoad(lastActiveId);
-        if (existing) {
-          await viewAPI.noteOpenInEditor(lastActiveId);
-          console.log('[AIWebView Sync] Opened lastActive note:', lastActiveId);
-          return;
+  // ── Right-click "提取到笔记" item ──
+  // Resolve the assistantMessage index at the click coordinates by
+  // asking the guest page itself (elementFromPoint + closest).
+  /**
+   * Resolve the assistant message at (x, y) and:
+   *   1. return its ordinal among currently-mounted `.font-claude-response`
+   *      nodes (used to pick the matching API message)
+   *   2. tag the hit element with `data-krig-target="1"` so downstream
+   *      scope-based iframe collection can find it even after the caller
+   *      scrolls or the DOM reshuffles
+   *
+   * Caller must call `clearTargetMarker` after done.
+   */
+  const resolveMsgIndex = useCallback(async (
+    webview: Electron.WebviewTag,
+    x: number,
+    y: number,
+    assistantSelector: string,
+  ): Promise<ClaudeRightClickTarget> => {
+    const script = `(function() {
+      var sel = ${JSON.stringify(assistantSelector)};
+      var parts = sel.split(',').map(function(s) { return s.trim(); });
+      var el = document.elementFromPoint(${x}, ${y});
+      var hit = null;
+      for (var i = 0; i < parts.length && !hit; i++) {
+        hit = el && el.closest ? el.closest(parts[i]) : null;
+      }
+      if (!hit) return { index: -1, preview: '', total: 0, artifactOrdinal: null };
+      var list = [];
+      for (var j = 0; j < parts.length; j++) {
+        var nodes = document.querySelectorAll(parts[j]);
+        for (var k = 0; k < nodes.length; k++) list.push(nodes[k]);
+      }
+      // Clear any stale marker + tag the newly-hit node.
+      var stale = document.querySelectorAll('[data-krig-target]');
+      for (var s = 0; s < stale.length; s++) {
+        stale[s].removeAttribute('data-krig-target');
+        stale[s].removeAttribute('data-krig-click-x');
+        stale[s].removeAttribute('data-krig-click-y');
+      }
+      hit.setAttribute('data-krig-target', '1');
+      hit.setAttribute('data-krig-click-x', String(${x}));
+      hit.setAttribute('data-krig-click-y', String(${y}));
+      var cards = Array.from(document.querySelectorAll('[class*="group/artifact-block"]'));
+      var allIframes = Array.from(document.querySelectorAll('iframe[src*="claudemcpcontent"]'));
+      var standaloneIframes = allIframes.filter(function(f) { return !f.closest('[class*="group/artifact-block"]'); });
+      var merged = cards.map(function(node) { return { form: 'card', el: node }; })
+        .concat(standaloneIframes.map(function(node) { return { form: 'iframe', el: node }; }));
+      merged.sort(function(a, b) {
+        var rel = a.el.compareDocumentPosition(b.el);
+        if (rel & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+        if (rel & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+        return 0;
+      });
+      var artifactEl = null;
+      if (el) {
+        if (el.tagName === 'IFRAME' && String(el.src || '').indexOf('claudemcpcontent') >= 0) artifactEl = el;
+        if (!artifactEl && el.closest) artifactEl = el.closest('[class*="group/artifact-block"]');
+        if (!artifactEl) {
+          var localIframe = hit.querySelector('iframe[src*="claudemcpcontent"]');
+          if (localIframe) artifactEl = localIframe;
         }
-        // lastActive pointed to a deleted note; fall through to list.
+      }
+      var artifactOrdinal = null;
+      if (artifactEl) {
+        for (var a = 0; a < merged.length; a++) {
+          if (merged[a].el === artifactEl) { artifactOrdinal = a; break; }
+        }
+      }
+      var text = (hit.innerText || hit.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 160);
+      return { index: list.indexOf(hit), preview: text, total: list.length, artifactOrdinal: artifactOrdinal };
+    })()`;
+    try {
+      const r = await webview.executeJavaScript(script);
+      if (r && typeof r.index === 'number') {
+        return {
+          msgIndex: r.index,
+          artifactOrdinal: typeof r.artifactOrdinal === 'number' ? r.artifactOrdinal : null,
+        };
+      }
+      return { msgIndex: -1, artifactOrdinal: null };
+    } catch {
+      return { msgIndex: -1, artifactOrdinal: null };
+    }
+  }, []);
+
+  const clearTargetMarker = useCallback(async (webview: Electron.WebviewTag) => {
+    try {
+      await webview.executeJavaScript(
+        `(function(){var s=document.querySelectorAll('[data-krig-target]');for(var i=0;i<s.length;i++){s[i].removeAttribute('data-krig-target');s[i].removeAttribute('data-krig-click-x');s[i].removeAttribute('data-krig-click-y');}})()`,
+      );
+    } catch {}
+  }, []);
+
+  const freezeViewport = useCallback(async (webview: Electron.WebviewTag) => {
+    try {
+      await webview.executeJavaScript(`
+        (function() {
+          if (window.__krigFreezeViewport) return;
+          var sx = window.scrollX || window.pageXOffset || 0;
+          var sy = window.scrollY || window.pageYOffset || 0;
+          var orig = {
+            scrollTo: window.scrollTo,
+            scrollBy: window.scrollBy,
+            scrollIntoView: Element.prototype.scrollIntoView,
+          };
+          window.__krigFreezeViewport = { sx: sx, sy: sy, orig: orig };
+          window.scrollTo = function() {};
+          window.scrollBy = function() {};
+          Element.prototype.scrollIntoView = function() {};
+          var root = document.scrollingElement || document.documentElement || document.body;
+          if (root) root.style.scrollBehavior = 'auto';
+          document.documentElement.style.overscrollBehavior = 'none';
+          document.body.style.overscrollBehavior = 'none';
+          document.documentElement.style.overflow = 'hidden';
+          document.body.style.overflow = 'hidden';
+          window.addEventListener('scroll', function() { orig.scrollTo.call(window, sx, sy); }, true);
+          orig.scrollTo.call(window, sx, sy);
+        })()
+      `).catch(() => {});
+    } catch {}
+  }, []);
+
+  const restoreViewport = useCallback(async (webview: Electron.WebviewTag) => {
+    try {
+      await webview.executeJavaScript(`
+        (function() {
+          var frozen = window.__krigFreezeViewport;
+          if (!frozen) return;
+          window.scrollTo = frozen.orig.scrollTo;
+          window.scrollBy = frozen.orig.scrollBy;
+          Element.prototype.scrollIntoView = frozen.orig.scrollIntoView;
+          document.documentElement.style.overscrollBehavior = '';
+          document.body.style.overscrollBehavior = '';
+          document.documentElement.style.overflow = '';
+          document.body.style.overflow = '';
+          frozen.orig.scrollTo.call(window, frozen.sx, frozen.sy);
+          delete window.__krigFreezeViewport;
+        })()
+      `).catch(() => {});
+    } catch {}
+  }, []);
+
+  const cdpStartedRef = useRef(false);
+  const sseTriggerRef = useRef<ReturnType<typeof startSseTrigger> | null>(null);
+
+  /**
+   * Extract one assistant turn (by DOM index) and emit it as
+   * as:append-turn so NoteView inserts it. Mirrors the save-to-note
+   * pipeline but for a single user-chosen turn.
+   */
+  const extractTurnAt = useCallback(async (ctx: MenuContext, msgIndex: number) => {
+    const webview = ctx.webview;
+    const url = ctx.url;
+    const profile = detectAIServiceByUrl(url);
+    if (!profile) return;
+
+    try {
+      // Manual extraction and live chat sync are mutually exclusive.
+      // Turn sync off first so the same Claude turn is not auto-appended.
+      setLiveSyncEnabled(false);
+      try { localStorage.setItem(LIVE_SYNC_ENABLED_KEY, '0'); } catch {}
+      sseTriggerRef.current?.suspendFor(15000);
+      await viewAPI.ensureRightSlot('demo-a');
+
+      // ChatGPT / Gemini need CDP to see the conversation API response.
+      // First-time only — reload with cache bypass so estuary image
+      // bytes get captured.
+      if ((profile.id === 'chatgpt' || profile.id === 'gemini') && !cdpStartedRef.current) {
+        const r = await viewAPI.wbCdpStart(['/backend-api/', 'rpcids=']);
+        cdpStartedRef.current = !!r?.success;
+        if (cdpStartedRef.current) {
+          (webview as any).reloadIgnoringCache?.() ?? webview.reload();
+          await new Promise<void>(resolve => {
+            const onStop = () => { webview.removeEventListener('did-stop-loading', onStop); resolve(); };
+            webview.addEventListener('did-stop-loading', onStop);
+          });
+          await new Promise(r => setTimeout(r, 1500));
+        }
       }
 
-      const list = await viewAPI.noteList();
-      if (Array.isArray(list) && list.length > 0) {
-        const latest = (list[0] as { id: string }).id;
-        await viewAPI.noteOpenInEditor(latest);
-        console.log('[AIWebView Sync] Opened most-recent note:', latest);
+      let userMessage = '';
+      let markdown = '';
+
+      if (profile.id === 'claude') {
+        const conv = await extractClaudeConversation(webview);
+        if (!conv) return;
+        let aSeen = -1;
+        let pendingHuman = '';
+        for (const m of conv.messages) {
+          if (m.sender === 'human') pendingHuman = m.text;
+          else if (m.sender === 'assistant') {
+            aSeen++;
+            if (aSeen === msgIndex) {
+              userMessage = pendingHuman;
+              markdown = m.text;
+              break;
+            }
+            pendingHuman = '';
+          }
+        }
+        try {
+          await freezeViewport(webview);
+          markdown = await processClaudeArtifactsFull(webview, markdown, {
+            scopeSelector: '[data-krig-target="1"]',
+            preferredArtifactOrdinals: (ctx as MenuContext & { artifactOrdinal?: number | null }).artifactOrdinal != null
+              ? [(ctx as MenuContext & { artifactOrdinal?: number | null }).artifactOrdinal as number]
+              : undefined,
+          });
+        } finally {
+          await restoreViewport(webview);
+          await clearTargetMarker(webview);
+        }
+      } else if (profile.id === 'chatgpt') {
+        const c = await extractChatGPTContent(webview, viewAPI as any);
+        // Coalesce one user prompt + following tool/assistant messages
+        // into a single turn (DALL·E / Code Interpreter put images on
+        // tool messages; pair them with the next assistant).
+        type Turn = { user: string; text: string; fileIds: string[] };
+        const turns: Turn[] = [];
+        let cur: Turn | null = null;
+        let pendingUser = '';
+        let orphanFiles: string[] = [];
+        for (const m of c.messages) {
+          if (m.role === 'user' && m.text.trim()) {
+            if (!cur && orphanFiles.length > 0 && pendingUser) {
+              turns.push({ user: pendingUser, text: '', fileIds: orphanFiles });
+            }
+            pendingUser = m.text;
+            orphanFiles = [];
+            cur = null;
+          } else if (m.role === 'tool') {
+            for (const id of m.fileRefs) orphanFiles.push(id);
+          } else if (m.role === 'assistant') {
+            const hasText = m.text.trim().length > 0;
+            const hasFiles = m.fileRefs.length > 0 || orphanFiles.length > 0;
+            if (!hasText && !hasFiles) continue;
+            if (!cur) {
+              cur = { user: pendingUser, text: '', fileIds: [] };
+              turns.push(cur);
+              pendingUser = '';
+            }
+            if (hasText) cur.text = (cur.text ? cur.text + '\n\n' : '') + m.text;
+            for (const id of orphanFiles) cur.fileIds.push(id);
+            for (const id of m.fileRefs) cur.fileIds.push(id);
+            orphanFiles = [];
+          }
+        }
+        if (!cur && orphanFiles.length > 0 && pendingUser) {
+          turns.push({ user: pendingUser, text: '', fileIds: orphanFiles });
+        }
+        const t = turns[msgIndex];
+        if (t) {
+          userMessage = t.user;
+          markdown = t.text || '_[无文字内容]_';
+          const imgLines: string[] = [];
+          for (const fid of t.fileIds) {
+            const f = c.files[fid];
+            if (f?.dataUrl) imgLines.push(`![${f.fileId}](${f.dataUrl})`);
+          }
+          if (imgLines.length > 0) {
+            markdown = markdown.trimEnd() + '\n\n' + imgLines.join('\n\n');
+          }
+        }
+      } else if (profile.id === 'gemini') {
+        const c = await extractGeminiContent(webview, viewAPI as any);
+        const t = c.turns[msgIndex];
+        if (t) {
+          userMessage = t.userText;
+          markdown = t.markdown;
+          const imgLines: string[] = [];
+          for (const img of t.images) {
+            if (img.dataUrl) imgLines.push(`![](${img.dataUrl})`);
+          }
+          if (imgLines.length > 0) {
+            markdown = markdown.trimEnd() + '\n\n' + imgLines.join('\n\n');
+          }
+        }
+      }
+
+      if (!markdown.trim()) {
         return;
       }
 
-      // Library is empty — do nothing. Note view will show its empty
-      // state with a "new note" button for the user to start from.
-      console.log('[AIWebView Sync] No notes available; awaiting user new/open.');
-    })();
-
-    console.log('[AIWebView Sync] Sync mode started, polling for responses...');
-
-    // Listen for NoteView status broadcasts.
-    const unsubStatus = viewAPI.onMessage((msg: any) => {
-      if (msg.protocol === 'ai-sync' && msg.action === 'as:note-status') {
-        const open = !!msg.payload?.open;
-        const t = Number(msg.payload?.lastTypedAt) || 0;
-        noteOpenRef.current = open;
-        if (t > lastTypedAtRef.current) lastTypedAtRef.current = t;
-        setNoteOpen(open);
-      }
-    });
-
-    // Probe: ask any live NoteView to announce itself (handles case where
-    // NoteView mounted before sync engine started).
-    viewAPI.sendToOtherSlot({ protocol: 'ai-sync', action: 'as:probe', payload: null });
-
-    // Auto-start CDP once per sync session; ChatGPT/Gemini need it to observe
-    // the Service Worker / batchexecute traffic that page scripts can't see.
-    (async () => {
-      if (cdpStartedRef.current) return;
-      try {
-        const r = await viewAPI.wbCdpStart(['/backend-api/', 'rpcids=', '/api/organizations/']);
-        cdpStartedRef.current = !!r?.success;
-        console.log('[AIWebView Sync] CDP start:', r?.success, r?.error || '');
-      } catch (err) {
-        console.warn('[AIWebView Sync] CDP start failed:', err);
-      }
-    })();
-
-    const sendTurn = (payload: {
-      responseId: string;
-      index: number;
-      userMessage: string;
-      markdown: string;
-      serviceId: string;
-      serviceName: string;
-    }) => {
       viewAPI.sendToOtherSlot({
         protocol: 'ai-sync',
         action: 'as:append-turn',
         payload: {
           turn: {
-            index: payload.index,
-            userMessage: payload.userMessage,
-            markdown: payload.markdown,
+            index: msgIndex,
+            userMessage,
+            markdown,
             timestamp: Date.now(),
           },
           source: {
-            serviceId: payload.serviceId,
-            serviceName: payload.serviceName,
+            serviceId: profile.id,
+            serviceName: profile.name,
           },
         },
       });
-      setSyncCount(c => c + 1);
-    };
-
-    /** Get (or create) the synced-response-id set for a conversation. */
-    const getSyncedSet = (convId: string): Set<string> => {
-      let set = syncedResponsesRef.current.get(convId);
-      if (!set) {
-        set = new Set();
-        syncedResponsesRef.current.set(convId, set);
-      }
-      return set;
-    };
-
-    // Poll for new responses
-    const pollInterval = setInterval(async () => {
-      const webview = webviewRef.current;
-      if (!webview) return;
-
-      // Boundary: NoteView not open → pause (UI shows ⏸).
-      if (!noteOpenRef.current) return;
-      // Boundary: user typed within 500ms → defer so we don't interrupt them.
-      if (Date.now() - lastTypedAtRef.current < 500) return;
-      // Boundary: previous poll still running (e.g. Claude artifact probe takes
-      // up to 4 s, longer than the 2 s tick). Skip rather than race.
-      if (pollInFlightRef.current) return;
-      pollInFlightRef.current = true;
-
-      try {
-        const curUrl = webview.getURL?.() || '';
-        const detected = detectAIServiceByUrl(curUrl);
-        if (!detected) return;
-
-        if (detected.id === 'claude') {
-          await syncClaude(webview, detected.name);
-        } else if (detected.id === 'chatgpt') {
-          await syncChatGPT(webview, detected.name);
-        } else if (detected.id === 'gemini') {
-          await syncGemini(webview, detected.name);
-        }
-      } catch (err) {
-        console.warn('[AIWebView Sync] Error:', err);
-      } finally {
-        pollInFlightRef.current = false;
-      }
-    }, 2000);
-
-    async function syncChatGPT(webview: Electron.WebviewTag, serviceName: string) {
-      const c = await extractChatGPTContent(webview, viewAPI as any);
-      if (!c.conversationId || c.messages.length === 0) return;
-      const synced = getSyncedSet(c.conversationId);
-
-      // Walk messages in order; for each user→assistant pair not yet synced, send.
-      let pendingUser = '';
-      let turnIdx = synced.size;
-      for (const m of c.messages) {
-        if (m.role === 'user' && m.text.trim()) {
-          pendingUser = m.text.trim();
-        } else if (m.role === 'assistant' && m.text.trim() && pendingUser) {
-          if (!synced.has(m.id)) {
-            synced.add(m.id);
-            sendTurn({
-              responseId: m.id,
-              index: turnIdx++,
-              userMessage: pendingUser,
-              markdown: m.text,
-              serviceId: 'chatgpt',
-              serviceName,
-            });
-            console.log(`[AIWebView Sync/ChatGPT] Sent turn ${m.id}: ${m.text.length} chars`);
-          }
-          pendingUser = '';
-        }
-      }
+    } catch (err) {
+      console.warn('[AIWebView Extract] Failed:', err);
     }
+  }, []);
 
-    async function syncGemini(webview: Electron.WebviewTag, serviceName: string) {
-      const c = await extractGeminiContent(webview, viewAPI as any);
-      if (!c.conversationId || c.turns.length === 0) return;
-      const synced = getSyncedSet(c.conversationId);
+  const aiContextItems = useMemo<ContextMenuItem[]>(() => [
+    {
+      id: 'extract-to-note',
+      icon: '📥',
+      label: '提取到笔记',
+      visible: (ctx: MenuContext) => !!detectAIServiceByUrl(ctx.url),
+      onClick: async (ctx: MenuContext) => {
+        const profile = detectAIServiceByUrl(ctx.url);
+        if (!profile) return;
+        const target = await resolveMsgIndex(ctx.webview, ctx.x, ctx.y, profile.selectors.assistantMessage);
+        if (target.msgIndex < 0) {
+          console.warn('[AIWebView Extract] Right-click was not inside an assistant message');
+          return;
+        }
+        await extractTurnAt(
+          { ...ctx, artifactOrdinal: target.artifactOrdinal } as MenuContext & { artifactOrdinal?: number | null },
+          target.msgIndex,
+        );
+      },
+    },
+  ], [resolveMsgIndex, extractTurnAt]);
 
-      let turnIdx = synced.size;
-      for (const t of c.turns) {
-        if (synced.has(t.responseId)) continue;
-        if (!t.markdown.trim()) continue;
-        synced.add(t.responseId);
-        sendTurn({
-          responseId: t.responseId,
-          index: turnIdx++,
-          userMessage: t.userText,
-          markdown: t.markdown,
-          serviceId: 'gemini',
-          serviceName,
-        });
-        console.log(`[AIWebView Sync/Gemini] Sent turn ${t.responseId}: ${t.markdown.length} chars`);
-      }
+  // ── Live chat sync (opt-in toggle) ──
+  useEffect(() => {
+    if (!liveSyncEnabled) {
+      sseTriggerRef.current?.dispose();
+      sseTriggerRef.current = null;
+      return;
     }
-
-    async function syncClaude(webview: Electron.WebviewTag, serviceName: string) {
-      const curUrl = webview.getURL?.() || '';
-      if (!isClaudeConversationPage(curUrl)) return;
-
-      const apiResult = await extractLatestClaudeResponse(webview);
-      if (!apiResult || !apiResult.raw) return;
-
-      const conv = apiResult.raw;
-      const humanCount = conv.messages.filter(m => m.sender === 'human').length;
-
-      while (humanCount > lastSyncedCountRef.current) {
-        const idx = lastSyncedCountRef.current;
-
-        // Find the idx-th human message and its next assistant response
-        let humanFound = -1;
-        let humanMsg = '';
-        let assistantMsg = '';
-        for (let i = 0; i < conv.messages.length; i++) {
-          if (conv.messages[i].sender === 'human') humanFound++;
-          if (humanFound === idx && conv.messages[i].sender === 'human') {
-            humanMsg = conv.messages[i].text;
-            for (let j = i + 1; j < conv.messages.length; j++) {
-              if (conv.messages[j].sender === 'assistant') {
-                assistantMsg = conv.messages[j].text;
-                break;
-              }
-            }
-            break;
-          }
-        }
-
-        if (!assistantMsg) {
-          // Streaming not finished yet — wait for next poll
-          break;
-        }
-
-        // Replace Artifact placeholders: prefer captured postMessage
-        // source, fall back to callout for any that weren't captured.
-        const artifactCount = countArtifactPlaceholders(assistantMsg);
-        let finalMarkdown = assistantMsg;
-        if (artifactCount > 0) {
-          try { await webview.executeJavaScript(getArtifactPostMessageHookScript()); } catch {}
-
-          let versionSources: string[] = [];
-          for (let attempt = 0; attempt < 5; attempt++) {
-            const versions = await fetchClaudeArtifactVersions(webview);
-            if (versions && versions.length > 0) {
-              versionSources = versions
-                .map(v => extractArtifactVersionSource(v))
-                .filter((s): s is string => !!s);
-              if (versionSources.length > 0) break;
-            }
-            await new Promise(r => setTimeout(r, 800));
-          }
-
-          const captured = await readCapturedArtifactMessages(webview);
-          const capturedSources = collectArtifactSources(captured);
-          const sources = [...versionSources.slice().reverse(), ...capturedSources];
-          const filled = fillArtifactPlaceholders(assistantMsg, sources);
-          console.log(`[Claude/Artifact] versions=${versionSources.length} captured=${capturedSources.length}`);
-          finalMarkdown = filled.remaining > 0
-            ? replaceArtifactPlaceholders(filled.text, webview.getURL())
-            : filled.text;
-          console.log(`[Claude/Artifact] Response #${idx}: ${artifactCount} placeholder(s), filled ${filled.filled}, remaining ${filled.remaining}`);
-        }
-
-        console.log(`[AIWebView Sync/Claude] Response #${idx}: ${finalMarkdown.length} chars`);
-
-        sendTurn({
-          responseId: `claude-${idx}`,
-          index: idx,
-          userMessage: humanMsg,
-          markdown: finalMarkdown,
-          serviceId: 'claude',
-          serviceName,
-        });
-        lastSyncedCountRef.current = idx + 1;
-      }
-    }
-
+    const handle = startSseTrigger(webviewRef);
+    sseTriggerRef.current = handle;
     return () => {
-      clearInterval(pollInterval);
-      unsubStatus();
+      if (sseTriggerRef.current === handle) sseTriggerRef.current = null;
+      handle.dispose();
     };
-  }, [isSyncMode, syncEnabled, currentService]);
+  }, [liveSyncEnabled]);
 
-  // ── 点击外部关闭菜单 ──
+  // ── Click outside service menu to close ──
   useEffect(() => {
     if (!showServiceMenu) return;
     const handler = (e: MouseEvent) => {
@@ -436,13 +494,12 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
     return () => document.removeEventListener('mousedown', handler);
   }, [showServiceMenu]);
 
-  // ── AI Workflow: handle AI_INJECT_AND_SEND ──
+  // ── AI_INJECT_AND_SEND (legacy "ask AI from Note" flow) ──
   useEffect(() => {
     const unsub = viewAPI.onAIInjectAndSend?.(async (params: {
       serviceId: string; prompt: string; noteId: string; thoughtId: string; responseChannel: string;
     }) => {
       let webview = webviewRef.current;
-      // Wait for webview to be ready
       for (let i = 0; i < 10 && !webview; i++) {
         await new Promise(r => setTimeout(r, 300));
         webview = webviewRef.current;
@@ -455,30 +512,23 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
       try {
         const profile = getAIServiceProfile(params.serviceId as AIServiceId);
 
-        // 1. Navigate to AI service if not already there
         const curUrl = webview.getURL?.() || '';
         if (!new RegExp(profile.urlPattern).test(curUrl)) {
           setAiStatus('injecting');
-          console.log(`[AIWebView] Navigating to ${profile.newChatUrl}`);
           webview.loadURL(profile.newChatUrl);
           setCurrentService(params.serviceId as AIServiceId);
-
           await new Promise<void>((resolve) => {
             const onLoad = () => { webview!.removeEventListener('did-finish-load', onLoad); resolve(); };
             webview!.addEventListener('did-finish-load', onLoad);
           });
-          // SPA hydration
           await new Promise(r => setTimeout(r, 3000));
         }
 
-        // 2. Inject SSE capture
         setAiStatus('injecting');
         const sseScript = getSSECaptureScript(profile.id, profile.intercept.endpointPattern);
-        const hookResult = await webview.executeJavaScript(sseScript);
-        console.log(`[AIWebView] SSE hook: ${hookResult}`);
+        await webview.executeJavaScript(sseScript);
         await webview.executeJavaScript('window.__krig_sse_responses = [];');
 
-        // 3. Paste prompt
         const escaped = params.prompt.replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$/g, '\\$');
         await webview.executeJavaScript(`(function() {
           var selector = ${JSON.stringify(profile.selectors.inputBox)};
@@ -503,7 +553,6 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
           }
         })()`);
 
-        // 4. Click send
         await new Promise(r => setTimeout(r, 500));
         await webview.executeJavaScript(`(function() {
           var selector = ${JSON.stringify(profile.selectors.sendButton)};
@@ -513,34 +562,24 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
           if (btn) btn.click();
         })()`);
 
-        // 5. Poll for response
         setAiStatus('waiting');
-        console.log(`[AIWebView] Waiting for AI response...`);
         const startTime = Date.now();
         while (Date.now() - startTime < 90_000) {
           await new Promise(r => setTimeout(r, 1000));
           const status = await webview.executeJavaScript(`(function() {
             var r = window.__krig_sse_responses || [];
             var l = r.length > 0 ? r[r.length - 1] : null;
-            return { count: r.length, streaming: l ? l.streaming : false, hooked: !!window.__krig_sse_hooked };
+            return { count: r.length, streaming: l ? l.streaming : false };
           })()`);
-
-          const elapsed = Math.round((Date.now() - startTime) / 1000);
-          if (elapsed % 5 === 0) {
-            console.log(`[AIWebView] Poll ${elapsed}s: responses=${status.count}, streaming=${status.streaming}, hooked=${status.hooked}`);
-          }
 
           if (status.count > 0 && !status.streaming) {
             setAiStatus('capturing');
-
-            // SSE markdown
             const sseMarkdown = await webview.executeJavaScript(`(function() {
               var r = window.__krig_sse_responses || [];
               for (var i = r.length - 1; i >= 0; i--) { if (!r[i].streaming && r[i].markdown.length > 0) return r[i].markdown; }
               return null;
             })()`);
 
-            // DOM markdown (complement — captures images/artifacts SSE misses)
             const domScript2 = getDomToMarkdownScript();
             await webview.executeJavaScript(domScript2);
             const domMd = await webview.executeJavaScript(`(function() {
@@ -556,7 +595,6 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
               return domToMarkdown(all[all.length - 1]);
             })()`);
 
-            // Merge: SSE + DOM images
             let finalMd = sseMarkdown || domMd || '';
             if (sseMarkdown && domMd) {
               const sseImgs = new Set((sseMarkdown.match(/!\[([^\]]*)\]\(([^)]+)\)/g) || []).map((m: string) => m.match(/\(([^)]+)\)/)?.[1]).filter(Boolean));
@@ -564,13 +602,12 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
               if (extraImgs.length > 0) finalMd += '\n\n' + extraImgs.join('\n\n');
             }
 
-            console.log(`[AIWebView] Captured: SSE=${sseMarkdown?.length ?? 0}, DOM=${domMd?.length ?? 0}, final=${finalMd.length}`);
             setAiStatus('idle');
             viewAPI.aiSendResponse?.(params.responseChannel, { success: true, markdown: finalMd });
             return;
           }
         }
-        // Timeout — try DOM extraction as last resort
+        // Timeout fallback
         setAiStatus('capturing');
         const domScript3 = getDomToMarkdownScript();
         await webview.executeJavaScript(domScript3);
@@ -588,14 +625,12 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
         })()`);
         setAiStatus('idle');
         if (timeoutDomMd) {
-          console.log(`[AIWebView] SSE timeout but DOM extracted: ${timeoutDomMd.length} chars`);
           viewAPI.aiSendResponse?.(params.responseChannel, { success: true, markdown: timeoutDomMd });
         } else {
-          viewAPI.aiSendResponse?.(params.responseChannel, { success: false, error: 'AI response timed out (SSE + DOM both empty)' });
+          viewAPI.aiSendResponse?.(params.responseChannel, { success: false, error: 'AI response timed out' });
         }
       } catch (err) {
         setAiStatus('idle');
-        console.error('[AIWebView] Error:', err);
         viewAPI.aiSendResponse?.(params.responseChannel, { success: false, error: String(err) });
       }
     });
@@ -613,7 +648,7 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
 
   return (
     <div className="web-view">
-      {/* AI Toolbar — 简化版，无地址栏 */}
+      {/* AI Toolbar — no URL bar */}
       <div className="web-toolbar" style={{ display: 'flex', alignItems: 'center', padding: '4px 8px', gap: 8 }}>
         {/* Service selector */}
         <div ref={menuRef} style={{ position: 'relative' }}>
@@ -652,33 +687,37 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
           )}
         </div>
 
-        {/* Sync status (only in ai-sync mode) */}
-        {isSyncMode && (
-          <button
-            style={{
-              background: !syncEnabled ? '#555' : (noteOpen ? '#1b5e20' : '#8a6d3b'),
-              border: 'none', borderRadius: 4, color: '#fff',
-              fontSize: 11, padding: '3px 8px', cursor: 'pointer',
-              display: 'flex', alignItems: 'center', gap: 4,
-            }}
-            onClick={() => setSyncEnabled(!syncEnabled)}
-            title={!syncEnabled ? '恢复同步' : noteOpen ? '暂停同步' : '等待 NoteView 打开'}
-          >
-            <span>{!syncEnabled ? '⏸' : noteOpen ? '●' : '⏸'}</span>
-            <span>
-              {!syncEnabled ? '已暂停' : noteOpen ? `同步中 (${syncCount})` : `等待笔记 (${syncCount})`}
-            </span>
-          </button>
-        )}
-
         {/* Loading / AI status */}
         {loading && <span style={{ color: '#888', fontSize: 12 }}>加载中...</span>}
         {statusText && (
           <span style={{ color: '#6366f1', fontSize: 12, fontWeight: 500 }}>{statusText}</span>
         )}
-
+        <button
+          style={{
+            background: liveSyncEnabled ? '#1f4b2b' : '#333',
+            border: `1px solid ${liveSyncEnabled ? '#2f7d46' : '#555'}`,
+            borderRadius: 6,
+            color: liveSyncEnabled ? '#d9ffe3' : '#e8eaed',
+            fontSize: 13,
+            padding: '4px 12px',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+          }}
+          onClick={() => {
+            const next = !liveSyncEnabled;
+            setLiveSyncEnabled(next);
+            try { localStorage.setItem(LIVE_SYNC_ENABLED_KEY, next ? '1' : '0'); } catch {}
+          }}
+          title={liveSyncEnabled ? '关闭聊天自动同步到 Note' : '开启聊天自动同步到 Note'}
+        >
+          聊天同步
+        </button>
 
         <div style={{ flex: 1 }} />
+
+        {/* Open view in right slot (Note / eBook / Web / Thought) */}
+        <SlotToggle />
 
         {/* Reload */}
         <button
@@ -698,19 +737,17 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
           ×
         </button>
       </div>
-
       {/* AI webview content */}
       <div className="web-view__content" style={{ position: 'relative' }}>
         <webview
           ref={setupWebview}
           src={initialUrl}
           className="web-view__webview"
-          partition="persist:web"
+          partition={WEBVIEW_PARTITION}
           // @ts-ignore
           allowpopups="true"
         />
-
-
+        <WebViewContextMenu webviewRef={webviewRef} items={aiContextItems} />
       </div>
     </div>
   );

@@ -5,6 +5,8 @@ import { SYNC_ACTION } from '../sync/sync-protocol';
 import { getSSECaptureScript } from '../../web-bridge/injection/inject-scripts/sse-capture';
 import { getAIServiceProfile, detectAIServiceByUrl } from '../../../shared/types/ai-service-types';
 import type { AIServiceId } from '../../../shared/types/ai-service-types';
+import { WEBVIEW_PARTITION } from '../../../shared/constants/webview-partition';
+import { WebViewContextMenu } from '../context-menu';
 import '../web.css';
 
 declare const viewAPI: {
@@ -350,15 +352,16 @@ export function WebView() {
         onBookmarkToggle={handleBookmarkToggle}
         onCloseSlot={() => (viewAPI as any).closeSlot()}
       />
-      <div className="web-view__content">
+      <div className="web-view__content" style={{ position: 'relative' }}>
         <webview
           ref={setupWebview}
           src={DEFAULT_URL}
           className="web-view__webview"
-          partition="persist:web"
+          partition={WEBVIEW_PARTITION}
           // @ts-ignore
           allowpopups="true"
         />
+        <WebViewContextMenu webviewRef={webviewRef} />
       </div>
     </div>
   );

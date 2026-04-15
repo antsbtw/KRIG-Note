@@ -143,12 +143,10 @@ export function NoteView() {
 
     // 1) 接收来自 eBook 的 anchor-sync → 滚动到对应 fromPage
     const unsubMessage = viewAPI.onMessage((message: any) => {
-      console.log('[NoteView:anchor] onMessage received:', JSON.stringify(message));
       if (message?.action !== 'anchor-sync') return;
       const { anchorType, pdfPage } = message.payload || {};
       if (anchorType === 'pdf-page' && typeof pdfPage === 'number') {
         const anchors = document.querySelectorAll<HTMLElement>('[data-from-page]');
-        console.log(`[NoteView:anchor] Looking for pdfPage=${pdfPage}, found ${anchors.length} fromPage elements`);
         let target: HTMLElement | null = null;
         let closestDist = Infinity;
         for (const el of anchors) {
@@ -160,10 +158,7 @@ export function NoteView() {
           }
         }
         if (target) {
-          console.log(`[NoteView:anchor] Scrolling to fromPage, closest dist=${closestDist}`);
           target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        } else {
-          console.log('[NoteView:anchor] No matching fromPage found');
         }
       }
     });
@@ -174,7 +169,6 @@ export function NoteView() {
       if (scrollTimer) clearTimeout(scrollTimer);
       scrollTimer = setTimeout(() => {
         const anchors = document.querySelectorAll<HTMLElement>('[data-from-page]');
-        console.log(`[NoteView:anchor] scroll handler: ${anchors.length} fromPages, mouseInView=${mouseInView}`);
         if (anchors.length === 0) return;
 
         let bestPage = 0;
@@ -188,9 +182,7 @@ export function NoteView() {
             }
           }
         }
-        console.log(`[NoteView:anchor] bestPage=${bestPage}, bestTop=${bestTop}`);
         if (bestPage > 0) {
-          console.log(`[NoteView:anchor] Sending anchor-sync pdfPage=${bestPage}`);
           viewAPI.sendToOtherSlot({
             protocol: '',
             action: 'anchor-sync',
@@ -206,12 +198,6 @@ export function NoteView() {
     const bindTimer = setTimeout(() => {
       const pm = document.querySelector('.ProseMirror');
       scrollTarget = pm?.parentElement?.parentElement ?? null;
-      console.log('[NoteView:anchor] Binding scroll listener:', {
-        pm: !!pm,
-        scrollTarget: scrollTarget?.tagName,
-        scrollTargetClass: scrollTarget?.className,
-        overflow: scrollTarget ? getComputedStyle(scrollTarget).overflow : 'N/A',
-      });
       scrollTarget?.addEventListener('scroll', handleScroll);
     }, 500);
 
