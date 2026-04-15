@@ -14,7 +14,7 @@ import {
   detectAIServiceByUrl,
 } from '../../../shared/types/ai-service-types';
 import type { AIServiceId } from '../../../shared/types/ai-service-types';
-import { processClaudeArtifactsFull } from '../../ai-note-bridge';
+import { processClaudeArtifactsFull, startSseTrigger } from '../../ai-note-bridge';
 import '../web.css';
 
 declare const viewAPI: {
@@ -323,6 +323,17 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
       },
     },
   ], [resolveMsgIndex, extractTurnAt]);
+
+  // ── Live chat sync (auto, no toggle) ──
+  // Fires whenever a Claude SSE response finishes (message_stop). If
+  // the right-side NoteView is mounted, the just-finished turn is
+  // forwarded as-is (Artifact placeholders become a "click Claude's
+  // copy button" callout — no CDP / no mouse simulation, so we never
+  // interfere with the user's reading).
+  useEffect(() => {
+    const handle = startSseTrigger(webviewRef);
+    return handle.dispose;
+  }, []);
 
   // ── Click outside service menu to close ──
   useEffect(() => {

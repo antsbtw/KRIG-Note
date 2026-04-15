@@ -23,3 +23,6 @@ export {
   processClaudeArtifactsLive,
   processClaudeArtifactsFull,
 } from './pipeline/claude-artifacts';
+
+export { startSseTrigger } from './triggers/sse-trigger';
+export type { SseTriggerHandle } from './triggers/sse-trigger';
