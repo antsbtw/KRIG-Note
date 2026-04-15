@@ -27,19 +27,33 @@
 import { ipcRenderer } from 'electron';
 
 // ─── CSP bypass (kept from prior version) ───────────────────────────
-new MutationObserver((mutations) => {
-  for (const { addedNodes } of mutations) {
-    for (const node of addedNodes) {
-      if (
-        node instanceof HTMLElement &&
-        node.nodeName === 'META' &&
-        (node as HTMLMetaElement).httpEquiv?.toLowerCase() === 'content-security-policy'
-      ) {
-        node.remove();
+// Preload runs before the document exists, so defer observer setup
+// until the document root is available. Without this guard the
+// preload throws a TypeError on `observe(null, ...)` and Chromium
+// silently drops the rest of the script — including the contextmenu
+// listeners below.
+function installCspBypass(): void {
+  const root = document.head ?? document.documentElement;
+  if (!root) return;
+  new MutationObserver((mutations) => {
+    for (const { addedNodes } of mutations) {
+      for (const node of addedNodes) {
+        if (
+          node instanceof HTMLElement &&
+          node.nodeName === 'META' &&
+          (node as HTMLMetaElement).httpEquiv?.toLowerCase() === 'content-security-policy'
+        ) {
+          node.remove();
+        }
       }
     }
-  }
-}).observe(document.head ?? document.documentElement, { childList: true });
+  }).observe(root, { childList: true });
+}
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', installCspBypass, { once: true });
+} else {
+  installCspBypass();
+}
 
 // ─── Context-menu signal ────────────────────────────────────────────
 //

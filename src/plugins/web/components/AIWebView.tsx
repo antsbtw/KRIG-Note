@@ -95,6 +95,110 @@ function saveSyncEnabled(serviceId: AIServiceId, enabled: boolean): void {
   try { localStorage.setItem(SYNC_ENABLED_KEY_PREFIX + serviceId, enabled ? '1' : '0'); } catch {}
 }
 
+/**
+ * Resolve Claude Artifact placeholders inside an assistant message.
+ *
+ * Three layers of fill, in order of fidelity:
+ *   1. Versions API + postMessage source (real markup when exposed)
+ *   2. Copy-to-clipboard rendered PNG via CDP mouse simulation
+ *   3. Friendly "view in Claude" callout (last resort)
+ *
+ * Shared by both the live sync engine and the right-click extract path
+ * so Artifacts behave identically regardless of trigger.
+ */
+async function processClaudeArtifacts(
+  webview: Electron.WebviewTag,
+  assistantMsg: string,
+): Promise<string> {
+  const artifactCount = countArtifactPlaceholders(assistantMsg);
+  if (artifactCount === 0) return assistantMsg;
+
+  try { await webview.executeJavaScript(getArtifactPostMessageHookScript()); } catch {}
+
+  let versionSources: string[] = [];
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const versions = await fetchClaudeArtifactVersions(webview);
+    if (versions && versions.length > 0) {
+      versionSources = versions
+        .map(v => extractArtifactVersionSource(v))
+        .filter((s): s is string => !!s);
+      if (versionSources.length > 0) break;
+    }
+    await new Promise(r => setTimeout(r, 800));
+  }
+
+  const captured = await readCapturedArtifactMessages(webview);
+  const capturedSources = collectArtifactSources(captured);
+  const sources = [...versionSources.slice().reverse(), ...capturedSources];
+  const filled = fillArtifactPlaceholders(assistantMsg, sources);
+  console.log(`[Claude/Artifact] versions=${versionSources.length} captured=${capturedSources.length} filled=${filled.filled}/${artifactCount}`);
+  let out = filled.text;
+
+  if (filled.remaining > 0) {
+    // Claude lazy-loads artifact iframes (often outside the viewport).
+    // First nudge any artifact host elements into view to trigger mount,
+    // then poll for iframes appearing in the DOM.
+    const expectedIframes = filled.remaining;
+    try {
+      await webview.executeJavaScript(`
+        (function() {
+          var hosts = document.querySelectorAll('[class*="artifact"], [data-testid*="artifact"]');
+          for (var i = 0; i < hosts.length; i++) hosts[i].scrollIntoView({ block: 'center', behavior: 'instant' });
+        })()
+      `).catch(() => {});
+    } catch {}
+    let lastFound = 0;
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const found = await webview.executeJavaScript(
+        'document.querySelectorAll(\'iframe[src*="claudemcpcontent"], iframe[src*="claudeusercontent"]\').length',
+      ).catch(() => 0);
+      lastFound = typeof found === 'number' ? found : 0;
+      if (lastFound >= expectedIframes) break;
+      await new Promise(r => setTimeout(r, 500));
+    }
+    console.log(`[Claude/Artifact] iframe wait: found=${lastFound} expected=${expectedIframes}`);
+
+    try {
+      const artifacts = await extractAllClaudeArtifacts(
+        webview,
+        viewAPI as any,
+        { image: true },
+      );
+      const rawImgs = artifacts.map(a => a.image?.dataUrl).filter((s): s is string => !!s);
+      // Dedupe by dataUrl: side-panel + inline + fullscreen often render
+      // the same artifact 2–3 times with identical PNG output. Keep a
+      // single copy so multi-placeholder messages don't end up with the
+      // same image in every slot.
+      const seenImgs = new Set<string>();
+      const imgs: string[] = [];
+      for (const u of rawImgs) {
+        if (seenImgs.has(u)) continue;
+        seenImgs.add(u);
+        imgs.push(u);
+      }
+      console.log(`[Claude/Artifact] CDP image capture: ${imgs.length} unique image(s) (raw=${rawImgs.length}) for ${expectedIframes} expected iframe(s); descriptors=${artifacts.length}`);
+      for (let i = 0; i < artifacts.length; i++) {
+        const a = artifacts[i];
+        console.log(`  descriptor[${i}] src=${a.iframeSrc?.slice(0, 80)} hasImage=${!!a.image} isFullscreen=${a.isFullscreen}`);
+      }
+      if (imgs.length > 0) {
+        const imgFill = fillArtifactPlaceholdersWithImages(out, imgs);
+        out = imgFill.text;
+        console.log(`[Claude/Artifact] image fallback filled ${imgFill.filled}/${imgs.length}, remaining ${imgFill.remaining}`);
+        if (imgFill.remaining > 0) {
+          out = replaceArtifactPlaceholders(out, webview.getURL());
+        }
+      } else {
+        out = replaceArtifactPlaceholders(out, webview.getURL());
+      }
+    } catch (err) {
+      console.warn('[Claude/Artifact] image fallback failed:', err);
+      out = replaceArtifactPlaceholders(out, webview.getURL());
+    }
+  }
+  return out;
+}
+
 export function AIWebView({ workModeId = '' }: AIWebViewProps) {
   const isSyncMode = workModeId === 'ai-sync';
   const webviewRef = useRef<Electron.WebviewTag | null>(null);
@@ -271,6 +375,8 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
             pendingHuman = '';
           }
         }
+        // Resolve Claude Artifact placeholders (same pipeline as sync).
+        markdown = await processClaudeArtifacts(webview, markdown);
       } else if (profile.id === 'chatgpt') {
         const c = await extractChatGPTContent(webview, viewAPI as any);
         console.log('[AIWebView Extract/ChatGPT] convId=', c.conversationId,
@@ -684,56 +790,7 @@ export function AIWebView({ workModeId = '' }: AIWebViewProps) {
 
         const idx = turnIdx;
 
-        // Replace Artifact placeholders: prefer captured postMessage
-        // source, fall back to callout for any that weren't captured.
-        const artifactCount = countArtifactPlaceholders(assistantMsg);
-        let finalMarkdown = assistantMsg;
-        if (artifactCount > 0) {
-          try { await webview.executeJavaScript(getArtifactPostMessageHookScript()); } catch {}
-
-          let versionSources: string[] = [];
-          for (let attempt = 0; attempt < 5; attempt++) {
-            const versions = await fetchClaudeArtifactVersions(webview);
-            if (versions && versions.length > 0) {
-              versionSources = versions
-                .map(v => extractArtifactVersionSource(v))
-                .filter((s): s is string => !!s);
-              if (versionSources.length > 0) break;
-            }
-            await new Promise(r => setTimeout(r, 800));
-          }
-
-          const captured = await readCapturedArtifactMessages(webview);
-          const capturedSources = collectArtifactSources(captured);
-          const sources = [...versionSources.slice().reverse(), ...capturedSources];
-          const filled = fillArtifactPlaceholders(assistantMsg, sources);
-          console.log(`[Claude/Artifact] versions=${versionSources.length} captured=${capturedSources.length}`);
-          finalMarkdown = filled.text;
-
-          // Remaining placeholders couldn't be filled from source — fall
-          // back to rendered PNG via the Copy-to-clipboard extractor so
-          // the note at least shows the artifact visually.
-          if (filled.remaining > 0) {
-            try {
-              const artifacts = await extractAllClaudeArtifacts(webview, viewAPI as any, { image: true });
-              const imgs = artifacts.map(a => a.image?.dataUrl).filter((s): s is string => !!s);
-              if (imgs.length > 0) {
-                const imgFill = fillArtifactPlaceholdersWithImages(finalMarkdown, imgs);
-                finalMarkdown = imgFill.text;
-                console.log(`[Claude/Artifact] image fallback filled ${imgFill.filled}/${imgs.length}, remaining ${imgFill.remaining}`);
-                if (imgFill.remaining > 0) {
-                  finalMarkdown = replaceArtifactPlaceholders(finalMarkdown, webview.getURL());
-                }
-              } else {
-                finalMarkdown = replaceArtifactPlaceholders(finalMarkdown, webview.getURL());
-              }
-            } catch (err) {
-              console.warn('[Claude/Artifact] image fallback failed:', err);
-              finalMarkdown = replaceArtifactPlaceholders(finalMarkdown, webview.getURL());
-            }
-          }
-          console.log(`[Claude/Artifact] Response #${idx}: ${artifactCount} placeholder(s), filled ${filled.filled}, remaining ${filled.remaining}`);
-        }
+        const finalMarkdown = await processClaudeArtifacts(webview, assistantMsg);
 
         console.log(`[AIWebView Sync/Claude] Response #${idx}: ${finalMarkdown.length} chars`);
 
