@@ -14,6 +14,7 @@ import {
   detectAIServiceByUrl,
 } from '../../../shared/types/ai-service-types';
 import type { AIServiceId } from '../../../shared/types/ai-service-types';
+import { WEBVIEW_PARTITION } from '../../../shared/constants/webview-partition';
 import { processClaudeArtifactsFull, startSseTrigger } from '../../ai-note-bridge';
 import '../web.css';
 
@@ -59,7 +60,13 @@ interface AIWebViewProps {
   workModeId?: string;
 }
 
+interface ClaudeRightClickTarget {
+  msgIndex: number;
+  artifactOrdinal: number | null;
+}
+
 const LAST_SERVICE_KEY = 'krig.ai.lastService';
+const LIVE_SYNC_ENABLED_KEY = 'krig.ai.liveSync.enabled';
 
 /** Read the last-used AI service from localStorage; fall back to default if missing/invalid. */
 function loadLastService(): AIServiceId {
@@ -72,6 +79,14 @@ function loadLastService(): AIServiceId {
   return DEFAULT_AI_SERVICE;
 }
 
+function loadLiveSyncEnabled(): boolean {
+  try {
+    return localStorage.getItem(LIVE_SYNC_ENABLED_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
 export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
   void _workModeId; // workModeId is kept for prop-API stability; not used yet.
   const webviewRef = useRef<Electron.WebviewTag | null>(null);
@@ -79,6 +94,7 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
   const [loading, setLoading] = useState(true);
   const [showServiceMenu, setShowServiceMenu] = useState(false);
   const [aiStatus, setAiStatus] = useState<'idle' | 'injecting' | 'waiting' | 'capturing'>('idle');
+  const [liveSyncEnabled, setLiveSyncEnabled] = useState<boolean>(loadLiveSyncEnabled);
   const menuRef = useRef<HTMLDivElement>(null);
 
   const initialUrl = getAIServiceProfile(currentService).newChatUrl;
@@ -87,7 +103,6 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
   const setupWebview = useCallback((el: Electron.WebviewTag | null) => {
     if (!el || webviewRef.current === el) return;
     webviewRef.current = el;
-
     el.addEventListener('did-start-loading', () => setLoading(true));
     el.addEventListener('did-stop-loading', () => setLoading(false));
 
@@ -128,12 +143,22 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
   // ── Right-click "提取到笔记" item ──
   // Resolve the assistantMessage index at the click coordinates by
   // asking the guest page itself (elementFromPoint + closest).
+  /**
+   * Resolve the assistant message at (x, y) and:
+   *   1. return its ordinal among currently-mounted `.font-claude-response`
+   *      nodes (used to pick the matching API message)
+   *   2. tag the hit element with `data-krig-target="1"` so downstream
+   *      scope-based iframe collection can find it even after the caller
+   *      scrolls or the DOM reshuffles
+   *
+   * Caller must call `clearTargetMarker` after done.
+   */
   const resolveMsgIndex = useCallback(async (
     webview: Electron.WebviewTag,
     x: number,
     y: number,
     assistantSelector: string,
-  ): Promise<number> => {
+  ): Promise<ClaudeRightClickTarget> => {
     const script = `(function() {
       var sel = ${JSON.stringify(assistantSelector)};
       var parts = sel.split(',').map(function(s) { return s.trim(); });
@@ -142,23 +167,124 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
       for (var i = 0; i < parts.length && !hit; i++) {
         hit = el && el.closest ? el.closest(parts[i]) : null;
       }
-      if (!hit) return -1;
+      if (!hit) return { index: -1, preview: '', total: 0, artifactOrdinal: null };
       var list = [];
       for (var j = 0; j < parts.length; j++) {
         var nodes = document.querySelectorAll(parts[j]);
         for (var k = 0; k < nodes.length; k++) list.push(nodes[k]);
       }
-      return list.indexOf(hit);
+      // Clear any stale marker + tag the newly-hit node.
+      var stale = document.querySelectorAll('[data-krig-target]');
+      for (var s = 0; s < stale.length; s++) {
+        stale[s].removeAttribute('data-krig-target');
+        stale[s].removeAttribute('data-krig-click-x');
+        stale[s].removeAttribute('data-krig-click-y');
+      }
+      hit.setAttribute('data-krig-target', '1');
+      hit.setAttribute('data-krig-click-x', String(${x}));
+      hit.setAttribute('data-krig-click-y', String(${y}));
+      var cards = Array.from(document.querySelectorAll('[class*="group/artifact-block"]'));
+      var allIframes = Array.from(document.querySelectorAll('iframe[src*="claudemcpcontent"]'));
+      var standaloneIframes = allIframes.filter(function(f) { return !f.closest('[class*="group/artifact-block"]'); });
+      var merged = cards.map(function(node) { return { form: 'card', el: node }; })
+        .concat(standaloneIframes.map(function(node) { return { form: 'iframe', el: node }; }));
+      merged.sort(function(a, b) {
+        var rel = a.el.compareDocumentPosition(b.el);
+        if (rel & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+        if (rel & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+        return 0;
+      });
+      var artifactEl = null;
+      if (el) {
+        if (el.tagName === 'IFRAME' && String(el.src || '').indexOf('claudemcpcontent') >= 0) artifactEl = el;
+        if (!artifactEl && el.closest) artifactEl = el.closest('[class*="group/artifact-block"]');
+        if (!artifactEl) {
+          var localIframe = hit.querySelector('iframe[src*="claudemcpcontent"]');
+          if (localIframe) artifactEl = localIframe;
+        }
+      }
+      var artifactOrdinal = null;
+      if (artifactEl) {
+        for (var a = 0; a < merged.length; a++) {
+          if (merged[a].el === artifactEl) { artifactOrdinal = a; break; }
+        }
+      }
+      var text = (hit.innerText || hit.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 160);
+      return { index: list.indexOf(hit), preview: text, total: list.length, artifactOrdinal: artifactOrdinal };
     })()`;
     try {
       const r = await webview.executeJavaScript(script);
-      return typeof r === 'number' ? r : -1;
+      if (r && typeof r.index === 'number') {
+        return {
+          msgIndex: r.index,
+          artifactOrdinal: typeof r.artifactOrdinal === 'number' ? r.artifactOrdinal : null,
+        };
+      }
+      return { msgIndex: -1, artifactOrdinal: null };
     } catch {
-      return -1;
+      return { msgIndex: -1, artifactOrdinal: null };
     }
   }, []);
 
+  const clearTargetMarker = useCallback(async (webview: Electron.WebviewTag) => {
+    try {
+      await webview.executeJavaScript(
+        `(function(){var s=document.querySelectorAll('[data-krig-target]');for(var i=0;i<s.length;i++){s[i].removeAttribute('data-krig-target');s[i].removeAttribute('data-krig-click-x');s[i].removeAttribute('data-krig-click-y');}})()`,
+      );
+    } catch {}
+  }, []);
+
+  const freezeViewport = useCallback(async (webview: Electron.WebviewTag) => {
+    try {
+      await webview.executeJavaScript(`
+        (function() {
+          if (window.__krigFreezeViewport) return;
+          var sx = window.scrollX || window.pageXOffset || 0;
+          var sy = window.scrollY || window.pageYOffset || 0;
+          var orig = {
+            scrollTo: window.scrollTo,
+            scrollBy: window.scrollBy,
+            scrollIntoView: Element.prototype.scrollIntoView,
+          };
+          window.__krigFreezeViewport = { sx: sx, sy: sy, orig: orig };
+          window.scrollTo = function() {};
+          window.scrollBy = function() {};
+          Element.prototype.scrollIntoView = function() {};
+          var root = document.scrollingElement || document.documentElement || document.body;
+          if (root) root.style.scrollBehavior = 'auto';
+          document.documentElement.style.overscrollBehavior = 'none';
+          document.body.style.overscrollBehavior = 'none';
+          document.documentElement.style.overflow = 'hidden';
+          document.body.style.overflow = 'hidden';
+          window.addEventListener('scroll', function() { orig.scrollTo.call(window, sx, sy); }, true);
+          orig.scrollTo.call(window, sx, sy);
+        })()
+      `).catch(() => {});
+    } catch {}
+  }, []);
+
+  const restoreViewport = useCallback(async (webview: Electron.WebviewTag) => {
+    try {
+      await webview.executeJavaScript(`
+        (function() {
+          var frozen = window.__krigFreezeViewport;
+          if (!frozen) return;
+          window.scrollTo = frozen.orig.scrollTo;
+          window.scrollBy = frozen.orig.scrollBy;
+          Element.prototype.scrollIntoView = frozen.orig.scrollIntoView;
+          document.documentElement.style.overscrollBehavior = '';
+          document.body.style.overscrollBehavior = '';
+          document.documentElement.style.overflow = '';
+          document.body.style.overflow = '';
+          frozen.orig.scrollTo.call(window, frozen.sx, frozen.sy);
+          delete window.__krigFreezeViewport;
+        })()
+      `).catch(() => {});
+    } catch {}
+  }, []);
+
   const cdpStartedRef = useRef(false);
+  const sseTriggerRef = useRef<ReturnType<typeof startSseTrigger> | null>(null);
 
   /**
    * Extract one assistant turn (by DOM index) and emit it as
@@ -172,6 +298,11 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
     if (!profile) return;
 
     try {
+      // Manual extraction and live chat sync are mutually exclusive.
+      // Turn sync off first so the same Claude turn is not auto-appended.
+      setLiveSyncEnabled(false);
+      try { localStorage.setItem(LIVE_SYNC_ENABLED_KEY, '0'); } catch {}
+      sseTriggerRef.current?.suspendFor(15000);
       await viewAPI.ensureRightSlot('demo-a');
 
       // ChatGPT / Gemini need CDP to see the conversation API response.
@@ -210,7 +341,18 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
             pendingHuman = '';
           }
         }
-        markdown = await processClaudeArtifactsFull(webview, markdown);
+        try {
+          await freezeViewport(webview);
+          markdown = await processClaudeArtifactsFull(webview, markdown, {
+            scopeSelector: '[data-krig-target="1"]',
+            preferredArtifactOrdinals: (ctx as MenuContext & { artifactOrdinal?: number | null }).artifactOrdinal != null
+              ? [(ctx as MenuContext & { artifactOrdinal?: number | null }).artifactOrdinal as number]
+              : undefined,
+          });
+        } finally {
+          await restoreViewport(webview);
+          await clearTargetMarker(webview);
+        }
       } else if (profile.id === 'chatgpt') {
         const c = await extractChatGPTContent(webview, viewAPI as any);
         // Coalesce one user prompt + following tool/assistant messages
@@ -279,7 +421,6 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
       }
 
       if (!markdown.trim()) {
-        console.warn('[AIWebView Extract] No markdown for index', msgIndex);
         return;
       }
 
@@ -299,7 +440,6 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
           },
         },
       });
-      console.log(`[AIWebView Extract] Sent turn #${msgIndex}: ${markdown.length} chars`);
     } catch (err) {
       console.warn('[AIWebView Extract] Failed:', err);
     }
@@ -314,26 +454,33 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
       onClick: async (ctx: MenuContext) => {
         const profile = detectAIServiceByUrl(ctx.url);
         if (!profile) return;
-        const idx = await resolveMsgIndex(ctx.webview, ctx.x, ctx.y, profile.selectors.assistantMessage);
-        if (idx < 0) {
+        const target = await resolveMsgIndex(ctx.webview, ctx.x, ctx.y, profile.selectors.assistantMessage);
+        if (target.msgIndex < 0) {
           console.warn('[AIWebView Extract] Right-click was not inside an assistant message');
           return;
         }
-        await extractTurnAt(ctx, idx);
+        await extractTurnAt(
+          { ...ctx, artifactOrdinal: target.artifactOrdinal } as MenuContext & { artifactOrdinal?: number | null },
+          target.msgIndex,
+        );
       },
     },
   ], [resolveMsgIndex, extractTurnAt]);
 
-  // ── Live chat sync (auto, no toggle) ──
-  // Fires whenever a Claude SSE response finishes (message_stop). If
-  // the right-side NoteView is mounted, the just-finished turn is
-  // forwarded as-is (Artifact placeholders become a "click Claude's
-  // copy button" callout — no CDP / no mouse simulation, so we never
-  // interfere with the user's reading).
+  // ── Live chat sync (opt-in toggle) ──
   useEffect(() => {
+    if (!liveSyncEnabled) {
+      sseTriggerRef.current?.dispose();
+      sseTriggerRef.current = null;
+      return;
+    }
     const handle = startSseTrigger(webviewRef);
-    return handle.dispose;
-  }, []);
+    sseTriggerRef.current = handle;
+    return () => {
+      if (sseTriggerRef.current === handle) sseTriggerRef.current = null;
+      handle.dispose();
+    };
+  }, [liveSyncEnabled]);
 
   // ── Click outside service menu to close ──
   useEffect(() => {
@@ -545,6 +692,27 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
         {statusText && (
           <span style={{ color: '#6366f1', fontSize: 12, fontWeight: 500 }}>{statusText}</span>
         )}
+        <button
+          style={{
+            background: liveSyncEnabled ? '#1f4b2b' : '#333',
+            border: `1px solid ${liveSyncEnabled ? '#2f7d46' : '#555'}`,
+            borderRadius: 6,
+            color: liveSyncEnabled ? '#d9ffe3' : '#e8eaed',
+            fontSize: 13,
+            padding: '4px 12px',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+          }}
+          onClick={() => {
+            const next = !liveSyncEnabled;
+            setLiveSyncEnabled(next);
+            try { localStorage.setItem(LIVE_SYNC_ENABLED_KEY, next ? '1' : '0'); } catch {}
+          }}
+          title={liveSyncEnabled ? '关闭聊天自动同步到 Note' : '开启聊天自动同步到 Note'}
+        >
+          聊天同步
+        </button>
 
         <div style={{ flex: 1 }} />
 
@@ -569,14 +737,13 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
           ×
         </button>
       </div>
-
       {/* AI webview content */}
       <div className="web-view__content" style={{ position: 'relative' }}>
         <webview
           ref={setupWebview}
           src={initialUrl}
           className="web-view__webview"
-          partition="persist:web"
+          partition={WEBVIEW_PARTITION}
           // @ts-ignore
           allowpopups="true"
         />

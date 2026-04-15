@@ -31,6 +31,8 @@ declare const viewAPI: {
 export interface SseTriggerHandle {
   /** Stop polling and detach listeners. */
   dispose: () => void;
+  /** Temporarily suppress auto-emits, e.g. while a manual extraction is running. */
+  suspendFor: (ms: number) => void;
 }
 
 interface SseRecordSnapshot {
@@ -56,6 +58,7 @@ export function startSseTrigger(
   // false we still mark records reacted but skip the actual emit.
   let noteOpen = false;
   let stopped = false;
+  let suspendedUntil = 0;
 
   function getSyncedSet(convId: string): Set<string> {
     let s = synced.get(convId);
@@ -110,6 +113,7 @@ export function startSseTrigger(
   // ── Poll loop ──
   async function tick(): Promise<void> {
     if (stopped) return;
+    if (Date.now() < suspendedUntil) return;
     const el = webviewRef.current;
     if (!el) return;
     ensureListeners();
@@ -179,7 +183,6 @@ export function startSseTrigger(
       }
 
       const finalMd = processClaudeArtifactsLive(assistantText, webview.getURL());
-      console.log(`[AI/Bridge/Live/Claude] emit turn ${m.uuid.slice(0, 8)} (#${turnIdx}): ${finalMd.length} chars`);
       viewAPI.sendToOtherSlot({
         protocol: 'ai-sync',
         action: 'as:append-turn',
@@ -209,6 +212,9 @@ export function startSseTrigger(
       clearInterval(interval);
       unsubStatus();
       detachListeners?.();
+    },
+    suspendFor: (ms: number) => {
+      suspendedUntil = Math.max(suspendedUntil, Date.now() + Math.max(0, ms));
     },
   };
 }

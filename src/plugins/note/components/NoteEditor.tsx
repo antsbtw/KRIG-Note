@@ -362,13 +362,11 @@ export function NoteEditor() {
 
   // 加载文档（带竞态取消：快速切换时丢弃过期的异步结果）
   const loadNote = useCallback(async (noteId: string) => {
-    console.log('[NoteEditor] loadNote called:', noteId);
     const seq = ++loadSeqRef.current;
     const s = getSchema();
     try {
       const record = await viewAPI.noteLoad(noteId);
-      console.log('[NoteEditor] noteLoad returned:', record ? `title="${record.title}", doc_content=${record.doc_content?.length ?? 0} atoms` : 'null');
-      if (seq !== loadSeqRef.current) { console.log('[NoteEditor] Stale load, discarding'); return; }
+      if (seq !== loadSeqRef.current) { return; }
       if (!record || !record.doc_content || record.doc_content.length === 0) {
         loadMoreRef.current = null;
         fullAtomsRef.current = null;
@@ -437,7 +435,7 @@ export function NoteEditor() {
   }, []);
 
   // 保存文档
-  const saveNote = useCallback(() => {
+  const saveNote = useCallback(async () => {
     const noteId = currentNoteIdRef.current;
     const view = viewRef.current;
     if (!noteId || !view) return;
@@ -481,16 +479,20 @@ export function NoteEditor() {
       loadedAtoms.push(...tailAtoms);
     }
 
-    viewAPI.noteSave(noteId, loadedAtoms, title);
+    await viewAPI.noteSave(noteId, loadedAtoms, title);
   }, []);
 
   // 防抖自动保存（1秒）
   const scheduleSave = useCallback(() => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(() => {
-      saveNote();
-      // 保存完成后通知 NoteView（dirty → saved）
-      window.dispatchEvent(new CustomEvent('note:saved'));
+    saveTimerRef.current = setTimeout(async () => {
+      try {
+        await saveNote();
+        // 保存完成后通知 NoteView（dirty → saved）
+        window.dispatchEvent(new CustomEvent('note:saved'));
+      } catch (err) {
+        console.error('[NoteEditor] Auto-save failed:', err);
+      }
     }, 1000);
     // 通知 NoteView 有未保存的修改
     window.dispatchEvent(new CustomEvent('note:dirty'));
@@ -527,9 +529,7 @@ export function NoteEditor() {
             allAtoms.push(atom);
           }
         }
-        console.log('[NoteEditor] Import JSON: raw atoms:', allAtoms.length, 'types:', allAtoms.map((a: Atom) => a.type));
         const cleaned = sanitizeAtoms(allAtoms);
-        console.log('[NoteEditor] After sanitize:', cleaned.length, 'types:', cleaned.map((a: Atom) => a.type));
         const { doc } = docFromContentChunked(s, cleaned);
         loadMoreRef.current = null;
         fullAtomsRef.current = null;
@@ -551,7 +551,6 @@ export function NoteEditor() {
     // 拉取导入时设置的 pending noteId，或恢复上次打开的笔记
     viewAPI.notePendingOpen().then(async (noteId) => {
       if (noteId) {
-        console.log('[NoteEditor] Pending note found:', noteId);
         loadNote(noteId);
         return;
       }
@@ -566,7 +565,6 @@ export function NoteEditor() {
       if (currentNoteIdRef.current) return; // already loaded by another path
       const activeId = await viewAPI.getActiveNoteId();
       if (activeId && !currentNoteIdRef.current) {
-        console.log('[NoteEditor] Restoring last note:', activeId);
         loadNote(activeId);
       }
     });
@@ -617,10 +615,14 @@ export function NoteEditor() {
     });
 
     // 监听手动保存事件（来自 NoteView Toolbar 的 Save 按钮）
-    const manualSaveHandler = () => {
+    const manualSaveHandler = async () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-      saveNote();
-      window.dispatchEvent(new CustomEvent('note:saved'));
+      try {
+        await saveNote();
+        window.dispatchEvent(new CustomEvent('note:saved'));
+      } catch (err) {
+        console.error('[NoteEditor] Manual save failed:', err);
+      }
     };
     window.addEventListener('note:save', manualSaveHandler);
 
@@ -654,8 +656,24 @@ export function NoteEditor() {
   // single queue so order matches arrival.
   useEffect(() => {
     let queue: Promise<void> = Promise.resolve();
+    let lastAppendFingerprint = '';
+    let lastAppendAt = 0;
     const unsub = viewAPI.onMessage((msg: any) => {
       if (msg.protocol === 'ai-sync' && msg.action === 'as:append-turn') {
+        const sourceId = String(msg.payload?.source?.serviceId || '');
+        const turn = msg.payload?.turn || {};
+        const fingerprint = JSON.stringify({
+          sourceId,
+          index: turn.index ?? null,
+          userMessage: turn.userMessage ?? '',
+          markdown: turn.markdown ?? '',
+        });
+        const now = Date.now();
+        if (fingerprint === lastAppendFingerprint && (now - lastAppendAt) < 15000) {
+          return;
+        }
+        lastAppendFingerprint = fingerprint;
+        lastAppendAt = now;
         queue = queue.then(async () => {
           const view = viewRef.current;
           if (!view || view.isDestroyed || !currentNoteIdRef.current) {

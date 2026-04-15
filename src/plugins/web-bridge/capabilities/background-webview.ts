@@ -2,7 +2,7 @@
  * BackgroundAIWebview — 后台 AI WebView 管理
  *
  * 创建一个隐藏的 BrowserWindow，内嵌 <webview> 标签加载 AI 服务。
- * 共享 partition: 'persist:web'，复用用户在前台 WebView 中的登录状态。
+ * 共享 partition，复用用户在前台 WebView 中的登录状态。
  *
  * 设计原则：
  * - 懒初始化：第一次 ai:ask 时才创建
@@ -18,6 +18,7 @@ import {
   getAIServiceProfile,
   type AIServiceProfile,
 } from '../../../shared/types/ai-service-types';
+import { WEBVIEW_PARTITION } from '../../../shared/constants/webview-partition';
 
 /** 后台 webview 的状态 */
 export type BackgroundAIStatus = 'idle' | 'loading' | 'ready' | 'error';
@@ -86,7 +87,7 @@ class BackgroundAIWebview {
   private async createWindow(): Promise<void> {
     this.status = 'loading';
 
-    // 确保 CSP bypass 在 persist:web session 上（前台 WebView 已设置，但后台窗口可能先启动）
+    // 确保 CSP bypass 在共享 webview session 上（前台 WebView 已设置，但后台窗口可能先启动）
     this.setupCSPBypass();
 
     this.window = new BrowserWindow({
@@ -95,8 +96,8 @@ class BackgroundAIWebview {
       height: 800,
       webPreferences: {
         // 后台窗口直接加载 AI 服务页面，不嵌套 webview 标签
-        // 使用 persist:web partition 共享前台登录状态
-        partition: 'persist:web',
+        // 使用共享 partition 复用前台登录状态
+        partition: WEBVIEW_PARTITION,
         contextIsolation: false,   // AI 服务页面需要完整的 JS 环境
         nodeIntegration: false,    // 安全：不暴露 Node API 给 AI 服务
         sandbox: false,            // 允许 preload 脚本注入
@@ -128,12 +129,12 @@ class BackgroundAIWebview {
   }
 
   /**
-   * 在 persist:web session 上设置 CSP bypass。
+   * 在共享 webview session 上设置 CSP bypass。
    * 剥离 HTTP 响应中的 Content-Security-Policy header，
    * 允许我们向 AI 服务页面注入脚本。
    */
   private setupCSPBypass(): void {
-    const webSession = session.fromPartition('persist:web');
+    const webSession = session.fromPartition(WEBVIEW_PARTITION);
 
     // 避免重复注册（前台 WebView 可能已经注册过）
     // Electron 没有提供检查 handler 是否已注册的 API，

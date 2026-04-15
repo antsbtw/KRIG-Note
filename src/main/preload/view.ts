@@ -289,6 +289,8 @@ contextBridge.exposeInMainWorld('viewAPI', {
     ipcRenderer.invoke(IPC.WB_CDP_FIND_RESPONSE, params),
   wbSendMouse: (events: Array<{ type: string; x: number; y: number; button?: string; buttons?: number; clickCount?: number }>) =>
     ipcRenderer.invoke(IPC.WB_SEND_MOUSE, events),
+  wbSendKey: (events: Array<{ type: string; key: string; code?: string; windowsVirtualKeyCode?: number }>) =>
+    ipcRenderer.invoke(IPC.WB_SEND_KEY, events),
   wbReadClipboardImage: () =>
     ipcRenderer.invoke(IPC.WB_READ_CLIPBOARD_IMAGE),
   wbCaptureDownloadOnce: (timeoutMs?: number) =>

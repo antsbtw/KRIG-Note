@@ -23,7 +23,7 @@ import {
   replaceArtifactPlaceholders,
 } from '../../web-bridge/capabilities/claude-api-extractor';
 import { getArtifactPostMessageHookScript } from '../../web-bridge/injection/inject-scripts/artifact-postmessage-hook';
-import { extractAll as extractAllClaudeArtifacts } from '../../web-bridge/capabilities/claude-artifact-extractor';
+import { collectAllIframeArtifactsAsPng } from '../../web-bridge/capabilities/claude-artifact-download';
 
 declare const viewAPI: unknown;
 
@@ -49,69 +49,102 @@ export function processClaudeArtifactsLive(
 export async function processClaudeArtifactsFull(
   webview: Electron.WebviewTag,
   assistantMsg: string,
+  opts?: { scopeSelector?: string; preferredArtifactOrdinals?: number[] },
 ): Promise<string> {
   const artifactCount = countArtifactPlaceholders(assistantMsg);
   if (artifactCount === 0) return assistantMsg;
+  const scopedSingleTurn = !!opts?.scopeSelector;
 
   // Make sure the postMessage hook is in place so capturedSources can
   // surface anything Claude posts to its iframe.
   try { await webview.executeJavaScript(getArtifactPostMessageHookScript()); } catch {}
 
-  // Layer 1: versions API (Claude often returns []; brief polling).
+  // Layer 1 is conversation-global: versions API + captured postMessage
+  // sources are not tagged with a turn/message id. For scoped right-click
+  // extraction that means an older turn's artifact can be matched into the
+  // newly selected turn, causing cross-turn image/source bleed. In the
+  // scoped path we skip Layer 1 entirely and rely on DOM-scoped iframe
+  // capture below, which is the only turn-local signal we have.
   let versionSources: string[] = [];
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const versions = await fetchClaudeArtifactVersions(webview);
-    if (versions && versions.length > 0) {
-      versionSources = versions
-        .map((v: any) => extractArtifactVersionSource(v))
-        .filter((s: string | null): s is string => !!s);
-      if (versionSources.length > 0) break;
+  let capturedSources: string[] = [];
+  if (!scopedSingleTurn) {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const versions = await fetchClaudeArtifactVersions(webview);
+      if (versions && versions.length > 0) {
+        versionSources = versions
+          .map((v: any) => extractArtifactVersionSource(v))
+          .filter((s: string | null): s is string => !!s);
+        if (versionSources.length > 0) break;
+      }
+      await new Promise(r => setTimeout(r, 800));
     }
-    await new Promise(r => setTimeout(r, 800));
+    const captured = await readCapturedArtifactMessages(webview);
+    capturedSources = collectArtifactSources(captured);
   }
-
-  const captured = await readCapturedArtifactMessages(webview);
-  const capturedSources = collectArtifactSources(captured);
   const sources = [...versionSources.slice().reverse(), ...capturedSources];
   const filled = fillArtifactPlaceholders(assistantMsg, sources);
-  console.log(`[AI/Bridge/Claude/Artifact] versions=${versionSources.length} captured=${capturedSources.length} filled=${filled.filled}/${artifactCount}`);
   let out = filled.text;
 
   if (filled.remaining === 0) return out;
 
   // Layer 2: rendered PNG via Copy-to-clipboard (CDP mouse simulation).
   const expectedIframes = filled.remaining;
-  // Nudge artifact host elements into view to trigger lazy mount.
+  // Only nudge the currently-targeted message into view. Scrolling every
+  // artifact host on the page causes Claude to jump to later visuals,
+  // which in turn destabilizes ordinal-based selection and makes the UI
+  // look like it is auto-scrolling to the bottom after extraction.
   try {
+    const scopeExpr2 = opts?.scopeSelector ? JSON.stringify(opts.scopeSelector) : 'null';
     await webview.executeJavaScript(`
       (function() {
-        var hosts = document.querySelectorAll('[class*="artifact"], [data-testid*="artifact"]');
-        for (var i = 0; i < hosts.length; i++) hosts[i].scrollIntoView({ block: 'center', behavior: 'instant' });
+        var scopeSel = ${scopeExpr2};
+        if (!scopeSel) return;
+        var scopeEl = document.querySelector(scopeSel);
+        if (!scopeEl) return;
+        scopeEl.scrollIntoView({ block: 'center', behavior: 'instant' });
       })()
     `).catch(() => {});
   } catch {}
   let lastFound = 0;
+  const scopeExpr = opts?.scopeSelector ? JSON.stringify(opts.scopeSelector) : 'null';
   for (let attempt = 0; attempt < 20; attempt++) {
-    const found = await webview.executeJavaScript(
-      'document.querySelectorAll(\'iframe[src*="claudemcpcontent"], iframe[src*="claudeusercontent"]\').length',
-    ).catch(() => 0);
+    const found = await webview.executeJavaScript(`
+      (function() {
+        var scopeSel = ${scopeExpr};
+        var scopeEl = scopeSel ? document.querySelector(scopeSel) : null;
+        if (scopeSel && !scopeEl) return 0;
+        var all = Array.from(document.querySelectorAll('iframe[src*="claudemcpcontent"], iframe[src*="claudeusercontent"]'));
+        if (!scopeEl) return all.length;
+        var count = 0;
+        for (var i = 0; i < all.length; i++) {
+          if (scopeEl.contains(all[i])) count++;
+        }
+        return count;
+      })()
+    `).catch(() => 0);
     lastFound = typeof found === 'number' ? found : 0;
     if (lastFound >= expectedIframes) break;
     await new Promise(r => setTimeout(r, 500));
   }
-  console.log(`[AI/Bridge/Claude/Artifact] iframe wait: found=${lastFound} expected=${expectedIframes}`);
-
   try {
-    const artifacts = await extractAllClaudeArtifacts(
+    const collected = await collectAllIframeArtifactsAsPng(
       webview,
       viewAPI as any,
-      { image: true },
-      // Only grab iframes belonging to the current turn — older ones
-      // are still in the DOM but already synced. ×2 absorbs
-      // side-panel / fullscreen duplicates which dedupe collapses.
-      expectedIframes * 2,
+      // When the caller marks a scope element (right-click single-turn
+      // path tags the target message DOM node), restrict collection to
+      // iframes inside that subtree. Without a scope (live-sync
+      // tail-message path), page-wide scan is still correct — the only
+      // freshly-arrived iframes are from that turn.
+      //
+      // ×2 on `limit` absorbs side-panel / fullscreen duplicates which
+      // dedupe collapses to N unique images.
+      {
+        limit: expectedIframes * 2,
+        scopeSelector: opts?.scopeSelector,
+        preferredOrdinals: opts?.preferredArtifactOrdinals,
+      },
     );
-    const rawImgs = artifacts.map(a => a.image?.dataUrl).filter((s): s is string => !!s);
+    const rawImgs = collected.results.map(r => r.dataUrl);
     const seen = new Set<string>();
     const imgs: string[] = [];
     for (const u of rawImgs) {
@@ -119,11 +152,9 @@ export async function processClaudeArtifactsFull(
       seen.add(u);
       imgs.push(u);
     }
-    console.log(`[AI/Bridge/Claude/Artifact] CDP image capture: ${imgs.length} unique image(s) (raw=${rawImgs.length}) for ${expectedIframes} expected; descriptors=${artifacts.length}`);
     if (imgs.length > 0) {
       const imgFill = fillArtifactPlaceholdersWithImages(out, imgs);
       out = imgFill.text;
-      console.log(`[AI/Bridge/Claude/Artifact] image fill ${imgFill.filled}/${imgs.length}, remaining ${imgFill.remaining}`);
       if (imgFill.remaining > 0) {
         out = replaceArtifactPlaceholders(out, webview.getURL());
       }

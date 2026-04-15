@@ -921,13 +921,16 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
   // WB_CAPTURE_DOWNLOAD_ONCE: Arm a one-shot will-download handler on the
   // sender's guest webContents session. The NEXT download triggered on
   // that session is intercepted: saved to a temp path, read into memory,
-  // deleted, and returned to the caller. Used by the Artifact "Download
-  // file" extraction path. Auto-clears after the download arrives or the
-  // timeout elapses, so it can be safely re-armed.
+  // deleted, and returned to the caller as raw bytes (base64).
+  //
+  // Returning base64 (not a UTF-8 string) preserves original bytes — critical
+  // because Claude's SVG downloads have a latin1/utf-8 encoding bug that
+  // callers need to reverse; if we decode as UTF-8 here, the original bytes
+  // are lost and the bug can't be fixed. Binary downloads (PNG) also need
+  // byte-exact preservation.
   ipcMain.handle(IPC.WB_CAPTURE_DOWNLOAD_ONCE, async (event, timeoutMs?: number) => {
     try {
       const { getGuest } = await import('../../plugins/web-bridge/infrastructure/guest-registry');
-      const { app } = await import('electron');
       const fs = await import('node:fs');
       const path = await import('node:path');
       const os = await import('node:os');
@@ -936,7 +939,15 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
       if (!guest) return { success: false, error: 'no guest for sender' };
       const session = guest.session;
 
-      return await new Promise<{ success: boolean; filename?: string; mimeType?: string; content?: string; error?: string }>((resolve) => {
+      return await new Promise<{
+        success: boolean;
+        filename?: string;
+        mimeType?: string;
+        /** base64-encoded raw bytes of the downloaded file */
+        contentBase64?: string;
+        byteLength?: number;
+        error?: string;
+      }>((resolve) => {
         const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'krig-artifact-'));
         let settled = false;
         const timer = setTimeout(() => {
@@ -963,7 +974,13 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
             if (state === 'completed') {
               try {
                 const buf = fs.readFileSync(savePath);
-                resolve({ success: true, filename, mimeType, content: buf.toString('utf8') });
+                resolve({
+                  success: true,
+                  filename,
+                  mimeType,
+                  contentBase64: buf.toString('base64'),
+                  byteLength: buf.length,
+                });
               } catch (err) {
                 resolve({ success: false, error: 'read failed: ' + String(err) });
               }
@@ -974,9 +991,6 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
           });
         };
         session.on('will-download', listener);
-
-        // Silence "unused" lint — app is imported for future use (e.g. app.getPath).
-        void app;
       });
     } catch (err) {
       return { success: false, error: String(err) };
@@ -1105,6 +1119,41 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
           buttons: ev.buttons ?? 0,
           clickCount: ev.clickCount ?? 0,
           pointerType: 'mouse',
+        });
+      }
+      return { success: true, count: events.length };
+    } catch (err) {
+      return { success: false, error: String(err) };
+    }
+  });
+
+  // WB_SEND_KEY: synthesize native key events into the sender's guest webview
+  // via CDP (Input.dispatchKeyEvent). Used for browser-layer UI such as
+  // download confirmation bubbles that aren't part of the page DOM.
+  ipcMain.handle(IPC.WB_SEND_KEY, async (event, events: Array<{
+    type: string;
+    key: string;
+    code?: string;
+    windowsVirtualKeyCode?: number;
+  }>) => {
+    try {
+      const { getGuest } = await import('../../plugins/web-bridge/infrastructure/guest-registry');
+      const senderId = event.sender.id;
+      const guest = getGuest(senderId);
+      if (!guest) return { success: false, error: 'No guest for sender ' + senderId };
+
+      const dbg = guest.debugger;
+      if (!dbg.isAttached()) {
+        try { dbg.attach('1.3'); } catch (e) { /* another debugger may be attached */ }
+      }
+
+      for (const ev of events) {
+        await dbg.sendCommand('Input.dispatchKeyEvent', {
+          type: ev.type,
+          key: ev.key,
+          code: ev.code ?? ev.key,
+          windowsVirtualKeyCode: ev.windowsVirtualKeyCode ?? 0,
+          nativeVirtualKeyCode: ev.windowsVirtualKeyCode ?? 0,
         });
       }
       return { success: true, count: events.length };

@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { SyncDriver } from '../sync/sync-driver';
 import { TranslateDriver } from '../translate/translate-driver';
 import { SYNC_ACTION } from '../sync/sync-protocol';
+import { WEBVIEW_PARTITION } from '../../../shared/constants/webview-partition';
 import '../web.css';
 
 declare const viewAPI: {
@@ -157,7 +158,7 @@ export function TranslateWebView() {
         <webview
           ref={setupWebview}
           src="about:blank"
-          partition="persist:web"
+          partition={WEBVIEW_PARTITION}
           // @ts-ignore — Electron webview attribute for CSP bypass
           disablewebsecurity="true"
           // @ts-ignore
