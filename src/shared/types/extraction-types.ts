@@ -21,11 +21,14 @@ export interface ExtractedListItem {
 }
 
 export interface ExtractedBlock {
-  type: 'paragraph' | 'heading' | 'blockquote' | 'callout' | 'code' | 'math' | 'image' | 'video' | 'audio' | 'bulletList' | 'orderedList' | 'table';
+  type: 'paragraph' | 'heading' | 'blockquote' | 'callout' | 'code' | 'math' | 'image' | 'video' | 'audio' | 'bulletList' | 'orderedList' | 'table' | 'file';
   tag: string;
   text: string;
   headingLevel: number;
   src?: string;
+  filename?: string;
+  mimeType?: string;
+  size?: number;
   alt?: string;
   width?: number;
   height?: number;

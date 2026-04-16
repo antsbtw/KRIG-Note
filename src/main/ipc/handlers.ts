@@ -133,6 +133,7 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
     const active = workspaceManager.getActive();
     if (!active) return;
     workspaceManager.update(active.id, { workModeId });
+    if (hasRightSlot()) closeRightSlot();
     switchLeftSlotView(workModeId);
     broadcastWorkspaceState(getMainWindow());
   });
@@ -163,6 +164,11 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
     if (!side) return;
     closeSlot(side);
     broadcastWorkspaceState(getMainWindow());
+  });
+
+  // View 查询自己在哪个 slot（用于同步滚动的左主右从仲裁）
+  ipcMain.handle(IPC.SLOT_GET_SIDE, (event) => {
+    return getSlotBySenderId(event.sender.id);
   });
 
   // ── View 间消息路由（双工，宽松模式） ──

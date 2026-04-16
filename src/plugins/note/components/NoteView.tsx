@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { NoteEditor } from './NoteEditor';
 import { SlotToggle } from '../../../shared/components/SlotToggle';
 import { OpenFilePopup } from '../../../shared/components/OpenFilePopup';
@@ -25,6 +25,7 @@ declare const viewAPI: {
   onNoteTitleChanged: (callback: (data: { noteId: string; title: string }) => void) => () => void;
   sendToOtherSlot: (message: any) => void;
   onMessage: (callback: (message: any) => void) => () => void;
+  getMySlotSide: () => Promise<'left' | 'right' | null>;
 };
 
 export function NoteView() {
@@ -130,18 +131,17 @@ export function NoteView() {
   }, [refreshNav]);
 
   // ── 锚定同步：eBook↔Note ──
-  // 规则：鼠标在哪个 slot，哪个 slot 发送；另一个只接收。
-  // 用 mouseenter/mouseleave 追踪鼠标是否在本 View 内。
+  // 规则：左主右从 — 只有位于 left slot 的 View 发射 anchor-sync，
+  // right slot 仅被动跟随。避免编辑对齐时的反射抖动。
+  const slotSideRef = useRef<'left' | 'right' | null>(null);
 
   useEffect(() => {
     let scrollTimer: ReturnType<typeof setTimeout> | null = null;
-    let mouseInView = true;
-    const enter = () => { mouseInView = true; };
-    const leave = () => { mouseInView = false; };
-    document.addEventListener('mouseenter', enter);
-    document.addEventListener('mouseleave', leave);
+    let suppressUntil = 0; // 被动滚动后抑制自己发射的时间戳
 
-    // 1) 接收来自 eBook 的 anchor-sync → 滚动到对应 fromPage
+    viewAPI.getMySlotSide().then((side) => { slotSideRef.current = side; });
+
+    // 1) 接收 anchor-sync → 滚动到对应 fromPage（两侧都接收）
     const unsubMessage = viewAPI.onMessage((message: any) => {
       if (message?.action !== 'anchor-sync') return;
       const { anchorType, pdfPage } = message.payload || {};
@@ -158,14 +158,16 @@ export function NoteView() {
           }
         }
         if (target) {
+          suppressUntil = Date.now() + 600;
           target.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
       }
     });
 
-    // 2) 滚动时检测当前可见的 fromPage → 发送回 eBook
+    // 2) 滚动时发送 anchor-sync（仅 left slot，且不在被动滚动抑制窗内）
     const handleScroll = () => {
-      if (!mouseInView) return;
+      if (slotSideRef.current !== 'left') return;
+      if (Date.now() < suppressUntil) return;
       if (scrollTimer) clearTimeout(scrollTimer);
       scrollTimer = setTimeout(() => {
         const anchors = document.querySelectorAll<HTMLElement>('[data-from-page]');
@@ -204,8 +206,6 @@ export function NoteView() {
     return () => {
       clearTimeout(bindTimer);
       unsubMessage();
-      document.removeEventListener('mouseenter', enter);
-      document.removeEventListener('mouseleave', leave);
       scrollTarget?.removeEventListener('scroll', handleScroll);
       if (scrollTimer) clearTimeout(scrollTimer);
     };

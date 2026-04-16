@@ -25,7 +25,7 @@ export const CARD_ROOT_SELECTOR = '[class*="group/artifact-block"]';
  * Download button inside a card. aria-label shape is `Download {title}`,
  * e.g. "Download Main", "Download First principles diagram".
  */
-export const CARD_DOWNLOAD_BUTTON_SELECTOR = 'button[aria-label^="Download "]';
+export const CARD_DOWNLOAD_BUTTON_SELECTOR = 'button[aria-label^="Download "], button[title*="Download"], button';
 
 /**
  * Element containing the artifact title, e.g. "Main", "Example".
@@ -37,6 +37,26 @@ export const CARD_TITLE_SELECTOR = '.leading-tight.text-sm';
  * "Document · MD", "Diagram · MERMAID", "Code · HTML".
  */
 export const CARD_KIND_LABEL_SELECTOR = '.text-xs.text-text-400';
+
+/**
+ * Utility snippet for guest-side scripts: filter a querySelectorAll result
+ * down to only top-level artifact card roots, excluding nested descendants
+ * that inherit partial "artifact-block" class names.
+ */
+export const CARD_ROOT_FILTER_FN = `
+  function(list) {
+    return Array.from(list).filter(function(el) {
+      var p = el.parentElement;
+      while (p) {
+        var cls = '';
+        try { cls = (p.className && String(p.className)) || ''; } catch (e) {}
+        if (cls.indexOf('group/artifact-block') >= 0) return false;
+        p = p.parentElement;
+      }
+      return true;
+    });
+  }
+`;
 
 // ─────────────────────────────────────────────────────────────
 // Iframe-form artifact (cross-origin MCP iframe)

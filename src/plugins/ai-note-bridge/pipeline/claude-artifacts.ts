@@ -61,6 +61,23 @@ async function writeStageDebugSnapshot(payload: {
   } catch {}
 }
 
+async function writeStepMarker(
+  extractionId: string | undefined,
+  stage: string,
+  pageUrl: string,
+  markdown: string,
+  meta?: Record<string, unknown>,
+): Promise<void> {
+  await writeStageDebugSnapshot({
+    extractionId,
+    stage,
+    serviceId: 'claude',
+    url: pageUrl,
+    markdown,
+    meta,
+  });
+}
+
 function bytesToDataUrl(bytes: Uint8Array, mime: string): string {
   let binary = '';
   const chunk = 0x8000;
@@ -316,8 +333,9 @@ export function processClaudeArtifactsLive(
   assistantMsg: string,
   conversationUrl: string,
 ): string {
-  if (countArtifactPlaceholders(assistantMsg) === 0) return assistantMsg;
-  return replaceArtifactPlaceholders(assistantMsg, conversationUrl);
+  const normalizedMsg = trimLeadingArtifactPlaceholder(assistantMsg);
+  if (countArtifactPlaceholders(normalizedMsg) === 0) return normalizedMsg;
+  return replaceArtifactPlaceholders(normalizedMsg, conversationUrl);
 }
 
 /**
@@ -342,11 +360,13 @@ export async function processClaudeArtifactsFull(
   // surface anything Claude posts to its iframe.
   if (!scopedSingleTurn) {
     try {
+      await writeStepMarker(opts?.extractionId, 'artifact-step-hook-start', pageUrl, normalizedMsg);
       await withStepTimeout(
         webview.executeJavaScript(getArtifactPostMessageHookScript()),
         2_000,
         'artifact-postmessage-hook',
       );
+      await writeStepMarker(opts?.extractionId, 'artifact-step-hook-done', pageUrl, normalizedMsg);
     } catch {}
   }
 
@@ -360,25 +380,47 @@ export async function processClaudeArtifactsFull(
   let capturedSources: string[] = [];
   if (!scopedSingleTurn) {
     for (let attempt = 0; attempt < 5; attempt++) {
+      await writeStepMarker(opts?.extractionId, 'artifact-step-versions-start', pageUrl, normalizedMsg, { attempt });
       const versions = await withStepTimeout(
         fetchClaudeArtifactVersions(webview),
         2_500,
         'fetchClaudeArtifactVersions',
-      ).catch(() => null);
+      ).catch((err) => {
+        void writeStepMarker(opts?.extractionId, 'artifact-step-versions-failed', pageUrl, normalizedMsg, {
+          attempt,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return null;
+      });
       if (versions && versions.length > 0) {
         versionSources = versions
           .map((v: any) => extractArtifactVersionSource(v))
           .filter((s: string | null): s is string => !!s);
+        await writeStepMarker(opts?.extractionId, 'artifact-step-versions-done', pageUrl, normalizedMsg, {
+          attempt,
+          versions: versions.length,
+          extracted: versionSources.length,
+        });
         if (versionSources.length > 0) break;
       }
       await new Promise(r => setTimeout(r, 800));
     }
+    await writeStepMarker(opts?.extractionId, 'artifact-step-captured-start', pageUrl, normalizedMsg);
     const captured = await withStepTimeout(
       readCapturedArtifactMessages(webview),
       1_500,
       'readCapturedArtifactMessages',
-    ).catch(() => []);
+    ).catch((err) => {
+      void writeStepMarker(opts?.extractionId, 'artifact-step-captured-failed', pageUrl, normalizedMsg, {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return [];
+    });
     capturedSources = collectArtifactSources(captured);
+    await writeStepMarker(opts?.extractionId, 'artifact-step-captured-done', pageUrl, normalizedMsg, {
+      capturedMessages: captured.length,
+      extracted: capturedSources.length,
+    });
   }
   const sources = [...versionSources.slice().reverse(), ...capturedSources];
   const filled = fillArtifactPlaceholders(normalizedMsg, sources);
@@ -410,6 +452,7 @@ export async function processClaudeArtifactsFull(
   // look like it is auto-scrolling to the bottom after extraction.
   try {
     const scopeExpr2 = opts?.scopeSelector ? JSON.stringify(opts.scopeSelector) : 'null';
+    await writeStepMarker(opts?.extractionId, 'artifact-step-scope-scroll-start', pageUrl, out);
     await withStepTimeout(
       webview.executeJavaScript(`
         (function() {
@@ -423,10 +466,14 @@ export async function processClaudeArtifactsFull(
       1_500,
       'artifact-scope-scroll-into-view',
     ).catch(() => {});
+    await writeStepMarker(opts?.extractionId, 'artifact-step-scope-scroll-done', pageUrl, out);
   } catch {}
   let lastFound = 0;
   const scopeExpr = opts?.scopeSelector ? JSON.stringify(opts.scopeSelector) : 'null';
   for (let attempt = 0; attempt < 20; attempt++) {
+    if (attempt === 0) {
+      await writeStepMarker(opts?.extractionId, 'artifact-step-iframe-count-start', pageUrl, out, { expected: filled.remaining });
+    }
     const found = await withStepTimeout(
       webview.executeJavaScript(`
         (function() {
@@ -444,12 +491,25 @@ export async function processClaudeArtifactsFull(
       `),
       1_500,
       'artifact-scope-iframe-count',
-    ).catch(() => 0);
+    ).catch((err) => {
+      void writeStepMarker(opts?.extractionId, 'artifact-step-iframe-count-failed', pageUrl, out, {
+        attempt,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return 0;
+    });
     lastFound = typeof found === 'number' ? found : 0;
     if (lastFound >= expectedIframes) break;
     await new Promise(r => setTimeout(r, 500));
   }
+  await writeStepMarker(opts?.extractionId, 'artifact-step-iframe-count-done', pageUrl, out, {
+    expected: expectedIframes,
+    found: lastFound,
+  });
   try {
+    await writeStepMarker(opts?.extractionId, 'artifact-step-candidate-scan-start', pageUrl, out, {
+      expected: expectedIframes,
+    });
     const candidateOrdinals = await withStepTimeout(
       listRelevantArtifactOrdinals(
         webview,
@@ -459,12 +519,26 @@ export async function processClaudeArtifactsFull(
       ),
       4_000,
       'listRelevantArtifactOrdinals',
-    ).catch(() => []);
+    ).catch((err) => {
+      void writeStepMarker(opts?.extractionId, 'artifact-step-candidate-scan-failed', pageUrl, out, {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return [];
+    });
+    await writeStepMarker(opts?.extractionId, 'artifact-step-candidate-scan-done', pageUrl, out, {
+      expected: expectedIframes,
+      candidates: candidateOrdinals.length,
+      candidateOrdinals,
+    });
     const canApplyMixed =
       expectedIframes === 1 ||
       explicitArtifactTarget ||
       candidateOrdinals.length === expectedIframes;
     if (candidateOrdinals.length > 0 && canApplyMixed) {
+      await writeStepMarker(opts?.extractionId, 'artifact-step-mixed-download-start', pageUrl, out, {
+        expected: expectedIframes,
+        candidates: candidateOrdinals.length,
+      });
       const mixedResult = await withStepTimeout(
         collectScopedArtifactMarkdownPieces(webview, expectedIframes, {
           scopeSelector: opts?.scopeSelector,
@@ -475,6 +549,10 @@ export async function processClaudeArtifactsFull(
         Math.max(5_000, candidateOrdinals.length * 4_500),
         'collectScopedArtifactMarkdownPieces',
       );
+      await writeStepMarker(opts?.extractionId, 'artifact-step-mixed-download-done', pageUrl, out, {
+        successCount: mixedResult.successCount,
+        ordinals: mixedResult.ordinals,
+      });
       const mixedFill = fillArtifactPlaceholdersWithSparseMarkdownPieces(out, mixedResult.pieces);
       out = mixedFill.text;
       await writeStageDebugSnapshot({
@@ -528,19 +606,29 @@ export async function processClaudeArtifactsFull(
     }
 
     const collected = await withStepTimeout(
-      collectAllIframeArtifactsAsPng(
-        webview,
-        viewAPI as any,
-        {
-          limit: Math.min(expectedIframes * 2, 4),
-          perItemTimeoutMs: 4_000,
-          scopeSelector: opts?.scopeSelector,
-          preferredOrdinals: ordinalHints,
-        },
-      ),
+      (async () => {
+        await writeStepMarker(opts?.extractionId, 'artifact-step-png-collect-start', pageUrl, out, {
+          expected: expectedIframes,
+        });
+        return collectAllIframeArtifactsAsPng(
+          webview,
+          viewAPI as any,
+          {
+            limit: Math.min(expectedIframes * 2, 4),
+            perItemTimeoutMs: 4_000,
+            scopeSelector: opts?.scopeSelector,
+            preferredOrdinals: ordinalHints,
+          },
+        );
+      })(),
       8_000,
       'collectAllIframeArtifactsAsPng',
     );
+    await writeStepMarker(opts?.extractionId, 'artifact-step-png-collect-done', pageUrl, out, {
+      results: collected.results.length,
+      skipped: collected.skippedCount,
+      discovered: collected.totalDiscovered,
+    });
     const rawImgs = collected.results.map(r => r.dataUrl);
     const seen = new Set<string>();
     const imgs: string[] = [];
@@ -579,6 +667,9 @@ export async function processClaudeArtifactsFull(
       return out;
     }
   } catch (err) {
+    await writeStepMarker(opts?.extractionId, 'artifact-step-layer2-catch', pageUrl, out, {
+      error: err instanceof Error ? err.message : String(err),
+    });
     console.warn('[AI/Bridge/Claude/Artifact] image fallback failed:', err);
   }
 

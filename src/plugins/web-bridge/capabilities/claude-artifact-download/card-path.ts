@@ -73,7 +73,16 @@ function buildProbeAndClickScript(ref: ClaudeArtifactRef): string {
       }
 
       // List all artifacts in document order (cards + standalone iframes).
-      var cards = Array.from(document.querySelectorAll(${JSON.stringify(CARD_ROOT_SELECTOR)}));
+      var cards = Array.from(document.querySelectorAll(${JSON.stringify(CARD_ROOT_SELECTOR)})).filter(function(el) {
+        var p = el.parentElement;
+        while (p) {
+          var cls = '';
+          try { cls = (p.className && String(p.className)) || ''; } catch (e) {}
+          if (cls.indexOf('group/artifact-block') >= 0) return false;
+          p = p.parentElement;
+        }
+        return true;
+      });
       var allIframes = Array.from(document.querySelectorAll(${JSON.stringify(IFRAME_SELECTOR)}));
       var standaloneIframes = allIframes.filter(function(f) { return !f.closest(${JSON.stringify(CARD_ROOT_SELECTOR)}); });
       var merged = cards.map(function(el) { return { form: 'card', el: el }; })
@@ -104,7 +113,15 @@ function buildProbeAndClickScript(ref: ClaudeArtifactRef): string {
       var rawKindLabel = labelEl ? (labelEl.textContent || '').trim() : '';
 
       // Find and click the Download button.
-      var btn = card.querySelector(${JSON.stringify(CARD_DOWNLOAD_BUTTON_SELECTOR)});
+      var btn = null;
+      var btns = Array.from(card.querySelectorAll('button, [role="button"], a'));
+      for (var bi = 0; bi < btns.length; bi++) {
+        var cand = btns[bi];
+        var label = ((cand.innerText || cand.textContent || '') + ' ' +
+          (cand.getAttribute('aria-label') || '') + ' ' +
+          (cand.getAttribute('title') || '')).toLowerCase();
+        if (label.indexOf('download') >= 0) { btn = cand; break; }
+      }
       if (!btn) {
         return { ok: false, code: 'card-button-not-found' };
       }

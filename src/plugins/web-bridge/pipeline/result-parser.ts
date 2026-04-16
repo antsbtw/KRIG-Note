@@ -229,6 +229,23 @@ export class ResultParser {
         continue;
       }
 
+      // Attachment: !attach[filename](src)
+      const attachMatch = line.trim().match(/^!attach\[([^\]]*)\]\(([^)]+)\)\s*$/);
+      if (attachMatch) {
+        const filename = (attachMatch[1] || 'attachment').trim();
+        const rawSrc = attachMatch[2];
+        blocks.push({
+          type: 'file',
+          tag: 'file',
+          text: filename,
+          headingLevel: 0,
+          src: rawSrc,
+          filename,
+        });
+        i++;
+        continue;
+      }
+
       // HTML media tags: <iframe>, <video>, <audio>
       const mediaBlock = this.tryParseMediaTag(line.trim());
       if (mediaBlock) {

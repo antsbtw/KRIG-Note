@@ -163,6 +163,7 @@ export const IPC = {
   SLOT_CLOSE_RIGHT: 'slot:close-right',
   SLOT_ENSURE_RIGHT: 'slot:ensure-right', // 确保 Right Slot 打开（不 toggle）
   SLOT_CLOSE: 'slot:close',             // View 关闭自己所在的 slot
+  SLOT_GET_SIDE: 'slot:get-side',       // View 查询自己在哪个 slot
   SLOT_DIVIDER_CHANGED: 'slot:divider-changed',
 
   // Divider 拖拽

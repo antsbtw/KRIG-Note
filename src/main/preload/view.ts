@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld('viewAPI', {
   ensureRightSlot: (workModeId: string) => ipcRenderer.invoke(IPC.SLOT_ENSURE_RIGHT, workModeId),
   closeRightSlot: () => ipcRenderer.invoke(IPC.SLOT_CLOSE_RIGHT),
   closeSlot: () => ipcRenderer.invoke(IPC.SLOT_CLOSE),  // 关闭自己所在的 slot
+  getMySlotSide: () => ipcRenderer.invoke(IPC.SLOT_GET_SIDE),  // 查询自己在哪个 slot（'left'|'right'|null）
 
   // NoteFile 操作
   noteCreate: (title?: string) => ipcRenderer.invoke(IPC.NOTE_CREATE, title),

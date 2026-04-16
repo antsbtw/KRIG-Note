@@ -184,15 +184,10 @@ export function collapseAdjacentArtifactPlaceholders(text: string): string {
   if (!text) return text;
   const normalized = text.replace(/\r\n/g, '\n');
   const duplicatePattern = new RegExp(
-    '(' + ARTIFACT_PLACEHOLDER_BLOCK_PATTERN + ')(?:\\n[ \\t]*){1,3}(?=' + ARTIFACT_PLACEHOLDER_BLOCK_PATTERN + ')',
+    '(' + ARTIFACT_PLACEHOLDER_BLOCK_PATTERN + ')(?:\\n[ \\t]*' + ARTIFACT_PLACEHOLDER_BLOCK_PATTERN + ')+',
     'g',
   );
-  let out = normalized;
-  while (duplicatePattern.test(out)) {
-    duplicatePattern.lastIndex = 0;
-    out = out.replace(duplicatePattern, '$1\n');
-  }
-  return out;
+  return normalized.replace(duplicatePattern, '$1');
 }
 
 /**

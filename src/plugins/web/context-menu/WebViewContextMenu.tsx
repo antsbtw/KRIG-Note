@@ -65,6 +65,12 @@ export function WebViewContextMenu({ webviewRef, items = [] }: WebViewContextMen
     if (busy) return;
     const enabled = item.enabled ? item.enabled(ctx) : true;
     if (!enabled) return;
+    console.log('[WebViewContextMenu] click', {
+      itemId: item.id,
+      x: ctx.x,
+      y: ctx.y,
+      url: ctx.url,
+    });
     setBusy(true);
     try {
       await item.onClick(ctx);
