@@ -1240,6 +1240,68 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
     }
   });
 
+  ipcMain.handle(IPC.AI_EXTRACTION_CACHE_WRITE, async (_event, payload: {
+    extractionId?: string;
+    stage?: string;
+    serviceId?: string;
+    url?: string;
+    noteTitle?: string;
+    msgIndex?: number;
+    preview?: string;
+    userMessage?: string;
+    markdown?: string;
+    meta?: Record<string, unknown>;
+  }) => {
+    try {
+      const fs = await import('node:fs/promises');
+      const path = await import('node:path');
+
+      const cacheDir = path.join(process.cwd(), 'debug', 'ai-extraction-cache');
+      await fs.mkdir(cacheDir, { recursive: true });
+
+      const extractionId = String(payload.extractionId || Date.now());
+      const stage = String(payload.stage || 'snapshot');
+      const serviceId = String(payload.serviceId || 'unknown');
+      const safeId = extractionId.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const safeStage = stage.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const baseName = `${safeId}-${safeStage}`;
+
+      const record = {
+        extractionId,
+        stage,
+        serviceId,
+        writtenAt: new Date().toISOString(),
+        ...payload,
+      };
+
+      const jsonPath = path.join(cacheDir, `${baseName}.json`);
+      await fs.writeFile(jsonPath, JSON.stringify(record, null, 2), 'utf8');
+
+      let markdownPath: string | null = null;
+      if (typeof payload.markdown === 'string') {
+        markdownPath = path.join(cacheDir, `${baseName}.md`);
+        await fs.writeFile(markdownPath, payload.markdown, 'utf8');
+      }
+
+      await fs.writeFile(
+        path.join(cacheDir, `latest-${serviceId}.json`),
+        JSON.stringify(record, null, 2),
+        'utf8',
+      );
+      if (typeof payload.markdown === 'string') {
+        await fs.writeFile(
+          path.join(cacheDir, `latest-${serviceId}.md`),
+          payload.markdown,
+          'utf8',
+        );
+      }
+
+      return { success: true, dir: cacheDir, jsonPath, markdownPath };
+    } catch (err) {
+      return { success: false, error: String(err) };
+    }
+  });
+
   // AI_EXTRACT_DEBUG: Parse markdown and return stats (for debugging extraction quality)
   ipcMain.handle(IPC.AI_EXTRACT_DEBUG, async (_event, params: { markdown: string; serviceId: string }) => {
     try {

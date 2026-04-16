@@ -68,6 +68,7 @@ declare const viewAPI: {
   onMessage: (callback: (message: any) => void) => () => void;
   sendToOtherSlot: (message: { protocol: string; action: string; payload: unknown }) => void;
   aiParseMarkdown: (markdown: string) => Promise<{ success: boolean; atoms: any[]; error?: string }>;
+  aiExtractionCacheWrite?: (payload: any) => Promise<any>;
 };
 
 // 注册所有 Block（只执行一次）
@@ -658,18 +659,46 @@ export function NoteEditor() {
     let queue: Promise<void> = Promise.resolve();
     let lastAppendFingerprint = '';
     let lastAppendAt = 0;
+    const writeReceipt = async (payload: any) => {
+      try {
+        await viewAPI.aiExtractionCacheWrite?.(payload);
+      } catch {}
+    };
     const unsub = viewAPI.onMessage((msg: any) => {
       if (msg.protocol === 'ai-sync' && msg.action === 'as:append-turn') {
         const sourceId = String(msg.payload?.source?.serviceId || '');
         const turn = msg.payload?.turn || {};
+        const extractionId = String(msg.payload?.debug?.extractionId || `note-${Date.now()}`);
+        const noteId = currentNoteIdRef.current ?? null;
         const fingerprint = JSON.stringify({
           sourceId,
           index: turn.index ?? null,
           userMessage: turn.userMessage ?? '',
           markdown: turn.markdown ?? '',
         });
+        void writeReceipt({
+          extractionId,
+          stage: 'note-received',
+          serviceId: sourceId || 'unknown',
+          msgIndex: turn.index ?? -1,
+          userMessage: turn.userMessage ?? '',
+          markdown: turn.markdown ?? '',
+          meta: {
+            noteId,
+            sourceName: String(msg.payload?.source?.serviceName || ''),
+          },
+        });
         const now = Date.now();
         if (fingerprint === lastAppendFingerprint && (now - lastAppendAt) < 15000) {
+          void writeReceipt({
+            extractionId,
+            stage: 'note-duplicate-skip',
+            serviceId: sourceId || 'unknown',
+            msgIndex: turn.index ?? -1,
+            userMessage: turn.userMessage ?? '',
+            markdown: turn.markdown ?? '',
+            meta: { noteId },
+          });
           return;
         }
         lastAppendFingerprint = fingerprint;
@@ -677,6 +706,15 @@ export function NoteEditor() {
         queue = queue.then(async () => {
           const view = viewRef.current;
           if (!view || view.isDestroyed || !currentNoteIdRef.current) {
+            await writeReceipt({
+              extractionId,
+              stage: 'note-no-active-note',
+              serviceId: sourceId || 'unknown',
+              msgIndex: turn.index ?? -1,
+              userMessage: turn.userMessage ?? '',
+              markdown: turn.markdown ?? '',
+              meta: { noteId: currentNoteIdRef.current ?? null },
+            });
             // No target note (view torn down, note deleted) — tell peer so
             // it can pause the sync toggle and surface a warning.
             viewAPI.sendToOtherSlot({
@@ -686,10 +724,40 @@ export function NoteEditor() {
             });
             return;
           }
+          await writeReceipt({
+            extractionId,
+            stage: 'note-insert-start',
+            serviceId: sourceId || 'unknown',
+            msgIndex: turn.index ?? -1,
+            userMessage: turn.userMessage ?? '',
+            markdown: turn.markdown ?? '',
+            meta: { noteId: currentNoteIdRef.current },
+          });
           const { insertTurnIntoNote } = await import('../ai-workflow/sync-note-receiver');
           await insertTurnIntoNote(view, msg.payload);
+          await writeReceipt({
+            extractionId,
+            stage: 'note-insert-success',
+            serviceId: sourceId || 'unknown',
+            msgIndex: turn.index ?? -1,
+            userMessage: turn.userMessage ?? '',
+            markdown: turn.markdown ?? '',
+            meta: { noteId: currentNoteIdRef.current },
+          });
         }).catch(err => {
           console.warn('[SyncNote] insert failed:', err);
+          void writeReceipt({
+            extractionId,
+            stage: 'note-insert-failed',
+            serviceId: sourceId || 'unknown',
+            msgIndex: turn.index ?? -1,
+            userMessage: turn.userMessage ?? '',
+            markdown: turn.markdown ?? '',
+            meta: {
+              noteId: currentNoteIdRef.current ?? null,
+              error: String(err),
+            },
+          });
           viewAPI.sendToOtherSlot({
             protocol: 'ai-sync',
             action: 'as:insert-failed',

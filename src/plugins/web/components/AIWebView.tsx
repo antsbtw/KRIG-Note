@@ -15,7 +15,7 @@ import {
 } from '../../../shared/types/ai-service-types';
 import type { AIServiceId } from '../../../shared/types/ai-service-types';
 import { WEBVIEW_PARTITION } from '../../../shared/constants/webview-partition';
-import { processClaudeArtifactsFull, startSseTrigger } from '../../ai-note-bridge';
+import { processClaudeArtifactsFull, processClaudeArtifactsLive } from '../../ai-note-bridge';
 import '../web.css';
 
 declare const viewAPI: {
@@ -30,6 +30,7 @@ declare const viewAPI: {
   onAIInjectAndSend?: (callback: (params: any) => void) => () => void;
   aiSendResponse?: (channel: string, result: any) => Promise<void>;
   aiReadClipboard: () => Promise<string>;
+  aiExtractionCacheWrite: (payload: any) => Promise<{ success: boolean; dir?: string; jsonPath?: string; markdownPath?: string | null; error?: string }>;
   wbCdpStart: (urlFilters?: string[]) => Promise<{ success: boolean; error?: string; guestUrl?: string; guestId?: number; filters?: string[] }>;
   wbCdpStop: () => Promise<{ success: boolean }>;
   wbCdpFindResponse: (params: { urlSubstring: string; mode?: 'all' | 'latest' | 'first' }) =>
@@ -63,11 +64,113 @@ interface AIWebViewProps {
 interface ClaudeRightClickTarget {
   msgIndex: number;
   artifactOrdinal: number | null;
+  preview: string;
+}
+
+interface ClaudeResolvedTurn {
+  userMessage: string;
+  baseMarkdown: string;
 }
 
 const LAST_SERVICE_KEY = 'krig.ai.lastService';
-const LIVE_SYNC_ENABLED_KEY = 'krig.ai.liveSync.enabled';
 
+function normalizePreviewText(input: string): string {
+  return (input || '')
+    .replace(/\s+/g, ' ')
+    .replace(/[`*_>#-]+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function findClaudeAssistantByPreview(
+  conv: Awaited<ReturnType<typeof extractClaudeConversation>>,
+  msgIndex: number,
+  preview: string,
+): { userMessage: string; markdown: string } | null {
+  if (!conv) return null;
+  const normalizedPreview = normalizePreviewText(preview).slice(0, 120);
+
+  const pairs: Array<{ assistantOrder: number; userMessage: string; markdown: string }> = [];
+  let pendingHuman = '';
+  let assistantOrder = -1;
+  for (const m of conv.messages) {
+    if (m.sender === 'human') {
+      pendingHuman = m.text;
+      continue;
+    }
+    if (m.sender === 'assistant') {
+      assistantOrder += 1;
+      pairs.push({
+        assistantOrder,
+        userMessage: pendingHuman,
+        markdown: m.text,
+      });
+      pendingHuman = '';
+    }
+  }
+
+  if (normalizedPreview) {
+    let best: { idx: number; score: number } | null = null;
+    for (let i = 0; i < pairs.length; i++) {
+      const candidate = normalizePreviewText(pairs[i].markdown).slice(0, 400);
+      if (!candidate) continue;
+      let score = 0;
+      if (candidate.includes(normalizedPreview)) score = normalizedPreview.length + 1000;
+      else if (normalizedPreview.includes(candidate.slice(0, Math.min(candidate.length, 80)))) score = 900 + Math.min(candidate.length, 80);
+      else {
+        const candidateWords = candidate.split(' ').filter(Boolean);
+        const previewWords = new Set(normalizedPreview.split(' ').filter(Boolean));
+        for (const word of candidateWords) {
+          if (previewWords.has(word)) score += Math.min(word.length, 12);
+        }
+      }
+      if (score <= 0) continue;
+      // Small bias toward the DOM-local ordinal when multiple texts are similar.
+      score -= Math.abs(i - msgIndex) * 3;
+      if (!best || score > best.score) best = { idx: i, score };
+    }
+    if (best && best.score > 20) {
+      return {
+        userMessage: pairs[best.idx].userMessage,
+        markdown: pairs[best.idx].markdown,
+      };
+    }
+  }
+
+  const fallback = pairs[msgIndex];
+  return fallback ? { userMessage: fallback.userMessage, markdown: fallback.markdown } : null;
+}
+
+async function resolveClaudeTurnFromApi(
+  webview: Electron.WebviewTag,
+  msgIndex: number,
+  preview: string,
+): Promise<ClaudeResolvedTurn | null> {
+  const conv = await extractClaudeConversation(webview);
+  if (!conv) return null;
+  const matched = findClaudeAssistantByPreview(conv, msgIndex, preview);
+  if (!matched) return null;
+  return {
+    userMessage: matched.userMessage,
+    baseMarkdown: matched.markdown,
+  };
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    promise.then(
+      (value) => {
+        window.clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        window.clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
 /** Read the last-used AI service from localStorage; fall back to default if missing/invalid. */
 function loadLastService(): AIServiceId {
   try {
@@ -79,14 +182,6 @@ function loadLastService(): AIServiceId {
   return DEFAULT_AI_SERVICE;
 }
 
-function loadLiveSyncEnabled(): boolean {
-  try {
-    return localStorage.getItem(LIVE_SYNC_ENABLED_KEY) === '1';
-  } catch {
-    return false;
-  }
-}
-
 export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
   void _workModeId; // workModeId is kept for prop-API stability; not used yet.
   const webviewRef = useRef<Electron.WebviewTag | null>(null);
@@ -94,7 +189,7 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
   const [loading, setLoading] = useState(true);
   const [showServiceMenu, setShowServiceMenu] = useState(false);
   const [aiStatus, setAiStatus] = useState<'idle' | 'injecting' | 'waiting' | 'capturing'>('idle');
-  const [liveSyncEnabled, setLiveSyncEnabled] = useState<boolean>(loadLiveSyncEnabled);
+  const [isExtractionLocked, setIsExtractionLocked] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   const initialUrl = getAIServiceProfile(currentService).newChatUrl;
@@ -198,10 +293,6 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
       if (el) {
         if (el.tagName === 'IFRAME' && String(el.src || '').indexOf('claudemcpcontent') >= 0) artifactEl = el;
         if (!artifactEl && el.closest) artifactEl = el.closest('[class*="group/artifact-block"]');
-        if (!artifactEl) {
-          var localIframe = hit.querySelector('iframe[src*="claudemcpcontent"]');
-          if (localIframe) artifactEl = localIframe;
-        }
       }
       var artifactOrdinal = null;
       if (artifactEl) {
@@ -218,11 +309,12 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
         return {
           msgIndex: r.index,
           artifactOrdinal: typeof r.artifactOrdinal === 'number' ? r.artifactOrdinal : null,
+          preview: typeof r.preview === 'string' ? r.preview : '',
         };
       }
-      return { msgIndex: -1, artifactOrdinal: null };
+      return { msgIndex: -1, artifactOrdinal: null, preview: '' };
     } catch {
-      return { msgIndex: -1, artifactOrdinal: null };
+      return { msgIndex: -1, artifactOrdinal: null, preview: '' };
     }
   }, []);
 
@@ -247,9 +339,22 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
             scrollIntoView: Element.prototype.scrollIntoView,
           };
           window.__krigFreezeViewport = { sx: sx, sy: sy, orig: orig };
-          window.scrollTo = function() {};
-          window.scrollBy = function() {};
-          Element.prototype.scrollIntoView = function() {};
+          window.__krigAllowProgrammaticScroll = false;
+          window.scrollTo = function() {
+            if (window.__krigAllowProgrammaticScroll) {
+              return orig.scrollTo.apply(window, arguments);
+            }
+          };
+          window.scrollBy = function() {
+            if (window.__krigAllowProgrammaticScroll) {
+              return orig.scrollBy.apply(window, arguments);
+            }
+          };
+          Element.prototype.scrollIntoView = function() {
+            if (window.__krigAllowProgrammaticScroll) {
+              return orig.scrollIntoView.apply(this, arguments);
+            }
+          };
           var root = document.scrollingElement || document.documentElement || document.body;
           if (root) root.style.scrollBehavior = 'auto';
           document.documentElement.style.overscrollBehavior = 'none';
@@ -272,6 +377,7 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
           window.scrollTo = frozen.orig.scrollTo;
           window.scrollBy = frozen.orig.scrollBy;
           Element.prototype.scrollIntoView = frozen.orig.scrollIntoView;
+          delete window.__krigAllowProgrammaticScroll;
           document.documentElement.style.overscrollBehavior = '';
           document.body.style.overscrollBehavior = '';
           document.documentElement.style.overflow = '';
@@ -284,7 +390,6 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
   }, []);
 
   const cdpStartedRef = useRef(false);
-  const sseTriggerRef = useRef<ReturnType<typeof startSseTrigger> | null>(null);
 
   /**
    * Extract one assistant turn (by DOM index) and emit it as
@@ -298,12 +403,9 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
     if (!profile) return;
 
     try {
-      // Manual extraction and live chat sync are mutually exclusive.
-      // Turn sync off first so the same Claude turn is not auto-appended.
-      setLiveSyncEnabled(false);
-      try { localStorage.setItem(LIVE_SYNC_ENABLED_KEY, '0'); } catch {}
-      sseTriggerRef.current?.suspendFor(15000);
+      setIsExtractionLocked(true);
       await viewAPI.ensureRightSlot('demo-a');
+      const extractionId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
       // ChatGPT / Gemini need CDP to see the conversation API response.
       // First-time only — reload with cache bypass so estuary image
@@ -325,32 +427,86 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
       let markdown = '';
 
       if (profile.id === 'claude') {
-        const conv = await extractClaudeConversation(webview);
-        if (!conv) return;
-        let aSeen = -1;
-        let pendingHuman = '';
-        for (const m of conv.messages) {
-          if (m.sender === 'human') pendingHuman = m.text;
-          else if (m.sender === 'assistant') {
-            aSeen++;
-            if (aSeen === msgIndex) {
-              userMessage = pendingHuman;
-              markdown = m.text;
-              break;
-            }
-            pendingHuman = '';
-          }
-        }
+        const resolvedTurn = await resolveClaudeTurnFromApi(
+          webview,
+          msgIndex,
+          (ctx as MenuContext & { preview?: string }).preview || '',
+        );
+        if (!resolvedTurn) return;
+        userMessage = resolvedTurn.userMessage;
+        markdown = resolvedTurn.baseMarkdown;
+        await viewAPI.aiExtractionCacheWrite({
+          extractionId,
+          stage: 'base',
+          serviceId: profile.id,
+          url,
+          msgIndex,
+          preview: (ctx as MenuContext & { preview?: string }).preview || '',
+          userMessage,
+          markdown,
+          meta: {
+            artifactOrdinal: (ctx as MenuContext & { artifactOrdinal?: number | null }).artifactOrdinal ?? null,
+          },
+        }).catch(() => {});
         try {
-          await freezeViewport(webview);
-          markdown = await processClaudeArtifactsFull(webview, markdown, {
-            scopeSelector: '[data-krig-target="1"]',
-            preferredArtifactOrdinals: (ctx as MenuContext & { artifactOrdinal?: number | null }).artifactOrdinal != null
-              ? [(ctx as MenuContext & { artifactOrdinal?: number | null }).artifactOrdinal as number]
-              : undefined,
-          });
+          await viewAPI.aiExtractionCacheWrite({
+            extractionId,
+            stage: 'artifact-enter',
+            serviceId: profile.id,
+            url,
+            msgIndex,
+            preview: (ctx as MenuContext & { preview?: string }).preview || '',
+            userMessage,
+            markdown,
+            meta: {
+              artifactOrdinal: (ctx as MenuContext & { artifactOrdinal?: number | null }).artifactOrdinal ?? null,
+            },
+          }).catch(() => {});
+          await withTimeout(freezeViewport(webview), 3_000, 'freezeViewport');
+          await viewAPI.aiExtractionCacheWrite({
+            extractionId,
+            stage: 'artifact-frozen',
+            serviceId: profile.id,
+            url,
+            msgIndex,
+            preview: (ctx as MenuContext & { preview?: string }).preview || '',
+            userMessage,
+            markdown,
+            meta: {
+              artifactOrdinal: (ctx as MenuContext & { artifactOrdinal?: number | null }).artifactOrdinal ?? null,
+            },
+          }).catch(() => {});
+          markdown = await withTimeout(
+            processClaudeArtifactsFull(webview, markdown, {
+              scopeSelector: '[data-krig-target="1"]',
+              extractionId,
+              pageUrl: url,
+              preferredArtifactOrdinals: (ctx as MenuContext & { artifactOrdinal?: number | null }).artifactOrdinal != null
+                ? [(ctx as MenuContext & { artifactOrdinal?: number | null }).artifactOrdinal as number]
+                : undefined,
+            }),
+            20_000,
+            'processClaudeArtifactsFull',
+          );
+        } catch (artifactErr) {
+          console.warn('[AIWebView Extract] Artifact processing fallback:', artifactErr);
+          markdown = processClaudeArtifactsLive(markdown, url);
+          await viewAPI.aiExtractionCacheWrite({
+            extractionId,
+            stage: 'artifact-timeout-fallback',
+            serviceId: profile.id,
+            url,
+            msgIndex,
+            preview: (ctx as MenuContext & { preview?: string }).preview || '',
+            userMessage,
+            markdown,
+            meta: {
+              artifactOrdinal: (ctx as MenuContext & { artifactOrdinal?: number | null }).artifactOrdinal ?? null,
+              error: artifactErr instanceof Error ? artifactErr.message : String(artifactErr),
+            },
+          }).catch(() => {});
         } finally {
-          await restoreViewport(webview);
+          await withTimeout(restoreViewport(webview), 3_000, 'restoreViewport').catch(() => {});
           await clearTargetMarker(webview);
         }
       } else if (profile.id === 'chatgpt') {
@@ -424,6 +580,20 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
         return;
       }
 
+      await viewAPI.aiExtractionCacheWrite({
+        extractionId,
+        stage: 'final',
+        serviceId: profile.id,
+        url,
+        msgIndex,
+        preview: (ctx as MenuContext & { preview?: string }).preview || '',
+        userMessage,
+        markdown,
+        meta: {
+          artifactOrdinal: (ctx as MenuContext & { artifactOrdinal?: number | null }).artifactOrdinal ?? null,
+        },
+      }).catch(() => {});
+
       viewAPI.sendToOtherSlot({
         protocol: 'ai-sync',
         action: 'as:append-turn',
@@ -438,10 +608,15 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
             serviceId: profile.id,
             serviceName: profile.name,
           },
+          debug: {
+            extractionId,
+          },
         },
       });
     } catch (err) {
       console.warn('[AIWebView Extract] Failed:', err);
+    } finally {
+      setIsExtractionLocked(false);
     }
   }, []);
 
@@ -460,27 +635,12 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
           return;
         }
         await extractTurnAt(
-          { ...ctx, artifactOrdinal: target.artifactOrdinal } as MenuContext & { artifactOrdinal?: number | null },
+          { ...ctx, artifactOrdinal: target.artifactOrdinal, preview: target.preview } as MenuContext & { artifactOrdinal?: number | null; preview?: string },
           target.msgIndex,
         );
       },
     },
   ], [resolveMsgIndex, extractTurnAt]);
-
-  // ── Live chat sync (opt-in toggle) ──
-  useEffect(() => {
-    if (!liveSyncEnabled) {
-      sseTriggerRef.current?.dispose();
-      sseTriggerRef.current = null;
-      return;
-    }
-    const handle = startSseTrigger(webviewRef);
-    sseTriggerRef.current = handle;
-    return () => {
-      if (sseTriggerRef.current === handle) sseTriggerRef.current = null;
-      handle.dispose();
-    };
-  }, [liveSyncEnabled]);
 
   // ── Click outside service menu to close ──
   useEffect(() => {
@@ -692,27 +852,6 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
         {statusText && (
           <span style={{ color: '#6366f1', fontSize: 12, fontWeight: 500 }}>{statusText}</span>
         )}
-        <button
-          style={{
-            background: liveSyncEnabled ? '#1f4b2b' : '#333',
-            border: `1px solid ${liveSyncEnabled ? '#2f7d46' : '#555'}`,
-            borderRadius: 6,
-            color: liveSyncEnabled ? '#d9ffe3' : '#e8eaed',
-            fontSize: 13,
-            padding: '4px 12px',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-          }}
-          onClick={() => {
-            const next = !liveSyncEnabled;
-            setLiveSyncEnabled(next);
-            try { localStorage.setItem(LIVE_SYNC_ENABLED_KEY, next ? '1' : '0'); } catch {}
-          }}
-          title={liveSyncEnabled ? '关闭聊天自动同步到 Note' : '开启聊天自动同步到 Note'}
-        >
-          聊天同步
-        </button>
 
         <div style={{ flex: 1 }} />
 
@@ -747,6 +886,42 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
           // @ts-ignore
           allowpopups="true"
         />
+        {isExtractionLocked && (
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              zIndex: 20,
+              background: 'rgba(18, 18, 18, 0.22)',
+              backdropFilter: 'blur(1px)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              pointerEvents: 'auto',
+              cursor: 'progress',
+            }}
+            onContextMenu={(e) => e.preventDefault()}
+            onMouseDown={(e) => e.preventDefault()}
+            onMouseUp={(e) => e.preventDefault()}
+            onWheel={(e) => e.preventDefault()}
+          >
+            <div
+              style={{
+                padding: '10px 14px',
+                borderRadius: 10,
+                background: 'rgba(24, 24, 24, 0.92)',
+                border: '1px solid rgba(255,255,255,0.08)',
+                color: 'rgba(255,255,255,0.92)',
+                fontSize: 13,
+                lineHeight: 1.4,
+                boxShadow: '0 10px 30px rgba(0,0,0,0.28)',
+                userSelect: 'none',
+              }}
+            >
+              正在提取 Artifact，请稍候…
+            </div>
+          </div>
+        )}
         <WebViewContextMenu webviewRef={webviewRef} items={aiContextItems} />
       </div>
     </div>

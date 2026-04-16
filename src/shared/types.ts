@@ -330,6 +330,7 @@ export const IPC = {
   AI_RESPONSE_CAPTURED: 'ai:response-captured', // web renderer → main：SSE 拦截到回复
   AI_EXTRACT_DEBUG: 'ai:extract-debug',         // renderer → main：调试用，解析 Markdown 并返回统计
   AI_PARSE_MARKDOWN: 'ai:parse-markdown',       // renderer → main：解析 Markdown → Atom[]
+  AI_EXTRACTION_CACHE_WRITE: 'ai:extraction-cache-write', // renderer → main：写入 AI 提取调试缓存文件
   MD_TO_PM_NODES: 'md:to-pm-nodes',             // renderer → main：Markdown 字符串 → ProseMirror node JSON 数组（smart paste 用）
   AI_READ_CLIPBOARD: 'ai:read-clipboard',       // renderer → main：读取系统剪贴板文本
   WB_CDP_START: 'wb:cdp-start',                 // renderer → main：启动 CDP 拦截器（调试用）

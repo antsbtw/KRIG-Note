@@ -278,6 +278,9 @@ contextBridge.exposeInMainWorld('viewAPI', {
   aiReadClipboard: () =>
     ipcRenderer.invoke(IPC.AI_READ_CLIPBOARD),
 
+  aiExtractionCacheWrite: (payload: any) =>
+    ipcRenderer.invoke(IPC.AI_EXTRACTION_CACHE_WRITE, payload),
+
   // ── WebBridge CDP 调试接口 ──
   wbCdpStart: (urlFilters?: string[]) =>
     ipcRenderer.invoke(IPC.WB_CDP_START, urlFilters),
