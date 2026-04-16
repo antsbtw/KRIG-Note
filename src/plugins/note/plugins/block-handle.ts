@@ -1,10 +1,16 @@
-import { Plugin, PluginKey, TextSelection } from 'prosemirror-state';
+import { Plugin, PluginKey, TextSelection, NodeSelection } from 'prosemirror-state';
 import { Slice, Fragment } from 'prosemirror-model';
 import { dropPoint } from 'prosemirror-transform';
 import type { EditorView } from 'prosemirror-view';
 import type { Node as PMNode } from 'prosemirror-model';
 import { blockSelectionKey } from './block-selection';
 import { blockRegistry } from '../registry';
+import {
+  computeSliceForClipboard,
+  writeKrigDataToTransfer,
+  readKrigDataFromTransfer,
+  KRIG_SOURCE_POS_MIME,
+} from '../paste/internal-clipboard';
 
 /** 任意注册为容器（content: block+ 风格，有 containerRule）的 block 类型名 */
 function isContainerType(name: string): boolean {
@@ -121,45 +127,6 @@ function resolveDropTarget(
   return { insertPos: p };
 }
 
-/**
- * 将 block 从 fromPos（任意层级）移动到 insertPos（任意层级）。
- * 通用版本：直接删除源节点，插入到目标位置。
- */
-function relocateBlockGeneral(view: EditorView, fromPos: number, insertPos: number): boolean {
-  const { state } = view;
-  const node = state.doc.nodeAt(fromPos);
-  if (!node) return false;
-
-  // 不能自己移到自己内部
-  if (insertPos > fromPos && insertPos < fromPos + node.nodeSize) return false;
-
-  // 检查目标位置的 parent 是否允许此节点类型
-  try {
-    const $insert = state.doc.resolve(insertPos);
-    const parentNode = $insert.parent;
-    if (!parentNode.type.contentMatch.matchType(node.type)) return false;
-  } catch { return false; }
-
-  // 检查是否原位（紧挨着源节点前后）
-  if (insertPos === fromPos || insertPos === fromPos + node.nodeSize) return false;
-
-  const tr = state.tr;
-  if (insertPos < fromPos) {
-    // 先插后删（避免位置偏移）
-    tr.insert(insertPos, node);
-    const mappedFrom = tr.mapping.map(fromPos);
-    const mappedNode = tr.doc.nodeAt(mappedFrom);
-    if (mappedNode) tr.delete(mappedFrom, mappedFrom + mappedNode.nodeSize);
-  } else {
-    // 先删后插
-    tr.delete(fromPos, fromPos + node.nodeSize);
-    const mappedInsert = tr.mapping.map(insertPos);
-    tr.insert(mappedInsert, node);
-  }
-  view.dispatch(tr);
-  return true;
-}
-
 export function blockHandlePlugin(): Plugin {
   let handleDOM: HTMLDivElement | null = null;
   let currentPos = -1;
@@ -219,7 +186,10 @@ export function blockHandlePlugin(): Plugin {
     dragBtn.addEventListener('mouseenter', () => { dragBtn.style.background = '#333'; dragBtn.style.color = '#e8eaed'; });
     dragBtn.addEventListener('mouseleave', () => { if (!isDragging) { dragBtn.style.background = 'transparent'; dragBtn.style.color = '#555'; } });
 
-    // 拖拽开始
+    // 拖拽开始 — 走与复制粘贴统一的 internal-clipboard 通道：
+    //   1. computeSliceForClipboard 拿到完整 Slice（保留所有外层容器）
+    //   2. writeKrigDataToTransfer 写 text/html（含 KRIG marker）+ text/plain
+    //   3. 额外写 KRIG_SOURCE_POS_MIME 标记源位置范围，drop 时用来删除原位置
     dragBtn.addEventListener('dragstart', (e) => {
       if (currentPos < 0 || !e.dataTransfer) return;
       isDragging = true;
@@ -231,17 +201,36 @@ export function blockHandlePlugin(): Plugin {
       e.dataTransfer.setDragImage(ghost, 0, 0);
       setTimeout(() => document.body.removeChild(ghost), 0);
 
-      // 检查 block-selection：如果当前 block 在选中列表中，拖拽所有选中 block
+      // 如果当前 block 不在 block-selection 选中列表里，临时把 selection 设成当前块
+      // —— 让 computeSliceForClipboard 走 PM NodeSelection 路径取到这一块的完整 Slice。
       const bsState = blockSelectionKey.getState(view.state);
-      if (bsState?.active && bsState.selectedPositions.length > 1
-          && bsState.selectedPositions.includes(currentPos)) {
-        e.dataTransfer.setData(
-          'application/krig-multi-block',
-          JSON.stringify(bsState.selectedPositions),
-        );
-      } else {
-        e.dataTransfer.setData('application/krig-block-pos', String(currentPos));
+      const inMultiSelection = bsState?.active
+        && bsState.selectedPositions.length > 0
+        && bsState.selectedPositions.includes(currentPos);
+
+      let sliceState = view.state;
+      if (!inMultiSelection) {
+        const node = view.state.doc.nodeAt(currentPos);
+        if (!node) return;
+        // 临时构造一个只覆盖当前节点的 NodeSelection，只用于序列化
+        try {
+          const tr = view.state.tr.setSelection(
+            NodeSelection.create(view.state.doc, currentPos),
+          );
+          sliceState = view.state.apply(tr);
+        } catch { /* fallback to current state */ }
       }
+
+      const slice = computeSliceForClipboard(sliceState);
+      if (!slice || slice.size === 0) return;
+
+      writeKrigDataToTransfer(e.dataTransfer, slice, view.state.schema);
+
+      // 记录源位置范围（dataTransfer 是进程内对象，自定义 MIME 安全可用）
+      const sourceRange = inMultiSelection
+        ? bsState!.selectedPositions
+        : [currentPos];
+      e.dataTransfer.setData(KRIG_SOURCE_POS_MIME, JSON.stringify(sourceRange));
       e.dataTransfer.effectAllowed = 'move';
     });
 
@@ -457,47 +446,59 @@ export function blockHandlePlugin(): Plugin {
         },
       },
 
-      // 接收拖放
+      // 接收拖放 — 走 internal-clipboard 通道：
+      //   1. 从 dataTransfer 读出 KRIG Slice（保留所有外层容器结构）
+      //   2. 读出 KRIG_SOURCE_POS_MIME 标记的源位置范围
+      //   3. 在目标位置插入 Slice，再删除源位置范围（先插后删，删除位置经 mapping）
       handleDrop(view, event) {
+        if (!event.dataTransfer) return false;
+        const sourcePosData = event.dataTransfer.getData(KRIG_SOURCE_POS_MIME);
+        if (!sourcePosData) return false; // 不是 KRIG 拖拽，让 PM 默认处理
+
+        const slice = readKrigDataFromTransfer(event.dataTransfer, view.state.schema);
+        if (!slice || slice.size === 0) return false;
+
         const dropResult = view.posAtCoords({ left: event.clientX, top: event.clientY });
         if (!dropResult) return false;
 
-        // 多 block 拖拽
-        const multiData = event.dataTransfer?.getData('application/krig-multi-block');
-        if (multiData) {
-          event.preventDefault();
-          try {
-            const positions: number[] = JSON.parse(multiData);
-            if (Array.isArray(positions) && positions.length > 0) {
-              const firstNode = view.state.doc.nodeAt(positions[0]);
-              if (!firstNode) return false;
-              const target = resolveDropTarget(view.state.doc, dropResult.pos, firstNode);
-              if (!target) return false;
-              // 逐个移入（从后往前以保持顺序）
-              let success = false;
-              const sorted = [...positions].sort((a, b) => a - b);
-              for (let i = sorted.length - 1; i >= 0; i--) {
-                if (relocateBlockGeneral(view, sorted[i], target.insertPos)) success = true;
-              }
-              return success;
-            }
-          } catch {}
-          return false;
-        }
+        let sourcePositions: number[];
+        try {
+          sourcePositions = JSON.parse(sourcePosData);
+          if (!Array.isArray(sourcePositions) || sourcePositions.length === 0) return false;
+        } catch { return false; }
 
-        // 单 block 拖拽
-        const posData = event.dataTransfer?.getData('application/krig-block-pos');
-        if (!posData) return false;
-        event.preventDefault();
-        const fromPos = parseInt(posData, 10);
-        if (isNaN(fromPos)) return false;
-
-        const srcNode = view.state.doc.nodeAt(fromPos);
-        if (!srcNode) return false;
-        const target = resolveDropTarget(view.state.doc, dropResult.pos, srcNode);
+        // 用 Slice 的第一个 child 类型来推断 drop 目标（容器/兄弟）
+        const firstNode = slice.content.firstChild;
+        if (!firstNode) return false;
+        const target = resolveDropTarget(view.state.doc, dropResult.pos, firstNode);
         if (!target) return false;
 
-        return relocateBlockGeneral(view, fromPos, target.insertPos);
+        // 自我拖到内部禁用：drop 位置不能落在任何源节点范围内
+        for (const srcPos of sourcePositions) {
+          const srcNode = view.state.doc.nodeAt(srcPos);
+          if (!srcNode) continue;
+          if (target.insertPos > srcPos && target.insertPos < srcPos + srcNode.nodeSize) {
+            event.preventDefault();
+            return true; // 静默忽略
+          }
+        }
+
+        event.preventDefault();
+
+        const tr = view.state.tr;
+        // 先在目标插入 Slice
+        tr.insert(target.insertPos, slice.content);
+        // 再删源位置范围（位置已经被 insert 影响，用 mapping 还原）
+        const sortedSources = [...sourcePositions].sort((a, b) => b - a); // 从后往前删
+        for (const srcPos of sortedSources) {
+          const mappedPos = tr.mapping.map(srcPos);
+          const node = tr.doc.nodeAt(mappedPos);
+          if (node) tr.delete(mappedPos, mappedPos + node.nodeSize);
+        }
+        // 退出 block-selection 状态
+        tr.setMeta(blockSelectionKey, { active: false, selectedPositions: [], anchorPos: null });
+        view.dispatch(tr);
+        return true;
       },
     },
   });

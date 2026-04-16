@@ -223,10 +223,13 @@ export function createRenderBlockView(
     const pmContentDOM = renderer.getContentDOM?.(contentEl);
 
     // ── 点击非 caption 区域 → NodeSelection ──
+    // 清除 DOM selection 是为了消除 caption contenteditable 内残留的 caret——
+    // 否则用户视觉上会以为光标还在 caption 里，粘贴时却把整个 block 替换掉。
     contentEl.addEventListener('mousedown', (e) => {
       if (pmContentDOM && pmContentDOM.contains(e.target as Node)) return;
       const pos = typeof getPos === 'function' ? getPos() : undefined;
       if (pos == null) return;
+      window.getSelection()?.removeAllRanges();
       view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, pos)));
       view.focus();
     });

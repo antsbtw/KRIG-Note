@@ -4,6 +4,8 @@ import { TextSelection } from 'prosemirror-state';
 import { blockRegistry } from '../registry';
 import { toggleHeadingCollapse } from '../plugins/heading-collapse';
 import { askAI } from '../commands/ask-ai-command';
+import { setTextBlockLevel } from '../commands/set-text-block-level';
+import { deleteColumnAt } from '../plugins/container-keyboard';
 import { DEFAULT_AI_SERVICE } from '../../../shared/types/ai-service-types';
 import type { AIServiceId } from '../../../shared/types/ai-service-types';
 
@@ -121,9 +123,22 @@ export function HandleMenu({ view }: HandleMenuProps) {
 
   const deleteBlock = () => {
     const node = view.state.doc.nodeAt(menu.pos);
-    if (node) {
-      view.dispatch(view.state.tr.delete(menu.pos, menu.pos + node.nodeSize));
+    if (!node) { close(); return; }
+
+    // 删 column 走专用入口：处理"删完只剩 1 列就解散 column-list"的级联，
+    // 避免直接 tr.delete 造成不合法的 column-list（content=column{2,3}）。
+    if (node.type.name === 'column') {
+      const $pos = view.state.doc.resolve(menu.pos);
+      const parent = $pos.parent;
+      if (parent.type.name === 'columnList') {
+        const columnListPos = $pos.before($pos.depth);
+        deleteColumnAt(view, columnListPos, menu.pos);
+        close();
+        return;
+      }
     }
+
+    view.dispatch(view.state.tr.delete(menu.pos, menu.pos + node.nodeSize));
     close();
   };
 
@@ -160,9 +175,12 @@ export function HandleMenu({ view }: HandleMenuProps) {
     const schema = view.state.schema;
 
     // textBlock → textBlock（改 level）
+    // 复用与键盘快捷键相同的命令，确保行为一致：在 orderedList 中转 heading 时
+    // 会自动把节点提取出来、把序号作为普通文字注入。
     if (item.blockName === 'textBlock' && node.type.name === 'textBlock') {
-      const level = item.attrs?.level ?? null;
-      view.dispatch(view.state.tr.setNodeMarkup(menu.pos, undefined, { ...node.attrs, level }));
+      const level = (item.attrs?.level as number | null | undefined) ?? null;
+      const tr = setTextBlockLevel(view.state, menu.pos, level);
+      if (tr) view.dispatch(tr);
       close();
       return;
     }

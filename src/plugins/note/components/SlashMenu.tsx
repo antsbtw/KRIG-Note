@@ -21,6 +21,10 @@ export function SlashMenu({ view }: SlashMenuProps) {
   const [coords, setCoords] = useState<{ left: number; top: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
+  // IME 输入码缓冲：菜单打开期间，拼音/日文等输入法的预编辑文字不会落入 PM doc，
+  // 但用户预期它能即时过滤菜单（如打"/2c"想要 "2 Columns"）。
+  const compositionRef = useRef<string>('');
+
   // dispatch patch 只跟 view 绑定，不随 items/selectedIdx 重复 patch
   useEffect(() => {
     if (!view) return;
@@ -31,11 +35,25 @@ export function SlashMenu({ view }: SlashMenuProps) {
       setTimeout(() => updateRef.current(), 0);
     };
 
+    // IME composition 事件：实时把预编辑文字反馈给菜单过滤
+    const onCompositionUpdate = (e: CompositionEvent) => {
+      compositionRef.current = e.data || '';
+      updateRef.current();
+    };
+    const onCompositionEnd = () => {
+      compositionRef.current = '';
+      // PM 会在 compositionend 后写入文档并触发 dispatch，updateRef 自然会跑
+    };
+    view.dom.addEventListener('compositionupdate', onCompositionUpdate);
+    view.dom.addEventListener('compositionend', onCompositionEnd);
+
     return () => {
       // 只在 view 未被销毁时恢复（销毁后 dom 不在文档中）
       if (view.dom?.parentNode) {
         view.dispatch = origDispatch;
       }
+      view.dom.removeEventListener('compositionupdate', onCompositionUpdate);
+      view.dom.removeEventListener('compositionend', onCompositionEnd);
     };
   }, [view]);
 
@@ -49,8 +67,8 @@ export function SlashMenu({ view }: SlashMenuProps) {
       return;
     }
 
-    // 过滤候选项
-    const query = state.query.toLowerCase();
+    // 过滤候选项 — composition 缓冲拼到 query 末尾，让 IME 预编辑期也能即时过滤
+    const query = (state.query + compositionRef.current).toLowerCase();
     const allItems = blockRegistry.getSlashItems().map((item) => ({
       id: item.id,
       label: item.label,
@@ -61,10 +79,15 @@ export function SlashMenu({ view }: SlashMenuProps) {
       keywords: item.keywords,
     }));
 
+    // 去掉空格再匹配 label：让 "2c" 能命中 "2 Columns"、"h1" 命中 "Heading 1" 等
+    // 紧凑速记，无需用户敲完整名字。
+    const compactQuery = query.replace(/\s+/g, '');
     let filtered = allItems
       .filter((item) => {
         if (!query) return true;
-        return item.label.toLowerCase().includes(query)
+        const label = item.label.toLowerCase();
+        return label.includes(query)
+          || label.replace(/\s+/g, '').includes(compactQuery)
           || item.keywords.some((k) => k.includes(query));
       })
       .sort((a, b) => a.order - b.order);

@@ -160,17 +160,26 @@ export function containerKeyboardPlugin(): Plugin {
           const atStart = $from.parentOffset === 0;
           if (!atStart) return false;
 
-          // column 内行首 Backspace：如果是唯一子节点，吞掉事件（防止破坏 column 结构）
+          // ── column 内行首 Backspace ──
+          // 规则：
+          //   - column 内多行（多个子节点）→ 让 PM 默认合并到上一行
+          //   - column 内只剩 1 个空 textBlock → 删除这个 column
+          //     · column-list 删完后剩 ≥ 2 列 → 正常剩下
+          //     · column-list 删完后只剩 1 列 → column-list 解散，剩下那列内容
+          //       铺开放在 column-list 原位置（变成普通顶层 block）
           if (isColumn) {
             const columnNode = $from.node(containerDepth);
             const containerStart = $from.before(containerDepth);
             const childStart = $from.before(childDepth);
             const isFirstChild = childStart === containerStart + 1;
-            if (isFirstChild && columnNode.childCount <= 1) {
+            const isOnlyEmptyChild = columnNode.childCount === 1 && childNode.content.size === 0;
+
+            if (isFirstChild && isOnlyEmptyChild && columnListDepth >= 0) {
               event.preventDefault();
-              return true; // 吞掉，不做任何事
+              deleteColumnAndMaybeUnwrap(view, columnListDepth, containerDepth);
+              return true;
             }
-            // column 内非首子 → 正常合并
+            // column 内非首子 / 还有内容 → 正常合并
             return false;
           }
 
@@ -230,6 +239,100 @@ function exitContainer(
     const newBlock = state.schema.nodes.textBlock.create();
     tr = tr.insert(newContainerEnd, newBlock);
     tr = tr.setSelection(TextSelection.create(tr.doc, newContainerEnd + 1));
+  }
+
+  view.dispatch(tr);
+}
+
+/**
+ * column 内最后一个空 textBlock 上按 Backspace 时调用。
+ * 通过 columnDepth 解析出 columnPos，转交给纯位置版函数。
+ */
+function deleteColumnAndMaybeUnwrap(
+  view: import('prosemirror-view').EditorView,
+  columnListDepth: number,
+  columnDepth: number,
+): void {
+  const { $from } = view.state.selection;
+  const columnPos = $from.before(columnDepth);
+  const columnListPos = $from.before(columnListDepth);
+  deleteColumnAt(view, columnListPos, columnPos);
+}
+
+/**
+ * 删除 column-list 中指定 column 节点的统一入口（任何来源都该调这个）。
+ *
+ * 规则（与 Backspace、handle Delete、未来可能的右键 Delete Column 一致）：
+ *   - column-list 删完后剩 ≥ 2 列：只删该 column，剩下列重置为等宽，更新 columns attr
+ *   - column-list 删完后只剩 1 列：解散 column-list，剩下那列内容铺开到 column-list 原位置
+ *
+ * @param columnListPos column-list 节点起始位置
+ * @param columnPos     要删除的 column 节点起始位置
+ */
+export function deleteColumnAt(
+  view: import('prosemirror-view').EditorView,
+  columnListPos: number,
+  columnPos: number,
+): void {
+  const { state } = view;
+  const columnListNode = state.doc.nodeAt(columnListPos);
+  if (!columnListNode || columnListNode.type.name !== 'columnList') return;
+
+  // 算出 columnPos 在 columnList 里是第几个 child
+  let columnIndex = -1;
+  let offset = columnListPos + 1;
+  for (let i = 0; i < columnListNode.childCount; i++) {
+    if (offset === columnPos) { columnIndex = i; break; }
+    offset += columnListNode.child(i).nodeSize;
+  }
+  if (columnIndex < 0) return;
+
+  // ── case A：删完只剩 1 列 → 解散 column-list ──
+  if (columnListNode.childCount <= 2) {
+    const survivingIndex = columnIndex === 0 ? 1 : 0;
+    const survivingColumn = columnListNode.child(survivingIndex);
+    let tr = state.tr.replaceWith(
+      columnListPos,
+      columnListPos + columnListNode.nodeSize,
+      survivingColumn.content,
+    );
+    try {
+      tr = tr.setSelection(TextSelection.near(tr.doc.resolve(columnListPos + 1)));
+    } catch { /* keep default */ }
+    view.dispatch(tr);
+    return;
+  }
+
+  // ── case B：删完剩 ≥ 2 列 → 只删该 column，重置剩下列宽度 ──
+  const columnNode = state.doc.nodeAt(columnPos);
+  if (!columnNode) return;
+  let tr = state.tr.delete(columnPos, columnPos + columnNode.nodeSize);
+
+  const mappedListPos = tr.mapping.map(columnListPos);
+  const updatedList = tr.doc.nodeAt(mappedListPos);
+  if (updatedList) {
+    let childOffset = mappedListPos + 1;
+    for (let i = 0; i < updatedList.childCount; i++) {
+      const child = updatedList.child(i);
+      if (child.attrs.width != null) {
+        tr = tr.setNodeMarkup(childOffset, undefined, { ...child.attrs, width: null });
+      }
+      childOffset += child.nodeSize;
+    }
+    tr = tr.setNodeMarkup(mappedListPos, undefined, {
+      ...updatedList.attrs,
+      columns: updatedList.childCount,
+    });
+
+    // 光标定位到相邻列的开头（优先原来索引，超出就前一个）
+    const targetIndex = Math.min(columnIndex, updatedList.childCount - 1);
+    let cursorOffset = mappedListPos + 1;
+    for (let i = 0; i < targetIndex; i++) {
+      cursorOffset += updatedList.child(i).nodeSize;
+    }
+    try {
+      tr = tr.setSelection(TextSelection.near(tr.doc.resolve(cursorOffset + 1)));
+    } catch { /* keep default */ }
   }
 
   view.dispatch(tr);

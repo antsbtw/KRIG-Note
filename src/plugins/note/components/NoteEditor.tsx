@@ -37,6 +37,7 @@ import { titleGuardPlugin } from '../plugins/title-guard';
 import { columnCollapsePlugin } from '../plugins/column-collapse';
 import { registerConverterTest } from '../converters/converter-test';
 import { converterRegistry } from '../converters/registry';
+import { setTextBlockLevel } from '../commands/set-text-block-level';
 import type { Atom, NoteTitleContent } from '../../../shared/types/atom-types';
 import { createAtom } from '../../../shared/types/atom-types';
 import { sanitizeAtoms } from '../../../shared/sanitize-atoms';
@@ -98,41 +99,47 @@ function buildPlugins(s: ReturnType<typeof getSchema>) {
   if (s.marks.strike) markKeymap['Mod-Shift-s'] = toggleMark(s.marks.strike);
   if (s.marks.code) markKeymap['Mod-e'] = toggleMark(s.marks.code);
 
-  // Cmd+Alt+0/1/2/3 标题切换
-  markKeymap['Mod-Alt-0'] = (state: any, dispatch: any) => {
+  // 找到光标所在的 textBlock（任意嵌套深度），返回 { pos, node }；
+  // 找不到、是标题块、或被选中的不是 textBlock 时返回 null。
+  // 与 HandleMenu 的 menu.pos 路径等价：操作总是落在"当前 block"上。
+  const resolveTextBlock = (state: any): { pos: number; node: PMNode } | null => {
     const { $from } = state.selection;
-    if ($from.depth < 1) return false;
-    const pos = $from.before(1);
-    const node = state.doc.nodeAt(pos);
-    if (!node || node.type.name !== 'textBlock' || node.attrs.isTitle) return false;
-    if (!node.attrs.level) return false;
-    if (dispatch) dispatch(state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, level: null }));
+    for (let d = $from.depth; d >= 1; d--) {
+      const node = $from.node(d);
+      if (node.type.name === 'textBlock') {
+        if (node.attrs.isTitle) return null;
+        return { pos: $from.before(d), node };
+      }
+    }
+    return null;
+  };
+
+  // Cmd+Alt+0/1/2/3 标题切换 — 与 HandleMenu 中"切换 textBlock level"走同一函数
+  markKeymap['Mod-Alt-0'] = (state: any, dispatch: any) => {
+    const target = resolveTextBlock(state);
+    if (!target) return false;
+    const tr = setTextBlockLevel(state, target.pos, null);
+    if (!tr) return false;
+    if (dispatch) dispatch(tr);
     return true;
   };
   for (const level of [1, 2, 3]) {
     markKeymap[`Mod-Alt-${level}`] = (state: any, dispatch: any) => {
-      const { $from } = state.selection;
-      if ($from.depth < 1) return false;
-      const pos = $from.before(1);
-      const node = state.doc.nodeAt(pos);
-      if (!node || node.type.name !== 'textBlock' || node.attrs.isTitle) return false;
-      if (node.attrs.level === level) {
-        if (dispatch) dispatch(state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, level: null }));
-      } else {
-        if (dispatch) dispatch(state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, level }));
-      }
+      const target = resolveTextBlock(state);
+      if (!target) return false;
+      const nextLevel = target.node.attrs.level === level ? null : level;
+      const tr = setTextBlockLevel(state, target.pos, nextLevel);
+      if (!tr) return false;
+      if (dispatch) dispatch(tr);
       return true;
     };
   }
 
-  // Shift+Cmd+I 首行缩进
+  // Shift+Cmd+I 首行缩进 — 与 HandleMenu 中 textIndent toggle 等价
   markKeymap['Shift-Mod-i'] = (state: any, dispatch: any) => {
-    const { $from } = state.selection;
-    if ($from.depth < 1) return false;
-    const pos = $from.before(1);
-    const node = state.doc.nodeAt(pos);
-    if (!node || node.type.name !== 'textBlock' || node.attrs.isTitle) return false;
-    if (dispatch) dispatch(state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, textIndent: !node.attrs.textIndent }));
+    const target = resolveTextBlock(state);
+    if (!target) return false;
+    if (dispatch) dispatch(state.tr.setNodeMarkup(target.pos, undefined, { ...target.node.attrs, textIndent: !target.node.attrs.textIndent }));
     return true;
   };
 
