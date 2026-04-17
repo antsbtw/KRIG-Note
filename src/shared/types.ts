@@ -351,4 +351,8 @@ export const IPC = {
   YTDLP_GET_INFO: 'ytdlp:get-info',
   YTDLP_PROGRESS: 'ytdlp:progress',               // main → renderer 进度事件
   YTDLP_SAVE_SUBTITLE: 'ytdlp:save-subtitle',     // 保存翻译字幕为 .srt
+
+  // Backup/Restore
+  BACKUP_CREATE: 'backup:create',
+  BACKUP_RESTORE: 'backup:restore',
 } as const;

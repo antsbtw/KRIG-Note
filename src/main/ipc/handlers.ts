@@ -1606,6 +1606,52 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
       return { success: false, error: String(err) };
     }
   });
+
+  // ── Backup/Restore ──
+
+  ipcMain.handle(IPC.BACKUP_CREATE, async () => {
+    const mainWindow = getMainWindow();
+    const result = await dialog.showSaveDialog(mainWindow as any, {
+      title: 'Backup All Data',
+      defaultPath: `krig-backup-${new Date().toISOString().slice(0, 10)}.tar.gz`,
+      filters: [{ name: 'KRIG Backup', extensions: ['tar.gz'] }],
+    });
+    if (result.canceled || !result.filePath) return { canceled: true };
+
+    const { backupStore } = await import('../storage/backup-store');
+    return backupStore.backup(result.filePath);
+  });
+
+  ipcMain.handle(IPC.BACKUP_RESTORE, async () => {
+    const mainWindow = getMainWindow();
+
+    const confirm = await dialog.showMessageBox(mainWindow as any, {
+      type: 'warning',
+      buttons: ['Cancel', 'Restore'],
+      defaultId: 0,
+      title: 'Restore from Backup',
+      message: 'This will replace ALL current data with the backup. Are you sure?',
+    });
+    if (confirm.response === 0) return { canceled: true };
+
+    const openResult = await dialog.showOpenDialog(mainWindow as any, {
+      title: 'Select Backup File',
+      filters: [{ name: 'KRIG Backup', extensions: ['tar.gz'] }],
+      properties: ['openFile'],
+    });
+    if (openResult.canceled || openResult.filePaths.length === 0) return { canceled: true };
+
+    const { backupStore } = await import('../storage/backup-store');
+    const restoreResult = await backupStore.restore(openResult.filePaths[0]);
+
+    // 恢复成功后广播刷新
+    if (restoreResult.success) {
+      broadcastNoteList(mainWindow);
+      broadcastWorkspaceState(mainWindow);
+    }
+
+    return restoreResult;
+  });
 }
 
 /** 广播 NoteFile 列表变更 */
