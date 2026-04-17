@@ -57,9 +57,44 @@ import {
   writeKrigDataToTransfer,
   readKrigDataFromTransfer,
 } from './internal-clipboard';
+import { blockSelectionKey } from '../plugins/block-selection';
+import { deleteSelection as deleteSelectionCmd, deleteBlocks } from '../commands/editor-commands';
 
 /** RenderBlock 节点：用户点击图片/视频时被 NodeSelection 选中。 */
 const RENDER_BLOCK_TYPES = new Set(['image', 'audioBlock', 'videoBlock', 'tweetBlock', 'fileBlock', 'externalRef']);
+
+/**
+ * 粘贴安全守卫：检查 tr 执行后，光标所在位置的祖先节点链是否被破坏。
+ *
+ * 原则：粘贴只在光标位置插入内容，绝不删除光标之外的节点。
+ * 方法：比较 tr 前后文档，光标处每一层祖先节点是否仍然存在且类型不变。
+ */
+function pasteIsSafe(state: import('prosemirror-state').EditorState, tr: import('prosemirror-state').Transaction): boolean {
+  const $from = state.selection.$from;
+
+  // 记录粘贴前光标的每层祖先节点类型
+  const ancestorTypes: string[] = [];
+  for (let d = 1; d <= $from.depth; d++) {
+    ancestorTypes.push($from.node(d).type.name);
+  }
+
+  // 用 step map 把原始位置映射到 tr 执行后的位置
+  const mappedPos = tr.mapping.map($from.pos);
+  try {
+    const $mapped = tr.doc.resolve(mappedPos);
+    // 如果 depth 减小了，说明有祖先节点被删除
+    if ($mapped.depth < $from.depth) return false;
+    // 检查每层祖先类型是否一致
+    for (let d = 1; d < ancestorTypes.length; d++) {
+      if (d > $mapped.depth) return false;
+      if ($mapped.node(d).type.name !== ancestorTypes[d]) return false;
+    }
+  } catch {
+    // resolve 失败说明位置无效，文档结构被破坏
+    return false;
+  }
+  return true;
+}
 
 /**
  * 计算粘贴 slice 的开放深度。
@@ -109,7 +144,9 @@ export function smartPastePlugin(): Plugin {
         },
         cut(view, event) {
           attachInternalClipboard(view, event as ClipboardEvent);
-          return false;
+          // attachInternalClipboard 已 preventDefault，需手动删除内容
+          deleteSelectionCmd(view);
+          return true;
         },
       },
 
@@ -123,7 +160,10 @@ export function smartPastePlugin(): Plugin {
         if (!shiftDown) {
           const slice = readKrigDataFromTransfer(cd, view.state.schema);
           if (slice) {
-            view.dispatch(view.state.tr.replaceSelection(slice).scrollIntoView());
+            const tr = view.state.tr.replaceSelection(slice).scrollIntoView();
+            if (pasteIsSafe(view.state, tr)) {
+              view.dispatch(tr);
+            }
             return true;
           }
         }
@@ -188,7 +228,9 @@ export function smartPastePlugin(): Plugin {
               // 容器、导致父节点（如 image）被破坏性替换。
               tr = state.tr.replaceSelection(buildPasteSlice(fragment)).scrollIntoView();
             }
-            view.dispatch(tr);
+            if (pasteIsSafe(state, tr)) {
+              view.dispatch(tr);
+            }
           } catch (err) {
             console.warn('[smart-paste] PM insert failed:', err);
           }
@@ -249,7 +291,9 @@ function insertAsPlainText(view: any, text: string) {
   } else {
     tr = state.tr.replaceSelection(buildPasteSlice(fragment)).scrollIntoView();
   }
-  view.dispatch(tr);
+  if (pasteIsSafe(state, tr)) {
+    view.dispatch(tr);
+  }
 }
 
 /**

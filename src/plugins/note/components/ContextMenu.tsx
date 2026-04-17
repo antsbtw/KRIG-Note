@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import type { EditorView } from 'prosemirror-view';
 import { showDictionaryPanel, showTranslationPanel } from '../learning';
+import { deleteCurrentBlock, deleteSelection } from '../commands/editor-commands';
 
 /**
  * ContextMenu — 右键菜单
@@ -53,27 +54,11 @@ export function ContextMenu({ view }: ContextMenuProps) {
     },
     {
       id: 'paste', label: 'Paste', icon: '📄', shortcut: '⌘V',
-      action: async () => {
-        try {
-          const text = await navigator.clipboard.readText();
-          if (text) view.dispatch(view.state.tr.insertText(text));
-        } catch { document.execCommand('paste'); }
-        close();
-      },
+      action: () => { document.execCommand('paste'); close(); },
     },
     {
       id: 'delete', label: 'Delete', icon: '🗑', shortcut: '⌫',
-      action: () => {
-        const { $from } = view.state.selection;
-        if ($from.depth >= 1) {
-          const pos = $from.before(1);
-          const node = view.state.doc.nodeAt(pos);
-          if (node && !(node.type.name === 'textBlock' && node.attrs.isTitle)) {
-            view.dispatch(view.state.tr.delete(pos, pos + node.nodeSize));
-          }
-        }
-        close();
-      },
+      action: () => { deleteCurrentBlock(view); close(); },
     },
   ];
 

@@ -135,12 +135,13 @@ function buildPlugins(s: ReturnType<typeof getSchema>) {
     };
   }
 
-  // Shift+Cmd+I 首行缩进 — 与 HandleMenu 中 textIndent toggle 等价
-  markKeymap['Shift-Mod-i'] = (state: any, dispatch: any) => {
-    const target = resolveTextBlock(state);
+  // Shift+Cmd+I 首行缩进 — 与 HandleMenu 中 textIndent toggle 走同一函数
+  markKeymap['Shift-Mod-i'] = (_state: any, _dispatch: any, editorView: any) => {
+    if (!editorView) return false;
+    const target = resolveTextBlock(editorView.state);
     if (!target) return false;
-    if (dispatch) dispatch(state.tr.setNodeMarkup(target.pos, undefined, { ...target.node.attrs, textIndent: !target.node.attrs.textIndent }));
-    return true;
+    const { toggleTextIndent } = require('../commands/editor-commands');
+    return toggleTextIndent(editorView, target.pos);
   };
 
   // Cmd+Shift+M 添加思考
