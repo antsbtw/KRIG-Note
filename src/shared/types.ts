@@ -163,6 +163,7 @@ export const IPC = {
   SLOT_CLOSE_RIGHT: 'slot:close-right',
   SLOT_ENSURE_RIGHT: 'slot:ensure-right', // 确保 Right Slot 打开（不 toggle）
   SLOT_CLOSE: 'slot:close',             // View 关闭自己所在的 slot
+  SLOT_GET_SIDE: 'slot:get-side',       // View 查询自己在哪个 slot
   SLOT_DIVIDER_CHANGED: 'slot:divider-changed',
 
   // Divider 拖拽
@@ -330,6 +331,7 @@ export const IPC = {
   AI_RESPONSE_CAPTURED: 'ai:response-captured', // web renderer → main：SSE 拦截到回复
   AI_EXTRACT_DEBUG: 'ai:extract-debug',         // renderer → main：调试用，解析 Markdown 并返回统计
   AI_PARSE_MARKDOWN: 'ai:parse-markdown',       // renderer → main：解析 Markdown → Atom[]
+  AI_EXTRACTION_CACHE_WRITE: 'ai:extraction-cache-write', // renderer → main：写入 AI 提取调试缓存文件
   MD_TO_PM_NODES: 'md:to-pm-nodes',             // renderer → main：Markdown 字符串 → ProseMirror node JSON 数组（smart paste 用）
   AI_READ_CLIPBOARD: 'ai:read-clipboard',       // renderer → main：读取系统剪贴板文本
   WB_CDP_START: 'wb:cdp-start',                 // renderer → main：启动 CDP 拦截器（调试用）
@@ -337,6 +339,7 @@ export const IPC = {
   WB_CDP_GET_RESPONSES: 'wb:cdp-get-responses', // renderer → main：获取已捕获的响应
   WB_CDP_FIND_RESPONSE: 'wb:cdp-find-response', // renderer → main：按 URL substring 取匹配响应的完整 body（ChatGPT 提取用）
   WB_SEND_MOUSE: 'wb:send-mouse',               // renderer → main：向 guest webContents 合成鼠标事件（CDP Input.dispatchMouseEvent）
+  WB_SEND_KEY: 'wb:send-key',                   // renderer → main：向 guest webContents 合成键盘事件（CDP Input.dispatchKeyEvent）
   WB_READ_CLIPBOARD_IMAGE: 'wb:read-clipboard-image', // renderer → main：读剪贴板图片（PNG dataURL）— Claude Artifact 复制的是渲染图像
   WB_CAPTURE_DOWNLOAD_ONCE: 'wb:capture-download-once', // renderer → main：一次性拦截下次 download，返回文件内容（Artifact "Download file" 提取源码用）
   WB_FETCH_BINARY: 'wb:fetch-binary',                 // renderer → main：main 进程 fetch URL（绕过 CORS / 页面 CSP），返回 base64 + mime（Gemini Imagen 图像下载用）

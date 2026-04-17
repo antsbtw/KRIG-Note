@@ -1,9 +1,16 @@
-import { Plugin, PluginKey, TextSelection } from 'prosemirror-state';
+import { Plugin, PluginKey, TextSelection, NodeSelection } from 'prosemirror-state';
 import { Slice, Fragment } from 'prosemirror-model';
+import { dropPoint } from 'prosemirror-transform';
 import type { EditorView } from 'prosemirror-view';
 import type { Node as PMNode } from 'prosemirror-model';
 import { blockSelectionKey } from './block-selection';
 import { blockRegistry } from '../registry';
+import {
+  computeSliceForClipboard,
+  writeKrigDataToTransfer,
+  readKrigDataFromTransfer,
+  KRIG_SOURCE_POS_MIME,
+} from '../paste/internal-clipboard';
 
 /** 任意注册为容器（content: block+ 风格，有 containerRule）的 block 类型名 */
 function isContainerType(name: string): boolean {
@@ -14,11 +21,12 @@ function isContainerType(name: string): boolean {
 /**
  * 找到鼠标位置对应的"手柄目标 block"的 depth。
  *
- * 规则：从 $pos 最深处向上，找到第一个 block 节点，其直接父节点是 doc 或容器
- * （blockquote / callout / toggleList / frameBlock / column / 列表 / tableCell 等）。
- * 这样嵌套容器内的子 block 也能显示自己的手柄，而不是容器本身的手柄。
+ * 规则：从 $pos 最深处向上，找第一个 block 节点，其直接父节点是 doc 或容器。
+ * 这样嵌套容器内的子 block 也能显示自己的手柄。
  *
- * 折叠态 toggleList 的"整组手柄"语义在后续 PR 处理；本函数只负责通用定位。
+ * 注意：本函数只处理 posAtCoords 已经正确钻入子 block 的情况。
+ * posAtCoords 有时给出容器层级的 pos（鼠标在行高外、margin 区等），此时
+ * 上层需要用 DOM 命中测试回退（见 pickChildByY）。
  */
 function findHandleTargetDepth($pos: import('prosemirror-model').ResolvedPos): number {
   for (let d = $pos.depth; d >= 1; d--) {
@@ -30,6 +38,42 @@ function findHandleTargetDepth($pos: import('prosemirror-model').ResolvedPos): n
     }
   }
   return 1;
+}
+
+/**
+ * 当 posAtCoords 给出容器层级的 pos（没钻进子 block），按鼠标 Y 从容器的子 block
+ * 中挑选包含该 Y 的那个。递归处理嵌套容器。
+ *
+ * 返回 { start, node, dom } 或 null（没找到）。
+ */
+function pickChildByY(
+  view: EditorView,
+  containerStart: number,
+  containerNode: PMNode,
+  mouseY: number,
+): { start: number; node: PMNode; dom: HTMLElement } | null {
+  let offset = containerStart + 1; // 进入容器内部
+  for (let i = 0; i < containerNode.childCount; i++) {
+    const child = containerNode.child(i);
+    const childStart = offset;
+    try {
+      const dom = view.nodeDOM(childStart);
+      const el = dom instanceof HTMLElement ? dom : (dom as Node)?.parentElement;
+      if (el) {
+        const r = el.getBoundingClientRect();
+        if (mouseY >= r.top && mouseY <= r.bottom) {
+          // 命中；若 child 自己也是容器，递归钻入
+          if (isContainerType(child.type.name)) {
+            const deeper = pickChildByY(view, childStart, child, mouseY);
+            if (deeper) return deeper;
+          }
+          return { start: childStart, node: child, dom: el };
+        }
+      }
+    } catch { /* skip */ }
+    offset += child.nodeSize;
+  }
+  return null;
 }
 
 /**
@@ -58,158 +102,29 @@ export function findTopBlockPos(doc: PMNode, pos: number): number | null {
 }
 
 /**
- * 解析 drop 目标：判断是顶层还是 column 内部。
- * 返回 { type: 'top', pos } 或 { type: 'column', insertPos } 。
- * insertPos 是 column 内精确的插入位置（某个子 block 之前）。
+ * 解析 drop 目标。
+ *
+ * 规则：
+ * - 若 drop 落在任意容器（column / toggleList / frameBlock / callout / blockquote / 列表
+ *   / tableCell / taskItem 等，凡有 containerRule）内部 → 'nested'，insertPos 是
+ *   容器内精确的子 block 插入点
+ * - 否则 → 'top'，pos 是顶层 block 起始位置
+ *
+ * 找最近的容器祖先：从 $pos 最深处向上，第一个 containerRule 容器就是 drop 目标容器。
  */
-function resolveDropTarget(doc: PMNode, pos: number): { type: 'top'; pos: number } | { type: 'column'; insertPos: number } | null {
-  try {
-    const $pos = doc.resolve(pos);
-    // 向上查找是否在 column 内
-    for (let d = $pos.depth; d >= 1; d--) {
-      if ($pos.node(d).type.name === 'column') {
-        // 找到 column，计算 column 内子 block 层级的插入位置
-        // column 的子 block 在 depth = d + 1
-        const childDepth = d + 1;
-        if ($pos.depth >= childDepth) {
-          // 光标在某个子 block 内部，插入到该子 block 之前
-          return { type: 'column', insertPos: $pos.before(childDepth) };
-        } else {
-          // 光标在 column 层但不在子 block 内，插入到 column 末尾
-          return { type: 'column', insertPos: $pos.end(d) };
-        }
-      }
-    }
-  } catch { /* fall through */ }
-  // 不在 column 内，回退到顶层
-  const topPos = findTopBlockPos(doc, pos);
-  if (topPos === null) return null;
-  return { type: 'top', pos: topPos };
-}
-
 /**
- * 将 block 从 fromPos（任意层级）移动到 insertPos（任意层级）。
- * 通用版本：直接删除源节点，插入到目标位置。
+ * 解析 drop 目标。使用 prosemirror-transform 的 dropPoint 算法，保证与原生
+ * dropCursor 的视觉标注位置完全一致（标注线画哪，就插哪）。
  */
-function relocateBlockGeneral(view: EditorView, fromPos: number, insertPos: number): boolean {
-  const { state } = view;
-  const node = state.doc.nodeAt(fromPos);
-  if (!node) return false;
-
-  // 不能自己移到自己内部
-  if (insertPos > fromPos && insertPos < fromPos + node.nodeSize) return false;
-
-  // 检查目标位置的 parent 是否允许此节点类型
-  try {
-    const $insert = state.doc.resolve(insertPos);
-    const parentNode = $insert.parent;
-    if (!parentNode.type.contentMatch.matchType(node.type)) return false;
-  } catch { return false; }
-
-  // 检查是否原位（紧挨着源节点前后）
-  if (insertPos === fromPos || insertPos === fromPos + node.nodeSize) return false;
-
-  const tr = state.tr;
-  if (insertPos < fromPos) {
-    // 先插后删（避免位置偏移）
-    tr.insert(insertPos, node);
-    const mappedFrom = tr.mapping.map(fromPos);
-    const mappedNode = tr.doc.nodeAt(mappedFrom);
-    if (mappedNode) tr.delete(mappedFrom, mappedFrom + mappedNode.nodeSize);
-  } else {
-    // 先删后插
-    tr.delete(fromPos, fromPos + node.nodeSize);
-    const mappedInsert = tr.mapping.map(insertPos);
-    tr.insert(mappedInsert, node);
-  }
-  view.dispatch(tr);
-  return true;
-}
-
-/** 将 block 从 fromPos 移动到 targetPos（仅顶层 block 之间） */
-function relocateBlock(view: EditorView, fromPos: number, targetPos: number): boolean {
-  const { state } = view;
-  const node = state.doc.nodeAt(fromPos);
-  if (!node) return false;
-
-  // 不能自己移到自己内部
-  if (targetPos > fromPos && targetPos < fromPos + node.nodeSize) return false;
-
-  // 获取所有顶层 block 位置
-  const allPositions: number[] = [];
-  state.doc.forEach((_n: PMNode, offset: number) => allPositions.push(offset));
-
-  const sourceIdx = allPositions.indexOf(fromPos);
-  if (sourceIdx < 0) return false;
-
-  let targetIdx = allPositions.findIndex(p => p >= targetPos);
-  if (targetIdx < 0) targetIdx = allPositions.length;
-
-  // 已经在原位
-  if (targetIdx === sourceIdx || targetIdx === sourceIdx + 1) return false;
-
-  const tr = state.tr;
-  // 先删除源 block
-  tr.delete(fromPos, fromPos + node.nodeSize);
-  // 映射目标位置
-  const mappedTarget = tr.mapping.map(allPositions[targetIdx] ?? targetPos);
-  // 插入到目标位置
-  tr.replace(mappedTarget, mappedTarget, new Slice(Fragment.from(node), 0, 0));
-  view.dispatch(tr);
-  return true;
-}
-
-/** 将多个 block 从 positions 移动到 targetPos */
-function relocateBlocks(view: EditorView, positions: number[], targetPos: number): boolean {
-  const { state } = view;
-  const allPositions: number[] = [];
-  state.doc.forEach((_n: PMNode, offset: number) => allPositions.push(offset));
-
-  // 去重排序
-  const sorted = Array.from(new Set(positions)).sort((a, b) => a - b);
-
-  // 不能移到自己内部
-  for (const pos of sorted) {
-    const node = state.doc.nodeAt(pos);
-    if (node && targetPos > pos && targetPos < pos + node.nodeSize) return false;
-  }
-
-  // 收集节点
-  const nodes = sorted.map(p => state.doc.nodeAt(p)).filter(Boolean) as PMNode[];
-  if (nodes.length === 0) return false;
-
-  // 检查是否原位
-  const sourceIndices = sorted.map(p => allPositions.indexOf(p)).filter(i => i >= 0);
-  let targetIdx = allPositions.findIndex(p => p >= targetPos);
-  if (targetIdx < 0) targetIdx = allPositions.length;
-  const firstSrcIdx = sourceIndices[0];
-  const lastSrcIdx = sourceIndices[sourceIndices.length - 1];
-  if (targetIdx >= firstSrcIdx && targetIdx <= lastSrcIdx + 1) return false;
-
-  const tr = state.tr;
-  // 从后往前删除
-  for (let i = sorted.length - 1; i >= 0; i--) {
-    const node = state.doc.nodeAt(sorted[i]);
-    if (node) tr.delete(sorted[i], sorted[i] + node.nodeSize);
-  }
-  const mappedTarget = tr.mapping.map(allPositions[targetIdx] ?? targetPos);
-  tr.replace(mappedTarget, mappedTarget, new Slice(Fragment.from(nodes), 0, 0));
-
-  // 计算移动后的新位置，保持选中状态
-  const newPositions: number[] = [];
-  let offset = mappedTarget;
-  for (const node of nodes) {
-    newPositions.push(offset);
-    offset += node.nodeSize;
-  }
-  tr.setMeta(blockSelectionKey, {
-    active: true,
-    selectedPositions: newPositions,
-    anchorPos: newPositions[0],
-  });
-
-  view.dispatch(tr);
-  return true;
+function resolveDropTarget(
+  doc: PMNode,
+  pos: number,
+  sourceNode: PMNode,
+): { insertPos: number } | null {
+  const slice = new Slice(Fragment.from(sourceNode), 0, 0);
+  const p = dropPoint(doc, pos, slice);
+  if (p == null) return null;
+  return { insertPos: p };
 }
 
 export function blockHandlePlugin(): Plugin {
@@ -271,7 +186,10 @@ export function blockHandlePlugin(): Plugin {
     dragBtn.addEventListener('mouseenter', () => { dragBtn.style.background = '#333'; dragBtn.style.color = '#e8eaed'; });
     dragBtn.addEventListener('mouseleave', () => { if (!isDragging) { dragBtn.style.background = 'transparent'; dragBtn.style.color = '#555'; } });
 
-    // 拖拽开始
+    // 拖拽开始 — 走与复制粘贴统一的 internal-clipboard 通道：
+    //   1. computeSliceForClipboard 拿到完整 Slice（保留所有外层容器）
+    //   2. writeKrigDataToTransfer 写 text/html（含 KRIG marker）+ text/plain
+    //   3. 额外写 KRIG_SOURCE_POS_MIME 标记源位置范围，drop 时用来删除原位置
     dragBtn.addEventListener('dragstart', (e) => {
       if (currentPos < 0 || !e.dataTransfer) return;
       isDragging = true;
@@ -283,17 +201,36 @@ export function blockHandlePlugin(): Plugin {
       e.dataTransfer.setDragImage(ghost, 0, 0);
       setTimeout(() => document.body.removeChild(ghost), 0);
 
-      // 检查 block-selection：如果当前 block 在选中列表中，拖拽所有选中 block
+      // 如果当前 block 不在 block-selection 选中列表里，临时把 selection 设成当前块
+      // —— 让 computeSliceForClipboard 走 PM NodeSelection 路径取到这一块的完整 Slice。
       const bsState = blockSelectionKey.getState(view.state);
-      if (bsState?.active && bsState.selectedPositions.length > 1
-          && bsState.selectedPositions.includes(currentPos)) {
-        e.dataTransfer.setData(
-          'application/krig-multi-block',
-          JSON.stringify(bsState.selectedPositions),
-        );
-      } else {
-        e.dataTransfer.setData('application/krig-block-pos', String(currentPos));
+      const inMultiSelection = bsState?.active
+        && bsState.selectedPositions.length > 0
+        && bsState.selectedPositions.includes(currentPos);
+
+      let sliceState = view.state;
+      if (!inMultiSelection) {
+        const node = view.state.doc.nodeAt(currentPos);
+        if (!node) return;
+        // 临时构造一个只覆盖当前节点的 NodeSelection，只用于序列化
+        try {
+          const tr = view.state.tr.setSelection(
+            NodeSelection.create(view.state.doc, currentPos),
+          );
+          sliceState = view.state.apply(tr);
+        } catch { /* fallback to current state */ }
       }
+
+      const slice = computeSliceForClipboard(sliceState);
+      if (!slice || slice.size === 0) return;
+
+      writeKrigDataToTransfer(e.dataTransfer, slice, view.state.schema);
+
+      // 记录源位置范围（dataTransfer 是进程内对象，自定义 MIME 安全可用）
+      const sourceRange = inMultiSelection
+        ? bsState!.selectedPositions
+        : [currentPos];
+      e.dataTransfer.setData(KRIG_SOURCE_POS_MIME, JSON.stringify(sourceRange));
       e.dataTransfer.effectAllowed = 'move';
     });
 
@@ -369,8 +306,16 @@ export function blockHandlePlugin(): Plugin {
           }
 
           const mouseY = event.clientY;
-          // 用鼠标实际 X 坐标探测，这样能精确进入 column 内的子 block
-          const probeX = event.clientX;
+          // probeX 选择：
+          // view.dom 有左 padding 72px（gutter 区），文字区起点 ≈ editorRect.left + 72
+          // - 鼠标在文字区内 → 用鼠标 X（为了 column 内精确定位到对应列）
+          // - 鼠标在 gutter / 文字区外（用户去够左侧 handle）→ 钳制到文字区内部一点，
+          //   避免 posAtCoords 把 gutter 坐标 snap 到容器层级（toggleList/frameBlock 等），
+          //   导致目标跳到外层 block
+          const textLeft = editorRect.left + 72;
+          const probeX = event.clientX >= textLeft
+            ? event.clientX
+            : textLeft + 40;
           let blockStart = -1;
           let blockNode: any = null;
           let targetBlockDOM: HTMLElement | null = null;
@@ -385,6 +330,15 @@ export function blockHandlePlugin(): Plugin {
                 blockNode = $pos.node(targetDepth);
                 const dom = view.nodeDOM(blockStart);
                 targetBlockDOM = dom instanceof HTMLElement ? dom : (dom as Node)?.parentElement as HTMLElement ?? null;
+
+                if (blockNode && isContainerType(blockNode.type.name)) {
+                  const picked = pickChildByY(view, blockStart, blockNode, mouseY);
+                  if (picked) {
+                    blockStart = picked.start;
+                    blockNode = picked.node;
+                    targetBlockDOM = picked.dom;
+                  }
+                }
               }
             } catch { /* ignore */ }
           }
@@ -453,23 +407,23 @@ export function blockHandlePlugin(): Plugin {
               }
 
               const topPx = textTop - containerRect.top + scrollTop + (lineHeight - handleHeight) / 2;
-              // left：保持手柄和文字的相对距离一致
-              // 顶层 block：editorLeft + 20（文字从 editorLeft + 72 开始 → 差 52px）
-              // 嵌套容器内 block（column / toggleList / frameBlock / 列表 / callout 等）：
-              //   贴 block DOM 左侧 - 52，保持与文字相同的视觉距离
+              // left：手柄水平位置策略
+              // - column 内 block：贴 block DOM 左侧 - 52（多列布局必须指向具体一列）
+              // - 其他所有情况（顶层 / 单列容器如 toggleList/frameBlock/列表/callout/blockquote 等）：
+              //   统一对齐到编辑器左 gutter（editorLeft + 20），与顶层 block 手柄同列，
+              //   移动路径不穿过容器内部，目标稳定不抖动
               const editorLeft = view.dom.getBoundingClientRect().left - containerRect.left + container.scrollLeft;
-              const isNested = blockStart >= 0 && (() => {
+              const isInsideColumn = blockStart >= 0 && (() => {
                 try {
                   const $p = view.state.doc.resolve(blockStart);
-                  // $p.depth 是 block 的父节点深度；只要任一祖先（<= $p.depth）是容器就算嵌套
                   for (let d = $p.depth; d >= 1; d--) {
-                    if (isContainerType($p.node(d).type.name)) return true;
+                    if ($p.node(d).type.name === 'column') return true;
                   }
                   return false;
                 } catch { return false; }
               })();
 
-              if (isNested) {
+              if (isInsideColumn) {
                 const blockLeftPx = blockRect.left - containerRect.left + container.scrollLeft;
                 handleDOM.style.left = `${blockLeftPx - 52}px`;
               } else {
@@ -492,57 +446,59 @@ export function blockHandlePlugin(): Plugin {
         },
       },
 
-      // 接收拖放
+      // 接收拖放 — 走 internal-clipboard 通道：
+      //   1. 从 dataTransfer 读出 KRIG Slice（保留所有外层容器结构）
+      //   2. 读出 KRIG_SOURCE_POS_MIME 标记的源位置范围
+      //   3. 在目标位置插入 Slice，再删除源位置范围（先插后删，删除位置经 mapping）
       handleDrop(view, event) {
+        if (!event.dataTransfer) return false;
+        const sourcePosData = event.dataTransfer.getData(KRIG_SOURCE_POS_MIME);
+        if (!sourcePosData) return false; // 不是 KRIG 拖拽，让 PM 默认处理
+
+        const slice = readKrigDataFromTransfer(event.dataTransfer, view.state.schema);
+        if (!slice || slice.size === 0) return false;
+
         const dropResult = view.posAtCoords({ left: event.clientX, top: event.clientY });
         if (!dropResult) return false;
 
-        const target = resolveDropTarget(view.state.doc, dropResult.pos);
+        let sourcePositions: number[];
+        try {
+          sourcePositions = JSON.parse(sourcePosData);
+          if (!Array.isArray(sourcePositions) || sourcePositions.length === 0) return false;
+        } catch { return false; }
+
+        // 用 Slice 的第一个 child 类型来推断 drop 目标（容器/兄弟）
+        const firstNode = slice.content.firstChild;
+        if (!firstNode) return false;
+        const target = resolveDropTarget(view.state.doc, dropResult.pos, firstNode);
         if (!target) return false;
 
-        // 多 block 拖拽
-        const multiData = event.dataTransfer?.getData('application/krig-multi-block');
-        if (multiData) {
-          event.preventDefault();
-          try {
-            const positions: number[] = JSON.parse(multiData);
-            if (Array.isArray(positions) && positions.length > 0) {
-              if (target.type === 'column') {
-                // 多 block 拖入 column：逐个移入（从后往前以保持顺序）
-                let success = false;
-                const sorted = [...positions].sort((a, b) => a - b);
-                for (let i = sorted.length - 1; i >= 0; i--) {
-                  if (relocateBlockGeneral(view, sorted[i], target.insertPos)) success = true;
-                }
-                return success;
-              }
-              return relocateBlocks(view, positions, target.pos);
-            }
-          } catch {}
-          return false;
+        // 自我拖到内部禁用：drop 位置不能落在任何源节点范围内
+        for (const srcPos of sourcePositions) {
+          const srcNode = view.state.doc.nodeAt(srcPos);
+          if (!srcNode) continue;
+          if (target.insertPos > srcPos && target.insertPos < srcPos + srcNode.nodeSize) {
+            event.preventDefault();
+            return true; // 静默忽略
+          }
         }
 
-        // 单 block 拖拽
-        const posData = event.dataTransfer?.getData('application/krig-block-pos');
-        if (!posData) return false;
         event.preventDefault();
-        const fromPos = parseInt(posData, 10);
-        if (isNaN(fromPos)) return false;
 
-        if (target.type === 'column') {
-          return relocateBlockGeneral(view, fromPos, target.insertPos);
+        const tr = view.state.tr;
+        // 先在目标插入 Slice
+        tr.insert(target.insertPos, slice.content);
+        // 再删源位置范围（位置已经被 insert 影响，用 mapping 还原）
+        const sortedSources = [...sourcePositions].sort((a, b) => b - a); // 从后往前删
+        for (const srcPos of sortedSources) {
+          const mappedPos = tr.mapping.map(srcPos);
+          const node = tr.doc.nodeAt(mappedPos);
+          if (node) tr.delete(mappedPos, mappedPos + node.nodeSize);
         }
-        // 源 block 可能在 column 内部（嵌套位置），此时用通用版本
-        const isSourceNested = (() => {
-          try {
-            const $from = view.state.doc.resolve(fromPos);
-            return $from.depth > 1;
-          } catch { return false; }
-        })();
-        if (isSourceNested) {
-          return relocateBlockGeneral(view, fromPos, target.pos);
-        }
-        return relocateBlock(view, fromPos, target.pos);
+        // 退出 block-selection 状态
+        tr.setMeta(blockSelectionKey, { active: false, selectedPositions: [], anchorPos: null });
+        view.dispatch(tr);
+        return true;
       },
     },
   });

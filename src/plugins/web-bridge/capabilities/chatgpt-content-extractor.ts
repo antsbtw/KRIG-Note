@@ -245,6 +245,117 @@ function walkMapping(mapping: Record<string, any>): any[] {
   return ordered;
 }
 
+/**
+ * Unwrap ChatGPT's private "widget" directives embedded in message text.
+ *
+ * ChatGPT wraps some block-level widgets (notably block-math) as:
+ *   <marker>genu<JSON>...<marker>
+ * where <marker> is a private-use Unicode character (e.g. U+25A3 ▣) and
+ * <JSON> is something like
+ *   {"math_block_widget_always_prefetch_v2":{"content":"e^{ix} = ..."}}
+ *
+ * The web UI resolves these client-side; the conversation API just stores
+ * the raw directive. We detect the pattern, pull `content` out, and
+ * replace the whole directive with a `$$...$$` block so md-to-atoms can
+ * render it as a mathBlock.
+ *
+ * Conservative: only matches widgets whose JSON parses AND contains a
+ * recognizable `math*` / `latex` key. Unknown widget keys are left as-is
+ * so they remain visible (so we notice them) rather than being silently
+ * dropped.
+ */
+function unwrapWidgets(text: string): string {
+  if (!text) return text;
+  // ChatGPT wraps some widgets as e.g.
+  //   genu{"math_block_widget_always_prefetch_v2":{"content":"e^{ix} = ..."}}
+  //   genui{...}  genua{...}  etc.
+  // A variable 1-char suffix after 'genu' precedes the opening '{'. There
+  // may or may not be a leading private-use marker char (observed both
+  // shapes). We locate each occurrence by walking the string and scanning
+  // a balanced JSON object after the 'genu' token. Unknown widget keys
+  // are left as-is so we notice them rather than silently dropping.
+  const GENU = 'genu';
+  const out: string[] = [];
+  let i = 0;
+  while (i < text.length) {
+    const found = text.indexOf(GENU, i);
+    if (found < 0) { out.push(text.slice(i)); break; }
+    // Find the next '{' after 'genu' (skipping at most a 1-char widget
+    // id like 'i' / 'a' / 'b').
+    let brace = -1;
+    for (let k = found + GENU.length; k < Math.min(found + GENU.length + 4, text.length); k++) {
+      if (text[k] === '{') { brace = k; break; }
+    }
+    if (brace < 0) {
+      out.push(text.slice(i, found + GENU.length));
+      i = found + GENU.length;
+      continue;
+    }
+    // Balanced scan of the JSON object.
+    let depth = 0;
+    let j = brace;
+    let inStr = false;
+    let esc = false;
+    for (; j < text.length; j++) {
+      const ch = text[j];
+      if (inStr) {
+        if (esc) { esc = false; continue; }
+        if (ch === '\\') { esc = true; continue; }
+        if (ch === '"') { inStr = false; continue; }
+      } else {
+        if (ch === '"') { inStr = true; continue; }
+        if (ch === '{') depth++;
+        else if (ch === '}') {
+          depth--;
+          if (depth === 0) { j++; break; }
+        }
+      }
+    }
+    if (depth !== 0) {
+      // Unbalanced — bail out, keep the rest verbatim.
+      out.push(text.slice(i));
+      break;
+    }
+    const body = text.slice(brace, j);
+    // Strip a single preceding private-use marker char (U+E000–U+F8FF), if any.
+    let start = found;
+    if (start > 0) {
+      const prev = text.charCodeAt(start - 1);
+      if (prev >= 0xE000 && prev <= 0xF8FF) start = start - 1;
+    }
+    // And a single trailing marker char, if any.
+    let end = j;
+    if (end < text.length) {
+      const next = text.charCodeAt(end);
+      if (next >= 0xE000 && next <= 0xF8FF) end = end + 1;
+    }
+    out.push(text.slice(i, start));
+    let replaced: string | null = null;
+    try {
+      const obj = JSON.parse(body);
+      for (const key of Object.keys(obj)) {
+        const payload = obj[key];
+        if (payload && typeof payload === 'object') {
+          const latex = typeof payload.content === 'string' ? payload.content
+            : typeof payload.latex === 'string' ? payload.latex
+            : null;
+          if (latex && /math|latex/i.test(key)) {
+            replaced = '\n\n$$' + latex.trim() + '$$\n\n';
+            break;
+          }
+        }
+      }
+    } catch {}
+    if (replaced) {
+      out.push(replaced);
+    } else {
+      out.push(text.slice(start, end));
+    }
+    i = end;
+  }
+  return out.join('');
+}
+
 /** Parse fenced code blocks out of a Markdown string. */
 function parseCodeBlocks(md: string): Array<{ language: string; code: string }> {
   const blocks: Array<{ language: string; code: string }> = [];
@@ -302,7 +413,7 @@ function normalizeMessage(raw: any): ChatGPTMessage {
     }
   }
 
-  const text = textParts.join('\n\n');
+  const text = unwrapWidgets(textParts.join('\n\n'));
   const codeBlocks = parseCodeBlocks(text);
   const metaKeys = raw.metadata ? Object.keys(raw.metadata) : [];
   const hidden = !!raw.metadata?.is_visually_hidden_from_conversation;

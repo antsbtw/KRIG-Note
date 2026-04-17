@@ -48,10 +48,31 @@
  * wins. Pure screenshots (image only) keep inserting as image blocks.
  */
 
-import { Plugin } from 'prosemirror-state';
+import { Plugin, NodeSelection } from 'prosemirror-state';
 import { Slice, Fragment } from 'prosemirror-model';
 import type { PasteClipboard, PasteHandler } from './types';
 import { genericHandler } from './sources/generic';
+import {
+  computeSliceForClipboard,
+  writeKrigDataToTransfer,
+  readKrigDataFromTransfer,
+} from './internal-clipboard';
+
+/** RenderBlock 节点：用户点击图片/视频时被 NodeSelection 选中。 */
+const RENDER_BLOCK_TYPES = new Set(['image', 'audioBlock', 'videoBlock', 'tweetBlock', 'fileBlock', 'externalRef']);
+
+/**
+ * 计算粘贴 slice 的开放深度。
+ *
+ * openStart=openEnd=0 表示"完整密封的 block 序列"——PM 找不到合适层级时会破坏性提升插入位置；
+ * 在 caption 这种 content='textBlock' 的容器里粘贴段落 slice 时会导致整个父节点被替换。
+ *
+ * 用 Slice.maxOpen 让 PM 自动算出最大开放深度：单段 textBlock → 1（首尾的 textBlock 节点
+ * 都是开放的，文字溶解到目标文本块）；多段 → 首尾各 1，中间段保持完整。
+ */
+function buildPasteSlice(fragment: Fragment): Slice {
+  return Slice.maxOpen(fragment);
+}
 
 /** Registered handlers, in priority order. Specific → generic. */
 const HANDLERS: PasteHandler[] = [
@@ -78,9 +99,34 @@ export function smartPastePlugin(): Plugin {
   installShiftTracker();
   return new Plugin({
     props: {
+      // 复制 / 剪切 时把 Slice 序列化为 PM JSON，嵌入到 text/html 末尾的注释里。
+      // 自定义 application/* MIME 在 macOS/Electron 系统剪贴板会被剥掉，
+      // text/html 是标准类型不会丢；外部应用读 HTML 时把注释当无害字符忽略。
+      handleDOMEvents: {
+        copy(view, event) {
+          attachInternalClipboard(view, event as ClipboardEvent);
+          return false;
+        },
+        cut(view, event) {
+          attachInternalClipboard(view, event as ClipboardEvent);
+          return false;
+        },
+      },
+
       handlePaste(view, event) {
         const cd = event.clipboardData;
         if (!cd) return false;
+
+        // ── 内部通道优先：text/html 里有 KRIG JSON 注释就走无损还原路径 ──
+        // 跨应用粘贴的 HTML 里没有这个 marker，自然落到下面的外部管道。
+        // Shift 强制纯文本粘贴时跳过，遵从用户显式意图。
+        if (!shiftDown) {
+          const slice = readKrigDataFromTransfer(cd, view.state.schema);
+          if (slice) {
+            view.dispatch(view.state.tr.replaceSelection(slice).scrollIntoView());
+            return true;
+          }
+        }
 
         const clipboard: PasteClipboard = {
           plain: cd.getData('text/plain') || '',
@@ -112,6 +158,10 @@ export function smartPastePlugin(): Plugin {
         const api: ViewAPILike | undefined = (window as any).viewAPI;
         if (!api?.markdownToPMNodes) return false;
 
+        // 同步阶段捕获 selection 快照：异步回调里 selection 可能已被 PM/浏览器
+        // 漂移（NodeSelection → 进入 caption 的 TextSelection），回调里再读就晚了。
+        const initialSel = view.state.selection;
+
         api.markdownToPMNodes(markdown).then(nodes => {
           if (!Array.isArray(nodes) || nodes.length === 0) return;
           try {
@@ -126,8 +176,18 @@ export function smartPastePlugin(): Plugin {
             if (pmNodes.length === 0) return;
 
             const fragment = Fragment.from(pmNodes);
-            const slice = new Slice(fragment, 0, 0);
-            const tr = state.tr.replaceSelection(slice).scrollIntoView();
+
+            // 用户按 Cmd+V 那一刻整个 RenderBlock 处于 NodeSelection —— 没有真实
+            // 文本光标，把内容插到节点之后；这是「整块被选中」语义的自然延伸。
+            let tr;
+            if (initialSel instanceof NodeSelection && RENDER_BLOCK_TYPES.has(initialSel.node.type.name)) {
+              tr = state.tr.insert(initialSel.from + initialSel.node.nodeSize, pmNodes).scrollIntoView();
+            } else {
+              // 否则一律走 replaceSelection——光标在哪粘哪。用 maxOpen 让首尾段落
+              // 的文字溶解到光标所在文本块，避免 closed slice 被 PM 提升到外层
+              // 容器、导致父节点（如 image）被破坏性替换。
+              tr = state.tr.replaceSelection(buildPasteSlice(fragment)).scrollIntoView();
+            }
             view.dispatch(tr);
           } catch (err) {
             console.warn('[smart-paste] PM insert failed:', err);
@@ -178,7 +238,44 @@ function insertAsPlainText(view: any, text: string) {
   if (nodes.length === 0) return;
 
   const fragment = Fragment.from(nodes);
-  const slice = new Slice(fragment, 0, 0);
-  const tr = state.tr.replaceSelection(slice).scrollIntoView();
+
+  // 与 markdown 路径同样的 selection 处理：NodeSelection on RenderBlock 时
+  // insert-after；其他情况一律 replaceSelection（光标在哪粘哪），用 maxOpen
+  // 让首尾段落溶解到目标文本块。
+  const sel = state.selection;
+  let tr;
+  if (sel instanceof NodeSelection && RENDER_BLOCK_TYPES.has(sel.node.type.name)) {
+    tr = state.tr.insert(sel.from + sel.node.nodeSize, nodes).scrollIntoView();
+  } else {
+    tr = state.tr.replaceSelection(buildPasteSlice(fragment)).scrollIntoView();
+  }
   view.dispatch(tr);
+}
+
+/**
+ * copy / cut 时把 selection 转成 Slice 写入剪贴板的 INTERNAL_CLIPBOARD_MIME 字段。
+ *
+ * 不阻止 PM 的默认 copy 行为——PM 仍然会写 text/html 和 text/plain（给跨应用用）。
+ * 我们只是叠加一个独立 MIME 字段，站内粘贴时优先读它无损还原。
+ *
+ * 两种 selection 来源：
+ *   1. block-selection plugin 激活时：用 selectedPositions 的最小 → 最大范围，
+ *      doc.slice(from, to, true) 自然包含所有外层容器
+ *   2. 普通 PM Selection（TextSelection / NodeSelection）：用 selection.content()，
+ *      底层同样调 doc.slice(from, to, true)
+ *
+ * 两种路径最终都通过 doc.slice 拿到完整 Slice，无需任何节点白名单——schema 里
+ * 有什么节点都自动支持。
+ */
+function attachInternalClipboard(view: any, event: ClipboardEvent) {
+  if (!event.clipboardData) return;
+  try {
+    const slice = computeSliceForClipboard(view.state);
+    if (!slice || slice.size === 0) return;
+    // 调 setData 之前必须 preventDefault，否则浏览器会用自己的默认数据覆盖。
+    event.preventDefault();
+    writeKrigDataToTransfer(event.clipboardData, slice, view.state.schema);
+  } catch (err) {
+    console.warn('[smart-paste] internal clipboard write failed:', err);
+  }
 }

@@ -91,7 +91,62 @@ function createViewForWorkMode(workModeId: string): WebContentsView {
 
   // webviewTag 启用时，拦截 guest 弹窗
   if (config.webPreferences?.webviewTag) {
+    view.webContents.on('will-attach-webview', (_event, webPreferences) => {
+      // Inject the guest preload (context-menu signal + CSP bypass).
+      // This is the only reliable way to keep our listener alive across
+      // SPA navigations that replace the document object.
+      webPreferences.preload = path.join(__dirname, 'web-content.js');
+      webPreferences.contextIsolation = true;
+      webPreferences.nodeIntegration = false;
+    });
     view.webContents.on('did-attach-webview', (_event, guestWebContents) => {
+      guestWebContents.on('did-start-loading', () => {
+        console.log('[GuestWebContents] did-start-loading', {
+          embedderId: view.webContents.id,
+          guestId: guestWebContents.id,
+          url: guestWebContents.getURL?.() || '',
+        });
+      });
+      guestWebContents.on('did-stop-loading', () => {
+        console.log('[GuestWebContents] did-stop-loading', {
+          embedderId: view.webContents.id,
+          guestId: guestWebContents.id,
+          url: guestWebContents.getURL?.() || '',
+        });
+      });
+      guestWebContents.on('did-fail-load', (_e, errorCode, errorDescription, validatedURL, isMainFrame) => {
+        console.log('[GuestWebContents] did-fail-load', {
+          embedderId: view.webContents.id,
+          guestId: guestWebContents.id,
+          errorCode,
+          errorDescription,
+          validatedURL,
+          isMainFrame,
+        });
+      });
+      guestWebContents.on('render-process-gone', (_e, details) => {
+        console.log('[GuestWebContents] render-process-gone', {
+          embedderId: view.webContents.id,
+          guestId: guestWebContents.id,
+          reason: details.reason,
+          exitCode: details.exitCode,
+        });
+      });
+      guestWebContents.on('unresponsive', () => {
+        console.log('[GuestWebContents] unresponsive', {
+          embedderId: view.webContents.id,
+          guestId: guestWebContents.id,
+          url: guestWebContents.getURL?.() || '',
+        });
+      });
+      guestWebContents.on('responsive', () => {
+        console.log('[GuestWebContents] responsive', {
+          embedderId: view.webContents.id,
+          guestId: guestWebContents.id,
+          url: guestWebContents.getURL?.() || '',
+        });
+      });
+
       // 弹窗策略：target=_blank → 内部导航，OAuth → 允许子窗口
       guestWebContents.setWindowOpenHandler(({ url, disposition }) => {
         if (!url || url === 'about:blank') return { action: 'allow' };
@@ -103,6 +158,25 @@ function createViewForWorkMode(workModeId: string): WebContentsView {
           return { action: 'deny' };
         }
         return { action: 'allow' };
+      });
+
+      // Chromium-layer right-click. This fires for ANY click — including
+      // those inside cross-origin iframes (artifact panels, DALL·E
+      // containers) — because it comes from the browser layer, above
+      // the page-JS sandbox. Forward to the embedder renderer so
+      // WebViewContextMenu can render its overlay.
+      guestWebContents.on('context-menu', (_e, params) => {
+        view.webContents.send('krig:webview-context-menu', {
+          guestId: guestWebContents.id,
+          x: params.x,
+          y: params.y,
+          linkURL: params.linkURL,
+          srcURL: params.srcURL,
+          mediaType: params.mediaType,
+          selectionText: params.selectionText,
+          isEditable: params.isEditable,
+          frameURL: params.frameURL,
+        });
       });
 
       // 调用插件注册的 onViewCreated hook

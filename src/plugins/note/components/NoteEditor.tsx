@@ -37,6 +37,7 @@ import { titleGuardPlugin } from '../plugins/title-guard';
 import { columnCollapsePlugin } from '../plugins/column-collapse';
 import { registerConverterTest } from '../converters/converter-test';
 import { converterRegistry } from '../converters/registry';
+import { setTextBlockLevel } from '../commands/set-text-block-level';
 import type { Atom, NoteTitleContent } from '../../../shared/types/atom-types';
 import { createAtom } from '../../../shared/types/atom-types';
 import { sanitizeAtoms } from '../../../shared/sanitize-atoms';
@@ -68,6 +69,7 @@ declare const viewAPI: {
   onMessage: (callback: (message: any) => void) => () => void;
   sendToOtherSlot: (message: { protocol: string; action: string; payload: unknown }) => void;
   aiParseMarkdown: (markdown: string) => Promise<{ success: boolean; atoms: any[]; error?: string }>;
+  aiExtractionCacheWrite?: (payload: any) => Promise<any>;
 };
 
 // 注册所有 Block（只执行一次）
@@ -97,41 +99,47 @@ function buildPlugins(s: ReturnType<typeof getSchema>) {
   if (s.marks.strike) markKeymap['Mod-Shift-s'] = toggleMark(s.marks.strike);
   if (s.marks.code) markKeymap['Mod-e'] = toggleMark(s.marks.code);
 
-  // Cmd+Alt+0/1/2/3 标题切换
-  markKeymap['Mod-Alt-0'] = (state: any, dispatch: any) => {
+  // 找到光标所在的 textBlock（任意嵌套深度），返回 { pos, node }；
+  // 找不到、是标题块、或被选中的不是 textBlock 时返回 null。
+  // 与 HandleMenu 的 menu.pos 路径等价：操作总是落在"当前 block"上。
+  const resolveTextBlock = (state: any): { pos: number; node: PMNode } | null => {
     const { $from } = state.selection;
-    if ($from.depth < 1) return false;
-    const pos = $from.before(1);
-    const node = state.doc.nodeAt(pos);
-    if (!node || node.type.name !== 'textBlock' || node.attrs.isTitle) return false;
-    if (!node.attrs.level) return false;
-    if (dispatch) dispatch(state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, level: null }));
+    for (let d = $from.depth; d >= 1; d--) {
+      const node = $from.node(d);
+      if (node.type.name === 'textBlock') {
+        if (node.attrs.isTitle) return null;
+        return { pos: $from.before(d), node };
+      }
+    }
+    return null;
+  };
+
+  // Cmd+Alt+0/1/2/3 标题切换 — 与 HandleMenu 中"切换 textBlock level"走同一函数
+  markKeymap['Mod-Alt-0'] = (state: any, dispatch: any) => {
+    const target = resolveTextBlock(state);
+    if (!target) return false;
+    const tr = setTextBlockLevel(state, target.pos, null);
+    if (!tr) return false;
+    if (dispatch) dispatch(tr);
     return true;
   };
   for (const level of [1, 2, 3]) {
     markKeymap[`Mod-Alt-${level}`] = (state: any, dispatch: any) => {
-      const { $from } = state.selection;
-      if ($from.depth < 1) return false;
-      const pos = $from.before(1);
-      const node = state.doc.nodeAt(pos);
-      if (!node || node.type.name !== 'textBlock' || node.attrs.isTitle) return false;
-      if (node.attrs.level === level) {
-        if (dispatch) dispatch(state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, level: null }));
-      } else {
-        if (dispatch) dispatch(state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, level }));
-      }
+      const target = resolveTextBlock(state);
+      if (!target) return false;
+      const nextLevel = target.node.attrs.level === level ? null : level;
+      const tr = setTextBlockLevel(state, target.pos, nextLevel);
+      if (!tr) return false;
+      if (dispatch) dispatch(tr);
       return true;
     };
   }
 
-  // Shift+Cmd+I 首行缩进
+  // Shift+Cmd+I 首行缩进 — 与 HandleMenu 中 textIndent toggle 等价
   markKeymap['Shift-Mod-i'] = (state: any, dispatch: any) => {
-    const { $from } = state.selection;
-    if ($from.depth < 1) return false;
-    const pos = $from.before(1);
-    const node = state.doc.nodeAt(pos);
-    if (!node || node.type.name !== 'textBlock' || node.attrs.isTitle) return false;
-    if (dispatch) dispatch(state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, textIndent: !node.attrs.textIndent }));
+    const target = resolveTextBlock(state);
+    if (!target) return false;
+    if (dispatch) dispatch(state.tr.setNodeMarkup(target.pos, undefined, { ...target.node.attrs, textIndent: !target.node.attrs.textIndent }));
     return true;
   };
 
@@ -314,7 +322,11 @@ export function NoteEditor() {
             viewAPI.sendToOtherSlot({
               protocol: 'ai-sync',
               action: 'as:note-status',
-              payload: { open: true, lastTypedAt: Date.now() },
+              payload: {
+                open: true,
+                lastTypedAt: Date.now(),
+                noteId: currentNoteIdRef.current,
+              },
             });
           }
           scheduleSaveRef.current();
@@ -358,13 +370,11 @@ export function NoteEditor() {
 
   // 加载文档（带竞态取消：快速切换时丢弃过期的异步结果）
   const loadNote = useCallback(async (noteId: string) => {
-    console.log('[NoteEditor] loadNote called:', noteId);
     const seq = ++loadSeqRef.current;
     const s = getSchema();
     try {
       const record = await viewAPI.noteLoad(noteId);
-      console.log('[NoteEditor] noteLoad returned:', record ? `title="${record.title}", doc_content=${record.doc_content?.length ?? 0} atoms` : 'null');
-      if (seq !== loadSeqRef.current) { console.log('[NoteEditor] Stale load, discarding'); return; }
+      if (seq !== loadSeqRef.current) { return; }
       if (!record || !record.doc_content || record.doc_content.length === 0) {
         loadMoreRef.current = null;
         fullAtomsRef.current = null;
@@ -433,7 +443,7 @@ export function NoteEditor() {
   }, []);
 
   // 保存文档
-  const saveNote = useCallback(() => {
+  const saveNote = useCallback(async () => {
     const noteId = currentNoteIdRef.current;
     const view = viewRef.current;
     if (!noteId || !view) return;
@@ -477,16 +487,20 @@ export function NoteEditor() {
       loadedAtoms.push(...tailAtoms);
     }
 
-    viewAPI.noteSave(noteId, loadedAtoms, title);
+    await viewAPI.noteSave(noteId, loadedAtoms, title);
   }, []);
 
   // 防抖自动保存（1秒）
   const scheduleSave = useCallback(() => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(() => {
-      saveNote();
-      // 保存完成后通知 NoteView（dirty → saved）
-      window.dispatchEvent(new CustomEvent('note:saved'));
+    saveTimerRef.current = setTimeout(async () => {
+      try {
+        await saveNote();
+        // 保存完成后通知 NoteView（dirty → saved）
+        window.dispatchEvent(new CustomEvent('note:saved'));
+      } catch (err) {
+        console.error('[NoteEditor] Auto-save failed:', err);
+      }
     }, 1000);
     // 通知 NoteView 有未保存的修改
     window.dispatchEvent(new CustomEvent('note:dirty'));
@@ -523,9 +537,7 @@ export function NoteEditor() {
             allAtoms.push(atom);
           }
         }
-        console.log('[NoteEditor] Import JSON: raw atoms:', allAtoms.length, 'types:', allAtoms.map((a: Atom) => a.type));
         const cleaned = sanitizeAtoms(allAtoms);
-        console.log('[NoteEditor] After sanitize:', cleaned.length, 'types:', cleaned.map((a: Atom) => a.type));
         const { doc } = docFromContentChunked(s, cleaned);
         loadMoreRef.current = null;
         fullAtomsRef.current = null;
@@ -547,7 +559,6 @@ export function NoteEditor() {
     // 拉取导入时设置的 pending noteId，或恢复上次打开的笔记
     viewAPI.notePendingOpen().then(async (noteId) => {
       if (noteId) {
-        console.log('[NoteEditor] Pending note found:', noteId);
         loadNote(noteId);
         return;
       }
@@ -562,7 +573,6 @@ export function NoteEditor() {
       if (currentNoteIdRef.current) return; // already loaded by another path
       const activeId = await viewAPI.getActiveNoteId();
       if (activeId && !currentNoteIdRef.current) {
-        console.log('[NoteEditor] Restoring last note:', activeId);
         loadNote(activeId);
       }
     });
@@ -613,10 +623,14 @@ export function NoteEditor() {
     });
 
     // 监听手动保存事件（来自 NoteView Toolbar 的 Save 按钮）
-    const manualSaveHandler = () => {
+    const manualSaveHandler = async () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-      saveNote();
-      window.dispatchEvent(new CustomEvent('note:saved'));
+      try {
+        await saveNote();
+        window.dispatchEvent(new CustomEvent('note:saved'));
+      } catch (err) {
+        console.error('[NoteEditor] Manual save failed:', err);
+      }
     };
     window.addEventListener('note:save', manualSaveHandler);
 
@@ -650,20 +664,119 @@ export function NoteEditor() {
   // single queue so order matches arrival.
   useEffect(() => {
     let queue: Promise<void> = Promise.resolve();
+    let lastAppendFingerprint = '';
+    let lastAppendAt = 0;
+    const writeReceipt = async (payload: any) => {
+      try {
+        await viewAPI.aiExtractionCacheWrite?.(payload);
+      } catch {}
+    };
     const unsub = viewAPI.onMessage((msg: any) => {
       if (msg.protocol === 'ai-sync' && msg.action === 'as:append-turn') {
+        const sourceId = String(msg.payload?.source?.serviceId || '');
+        const turn = msg.payload?.turn || {};
+        const extractionId = String(msg.payload?.debug?.extractionId || `note-${Date.now()}`);
+        const noteId = currentNoteIdRef.current ?? null;
+        const fingerprint = JSON.stringify({
+          sourceId,
+          index: turn.index ?? null,
+          userMessage: turn.userMessage ?? '',
+          markdown: turn.markdown ?? '',
+        });
+        void writeReceipt({
+          extractionId,
+          stage: 'note-received',
+          serviceId: sourceId || 'unknown',
+          msgIndex: turn.index ?? -1,
+          userMessage: turn.userMessage ?? '',
+          markdown: turn.markdown ?? '',
+          meta: {
+            noteId,
+            sourceName: String(msg.payload?.source?.serviceName || ''),
+          },
+        });
+        const now = Date.now();
+        if (fingerprint === lastAppendFingerprint && (now - lastAppendAt) < 15000) {
+          void writeReceipt({
+            extractionId,
+            stage: 'note-duplicate-skip',
+            serviceId: sourceId || 'unknown',
+            msgIndex: turn.index ?? -1,
+            userMessage: turn.userMessage ?? '',
+            markdown: turn.markdown ?? '',
+            meta: { noteId },
+          });
+          return;
+        }
+        lastAppendFingerprint = fingerprint;
+        lastAppendAt = now;
         queue = queue.then(async () => {
           const view = viewRef.current;
-          if (!view || view.isDestroyed) return;
+          if (!view || view.isDestroyed || !currentNoteIdRef.current) {
+            await writeReceipt({
+              extractionId,
+              stage: 'note-no-active-note',
+              serviceId: sourceId || 'unknown',
+              msgIndex: turn.index ?? -1,
+              userMessage: turn.userMessage ?? '',
+              markdown: turn.markdown ?? '',
+              meta: { noteId: currentNoteIdRef.current ?? null },
+            });
+            // No target note (view torn down, note deleted) — tell peer so
+            // it can pause the sync toggle and surface a warning.
+            viewAPI.sendToOtherSlot({
+              protocol: 'ai-sync',
+              action: 'as:insert-failed',
+              payload: { reason: 'no-active-note' },
+            });
+            return;
+          }
+          await writeReceipt({
+            extractionId,
+            stage: 'note-insert-start',
+            serviceId: sourceId || 'unknown',
+            msgIndex: turn.index ?? -1,
+            userMessage: turn.userMessage ?? '',
+            markdown: turn.markdown ?? '',
+            meta: { noteId: currentNoteIdRef.current },
+          });
           const { insertTurnIntoNote } = await import('../ai-workflow/sync-note-receiver');
           await insertTurnIntoNote(view, msg.payload);
-        }).catch(err => console.warn('[SyncNote] insert failed:', err));
+          await writeReceipt({
+            extractionId,
+            stage: 'note-insert-success',
+            serviceId: sourceId || 'unknown',
+            msgIndex: turn.index ?? -1,
+            userMessage: turn.userMessage ?? '',
+            markdown: turn.markdown ?? '',
+            meta: { noteId: currentNoteIdRef.current },
+          });
+        }).catch(err => {
+          console.warn('[SyncNote] insert failed:', err);
+          void writeReceipt({
+            extractionId,
+            stage: 'note-insert-failed',
+            serviceId: sourceId || 'unknown',
+            msgIndex: turn.index ?? -1,
+            userMessage: turn.userMessage ?? '',
+            markdown: turn.markdown ?? '',
+            meta: {
+              noteId: currentNoteIdRef.current ?? null,
+              error: String(err),
+            },
+          });
+          viewAPI.sendToOtherSlot({
+            protocol: 'ai-sync',
+            action: 'as:insert-failed',
+            payload: { reason: String(err) },
+          });
+        });
       } else if (msg.protocol === 'ai-sync' && msg.action === 'as:probe') {
         // Peer asks "are you open?" — reply immediately.
         viewAPI.sendToOtherSlot({
           protocol: 'ai-sync',
           action: 'as:note-status',
-          payload: { open: true, lastTypedAt: 0 },
+          payload: { open: true, lastTypedAt: 0, noteId: currentNoteIdRef.current },
         });
       }
     });
@@ -671,18 +784,20 @@ export function NoteEditor() {
   }, []);
 
   // Broadcast open/close so the AI sync engine can pause when the note
-  // view is unmounted (user closed the right slot).
+  // view is unmounted (user closed the right slot). Note switches inside
+  // this component are announced from within loadNote() — no extra effect
+  // needed here.
   useEffect(() => {
     viewAPI.sendToOtherSlot({
       protocol: 'ai-sync',
       action: 'as:note-status',
-      payload: { open: true, lastTypedAt: 0 },
+      payload: { open: true, lastTypedAt: 0, noteId: currentNoteIdRef.current },
     });
     return () => {
       viewAPI.sendToOtherSlot({
         protocol: 'ai-sync',
         action: 'as:note-status',
-        payload: { open: false, lastTypedAt: 0 },
+        payload: { open: false, lastTypedAt: 0, noteId: null },
       });
     };
   }, []);

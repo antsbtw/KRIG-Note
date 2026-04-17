@@ -1,0 +1,28 @@
+{
+  "extractionId": "1776339865092-y7ek2t",
+  "stage": "artifact-probe",
+  "serviceId": "claude",
+  "writtenAt": "2026-04-16T11:44:25.552Z",
+  "url": "https://claude.ai/chat/c02c2e45-d3b7-4523-a5d4-0ab2271f604e",
+  "msgIndex": 0,
+  "preview": "好的，我来生成一段包含多种内容类型的测试对话。 用户问题 请帮我解释欧拉恒等式，并给出一个用 Go 实现复数运算的例子，附带一个流程图说明程序执行过程，最后再画一个 SVG 示意图。 回答 1. 欧拉恒等式（公式） 欧拉恒等式被誉为数学中最优美的等式： 𝑒 𝑖 𝜋 + 1 = 0 e iπ +1=0 它是欧拉公式",
+  "userMessage": "我在测试提取聊天内容的功能，请输出一段带有公式、svg图片、代码块、流程图、go代码附件的对话。",
+  "markdown": "\n```\nThis block is not supported on your current device yet.\n```\n\n好的，我来生成一段包含多种内容类型的测试对话。\n\n---\n\n## 用户问题\n\n> 请帮我解释欧拉恒等式，并给出一个用 Go 实现复数运算的例子，附带一个流程图说明程序执行过程，最后再画一个 SVG 示意图。\n\n---\n\n## 回答\n\n### 1. 欧拉恒等式（公式）\n\n欧拉恒等式被誉为数学中最优美的等式：\n\n$$\ne^{i\\pi} + 1 = 0\n$$\n\n它是欧拉公式的特例。欧拉公式的一般形式为：\n\n$$\ne^{i\\theta} = \\cos\\theta + i\\sin\\theta\n$$\n\n当 $\\theta = \\pi$ 时，由于 $\\cos\\pi = -1$，$\\sin\\pi = 0$，代入得：\n\n$$\ne^{i\\pi} = -1 + 0i \\implies e^{i\\pi} + 1 = 0\n$$\n\n复数的模（magnitude）定义为：\n\n$$\n|z| = \\sqrt{a^2 + b^2}, \\quad z = a + bi\n$$\n\n---\n\n### 2. SVG 示意图 — 复数的极坐标表示\n```\nThis block is not supported on your current device yet.\n```\n\n---\n\n### 3. 流程图 — Go 程序执行流程\n```\nThis block is not supported on your current device yet.\n```\n\n---\n\n### 4. Go 代码（内联代码块）\n\n```go\npackage main\n\nimport (\n\t\"fmt\"\n\t\"math/cmplx\"\n)\n\n// Complex 封装复数运算工具\ntype Complex struct {\n\tValue complex128\n}\n\n// NewComplex 构造复数\nfunc NewComplex(real, imag float64) Complex {\n\treturn Complex{Value: complex(real, imag)}\n}\n\n// Abs 返回模长\nfunc (c Complex) Abs() float64 {\n\treturn cmplx.Abs(c.Value)\n}\n\n// Phase 返回辐角（弧度）\nfunc (c Complex) Phase() float64 {\n\treturn cmplx.Phase(c.Value)\n}\n\n// IsOnUnitCircle 判断是否在单位圆上（容差 1e-9）\nfunc (c Complex) IsOnUnitCircle() bool {\n\treturn abs(c.Abs()-1.0) < 1e-9\n}\n\nfunc abs(x float64) float64 {\n\tif x < 0 {\n\t\treturn -x\n\t}\n\treturn x\n}\n\nfunc main() {\n\t// 欧拉公式：e^(iπ) = cos(π) + i·sin(π)\n\tz := NewComplex(-1, 0) // e^(iπ)\n\n\tfmt.Printf(\"z = %v\\n\", z.Value)\n\tfmt.Printf(\"|z| = %.6f\\n\", z.Abs())\n\tfmt.Printf(\"arg(z) = %.6f rad\\n\", z.Phase())\n\tfmt.Printf(\"单位圆上: %v\\n\", z.IsOnUnitCircle())\n\n\t// 一般复数示例\n\tw := NewComplex(3, 4)\n\tfmt.Printf(\"\\nw = %v\\n\", w.Value)\n\tfmt.Printf(\"|w| = %.6f  (3-4-5 三角形)\\n\", w.Abs())\n}\n```\n\n**输出：**\n```\nz = (-1+0i)\n|z| = 1.000000\narg(z) = 3.141593 rad\n单位圆上: true\n\nw = (3+4i)\n|w| = 5.000000  (3-4-5 三角形)\n```\n\n---\n\n### 5. Go 代码附件\n```\nThis block is not supported on your current device yet.\n```\n\n\n```\nThis block is not supported on your current device yet.\n```\n\n---\n\n以上对话包含了以下所有内容类型，可用于提取测试：\n\n- **数学公式**：行内公式 `$...$` 和块级公式 `$$...$$`\n- **SVG 图片**：复数极坐标平面示意图（widget 渲染）\n- **流程图**：SVG 流程图，含分支判断节点\n- **内联代码块**：带语法高亮的 Go 代码片段\n- **Go 代码附件**：可下载的 `.go` 文件",
+  "meta": {
+    "artifactOrdinal": null,
+    "candidates": 1,
+    "probe": [
+      {
+        "ordinal": 0,
+        "form": "card",
+        "inScope": true,
+        "visible": true,
+        "top": 988,
+        "bottom": 1059,
+        "height": 71,
+        "title": "",
+        "kind": ""
+      }
+    ]
+  }
+}

@@ -133,6 +133,7 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
     const active = workspaceManager.getActive();
     if (!active) return;
     workspaceManager.update(active.id, { workModeId });
+    if (hasRightSlot()) closeRightSlot();
     switchLeftSlotView(workModeId);
     broadcastWorkspaceState(getMainWindow());
   });
@@ -163,6 +164,11 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
     if (!side) return;
     closeSlot(side);
     broadcastWorkspaceState(getMainWindow());
+  });
+
+  // View 查询自己在哪个 slot（用于同步滚动的左主右从仲裁）
+  ipcMain.handle(IPC.SLOT_GET_SIDE, (event) => {
+    return getSlotBySenderId(event.sender.id);
   });
 
   // ── View 间消息路由（双工，宽松模式） ──
@@ -921,13 +927,16 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
   // WB_CAPTURE_DOWNLOAD_ONCE: Arm a one-shot will-download handler on the
   // sender's guest webContents session. The NEXT download triggered on
   // that session is intercepted: saved to a temp path, read into memory,
-  // deleted, and returned to the caller. Used by the Artifact "Download
-  // file" extraction path. Auto-clears after the download arrives or the
-  // timeout elapses, so it can be safely re-armed.
+  // deleted, and returned to the caller as raw bytes (base64).
+  //
+  // Returning base64 (not a UTF-8 string) preserves original bytes — critical
+  // because Claude's SVG downloads have a latin1/utf-8 encoding bug that
+  // callers need to reverse; if we decode as UTF-8 here, the original bytes
+  // are lost and the bug can't be fixed. Binary downloads (PNG) also need
+  // byte-exact preservation.
   ipcMain.handle(IPC.WB_CAPTURE_DOWNLOAD_ONCE, async (event, timeoutMs?: number) => {
     try {
       const { getGuest } = await import('../../plugins/web-bridge/infrastructure/guest-registry');
-      const { app } = await import('electron');
       const fs = await import('node:fs');
       const path = await import('node:path');
       const os = await import('node:os');
@@ -936,7 +945,15 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
       if (!guest) return { success: false, error: 'no guest for sender' };
       const session = guest.session;
 
-      return await new Promise<{ success: boolean; filename?: string; mimeType?: string; content?: string; error?: string }>((resolve) => {
+      return await new Promise<{
+        success: boolean;
+        filename?: string;
+        mimeType?: string;
+        /** base64-encoded raw bytes of the downloaded file */
+        contentBase64?: string;
+        byteLength?: number;
+        error?: string;
+      }>((resolve) => {
         const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'krig-artifact-'));
         let settled = false;
         const timer = setTimeout(() => {
@@ -963,7 +980,13 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
             if (state === 'completed') {
               try {
                 const buf = fs.readFileSync(savePath);
-                resolve({ success: true, filename, mimeType, content: buf.toString('utf8') });
+                resolve({
+                  success: true,
+                  filename,
+                  mimeType,
+                  contentBase64: buf.toString('base64'),
+                  byteLength: buf.length,
+                });
               } catch (err) {
                 resolve({ success: false, error: 'read failed: ' + String(err) });
               }
@@ -974,9 +997,6 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
           });
         };
         session.on('will-download', listener);
-
-        // Silence "unused" lint — app is imported for future use (e.g. app.getPath).
-        void app;
       });
     } catch (err) {
       return { success: false, error: String(err) };
@@ -1113,6 +1133,41 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
     }
   });
 
+  // WB_SEND_KEY: synthesize native key events into the sender's guest webview
+  // via CDP (Input.dispatchKeyEvent). Used for browser-layer UI such as
+  // download confirmation bubbles that aren't part of the page DOM.
+  ipcMain.handle(IPC.WB_SEND_KEY, async (event, events: Array<{
+    type: string;
+    key: string;
+    code?: string;
+    windowsVirtualKeyCode?: number;
+  }>) => {
+    try {
+      const { getGuest } = await import('../../plugins/web-bridge/infrastructure/guest-registry');
+      const senderId = event.sender.id;
+      const guest = getGuest(senderId);
+      if (!guest) return { success: false, error: 'No guest for sender ' + senderId };
+
+      const dbg = guest.debugger;
+      if (!dbg.isAttached()) {
+        try { dbg.attach('1.3'); } catch (e) { /* another debugger may be attached */ }
+      }
+
+      for (const ev of events) {
+        await dbg.sendCommand('Input.dispatchKeyEvent', {
+          type: ev.type,
+          key: ev.key,
+          code: ev.code ?? ev.key,
+          windowsVirtualKeyCode: ev.windowsVirtualKeyCode ?? 0,
+          nativeVirtualKeyCode: ev.windowsVirtualKeyCode ?? 0,
+        });
+      }
+      return { success: true, count: events.length };
+    } catch (err) {
+      return { success: false, error: String(err) };
+    }
+  });
+
   ipcMain.handle(IPC.WB_CDP_STOP, async () => {
     if (cdpInstance) {
       cdpInstance.stop();
@@ -1188,6 +1243,68 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
     } catch (err) {
       console.error('[AI_PARSE_MARKDOWN] Error:', err);
       return { success: false, error: String(err), atoms: [] };
+    }
+  });
+
+  ipcMain.handle(IPC.AI_EXTRACTION_CACHE_WRITE, async (_event, payload: {
+    extractionId?: string;
+    stage?: string;
+    serviceId?: string;
+    url?: string;
+    noteTitle?: string;
+    msgIndex?: number;
+    preview?: string;
+    userMessage?: string;
+    markdown?: string;
+    meta?: Record<string, unknown>;
+  }) => {
+    try {
+      const fs = await import('node:fs/promises');
+      const path = await import('node:path');
+
+      const cacheDir = path.join(process.cwd(), 'debug', 'ai-extraction-cache');
+      await fs.mkdir(cacheDir, { recursive: true });
+
+      const extractionId = String(payload.extractionId || Date.now());
+      const stage = String(payload.stage || 'snapshot');
+      const serviceId = String(payload.serviceId || 'unknown');
+      const safeId = extractionId.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const safeStage = stage.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const baseName = `${safeId}-${safeStage}`;
+
+      const record = {
+        extractionId,
+        stage,
+        serviceId,
+        writtenAt: new Date().toISOString(),
+        ...payload,
+      };
+
+      const jsonPath = path.join(cacheDir, `${baseName}.json`);
+      await fs.writeFile(jsonPath, JSON.stringify(record, null, 2), 'utf8');
+
+      let markdownPath: string | null = null;
+      if (typeof payload.markdown === 'string') {
+        markdownPath = path.join(cacheDir, `${baseName}.md`);
+        await fs.writeFile(markdownPath, payload.markdown, 'utf8');
+      }
+
+      await fs.writeFile(
+        path.join(cacheDir, `latest-${serviceId}.json`),
+        JSON.stringify(record, null, 2),
+        'utf8',
+      );
+      if (typeof payload.markdown === 'string') {
+        await fs.writeFile(
+          path.join(cacheDir, `latest-${serviceId}.md`),
+          payload.markdown,
+          'utf8',
+        );
+      }
+
+      return { success: true, dir: cacheDir, jsonPath, markdownPath };
+    } catch (err) {
+      return { success: false, error: String(err) };
     }
   });
 

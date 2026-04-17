@@ -31,6 +31,9 @@ interface AppendTurnPayload {
     serviceId: string;
     serviceName: string;
   };
+  debug?: {
+    extractionId?: string;
+  };
 }
 
 /**

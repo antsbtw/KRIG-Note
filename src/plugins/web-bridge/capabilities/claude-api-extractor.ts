@@ -177,6 +177,18 @@ export function isClaudeConversationPage(url: string): boolean {
 
 /** Placeholder string Claude inserts for Artifact content when rendered for non-official clients. */
 export const CLAUDE_ARTIFACT_PLACEHOLDER = 'This block is not supported on your current device yet.';
+const ESCAPED_CLAUDE_ARTIFACT_PLACEHOLDER = CLAUDE_ARTIFACT_PLACEHOLDER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const ARTIFACT_PLACEHOLDER_BLOCK_PATTERN = '```[ \\t]*\\n' + ESCAPED_CLAUDE_ARTIFACT_PLACEHOLDER + '\\n```';
+
+export function collapseAdjacentArtifactPlaceholders(text: string): string {
+  if (!text) return text;
+  const normalized = text.replace(/\r\n/g, '\n');
+  const duplicatePattern = new RegExp(
+    '(' + ARTIFACT_PLACEHOLDER_BLOCK_PATTERN + ')(?:\\n[ \\t]*' + ARTIFACT_PLACEHOLDER_BLOCK_PATTERN + ')+',
+    'g',
+  );
+  return normalized.replace(duplicatePattern, '$1');
+}
 
 /**
  * Count how many artifact placeholders appear in a message text.
@@ -184,8 +196,26 @@ export const CLAUDE_ARTIFACT_PLACEHOLDER = 'This block is not supported on your 
  */
 export function countArtifactPlaceholders(text: string): number {
   if (!text) return 0;
-  const matches = text.match(/```[\s\S]*?This block is not supported on your current device yet\.[\s\S]*?```/g);
+  const normalized = collapseAdjacentArtifactPlaceholders(text);
+  const placeholderPattern = '(^|\\n)' + ARTIFACT_PLACEHOLDER_BLOCK_PATTERN + '(?=\\n|$)';
+  const matches = normalized.match(new RegExp(placeholderPattern, 'g'));
   return matches?.length ?? 0;
+}
+
+/**
+ * Claude conversation API sometimes prepends a stray artifact placeholder
+ * before the actual assistant prose in long/mixed-content replies. That
+ * leading placeholder has no stable mapping to the visible turn content,
+ * and if we keep it, fallback replacement produces a bogus callout at the
+ * very top of the imported note.
+ */
+export function trimLeadingArtifactPlaceholder(text: string): string {
+  if (!text) return text;
+  const match = text.match(new RegExp('^\\s*```[ \\t]*\\n' + ESCAPED_CLAUDE_ARTIFACT_PLACEHOLDER + '\\n```(?:\\n\\s*)*'));
+  if (!match) return text;
+  const rest = text.slice(match[0].length);
+  if (!rest.trim()) return text;
+  return rest;
 }
 
 
@@ -403,6 +433,83 @@ function extractPlaceholderInfoString(placeholderBlock: string): string {
   return m ? m[1].trim() : '';
 }
 
+const ARTIFACT_PLACEHOLDER_REGEX = new RegExp(
+  '(^|\\n)' + ARTIFACT_PLACEHOLDER_BLOCK_PATTERN + '(?=\\n|$)',
+  'g',
+);
+
+type ArtifactSegment =
+  | { type: 'text'; text: string }
+  | { type: 'placeholder'; block: string; info: string; index: number };
+
+function splitByArtifactPlaceholders(messageText: string): ArtifactSegment[] {
+  const segments: ArtifactSegment[] = [];
+  if (!messageText) return [{ type: 'text', text: '' }];
+  const normalizedText = collapseAdjacentArtifactPlaceholders(messageText);
+
+  let lastIndex = 0;
+  let placeholderIndex = 0;
+  normalizedText.replace(ARTIFACT_PLACEHOLDER_REGEX, (block, prefix, offset: number) => {
+    const actualBlock = String(block).startsWith('\n') ? String(block).slice(1) : String(block);
+    const actualOffset = String(block).startsWith('\n') ? offset + 1 : offset;
+    if (offset > lastIndex) {
+      segments.push({ type: 'text', text: normalizedText.slice(lastIndex, actualOffset) });
+    }
+    segments.push({
+      type: 'placeholder',
+      block: actualBlock,
+      info: extractPlaceholderInfoString(actualBlock),
+      index: placeholderIndex++,
+    });
+    lastIndex = actualOffset + actualBlock.length;
+    return String(block);
+  });
+
+  if (lastIndex < normalizedText.length) {
+    segments.push({ type: 'text', text: normalizedText.slice(lastIndex) });
+  }
+
+  if (segments.length === 0) return [{ type: 'text', text: normalizedText }];
+  return segments;
+}
+
+function rebuildArtifactSegments(
+  segments: ArtifactSegment[],
+  replacer: (placeholder: Extract<ArtifactSegment, { type: 'placeholder' }>) => string | null,
+): { text: string; filled: number; remaining: number } {
+  let filled = 0;
+  let remaining = 0;
+  const out = segments.map((segment) => {
+    if (segment.type === 'text') return segment.text;
+    const replaced = replacer(segment);
+    if (replaced == null) {
+      remaining += 1;
+      return segment.block;
+    }
+    filled += 1;
+    return replaced;
+  }).join('');
+  return { text: out, filled, remaining };
+}
+
+function collapseDuplicateFallbackCallouts(text: string): string {
+  if (!text) return text;
+  const normalized = text.replace(/\r\n/g, '\n');
+  const calloutPattern =
+    '(> \\[!note\\] 📥 此处图片请点击 Claude 页面的拷贝按钮\\n' +
+    '(?:> \\[在 Claude 中查看原图\\]\\([^\\n]+\\)))';
+  const duplicatePattern = new RegExp(
+    calloutPattern + '(?:\\n[ \\t]*){1,3}' + calloutPattern,
+    'g',
+  );
+  let out = normalized;
+  while (duplicatePattern.test(out)) {
+    duplicatePattern.lastIndex = 0;
+    out = out.replace(duplicatePattern, '$1');
+  }
+  return out;
+}
+
 /**
  * Replace Claude Artifact placeholders in `messageText` with captured
  * artifact source code (from postMessage hook). Placeholders are matched in
@@ -422,25 +529,95 @@ export function fillArtifactPlaceholders(
     return { text: messageText, filled: 0, remaining };
   }
 
-  const placeholderRegex = /```[^\n]*\n(?:[^\n]*\n)*?This block is not supported on your current device yet\.(?:[^\n]*\n)*?```/g;
-  const placeholders = messageText.match(placeholderRegex) || [];
+  const segments = splitByArtifactPlaceholders(messageText);
+  const placeholders = segments.filter((s): s is Extract<ArtifactSegment, { type: 'placeholder' }> => s.type === 'placeholder');
   // Map i-th placeholder (from end) to i-th captured source (newest first),
   // which matches the user's most-recent-visible-first mental model.
   const placeholdersFromEnd = placeholders.length;
-  let filled = 0;
-  let idxFromStart = 0;
-
-  const result = messageText.replace(placeholderRegex, (block) => {
-    const idxFromEnd = placeholdersFromEnd - 1 - idxFromStart;
-    idxFromStart += 1;
+  return rebuildArtifactSegments(segments, (placeholder) => {
+    const idxFromEnd = placeholdersFromEnd - 1 - placeholder.index;
     const src = capturedSources[idxFromEnd];
-    if (!src) return block;
-    filled += 1;
-    const info = extractPlaceholderInfoString(block) || 'html';
+    if (!src) return null;
+    const info = placeholder.info || 'html';
     return '```' + info + '\n' + src + '\n```';
   });
+}
 
-  return { text: result, filled, remaining: placeholdersFromEnd - filled };
+/**
+ * Replace Claude Artifact placeholders with rendered images.
+ *
+ * Used when the Copy-to-clipboard extractor has produced PNG dataUrls for
+ * each artifact card on the page. The i-th placeholder from the top of
+ * the message maps to the i-th image in document order (listArtifacts
+ * also walks the DOM top-down, so indices line up).
+ *
+ * Returns both the rewritten text and how many placeholders were filled
+ * so the caller can decide whether to further call
+ * `replaceArtifactPlaceholders` for any remaining ones.
+ */
+export function fillArtifactPlaceholdersWithImages(
+  messageText: string,
+  imageDataUrls: string[],
+): { text: string; filled: number; remaining: number } {
+  if (!messageText || imageDataUrls.length === 0) {
+    const remaining = countArtifactPlaceholders(messageText || '');
+    return { text: messageText, filled: 0, remaining };
+  }
+  const segments = splitByArtifactPlaceholders(messageText);
+  return rebuildArtifactSegments(segments, (placeholder) => {
+    const url = imageDataUrls[placeholder.index];
+    if (!url) return null;
+    return `![Claude Artifact](${url})`;
+  });
+}
+
+/**
+ * Replace Claude Artifact placeholders with arbitrary markdown snippets.
+ *
+ * Used by the manual right-click extraction path once the artifact has
+ * been downloaded and converted into a markdown representation such as:
+ *   - image markdown for iframe-rendered SVG/PNG
+ *   - fenced code block for code cards / file cards
+ *   - fenced mermaid/html blocks for diagram / html cards
+ */
+export function fillArtifactPlaceholdersWithMarkdownPieces(
+  messageText: string,
+  pieces: string[],
+): { text: string; filled: number; remaining: number } {
+  if (!messageText || pieces.length === 0) {
+    const remaining = countArtifactPlaceholders(messageText || '');
+    return { text: messageText, filled: 0, remaining };
+  }
+  const segments = splitByArtifactPlaceholders(messageText);
+  return rebuildArtifactSegments(segments, (placeholder) => {
+    const piece = pieces[placeholder.index];
+    if (!piece) return null;
+    return piece;
+  });
+}
+
+/**
+ * Replace Claude Artifact placeholders with markdown snippets while
+ * preserving placeholder order even if only some downloads succeeded.
+ *
+ * `pieces[i]` maps to placeholder i; null/empty entries leave that
+ * placeholder untouched so later fallback can handle it without shifting
+ * subsequent artifacts forward.
+ */
+export function fillArtifactPlaceholdersWithSparseMarkdownPieces(
+  messageText: string,
+  pieces: Array<string | null | undefined>,
+): { text: string; filled: number; remaining: number } {
+  if (!messageText || pieces.length === 0) {
+    const remaining = countArtifactPlaceholders(messageText || '');
+    return { text: messageText, filled: 0, remaining };
+  }
+  const segments = splitByArtifactPlaceholders(messageText);
+  return rebuildArtifactSegments(segments, (placeholder) => {
+    const piece = pieces[placeholder.index];
+    if (!piece) return null;
+    return piece;
+  });
 }
 
 /**
@@ -461,12 +638,12 @@ export function replaceArtifactPlaceholders(
   messageText: string,
   conversationUrl?: string,
 ): string {
-  const placeholderRegex = /```[^\n]*\n(?:[^\n]*\n)*?This block is not supported on your current device yet\.(?:[^\n]*\n)*?```/g;
   const linkText = conversationUrl
-    ? `> [在 Claude 中查看](${conversationUrl})`
-    : `> 请在原始 Claude 对话中查看`;
-  return messageText.replace(
-    placeholderRegex,
-    `> [!note] Claude Artifact (交互式内容)\n> 这里是 Claude 生成的交互式 HTML/图表，无法自动提取到 Note。\n${linkText}`,
+    ? `> [在 Claude 中查看原图](${conversationUrl})`
+    : '';
+  const fallback = `> [!note] 📥 此处图片请点击 Claude 页面的拷贝按钮${linkText ? `\n${linkText}` : ''}`;
+  const segments = splitByArtifactPlaceholders(messageText);
+  return collapseDuplicateFallbackCallouts(
+    rebuildArtifactSegments(segments, () => fallback).text,
   );
 }

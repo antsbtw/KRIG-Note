@@ -1,0 +1,14 @@
+{
+  "extractionId": "1776342793847-1zk7nc",
+  "stage": "resolve-done",
+  "serviceId": "claude",
+  "writtenAt": "2026-04-16T12:33:13.857Z",
+  "url": "https://claude.ai/chat/c02c2e45-d3b7-4523-a5d4-0ab2271f604e",
+  "msgIndex": 0,
+  "preview": "好的，我来生成一段包含多种内容类型的测试对话。 用户问题 请帮我解释欧拉恒等式，并给出一个用 Go 实现复数运算的例子，附带一个流程图说明程序执行过程，最后再画一个 SVG 示意图。 回答 1. 欧拉恒等式（公式） 欧拉恒等式被誉为数学中最优美的等式： 𝑒 𝑖 𝜋 + 1 = 0 e iπ +1=0 它是欧拉公式",
+  "userMessage": "",
+  "markdown": "",
+  "meta": {
+    "artifactOrdinal": null
+  }
+}

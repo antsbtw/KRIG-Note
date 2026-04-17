@@ -14,6 +14,7 @@ import type {
   TableContent,
   TableCellContent,
   NoteTitleContent,
+  FileBlockContent,
 } from '../../../shared/types/atom-types';
 import type { ExtractedBlock, ExtractedInline } from '../../../shared/types/extraction-types';
 
@@ -274,6 +275,17 @@ export function createAtomsFromExtracted(blocks: ExtractedBlock[], pageTitle?: s
         title: block.text || 'Audio',
       };
       atoms.push(createAtom('audio', content, rootAtom.id));
+
+    } else if (block.type === 'file' && block.src) {
+      const content: FileBlockContent = {
+        mediaId: '',
+        src: block.src,
+        filename: block.filename || block.text || 'attachment',
+        mimeType: block.mimeType || '',
+        size: block.size,
+        source: 'ai-generated',
+      };
+      atoms.push(createAtom('fileBlock', content, rootAtom.id));
 
     } else if (block.type === 'bulletList' || block.type === 'orderedList') {
       const listContent: ListContent = {

@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld('viewAPI', {
   ensureRightSlot: (workModeId: string) => ipcRenderer.invoke(IPC.SLOT_ENSURE_RIGHT, workModeId),
   closeRightSlot: () => ipcRenderer.invoke(IPC.SLOT_CLOSE_RIGHT),
   closeSlot: () => ipcRenderer.invoke(IPC.SLOT_CLOSE),  // 关闭自己所在的 slot
+  getMySlotSide: () => ipcRenderer.invoke(IPC.SLOT_GET_SIDE),  // 查询自己在哪个 slot（'left'|'right'|null）
 
   // NoteFile 操作
   noteCreate: (title?: string) => ipcRenderer.invoke(IPC.NOTE_CREATE, title),
@@ -95,6 +96,16 @@ contextBridge.exposeInMainWorld('viewAPI', {
     const listener = (_event: Electron.IpcRendererEvent, state: unknown) => callback(state);
     ipcRenderer.on(IPC.WORKSPACE_STATE_CHANGED, listener);
     return () => ipcRenderer.removeListener(IPC.WORKSPACE_STATE_CHANGED, listener);
+  },
+
+  // Right-click events from any guest <webview> — including events
+  // inside cross-origin iframes — are forwarded by main via this
+  // channel. WebViewContextMenu uses it to drive its overlay so the
+  // menu works just like Chrome's built-in one (everywhere, always).
+  onWebviewContextMenu: (callback: (payload: any) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: any) => callback(payload);
+    ipcRenderer.on('krig:webview-context-menu', listener);
+    return () => ipcRenderer.removeListener('krig:webview-context-menu', listener);
   },
 
   // ── Thought 操作 ──
@@ -268,6 +279,9 @@ contextBridge.exposeInMainWorld('viewAPI', {
   aiReadClipboard: () =>
     ipcRenderer.invoke(IPC.AI_READ_CLIPBOARD),
 
+  aiExtractionCacheWrite: (payload: any) =>
+    ipcRenderer.invoke(IPC.AI_EXTRACTION_CACHE_WRITE, payload),
+
   // ── WebBridge CDP 调试接口 ──
   wbCdpStart: (urlFilters?: string[]) =>
     ipcRenderer.invoke(IPC.WB_CDP_START, urlFilters),
@@ -279,6 +293,8 @@ contextBridge.exposeInMainWorld('viewAPI', {
     ipcRenderer.invoke(IPC.WB_CDP_FIND_RESPONSE, params),
   wbSendMouse: (events: Array<{ type: string; x: number; y: number; button?: string; buttons?: number; clickCount?: number }>) =>
     ipcRenderer.invoke(IPC.WB_SEND_MOUSE, events),
+  wbSendKey: (events: Array<{ type: string; key: string; code?: string; windowsVirtualKeyCode?: number }>) =>
+    ipcRenderer.invoke(IPC.WB_SEND_KEY, events),
   wbReadClipboardImage: () =>
     ipcRenderer.invoke(IPC.WB_READ_CLIPBOARD_IMAGE),
   wbCaptureDownloadOnce: (timeoutMs?: number) =>

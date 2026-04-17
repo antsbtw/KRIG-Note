@@ -89,29 +89,21 @@ export function EBookView() {
   const progressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── 锚定同步（debounce）──
-  // 用 mouseenter/mouseleave 追踪鼠标是否在本 View 内，代替 document.hasFocus()
+  // 左主右从：仅当本 View 位于 left slot 时发射 anchor-sync。
 
   const anchorSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const mouseInView = useRef(true); // EBookView 默认 true（用户正在操作的 View）
+  const slotSideRef = useRef<'left' | 'right' | null>(null);
 
   useEffect(() => {
-    const enter = () => { mouseInView.current = true; };
-    const leave = () => { mouseInView.current = false; };
-    document.addEventListener('mouseenter', enter);
-    document.addEventListener('mouseleave', leave);
-    return () => {
-      document.removeEventListener('mouseenter', enter);
-      document.removeEventListener('mouseleave', leave);
-    };
+    (viewAPI as any).getMySlotSide?.().then((side: 'left' | 'right' | null) => {
+      slotSideRef.current = side;
+    });
   }, []);
 
   const sendAnchorSync = useCallback((page: number) => {
-    const active = mouseInView.current;
-    console.log(`[EBookView:anchor] sendAnchorSync page=${page}, mouseInView=${active}`);
-    if (!active) return;
+    if (slotSideRef.current !== 'left') return;
     if (anchorSyncTimerRef.current) clearTimeout(anchorSyncTimerRef.current);
     anchorSyncTimerRef.current = setTimeout(() => {
-      console.log(`[EBookView:anchor] Actually sending anchor-sync pdfPage=${page}`);
       (viewAPI as any).sendToOtherSlot({
         protocol: '',
         action: 'anchor-sync',

@@ -1,7 +1,7 @@
 import { Plugin, PluginKey, TextSelection } from 'prosemirror-state';
 import type { EditorView } from 'prosemirror-view';
 import { Decoration, DecorationSet } from 'prosemirror-view';
-import { Node as PMNode, DOMSerializer, Fragment, Slice } from 'prosemirror-model';
+import { Node as PMNode } from 'prosemirror-model';
 import { findTopBlockPos } from './block-handle';
 
 /**
@@ -92,38 +92,6 @@ function getBlockRange(doc: PMNode, fromPos: number, toPos: number): number[] {
   const minIdx = Math.min(fromIdx, toIdx);
   const maxIdx = Math.max(fromIdx, toIdx);
   return positions.slice(minIdx, maxIdx + 1);
-}
-
-/** 将选中 block 写入剪贴板 */
-function writeBlocksToClipboard(view: EditorView, positions: number[], event: ClipboardEvent) {
-  const sorted = [...positions].sort((a, b) => a - b);
-  const { doc, schema } = view.state;
-  const nodes: PMNode[] = [];
-  const textParts: string[] = [];
-
-  for (const pos of sorted) {
-    const node = doc.nodeAt(pos);
-    if (!node) continue;
-    nodes.push(node);
-    textParts.push(node.textContent);
-  }
-
-  if (nodes.length === 0) return;
-
-  // JSON for internal paste
-  const json = nodes.map(n => n.toJSON());
-
-  // HTML for external paste
-  const serializer = DOMSerializer.fromSchema(schema);
-  const container = document.createElement('div');
-  for (const node of nodes) {
-    const dom = serializer.serializeNode(node);
-    container.appendChild(dom);
-  }
-
-  event.clipboardData?.setData('application/krig-blocks', JSON.stringify(json));
-  event.clipboardData?.setData('text/html', container.innerHTML);
-  event.clipboardData?.setData('text/plain', textParts.join('\n'));
 }
 
 // ── Plugin ──
@@ -354,52 +322,11 @@ export function blockSelectionPlugin(): Plugin {
           exitSelection(view);
           return false;
         },
-        copy(view, event) {
-          const state = blockSelectionKey.getState(view.state);
-          if (!state?.active || state.selectedPositions.length === 0) return false;
-          event.preventDefault();
-          writeBlocksToClipboard(view, state.selectedPositions, event as ClipboardEvent);
-          return true;
-        },
-        cut(view, event) {
-          const state = blockSelectionKey.getState(view.state);
-          if (!state?.active || state.selectedPositions.length === 0) return false;
-          event.preventDefault();
-          writeBlocksToClipboard(view, state.selectedPositions, event as ClipboardEvent);
-          deleteSelectedBlocks(view, state.selectedPositions);
-          return true;
-        },
-        paste(view, event) {
-          const clipEvent = event as ClipboardEvent;
-          const blocksData = clipEvent.clipboardData?.getData('application/krig-blocks');
-          if (!blocksData) return false;
-
-          event.preventDefault();
-          try {
-            const nodesJSON = JSON.parse(blocksData) as any[];
-            const schema = view.state.schema;
-            const nodes = nodesJSON.map(j => PMNode.fromJSON(schema, j));
-            if (nodes.length === 0) return false;
-
-            // 插入到光标所在 block 之后
-            const { $from } = view.state.selection;
-            const blockPos = findTopBlockPos(view.state.doc, $from.pos);
-            if (blockPos === null) return false;
-            const blockNode = view.state.doc.nodeAt(blockPos);
-            if (!blockNode) return false;
-            const insertPos = blockPos + blockNode.nodeSize;
-
-            const tr = view.state.tr;
-            const fragment = Fragment.from(nodes);
-            tr.replace(insertPos, insertPos, new Slice(fragment, 0, 0));
-            // 光标移到插入内容之后
-            try {
-              tr.setSelection(TextSelection.near(tr.doc.resolve(insertPos + fragment.size)));
-            } catch {}
-            view.dispatch(tr);
-          } catch {}
-          return true;
-        },
+        // 注：复制/剪切/粘贴交给 smart-paste-plugin 的统一通道处理。
+        // smart-paste 会读 blockSelectionKey 状态，把 selectedPositions 转换成
+        // 一个完整的 PM Slice（覆盖最早 → 最晚 position 的范围，includeParents=true
+        // 自然保留所有外层容器），然后走 internal-clipboard JSON 序列化。
+        // 单一通道，无白名单，新增节点类型自动支持。
       },
     },
   });
