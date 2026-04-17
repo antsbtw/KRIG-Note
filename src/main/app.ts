@@ -287,6 +287,57 @@ function registerPlugins(): void {
         }
       }},
       { id: 'export-md', label: 'Export as Markdown', handler: () => console.log('Export MD') },
+      { id: 'sep-backup', label: '', separator: true, handler: () => {} },
+      { id: 'backup', label: 'Backup All Data...', handler: async () => {
+        const win = getMainWindow();
+        if (!win) return;
+        const result = await dialog.showSaveDialog(win as any, {
+          title: 'Backup All Data',
+          defaultPath: `krig-backup-${new Date().toISOString().slice(0, 10)}.tar.gz`,
+          filters: [{ name: 'KRIG Backup', extensions: ['tar.gz'] }],
+        });
+        if (result.canceled || !result.filePath) return;
+        const { backupStore } = await import('./storage/backup-store');
+        const r = await backupStore.backup(result.filePath);
+        if (r.success) {
+          dialog.showMessageBox(win as any, {
+            type: 'info',
+            title: 'Backup Complete',
+            message: `Backup saved to:\n${result.filePath}\n(${((r.size || 0) / 1024 / 1024).toFixed(1)} MB)`,
+          });
+        } else {
+          dialog.showMessageBox(win as any, {
+            type: 'error',
+            title: 'Backup Failed',
+            message: r.error || 'Unknown error',
+          });
+        }
+      }},
+      { id: 'restore', label: 'Restore from Backup...', handler: async () => {
+        const win = getMainWindow();
+        if (!win) return;
+        const confirm = await dialog.showMessageBox(win as any, {
+          type: 'warning',
+          buttons: ['Cancel', 'Restore'],
+          defaultId: 0,
+          title: 'Restore from Backup',
+          message: 'This will replace ALL current data with the backup. Are you sure?',
+        });
+        if (confirm.response === 0) return;
+        const openResult = await dialog.showOpenDialog(win as any, {
+          title: 'Select Backup File',
+          filters: [{ name: 'KRIG Backup', extensions: ['tar.gz'] }],
+          properties: ['openFile'],
+        });
+        if (openResult.canceled || openResult.filePaths.length === 0) return;
+        const { backupStore } = await import('./storage/backup-store');
+        const r = await backupStore.restore(openResult.filePaths[0]);
+        dialog.showMessageBox(win as any, {
+          type: r.success ? 'info' : 'error',
+          title: r.success ? 'Restore Complete' : 'Restore Failed',
+          message: r.success ? 'Data restored successfully. Please restart the app.' : (r.error || 'Unknown error'),
+        });
+      }},
     ],
   });
 

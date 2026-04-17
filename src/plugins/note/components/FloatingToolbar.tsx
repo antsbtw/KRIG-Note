@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import type { EditorView } from 'prosemirror-view';
 import type { MarkType } from 'prosemirror-model';
 import { toggleMark } from 'prosemirror-commands';
+import { applyLink as applyLinkCmd, removeLink as removeLinkCmd, insertInlineMath } from '../commands/editor-commands';
 import { ColorPicker } from './ColorPicker';
 import { addThought } from '../commands/thought-commands';
 import { askAI, getSelectedText } from '../commands/ask-ai-command';
@@ -97,6 +98,20 @@ export function FloatingToolbar({ view }: FloatingToolbarProps) {
     } catch { return false; }
   }, [view]);
 
+  // 右键菜单打开时隐藏 floating toolbar，避免两者同时出现
+  const contextMenuOpen = useRef(false);
+  useEffect(() => {
+    if (!view) return;
+    const onContext = () => { contextMenuOpen.current = true; setVisible(false); };
+    const onClickRestore = () => { contextMenuOpen.current = false; };
+    view.dom.addEventListener('contextmenu', onContext);
+    document.addEventListener('click', onClickRestore);
+    return () => {
+      view.dom.removeEventListener('contextmenu', onContext);
+      document.removeEventListener('click', onClickRestore);
+    };
+  }, [view]);
+
   // RAF 持续轮询选区变化
   useEffect(() => {
     if (!view) return;
@@ -110,7 +125,7 @@ export function FloatingToolbar({ view }: FloatingToolbarProps) {
       if (from !== prevFrom || to !== prevTo) {
         prevFrom = from;
         prevTo = to;
-        if (updatePosition()) {
+        if (!contextMenuOpen.current && updatePosition()) {
           setVisible(true);
           forceUpdate((n) => n + 1);
         } else {
@@ -167,31 +182,18 @@ export function FloatingToolbar({ view }: FloatingToolbarProps) {
   };
 
   const insertMathInline = () => {
-    const { from, to } = view.state.selection;
-    const mathType = s.nodes.mathInline;
-    if (!mathType) return;
-    const selectedText = view.state.doc.textBetween(from, to, '');
-    const mathNode = mathType.create({ latex: selectedText });
-    view.dispatch(view.state.tr.replaceWith(from, to, mathNode));
+    insertInlineMath(view);
     view.focus();
   };
 
   const applyLink = (href: string) => {
-    const linkType = s.marks.link;
-    if (!linkType || !href) return;
-    const { from, to } = view.state.selection;
-    const tr = view.state.tr.addMark(from, to, linkType.create({ href }));
-    view.dispatch(tr);
+    applyLinkCmd(view, href);
     setShowLinkPanel(false);
     view.focus();
   };
 
   const removeLink = () => {
-    const linkType = s.marks.link;
-    if (!linkType) return;
-    const { from, to } = view.state.selection;
-    const tr = view.state.tr.removeMark(from, to, linkType);
-    view.dispatch(tr);
+    removeLinkCmd(view);
     setShowLinkPanel(false);
     view.focus();
   };
