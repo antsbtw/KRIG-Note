@@ -73,9 +73,19 @@ export function isDBReady(): boolean {
   return isReady;
 }
 
+export function getConnectionInfo() {
+  return {
+    endpoint: `http://127.0.0.1:${serverPort}`,
+    username: USERNAME,
+    password: PASSWORD,
+    namespace: NAMESPACE,
+    database: DATABASE,
+  };
+}
+
 // ── Binary 查找 ──
 
-function findBinary(): string | null {
+export function findBinary(): string | null {
   const candidates = [
     // 打包内置
     path.join(process.resourcesPath || '', 'surreal'),

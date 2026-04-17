@@ -3,6 +3,7 @@ import type { EditorView } from 'prosemirror-view';
 import { Decoration, DecorationSet } from 'prosemirror-view';
 import { Node as PMNode } from 'prosemirror-model';
 import { findTopBlockPos } from './block-handle';
+import { deleteBlocks } from '../commands/editor-commands';
 
 /**
  * Block Selection Plugin — ESC 选中 Block，↑/↓ 导航，Shift 多选
@@ -261,7 +262,7 @@ export function blockSelectionPlugin(): Plugin {
 
         // Delete / Backspace → 删除选中 block
         if (event.key === 'Backspace' || event.key === 'Delete') {
-          deleteSelectedBlocks(view, state!.selectedPositions);
+          deleteBlocks(view, state!.selectedPositions);
           return true;
         }
 
@@ -348,20 +349,4 @@ function exitSelection(view: EditorView) {
   view.dom.classList.remove('block-selection-active');
 }
 
-function deleteSelectedBlocks(view: EditorView, positions: number[]) {
-  const sorted = [...positions].sort((a, b) => b - a); // 从后往前删
-  let tr = view.state.tr;
-  for (const pos of sorted) {
-    const node = tr.doc.nodeAt(pos);
-    if (node) {
-      tr.delete(pos, pos + node.nodeSize);
-    }
-  }
-  // 确保文档不为空——至少保留一个空段落
-  if (tr.doc.childCount === 0) {
-    tr.insert(0, view.state.schema.nodes.textBlock.create());
-  }
-  tr.setMeta(blockSelectionKey, INITIAL);
-  view.dispatch(tr);
-  view.dom.classList.remove('block-selection-active');
-}
+export { deleteBlocks as deleteSelectedBlocks } from '../commands/editor-commands';

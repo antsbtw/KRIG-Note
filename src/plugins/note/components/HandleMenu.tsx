@@ -5,7 +5,7 @@ import { blockRegistry } from '../registry';
 import { toggleHeadingCollapse } from '../plugins/heading-collapse';
 import { askAI } from '../commands/ask-ai-command';
 import { setTextBlockLevel } from '../commands/set-text-block-level';
-import { deleteColumnAt } from '../plugins/container-keyboard';
+import { deleteBlockAt, applyTextColor as applyTextColorCmd, applyHighlight as applyHighlightCmd, toggleTextIndent as toggleTextIndentCmd, setTextAlign as setTextAlignCmd } from '../commands/editor-commands';
 import { DEFAULT_AI_SERVICE } from '../../../shared/types/ai-service-types';
 import type { AIServiceId } from '../../../shared/types/ai-service-types';
 
@@ -122,23 +122,7 @@ export function HandleMenu({ view }: HandleMenuProps) {
   // ── 操作函数 ──
 
   const deleteBlock = () => {
-    const node = view.state.doc.nodeAt(menu.pos);
-    if (!node) { close(); return; }
-
-    // 删 column 走专用入口：处理"删完只剩 1 列就解散 column-list"的级联，
-    // 避免直接 tr.delete 造成不合法的 column-list（content=column{2,3}）。
-    if (node.type.name === 'column') {
-      const $pos = view.state.doc.resolve(menu.pos);
-      const parent = $pos.parent;
-      if (parent.type.name === 'columnList') {
-        const columnListPos = $pos.before($pos.depth);
-        deleteColumnAt(view, columnListPos, menu.pos);
-        close();
-        return;
-      }
-    }
-
-    view.dispatch(view.state.tr.delete(menu.pos, menu.pos + node.nodeSize));
+    deleteBlockAt(view, menu.pos);
     close();
   };
 
@@ -266,31 +250,13 @@ export function HandleMenu({ view }: HandleMenuProps) {
   const applyTextColor = (color: string) => {
     const node = view.state.doc.nodeAt(menu.pos);
     if (!node) return;
-    const from = menu.pos + 1;
-    const to = menu.pos + node.nodeSize - 1;
-    if (from >= to) return;
-    const tr = view.state.tr;
-    if (!color) {
-      tr.removeMark(from, to, view.state.schema.marks.textStyle);
-    } else {
-      tr.addMark(from, to, view.state.schema.marks.textStyle.create({ color }));
-    }
-    view.dispatch(tr);
+    applyTextColorCmd(view, menu.pos + 1, menu.pos + node.nodeSize - 1, color);
   };
 
   const applyBgColor = (color: string) => {
     const node = view.state.doc.nodeAt(menu.pos);
     if (!node) return;
-    const from = menu.pos + 1;
-    const to = menu.pos + node.nodeSize - 1;
-    if (from >= to) return;
-    const tr = view.state.tr;
-    if (!color) {
-      tr.removeMark(from, to, view.state.schema.marks.highlight);
-    } else {
-      tr.addMark(from, to, view.state.schema.marks.highlight.create({ color }));
-    }
-    view.dispatch(tr);
+    applyHighlightCmd(view, menu.pos + 1, menu.pos + node.nodeSize - 1, color);
   };
 
   // ── 子菜单位置 ──
@@ -517,14 +483,12 @@ export function HandleMenu({ view }: HandleMenuProps) {
             const currentAlign = node?.attrs.align ?? 'left';
 
             const toggleTextIndent = () => {
-              if (!node) return;
-              view.dispatch(view.state.tr.setNodeMarkup(menu.pos, undefined, { ...node.attrs, textIndent: !currentIndent }));
+              toggleTextIndentCmd(view, menu.pos);
               close();
             };
 
             const setAlign = (value: string) => {
-              if (!node) return;
-              view.dispatch(view.state.tr.setNodeMarkup(menu.pos, undefined, { ...node.attrs, align: value }));
+              setTextAlignCmd(view, menu.pos, value);
               close();
             };
 
