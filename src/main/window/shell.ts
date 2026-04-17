@@ -7,6 +7,7 @@ import { protocolRegistry } from '../protocol/registry';
 import { DIVIDER_HTML } from '../slot/divider';
 import { IPC } from '../../shared/types';
 import type { WorkspaceId, ViewType, ViewTypeRendererConfig } from '../../shared/types';
+import { bindWebContentsPage, setWebContentsVisibility } from '../../plugins/browser-capability';
 
 /**
  * Shell — 应用的主窗口
@@ -72,6 +73,11 @@ function createViewForWorkMode(workModeId: string): WebContentsView {
     },
   });
   view.setBackgroundColor('#1e1e1e');
+  bindWebContentsPage(view.webContents, {
+    owner: 'system',
+    visibility: 'hidden',
+    partition: config.webPreferences?.webviewTag ? 'persist:webview-host' : 'persist:view',
+  });
 
   // 构建查询参数
   const variant = mode?.variant ?? '';
@@ -100,6 +106,11 @@ function createViewForWorkMode(workModeId: string): WebContentsView {
       webPreferences.nodeIntegration = false;
     });
     view.webContents.on('did-attach-webview', (_event, guestWebContents) => {
+      bindWebContentsPage(guestWebContents, {
+        owner: 'user',
+        visibility: 'foreground',
+        partition: 'persist:web',
+      });
       guestWebContents.on('did-start-loading', () => {
         console.log('[GuestWebContents] did-start-loading', {
           embedderId: view.webContents.id,
@@ -186,6 +197,7 @@ function createViewForWorkMode(workModeId: string): WebContentsView {
 
   mainWindow?.contentView.addChildView(view);
   view.setVisible(false);
+  setWebContentsVisibility(view.webContents, 'hidden');
   return view;
 }
 
@@ -206,7 +218,10 @@ export function switchLeftSlotView(workModeId: string): void {
   // 隐藏旧 Left View
   if (pool.activeLeftId && pool.activeLeftId !== workModeId) {
     const oldView = pool.leftViews.get(pool.activeLeftId);
-    if (oldView) oldView.setVisible(false);
+    if (oldView) {
+      oldView.setVisible(false);
+      setWebContentsVisibility(oldView.webContents, 'hidden');
+    }
   }
 
   // 显示/创建新 Left View
@@ -216,6 +231,7 @@ export function switchLeftSlotView(workModeId: string): void {
     pool.leftViews.set(workModeId, newView);
   }
   newView.setVisible(true);
+  setWebContentsVisibility(newView.webContents, 'foreground');
   pool.activeLeftId = workModeId;
 
   // 同步 slotBinding.left 到 WorkspaceState
@@ -251,6 +267,7 @@ export function openRightSlot(workModeId: string): WebContentsView | null {
   if (currentRight) {
     currentRight.setVisible(false);
     mainWindow.contentView.removeChildView(currentRight);
+    setWebContentsVisibility(currentRight.webContents, 'hidden');
   }
 
   // 从缓存池取已有的 View，或创建新的
@@ -267,6 +284,7 @@ export function openRightSlot(workModeId: string): WebContentsView | null {
 
   pool.rightWorkModeId = workModeId;
   targetView.setVisible(true);
+  setWebContentsVisibility(targetView.webContents, 'background');
   mainWindow.contentView.addChildView(targetView);
 
   // 同步 slotBinding.right 到 WorkspaceState
@@ -294,6 +312,7 @@ export function closeRightSlot(): void {
   if (currentRight) {
     currentRight.setVisible(false);
     mainWindow.contentView.removeChildView(currentRight);
+    setWebContentsVisibility(currentRight.webContents, 'hidden');
     // 不销毁 — 保留在缓存池中
   }
   pool.rightWorkModeId = null;
@@ -318,8 +337,12 @@ export function switchWorkspace(oldId: WorkspaceId | null, newId: WorkspaceId): 
     const oldPool = workspaceViewPools.get(oldId);
     if (oldPool) {
       for (const view of oldPool.leftViews.values()) view.setVisible(false);
+      for (const view of oldPool.leftViews.values()) setWebContentsVisibility(view.webContents, 'hidden');
       const oldRight = getActiveRightView(oldPool);
-      if (oldRight) oldRight.setVisible(false);
+      if (oldRight) {
+        oldRight.setVisible(false);
+        setWebContentsVisibility(oldRight.webContents, 'hidden');
+      }
     }
   }
 
@@ -332,7 +355,10 @@ export function switchWorkspace(oldId: WorkspaceId | null, newId: WorkspaceId): 
     const pool = getViewPool(newId);
     if (pool.activeLeftId) {
       const leftView = pool.leftViews.get(pool.activeLeftId);
-      if (leftView) leftView.setVisible(true);
+      if (leftView) {
+        leftView.setVisible(true);
+        setWebContentsVisibility(leftView.webContents, 'foreground');
+      }
     } else {
       switchLeftSlotView(newWorkspace.workModeId);
     }
@@ -341,6 +367,7 @@ export function switchWorkspace(oldId: WorkspaceId | null, newId: WorkspaceId): 
     const restoredRight = getActiveRightView(pool);
     if (restoredRight) {
       restoredRight.setVisible(true);
+      setWebContentsVisibility(restoredRight.webContents, 'background');
       ensureDivider();
       dividerView?.setVisible(true);
     } else if (newWorkspace.slotBinding?.right) {
@@ -365,6 +392,7 @@ export function closeWorkspaceViews(workspaceId: WorkspaceId): void {
     if (mainWindow.contentView.children.includes(view)) {
       mainWindow.contentView.removeChildView(view);
     }
+    setWebContentsVisibility(view.webContents, 'hidden');
     view.webContents.close();
   }
 
@@ -372,6 +400,7 @@ export function closeWorkspaceViews(workspaceId: WorkspaceId): void {
     if (mainWindow.contentView.children.includes(rv)) {
       mainWindow.contentView.removeChildView(rv);
     }
+    setWebContentsVisibility(rv.webContents, 'hidden');
     rv.webContents.close();
   }
 
@@ -416,6 +445,7 @@ export function closeSlot(side: 'left' | 'right'): void {
     const leftView = pool.leftViews.get(pool.activeLeftId);
     if (leftView) {
       leftView.setVisible(false);
+      setWebContentsVisibility(leftView.webContents, 'hidden');
       mainWindow.contentView.removeChildView(leftView);
       leftView.webContents.close();
     }
@@ -428,6 +458,7 @@ export function closeSlot(side: 'left' | 'right'): void {
   pool.leftViews.set(promotedModeId, promotedView);
   pool.activeLeftId = promotedModeId;
   pool.rightWorkModeId = null;
+  setWebContentsVisibility(promotedView.webContents, 'foreground');
   workspaceManager.update(active.id, { workModeId: promotedModeId });
   dividerView?.setVisible(false);
   updateLayout();

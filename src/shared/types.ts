@@ -343,6 +343,8 @@ export const IPC = {
   WB_READ_CLIPBOARD_IMAGE: 'wb:read-clipboard-image', // renderer → main：读剪贴板图片（PNG dataURL）— Claude Artifact 复制的是渲染图像
   WB_CAPTURE_DOWNLOAD_ONCE: 'wb:capture-download-once', // renderer → main：一次性拦截下次 download，返回文件内容（Artifact "Download file" 提取源码用）
   WB_FETCH_BINARY: 'wb:fetch-binary',                 // renderer → main：main 进程 fetch URL（绕过 CORS / 页面 CSP），返回 base64 + mime（Gemini Imagen 图像下载用）
+  WB_CAPTURE_ISOLATED_SEGMENT: 'wb:capture-isolated-segment', // renderer → main：隐藏窗口加载 Claude isolated-segment 页面并截图内部可见 mcp iframe
+  WB_CAPTURE_GUEST_RECTS: 'wb:capture-guest-rects', // renderer → main：对当前 sender 对应的 guest webContents 按矩形截图
 
   // yt-dlp
   YTDLP_CHECK_STATUS: 'ytdlp:check-status',

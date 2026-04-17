@@ -1,12 +1,13 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { app } from 'electron';
-import type { ArtifactRecord, DomAnchor, DownloadState, FrameState, PageLifecycleEvent } from '../types';
+import type { ArtifactRecord, DomAnchor, DownloadState, FrameState, PageInteraction, PageLifecycleEvent } from '../types';
 
 type NetworkTraceEntry =
   | {
       kind: 'request-start';
       pageId: string;
+      frameId?: string | null;
       requestId: string;
       method: string;
       resourceType?: string;
@@ -16,6 +17,7 @@ type NetworkTraceEntry =
   | {
       kind: 'response-complete';
       pageId: string;
+      frameId?: string | null;
       requestId: string;
       status?: number;
       resourceType?: string;
@@ -25,6 +27,7 @@ type NetworkTraceEntry =
   | {
       kind: 'response-body-captured';
       pageId: string;
+      frameId?: string | null;
       requestId: string;
       method: string;
       status?: number;
@@ -38,10 +41,17 @@ type NetworkTraceEntry =
   | {
       kind: 'download-complete';
       pageId: string;
+      frameId?: string | null;
       downloadId: string;
       filename: string;
       status: 'completed' | 'cancelled' | 'failed';
       url: string;
+      mimeType?: string;
+      byteLength?: number;
+      sha256?: string;
+      extension?: string;
+      mtime?: string;
+      storageRef?: string;
       at: string;
     };
 
@@ -74,6 +84,12 @@ type PageSummary = {
     filename: string;
     status: 'completed' | 'cancelled' | 'failed';
     url: string;
+    mimeType?: string;
+    byteLength?: number;
+    sha256?: string;
+    extension?: string;
+    mtime?: string;
+    storageRef?: string;
     at: string;
   }>;
   keyEvents: NetworkTraceEntry[];
@@ -94,6 +110,12 @@ type RunSummary = {
     filename: string;
     status: 'completed' | 'cancelled' | 'failed';
     url: string;
+    mimeType?: string;
+    byteLength?: number;
+    sha256?: string;
+    extension?: string;
+    mtime?: string;
+    storageRef?: string;
     at: string;
   }>;
   keyEvents: NetworkTraceEntry[];
@@ -114,6 +136,7 @@ type GenericExtractedState = {
   artifacts: ArtifactRecord[];
   artifactCandidates: ArtifactRecord[];
   anchors: DomAnchor[];
+  interactions: PageInteraction[];
   frames: FrameState[];
 };
 
@@ -161,6 +184,7 @@ export class BrowserCapabilityTraceWriter {
   private pages = new Map<string, PageMeta>();
   private pageSummaries = new Map<string, PageSummary>();
   private extractedState = new Map<string, GenericExtractedState>();
+  private claudeConversationArtifactCache = new Map<string, ArtifactRecord[]>();
 
   init(baseDir?: string): void {
     if (this.initialized) return;
@@ -255,6 +279,7 @@ export class BrowserCapabilityTraceWriter {
   writeNetwork(event: NetworkTraceEntry): void {
     if (!this.initialized) this.init();
     const pageMeta = this.ensurePage(event.pageId);
+    this.observeFrameFromNetworkEvent(event);
     this.updateNetworkSummary(event);
     this.append(pageMeta.networkFile, {
       stream: 'network',
@@ -286,7 +311,33 @@ export class BrowserCapabilityTraceWriter {
     if (!this.initialized) this.init();
     const pageMeta = this.ensurePage(pageId);
     const state = this.ensureExtractedState(pageId);
-    state.frames = frames.map((frame) => ({ ...frame }));
+    const merged = new Map<string, FrameState>();
+    for (const frame of state.frames) {
+      merged.set(frame.frameId, { ...frame });
+    }
+    for (const frame of frames) {
+      const existing = merged.get(frame.frameId);
+      merged.set(frame.frameId, existing ? {
+        ...existing,
+        ...frame,
+        parentFrameId: frame.parentFrameId ?? existing.parentFrameId ?? null,
+        bounds: frame.bounds ?? existing.bounds ?? null,
+      } : { ...frame });
+    }
+    state.frames = Array.from(merged.values()).sort((left, right) => {
+      if (left.kind === 'main' && right.kind !== 'main') return -1;
+      if (left.kind !== 'main' && right.kind === 'main') return 1;
+      return left.frameId.localeCompare(right.frameId);
+    });
+    if (state.anchors.length > 0) {
+      state.anchors = this.attachFrameIdsToAnchors(pageId, state.anchors);
+    }
+    if (state.artifacts.length > 0) {
+      state.artifacts = this.reconcileArtifactsWithAnchors(
+        pageId,
+        this.attachClaudeSubframeContext(pageId, state.artifacts),
+      );
+    }
     this.queue = this.queue
       .then(() => fs.promises.writeFile(
         path.join(pageMeta.extractedDir, 'frames.json'),
@@ -300,12 +351,107 @@ export class BrowserCapabilityTraceWriter {
       .catch((error) => {
         console.error('[BrowserCapability][Trace] frame snapshot flush failed', error);
       });
+
+    if (state.artifacts.length > 0) {
+      this.queue = this.queue
+        .then(() => fs.promises.writeFile(
+          path.join(pageMeta.extractedDir, 'artifacts.json'),
+          JSON.stringify({
+            pageId,
+            updatedAt: new Date().toISOString(),
+            artifacts: state.artifacts,
+          }, null, 2),
+          'utf8',
+        ))
+        .catch((error) => {
+          console.error('[BrowserCapability][Trace] artifacts refresh after frame snapshot failed', error);
+        });
+    }
   }
 
   recordDownloadedArtifact(download: DownloadState): void {
     if (!this.initialized) this.init();
     if (download.status !== 'completed') return;
+    this.hydrateArtifactCandidatesFromExtractedFiles(download.pageId);
     this.writeArtifactsExtraction(download.pageId, [this.toArtifactFromDownload(download)]);
+  }
+
+  updateAnchorSnapshot(pageId: string, anchors: DomAnchor[]): void {
+    if (!this.initialized) this.init();
+    const pageMeta = this.ensurePage(pageId);
+    const state = this.ensureExtractedState(pageId);
+    state.anchors = this.attachFrameIdsToAnchors(pageId, anchors);
+    if (state.artifacts.length > 0) {
+      state.artifacts = this.reconcileArtifactsWithAnchors(pageId, state.artifacts);
+    }
+    if (state.interactions.length > 0) {
+      state.interactions = this.reconcileInteractions(pageId, state.interactions);
+    }
+    this.queue = this.queue
+      .then(() => fs.promises.writeFile(
+        path.join(pageMeta.extractedDir, 'anchors.json'),
+        JSON.stringify({
+          pageId,
+          updatedAt: new Date().toISOString(),
+          anchors: state.anchors,
+        }, null, 2),
+        'utf8',
+      ))
+      .catch((error) => {
+        console.error('[BrowserCapability][Trace] anchor snapshot flush failed', error);
+      });
+
+    if (state.artifacts.length > 0) {
+      this.queue = this.queue
+        .then(() => fs.promises.writeFile(
+          path.join(pageMeta.extractedDir, 'artifacts.json'),
+          JSON.stringify({
+            pageId,
+            updatedAt: new Date().toISOString(),
+            artifacts: state.artifacts,
+          }, null, 2),
+          'utf8',
+        ))
+        .catch((error) => {
+          console.error('[BrowserCapability][Trace] artifacts refresh after anchor snapshot failed', error);
+        });
+    }
+
+    if (state.interactions.length > 0) {
+      this.queue = this.queue
+        .then(() => fs.promises.writeFile(
+          path.join(pageMeta.extractedDir, 'interactions.json'),
+          JSON.stringify({
+            pageId,
+            updatedAt: new Date().toISOString(),
+            interactions: state.interactions,
+          }, null, 2),
+          'utf8',
+        ))
+        .catch((error) => {
+          console.error('[BrowserCapability][Trace] interactions refresh after anchor snapshot failed', error);
+        });
+    }
+  }
+
+  updateInteractionSnapshot(pageId: string, interactions: PageInteraction[]): void {
+    if (!this.initialized) this.init();
+    const pageMeta = this.ensurePage(pageId);
+    const state = this.ensureExtractedState(pageId);
+    state.interactions = this.reconcileInteractions(pageId, interactions);
+    this.queue = this.queue
+      .then(() => fs.promises.writeFile(
+        path.join(pageMeta.extractedDir, 'interactions.json'),
+        JSON.stringify({
+          pageId,
+          updatedAt: new Date().toISOString(),
+          interactions: state.interactions,
+        }, null, 2),
+        'utf8',
+      ))
+      .catch((error) => {
+        console.error('[BrowserCapability][Trace] interaction snapshot flush failed', error);
+      });
   }
 
   writeResponseBody(input: ResponseBodyCapture): string {
@@ -381,6 +527,7 @@ export class BrowserCapabilityTraceWriter {
       artifacts: [],
       artifactCandidates: [],
       anchors: [],
+      interactions: [],
       frames: [],
     });
 
@@ -401,6 +548,11 @@ export class BrowserCapabilityTraceWriter {
       pageId,
       updatedAt: now,
       anchors: [],
+    }, null, 2));
+    fs.writeFileSync(path.join(extractedDir, 'interactions.json'), JSON.stringify({
+      pageId,
+      updatedAt: now,
+      interactions: [],
     }, null, 2));
     fs.writeFileSync(path.join(extractedDir, 'artifacts.json'), JSON.stringify({
       pageId,
@@ -507,6 +659,12 @@ export class BrowserCapabilityTraceWriter {
         filename: event.filename,
         status: event.status,
         url: event.url,
+        mimeType: event.mimeType,
+        byteLength: event.byteLength,
+        sha256: event.sha256,
+        extension: event.extension,
+        mtime: event.mtime,
+        storageRef: event.storageRef,
         at: event.at,
       };
       this.runSummary.downloads.push(download);
@@ -516,6 +674,12 @@ export class BrowserCapabilityTraceWriter {
         filename: event.filename,
         status: event.status,
         url: event.url,
+        mimeType: event.mimeType,
+        byteLength: event.byteLength,
+        sha256: event.sha256,
+        extension: event.extension,
+        mtime: event.mtime,
+        storageRef: event.storageRef,
         at: event.at,
       });
       pageSummary.downloads = pageSummary.downloads.slice(-20);
@@ -561,11 +725,13 @@ export class BrowserCapabilityTraceWriter {
       const conversationArtifacts = this.extractClaudeConversationArtifacts(pageId, parsed, capturedAt, {
         preferCurrentLeaf: false,
       });
+      this.cacheClaudeConversationArtifacts(parsed, conversationArtifacts);
       this.indexArtifactCandidates(pageId, conversationArtifacts);
       this.writeArtifactsExtraction(
         pageId,
         this.prioritizeCurrentLeafArtifacts(conversationArtifacts),
       );
+      this.reconcileArtifactsWithCandidates(pageId);
       this.writeExtractedJson(pageId, 'conversation.json', {
         kind: 'claude-conversation',
         pageId,
@@ -623,14 +789,21 @@ export class BrowserCapabilityTraceWriter {
       merged.set(artifact.artifactId, artifact);
     }
     for (const artifact of artifacts) {
-      const existing = this.resolveArtifactMergeTarget(state, merged, artifact);
-      const artifactId = existing?.artifactId ?? artifact.artifactId;
+      const preparedArtifact = this.enrichArtifactWithFrameContext(pageId, artifact);
+      const existing = this.resolveArtifactMergeTarget(state, merged, preparedArtifact);
+      const artifactId = existing?.artifactId ?? preparedArtifact.artifactId;
       merged.set(
         artifactId,
-        existing ? this.mergeArtifactRecords(existing, { ...artifact, artifactId }) : artifact,
+        existing ? this.mergeArtifactRecords(existing, { ...preparedArtifact, artifactId }) : preparedArtifact,
       );
     }
-    state.artifacts = Array.from(merged.values());
+    state.artifacts = this.reconcileArtifactsWithAnchors(
+      pageId,
+      this.attachClaudeSubframeContext(pageId, Array.from(merged.values())),
+    );
+    if (state.interactions.length > 0) {
+      state.interactions = this.reconcileInteractions(pageId, state.interactions);
+    }
     this.queue = this.queue
       .then(() => fs.promises.writeFile(
         path.join(pageMeta.extractedDir, 'artifacts.json'),
@@ -644,6 +817,21 @@ export class BrowserCapabilityTraceWriter {
       .catch((error) => {
         console.error('[BrowserCapability][Trace] artifacts extraction flush failed', error);
       });
+    if (state.interactions.length > 0) {
+      this.queue = this.queue
+        .then(() => fs.promises.writeFile(
+          path.join(pageMeta.extractedDir, 'interactions.json'),
+          JSON.stringify({
+            pageId,
+            updatedAt: new Date().toISOString(),
+            interactions: state.interactions,
+          }, null, 2),
+          'utf8',
+        ))
+        .catch((error) => {
+          console.error('[BrowserCapability][Trace] interactions refresh after artifact flush failed', error);
+        });
+    }
   }
 
   private indexArtifactCandidates(pageId: string, artifacts: ArtifactRecord[]): void {
@@ -662,15 +850,117 @@ export class BrowserCapabilityTraceWriter {
     state.artifactCandidates = Array.from(merged.values());
   }
 
+  private reconcileArtifactsWithCandidates(pageId: string): void {
+    const pageMeta = this.pages.get(pageId);
+    if (!pageMeta) return;
+    const state = this.ensureExtractedState(pageId);
+    if (state.artifacts.length === 0 || state.artifactCandidates.length === 0) return;
+
+    const candidateMap = new Map<string, ArtifactRecord>();
+    for (const artifact of state.artifactCandidates) {
+      candidateMap.set(artifact.artifactId, this.enrichArtifactWithFrameContext(pageId, artifact));
+    }
+
+    state.artifacts = this.attachClaudeSubframeContext(
+      pageId,
+      state.artifacts.map((artifact) => {
+        const direct = candidateMap.get(artifact.artifactId);
+        if (direct) {
+          return this.mergeArtifactRecords(direct, artifact);
+        }
+        if (artifact.sourceLayer !== 'download') return artifact;
+        const matched = this.findBestCandidateForArtifact(pageId, artifact, candidateMap);
+        return matched ? this.mergeArtifactRecords(matched, artifact) : artifact;
+      }),
+    );
+
+    this.queue = this.queue
+      .then(() => fs.promises.writeFile(
+        path.join(pageMeta.extractedDir, 'artifacts.json'),
+        JSON.stringify({
+          pageId,
+          updatedAt: new Date().toISOString(),
+          artifacts: state.artifacts,
+        }, null, 2),
+        'utf8',
+      ))
+      .catch((error) => {
+        console.error('[BrowserCapability][Trace] artifact reconciliation flush failed', error);
+      });
+  }
+
+  private hydrateArtifactCandidatesFromExtractedFiles(pageId: string): void {
+    const pageMeta = this.pages.get(pageId);
+    if (!pageMeta) return;
+    const candidates: ArtifactRecord[] = [];
+
+    const conversationPayload = this.tryReadJsonFile(path.join(pageMeta.extractedDir, 'conversation.json'));
+    const conversationData = this.readRecord(conversationPayload)?.data;
+    if (conversationData) {
+      candidates.push(
+        ...this.extractClaudeConversationArtifacts(pageId, conversationData, new Date().toISOString(), {
+          preferCurrentLeaf: false,
+        }),
+      );
+    }
+
+    const artifactVersionsPayload = this.tryReadJsonFile(path.join(pageMeta.extractedDir, 'claude-artifact-versions.json'));
+    const artifactVersionsData = this.readRecord(artifactVersionsPayload)?.data;
+    if (artifactVersionsData) {
+      candidates.push(...this.extractClaudeArtifacts(pageId, artifactVersionsData, new Date().toISOString()));
+    }
+
+    if (candidates.length === 0) {
+      const cachedConversationArtifacts = this.getCachedClaudeConversationArtifactsForPage(pageId);
+      if (cachedConversationArtifacts.length > 0) {
+        candidates.push(...cachedConversationArtifacts.map((artifact) => ({
+          ...artifact,
+          pageId,
+        })));
+      }
+    }
+
+    if (candidates.length === 0) {
+      const historicalConversationArtifacts = this.getHistoricalClaudeConversationArtifactsForPage(pageId);
+      if (historicalConversationArtifacts.length > 0) {
+        candidates.push(...historicalConversationArtifacts.map((artifact) => ({
+          ...artifact,
+          pageId,
+        })));
+      }
+    }
+
+    if (candidates.length > 0) {
+      this.indexArtifactCandidates(pageId, candidates);
+    }
+  }
+
   private mergeArtifactRecords(existing: ArtifactRecord, incoming: ArtifactRecord): ArtifactRecord {
+    const semanticScopeRank: Record<NonNullable<ArtifactRecord['surfaceScope']>, number> = {
+      'current-leaf-message': 4,
+      'message-history': 3,
+      'frame-subframe': 2,
+      'frame-main': 1,
+      'download-event': 0,
+      unknown: -1,
+    };
+    const existingSurfaceScope = existing.surfaceScope ?? 'unknown';
+    const incomingSurfaceScope = incoming.surfaceScope ?? 'unknown';
+    const keepExistingSemanticSurface =
+      semanticScopeRank[existingSurfaceScope] >= semanticScopeRank[incomingSurfaceScope];
+
     const merged: ArtifactRecord = {
       ...existing,
       ...incoming,
     };
 
     merged.frameId = incoming.frameId ?? existing.frameId;
+    merged.frameUrl = incoming.frameUrl ?? existing.frameUrl;
+    merged.frameOrigin = incoming.frameOrigin ?? existing.frameOrigin;
+    merged.frameKind = incoming.frameKind ?? existing.frameKind;
     merged.messageUuid = incoming.messageUuid ?? existing.messageUuid;
     merged.messageIndex = incoming.messageIndex ?? existing.messageIndex;
+    merged.toolUseId = incoming.toolUseId ?? existing.toolUseId;
     merged.sender = incoming.sender ?? existing.sender;
     merged.isCurrentLeaf = incoming.isCurrentLeaf ?? existing.isCurrentLeaf;
     merged.previewRef = incoming.previewRef ?? existing.previewRef;
@@ -678,14 +968,14 @@ export class BrowserCapabilityTraceWriter {
     merged.storageRef = incoming.storageRef ?? existing.storageRef;
     merged.url = incoming.url ?? existing.url;
     merged.mimeType = incoming.mimeType ?? existing.mimeType;
+    merged.byteLength = incoming.byteLength ?? existing.byteLength;
+    merged.sha256 = incoming.sha256 ?? existing.sha256;
+    merged.extension = incoming.extension ?? existing.extension;
+    merged.mtime = incoming.mtime ?? existing.mtime;
     merged.title = incoming.title ?? existing.title;
 
-    const shouldPreserveExistingSurface =
-      existing.surfaceScope === 'current-leaf-message' ||
-      existing.surfaceScope === 'message-history';
-
-    if (shouldPreserveExistingSurface && incoming.surfaceScope === 'download-event') {
-      merged.surfaceScope = existing.surfaceScope;
+    if (keepExistingSemanticSurface) {
+      merged.surfaceScope = existing.surfaceScope ?? incoming.surfaceScope;
       merged.surfaceRef = existing.surfaceRef ?? incoming.surfaceRef;
     } else {
       merged.surfaceScope = incoming.surfaceScope ?? existing.surfaceScope;
@@ -693,7 +983,7 @@ export class BrowserCapabilityTraceWriter {
     }
 
     merged.acquisition = this.mergeArtifactAcquisition(existing.acquisition, incoming.acquisition);
-    merged.sourceLayer = incoming.sourceLayer;
+    merged.sourceLayer = this.mergeArtifactSourceLayer(existing, incoming);
     merged.createdAt = existing.createdAt ?? incoming.createdAt;
 
     return merged;
@@ -713,6 +1003,16 @@ export class BrowserCapabilityTraceWriter {
     return rank[incoming] >= rank[existing] ? incoming : existing;
   }
 
+  private mergeArtifactSourceLayer(existing: ArtifactRecord, incoming: ArtifactRecord): ArtifactRecord['sourceLayer'] {
+    if (incoming.sourceLayer === 'download' && existing.sourceLayer === 'network') {
+      return 'download';
+    }
+    if (incoming.sourceLayer === 'frame' && (existing.sourceLayer === 'network' || existing.sourceLayer === 'download')) {
+      return existing.sourceLayer;
+    }
+    return incoming.sourceLayer ?? existing.sourceLayer;
+  }
+
   private writeExtractedJson(pageId: string, filename: string, payload: unknown): void {
     const pageMeta = this.pages.get(pageId);
     if (!pageMeta) return;
@@ -730,6 +1030,7 @@ export class BrowserCapabilityTraceWriter {
       artifacts: [],
       artifactCandidates: [],
       anchors: [],
+      interactions: [],
       frames: [],
     };
     this.extractedState.set(pageId, state);
@@ -929,16 +1230,17 @@ export class BrowserCapabilityTraceWriter {
         ?? this.readString(record.asset_pointer);
 
       artifacts.push({
-        artifactId: this.makeArtifactId({
-          rawId: this.readString(record.id) ?? this.readString(record.uuid),
-          title,
-        }),
-        pageId,
-        frameId: null,
-        messageUuid: meta.messageUuid,
-        messageIndex: meta.messageIndex,
-        sender: meta.sender,
-        isCurrentLeaf: meta.isCurrentLeaf,
+      artifactId: this.makeArtifactId({
+        rawId: this.readString(record.id) ?? this.readString(record.uuid),
+        title,
+      }),
+      pageId,
+      frameId: null,
+      messageUuid: meta.messageUuid,
+      messageIndex: meta.messageIndex,
+      toolUseId: this.readString(record.id) ?? undefined,
+      sender: meta.sender,
+      isCurrentLeaf: meta.isCurrentLeaf,
         acquisition: url ? 'downloadable' : 'discovered',
         surfaceScope: meta.isCurrentLeaf ? 'current-leaf-message' : 'message-history',
         surfaceRef: `conversation-message:${meta.messageUuid}`,
@@ -991,6 +1293,7 @@ export class BrowserCapabilityTraceWriter {
       frameId: null,
       messageUuid: meta.messageUuid,
       messageIndex: meta.messageIndex,
+      toolUseId: this.readString(part.id) ?? undefined,
       sender: meta.sender,
       isCurrentLeaf: meta.isCurrentLeaf,
       acquisition: kind === 'image' || kind === 'widget' ? 'downloadable' : 'discovered',
@@ -1058,10 +1361,193 @@ export class BrowserCapabilityTraceWriter {
       sourceLayer: 'download',
       title: download.filename,
       mimeType: download.mimeType,
+      byteLength: download.byteLength,
+      sha256: download.sha256,
+      extension: download.extension,
+      mtime: download.mtime,
       url: download.url,
       storageRef: download.storageRef,
       createdAt: download.finishedAt ?? download.startedAt,
     };
+  }
+
+  private enrichArtifactWithFrameContext(pageId: string, artifact: ArtifactRecord): ArtifactRecord {
+    if (!artifact.frameId) return artifact;
+    const state = this.ensureExtractedState(pageId);
+    const frame = state.frames.find((item) => item.frameId === artifact.frameId);
+    if (!frame) return artifact;
+    return {
+      ...artifact,
+      frameUrl: artifact.frameUrl ?? frame.url,
+      frameOrigin: artifact.frameOrigin ?? frame.origin,
+      frameKind: artifact.frameKind ?? frame.kind,
+    };
+  }
+
+  private attachClaudeSubframeContext(pageId: string, artifacts: ArtifactRecord[]): ArtifactRecord[] {
+    const state = this.ensureExtractedState(pageId);
+    const mcpSubframes = state.frames
+      .filter((frame) => frame.kind === 'subframe' && this.isClaudeWidgetFrame(frame.url))
+      .sort((left, right) => this.compareFrameIds(left.frameId, right.frameId));
+    if (mcpSubframes.length === 0) return artifacts;
+
+    const conversationArtifacts = this.collectClaudeConversationArtifactsForMapping(pageId)
+      .filter((artifact) => artifact.toolUseId && artifact.previewRef === 'inline:conversation-tool-use')
+      .sort((left, right) => this.compareArtifactSequence(left, right));
+    if (conversationArtifacts.length === 0) return artifacts;
+
+    const frameByArtifactId = new Map<string, FrameState>();
+    conversationArtifacts.forEach((artifact, index) => {
+      const frame = mcpSubframes[index];
+      if (frame) {
+        frameByArtifactId.set(artifact.artifactId, frame);
+      }
+    });
+
+    return artifacts.map((artifact) => {
+      const frame = frameByArtifactId.get(artifact.artifactId);
+      if (!frame) return artifact;
+      const shouldOverrideFrame =
+        !artifact.frameId ||
+        artifact.frameKind === 'main' ||
+        artifact.frameUrl === undefined ||
+        artifact.frameOrigin === undefined ||
+        artifact.frameUrl === this.pageSummaries.get(pageId)?.currentUrl;
+      if (!shouldOverrideFrame) return artifact;
+      return {
+        ...artifact,
+        frameId: frame.frameId,
+        frameUrl: frame.url,
+        frameOrigin: frame.origin,
+        frameKind: frame.kind,
+      };
+    });
+  }
+
+  private attachFrameIdsToAnchors(pageId: string, anchors: DomAnchor[]): DomAnchor[] {
+    const state = this.ensureExtractedState(pageId);
+    const widgetFrames = state.frames
+      .filter((frame) => frame.kind === 'subframe' && this.isClaudeWidgetFrame(frame.url))
+      .sort((left, right) => this.compareFrameIds(left.frameId, right.frameId));
+    const widgetAnchors = anchors
+      .filter((anchor) => this.isClaudeWidgetFrame(anchor.frameUrl))
+      .sort((left, right) => (left.ordinal ?? Number.MAX_SAFE_INTEGER) - (right.ordinal ?? Number.MAX_SAFE_INTEGER));
+    const frameByAnchorId = new Map<string, FrameState>();
+    widgetAnchors.forEach((anchor, index) => {
+      const frame = widgetFrames[index];
+      if (frame) {
+        frameByAnchorId.set(anchor.anchorId, frame);
+      }
+    });
+    return anchors.map((anchor) => {
+      const frame = frameByAnchorId.get(anchor.anchorId);
+      if (!frame) return anchor;
+      return {
+        ...anchor,
+        frameId: frame.frameId,
+        frameUrl: frame.url,
+        frameOrigin: frame.origin,
+      };
+    });
+  }
+
+  private reconcileArtifactsWithAnchors(pageId: string, artifacts: ArtifactRecord[]): ArtifactRecord[] {
+    const state = this.ensureExtractedState(pageId);
+    if (state.anchors.length === 0) return artifacts;
+    const anchorByFrameId = new Map<string, DomAnchor>();
+    for (const anchor of state.anchors) {
+      if (anchor.frameId) {
+        anchorByFrameId.set(anchor.frameId, anchor);
+      }
+    }
+    return artifacts.map((artifact) => {
+      if (!artifact.frameId) return artifact;
+      const anchor = anchorByFrameId.get(artifact.frameId);
+      if (!anchor) return artifact;
+      return {
+        ...artifact,
+        domAnchorId: artifact.domAnchorId ?? anchor.anchorId,
+      };
+    });
+  }
+
+  private reconcileInteractions(pageId: string, interactions: PageInteraction[]): PageInteraction[] {
+    const state = this.ensureExtractedState(pageId);
+    const artifactAnchors = state.anchors.filter((anchor) => anchor.frameId && anchor.rect);
+    const artifactByAnchorId = new Map<string, ArtifactRecord>();
+    for (const artifact of state.artifacts) {
+      if (artifact.domAnchorId) {
+        artifactByAnchorId.set(artifact.domAnchorId, artifact);
+      }
+    }
+
+    return interactions.map((interaction) => {
+      if (interaction.surfaceScope === 'sidebar' || interaction.surfaceScope === 'header' || interaction.surfaceScope === 'composer') {
+        return interaction;
+      }
+      if (interaction.anchorId) {
+        const directArtifact = artifactByAnchorId.get(interaction.anchorId);
+        if (directArtifact) {
+          return {
+            ...interaction,
+            frameId: interaction.frameId ?? directArtifact.frameId ?? null,
+            artifactId: interaction.artifactId ?? directArtifact.artifactId,
+            surfaceScope: 'artifact',
+          };
+        }
+      }
+      const matchedAnchor = this.findClosestAnchorForInteraction(interaction, artifactAnchors);
+      if (!matchedAnchor) return interaction;
+      const matchedArtifact = artifactByAnchorId.get(matchedAnchor.anchorId);
+      return {
+        ...interaction,
+        anchorId: interaction.anchorId ?? matchedAnchor.anchorId,
+        frameId: interaction.frameId ?? matchedAnchor.frameId ?? null,
+        artifactId: interaction.artifactId ?? matchedArtifact?.artifactId,
+        surfaceScope: 'artifact',
+      };
+    });
+  }
+
+  private findClosestAnchorForInteraction(
+    interaction: PageInteraction,
+    anchors: DomAnchor[],
+  ): DomAnchor | null {
+    if (!interaction.rect) return null;
+    let best: { anchor: DomAnchor; score: number } | null = null;
+    for (const anchor of anchors) {
+      if (!anchor.rect) continue;
+      const interactionLeft = interaction.rect.x;
+      const interactionRight = interaction.rect.x + interaction.rect.width;
+      const anchorLeft = anchor.rect.x;
+      const anchorRight = anchor.rect.x + anchor.rect.width;
+      const horizontalOverlap = Math.min(interactionRight, anchorRight) - Math.max(interactionLeft, anchorLeft);
+      const inMainContentColumn =
+        interactionLeft >= Math.max(anchorLeft - 32, 480) &&
+        interactionRight <= anchorRight + 48;
+      if (horizontalOverlap < Math.min(interaction.rect.width, anchor.rect.width) * 0.25 && !inMainContentColumn) {
+        continue;
+      }
+      const verticalCenter = interaction.rect.y + (interaction.rect.height / 2);
+      const anchorTop = anchor.rect.y - 120;
+      const anchorBottom = anchor.rect.y + anchor.rect.height + 120;
+      if (verticalCenter < anchorTop || verticalCenter > anchorBottom) continue;
+      const interactionArea = interaction.rect.width * interaction.rect.height;
+      const artifactCardLike =
+        interactionArea > 1200 ||
+        interaction.kind === 'input' ||
+        /artifact|download|copy|retry|edit|open/i.test(interaction.label ?? interaction.textPreview ?? '');
+      if (!artifactCardLike && verticalCenter < anchor.rect.y) {
+        continue;
+      }
+      const dx = Math.abs((interaction.rect.x + interaction.rect.width / 2) - (anchor.rect.x + anchor.rect.width / 2));
+      const dy = Math.abs(verticalCenter - (anchor.rect.y + anchor.rect.height / 2));
+      const score = dx + dy;
+      if (!best || score < best.score) {
+        best = { anchor, score };
+      }
+    }
+    return best?.anchor ?? null;
   }
 
   private prioritizeCurrentLeafArtifacts(artifacts: ArtifactRecord[]): ArtifactRecord[] {
@@ -1079,9 +1565,6 @@ export class BrowserCapabilityTraceWriter {
     if (exact) return exact;
     if (incoming.sourceLayer !== 'download') return undefined;
 
-    const normalizedIncomingTitle = this.normalizeArtifactLabel(incoming.title);
-    if (!normalizedIncomingTitle) return undefined;
-
     const candidates = new Map<string, ArtifactRecord>();
     for (const artifact of state.artifacts) {
       candidates.set(artifact.artifactId, artifact);
@@ -1091,8 +1574,28 @@ export class BrowserCapabilityTraceWriter {
         candidates.set(artifact.artifactId, artifact);
       }
     }
+    return this.findBestCandidateForArtifact(incoming.pageId, incoming, candidates);
+  }
+
+  private scoreArtifactMatch(artifact: ArtifactRecord): number {
+    let score = 0;
+    if (artifact.isCurrentLeaf) score += 100;
+    if (artifact.surfaceScope === 'current-leaf-message') score += 20;
+    if (artifact.sourceLayer === 'network') score += 10;
+    if (artifact.acquisition === 'downloadable') score += 5;
+    return score;
+  }
+
+  private findBestCandidateForArtifact(
+    pageId: string,
+    incoming: ArtifactRecord,
+    candidates: Map<string, ArtifactRecord>,
+  ): ArtifactRecord | undefined {
+    const normalizedIncomingTitle = this.normalizeArtifactLabel(incoming.title);
+    if (!normalizedIncomingTitle) return undefined;
 
     const matches = Array.from(candidates.values()).filter((artifact) => {
+      if (artifact.pageId !== pageId) return false;
       const candidateTitle = this.normalizeArtifactLabel(artifact.title);
       if (!candidateTitle || candidateTitle !== normalizedIncomingTitle) return false;
       if (artifact.kind !== incoming.kind) return false;
@@ -1104,13 +1607,39 @@ export class BrowserCapabilityTraceWriter {
     return matches[0];
   }
 
-  private scoreArtifactMatch(artifact: ArtifactRecord): number {
-    let score = 0;
-    if (artifact.isCurrentLeaf) score += 100;
-    if (artifact.surfaceScope === 'current-leaf-message') score += 20;
-    if (artifact.sourceLayer === 'network') score += 10;
-    if (artifact.acquisition === 'downloadable') score += 5;
-    return score;
+  private collectClaudeConversationArtifactsForMapping(pageId: string): ArtifactRecord[] {
+    const state = this.ensureExtractedState(pageId);
+    const merged = new Map<string, ArtifactRecord>();
+    for (const artifact of state.artifactCandidates) {
+      if (artifact.sourceLayer === 'network' && artifact.toolUseId) {
+        merged.set(artifact.artifactId, artifact);
+      }
+    }
+    for (const artifact of state.artifacts) {
+      if (!artifact.toolUseId) continue;
+      const existing = merged.get(artifact.artifactId);
+      merged.set(
+        artifact.artifactId,
+        existing ? this.mergeArtifactRecords(existing, artifact) : artifact,
+      );
+    }
+    return Array.from(merged.values());
+  }
+
+  private compareArtifactSequence(left: ArtifactRecord, right: ArtifactRecord): number {
+    const leftIndex = left.messageIndex ?? Number.MAX_SAFE_INTEGER;
+    const rightIndex = right.messageIndex ?? Number.MAX_SAFE_INTEGER;
+    if (leftIndex !== rightIndex) return leftIndex - rightIndex;
+    return (left.createdAt || '').localeCompare(right.createdAt || '');
+  }
+
+  private compareFrameIds(left: string, right: string): number {
+    const leftNum = Number.parseInt(left, 10);
+    const rightNum = Number.parseInt(right, 10);
+    if (Number.isFinite(leftNum) && Number.isFinite(rightNum) && leftNum !== rightNum) {
+      return leftNum - rightNum;
+    }
+    return left.localeCompare(right);
   }
 
   private normalizeArtifactLabel(value?: string | null): string | null {
@@ -1132,6 +1661,134 @@ export class BrowserCapabilityTraceWriter {
 
   private readString(value: unknown): string | null {
     return typeof value === 'string' && value.length > 0 ? value : null;
+  }
+
+  private cacheClaudeConversationArtifacts(parsed: unknown, artifacts: ArtifactRecord[]): void {
+    const conversationId = this.extractClaudeConversationId(parsed);
+    if (!conversationId || artifacts.length === 0) return;
+    this.claudeConversationArtifactCache.set(
+      conversationId,
+      artifacts.map((artifact) => ({ ...artifact })),
+    );
+  }
+
+  private getCachedClaudeConversationArtifactsForPage(pageId: string): ArtifactRecord[] {
+    const conversationId = this.resolveClaudeConversationIdForPage(pageId);
+    if (!conversationId) return [];
+    return this.claudeConversationArtifactCache.get(conversationId) ?? [];
+  }
+
+  private getHistoricalClaudeConversationArtifactsForPage(pageId: string): ArtifactRecord[] {
+    const conversationId = this.resolveClaudeConversationIdForPage(pageId);
+    if (!conversationId) return [];
+    const cached = this.claudeConversationArtifactCache.get(conversationId);
+    if (cached && cached.length > 0) return cached;
+
+    try {
+      const runDirs = fs.readdirSync(this.traceRootDir, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name)
+        .filter((name) => name !== this.runId)
+        .sort((left, right) => right.localeCompare(left));
+
+      for (const runDirName of runDirs) {
+        const pagesDir = path.join(this.traceRootDir, runDirName, 'pages');
+        if (!fs.existsSync(pagesDir)) continue;
+        const pageDirs = fs.readdirSync(pagesDir, { withFileTypes: true })
+          .filter((entry) => entry.isDirectory())
+          .map((entry) => entry.name);
+        for (const pageDirName of pageDirs) {
+          const conversationPath = path.join(pagesDir, pageDirName, 'extracted', 'conversation.json');
+          const payload = this.tryReadJsonFile(conversationPath);
+          const data = this.readRecord(payload)?.data;
+          if (!data || this.extractClaudeConversationId(data) !== conversationId) continue;
+          const artifacts = this.extractClaudeConversationArtifacts(pageId, data, new Date().toISOString(), {
+            preferCurrentLeaf: false,
+          });
+          if (artifacts.length === 0) continue;
+          this.claudeConversationArtifactCache.set(
+            conversationId,
+            artifacts.map((artifact) => ({ ...artifact })),
+          );
+          return artifacts;
+        }
+      }
+    } catch {
+      return [];
+    }
+
+    return [];
+  }
+
+  private resolveClaudeConversationIdForPage(pageId: string): string | null {
+    const summary = this.pageSummaries.get(pageId);
+    const fromUrl = this.extractClaudeConversationIdFromUrl(summary?.currentUrl);
+    if (fromUrl) return fromUrl;
+
+    const pageMeta = this.pages.get(pageId);
+    if (!pageMeta) return null;
+    const conversationPayload = this.tryReadJsonFile(path.join(pageMeta.extractedDir, 'conversation.json'));
+    const conversationData = this.readRecord(conversationPayload)?.data;
+    return this.extractClaudeConversationId(conversationData);
+  }
+
+  private extractClaudeConversationId(parsed: unknown): string | null {
+    if (!parsed || typeof parsed !== 'object') return null;
+    return this.readString((parsed as { uuid?: unknown }).uuid);
+  }
+
+  private extractClaudeConversationIdFromUrl(rawUrl: string | undefined): string | null {
+    if (!rawUrl) return null;
+    const match = rawUrl.match(/\/chat\/([^/?#]+)/);
+    return match?.[1] ?? null;
+  }
+
+  private isClaudeWidgetFrame(rawUrl: string | undefined): boolean {
+    return typeof rawUrl === 'string' && rawUrl.includes('claudemcpcontent.com/mcp_apps');
+  }
+
+  private observeFrameFromNetworkEvent(event: NetworkTraceEntry): void {
+    const frameId = 'frameId' in event ? event.frameId : null;
+    if (!frameId) return;
+    if (!('url' in event) || !event.url) return;
+    if (!('resourceType' in event)) return;
+
+    const resourceType = String(event.resourceType || '').toLowerCase();
+    const kind: FrameState['kind'] =
+      resourceType === 'mainframe'
+        ? 'main'
+        : resourceType === 'subframe' || resourceType === 'document'
+          ? 'subframe'
+          : 'unknown';
+    if (kind === 'unknown') return;
+
+    const state = this.ensureExtractedState(event.pageId);
+    const existing = state.frames.find((frame) => frame.frameId === frameId);
+    const nextFrame: FrameState = {
+      frameId,
+      parentFrameId: existing?.parentFrameId ?? null,
+      url: event.url,
+      origin: this.safeGetOrigin(event.url) ?? '',
+      visible: existing?.visible ?? true,
+      bounds: existing?.bounds ?? null,
+      kind: existing?.kind === 'main' ? 'main' : kind,
+    };
+    const nextFrames = state.frames.filter((frame) => frame.frameId !== frameId);
+    nextFrames.push(nextFrame);
+    this.updateFrameSnapshot(event.pageId, nextFrames);
+  }
+
+  private readRecord(value: unknown): Record<string, unknown> | null {
+    return value && typeof value === 'object' ? (value as Record<string, unknown>) : null;
+  }
+
+  private tryReadJsonFile(filePath: string): unknown | null {
+    try {
+      if (!fs.existsSync(filePath)) return null;
+      return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    } catch {
+      return null;
+    }
   }
 
   private readClaudeSender(value: unknown): ArtifactRecord['sender'] {

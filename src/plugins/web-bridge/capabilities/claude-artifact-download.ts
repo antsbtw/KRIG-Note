@@ -101,18 +101,27 @@ async function probeFormByOrdinal(
   // Tailwind "group/artifact-block" class.
   const script = `
     (function() {
-      var cards = Array.from(document.querySelectorAll('[class*="group/artifact-block"]'));
-      var allIframes = Array.from(document.querySelectorAll('iframe[src*="claudemcpcontent"]'));
-      var standaloneIframes = allIframes.filter(function(f) {
-        var p = f.parentElement;
+      var cards = Array.from(document.querySelectorAll('[class*="group/artifact-block"]')).filter(function(el) {
+        var p = el.parentElement;
         while (p) {
-          if (p.className && String(p.className).indexOf('group/artifact-block') >= 0) return false;
+          var cls = '';
+          try { cls = (p.className && String(p.className)) || ''; } catch (e) {}
+          if (cls.indexOf('group/artifact-block') >= 0) return false;
           p = p.parentElement;
         }
-        return true;
+        var btns = Array.from(el.querySelectorAll('button, [role="button"], a'));
+        for (var bi = 0; bi < btns.length; bi++) {
+          var b = btns[bi];
+          var label = ((b.innerText || b.textContent || '') + ' ' +
+            (b.getAttribute('aria-label') || '') + ' ' +
+            (b.getAttribute('title') || '')).toLowerCase();
+          if (label.indexOf('download') >= 0) return true;
+        }
+        return false;
       });
+      var allIframes = Array.from(document.querySelectorAll('iframe[src*="claudemcpcontent"]'));
       var merged = cards.map(function(el) { return { form: 'card', el: el }; })
-        .concat(standaloneIframes.map(function(el) { return { form: 'iframe', el: el }; }));
+        .concat(allIframes.map(function(el) { return { form: 'iframe', el: el }; }));
       merged.sort(function(a, b) {
         var rel = a.el.compareDocumentPosition(b.el);
         if (rel & Node.DOCUMENT_POSITION_FOLLOWING) return -1;

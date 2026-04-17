@@ -1,4 +1,4 @@
-import { ipcMain, BaseWindow, BrowserWindow, dialog, shell, net } from 'electron';
+import { ipcMain, BaseWindow, BrowserWindow, dialog, shell, net, session } from 'electron';
 import { IPC, ViewMessage } from '../../shared/types';
 import { workspaceManager } from '../workspace/manager';
 import { workModeRegistry } from '../workmode/registry';
@@ -35,6 +35,7 @@ import { annotationSurrealStore as annotationStore } from '../ebook/annotation-s
 import { navSideRegistry } from '../navside/registry';
 import { bookmarkSurrealStore as webBookmarkStore } from '../../plugins/web/main/bookmark-surreal-store';
 import { historySurrealStore as webHistoryStore } from '../../plugins/web/main/history-surreal-store';
+import { WEBVIEW_PARTITION } from '../../shared/constants/webview-partition';
 
 // 待打开的 noteId（导入完成后设置，NoteEditor ready 后拉取）
 let pendingNoteId: string | null = null;
@@ -1036,6 +1037,123 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
       } finally {
         clearTimeout(timer);
       }
+    } catch (err) {
+      return { success: false, error: String(err) };
+    }
+  });
+
+  ipcMain.handle(IPC.WB_CAPTURE_ISOLATED_SEGMENT, async (_event, url: string, timeoutMs?: number) => {
+    let win: BrowserWindow | null = null;
+    try {
+      if (!url || !/^https:\/\/a\.claude\.ai\/isolated-segment\.html/i.test(url)) {
+        return { success: false, error: 'invalid-isolated-segment-url' };
+      }
+
+      const webSession = session.fromPartition(WEBVIEW_PARTITION);
+      webSession.webRequest.onHeadersReceived((details, callback) => {
+        const headers = { ...details.responseHeaders };
+        delete headers['content-security-policy'];
+        delete headers['Content-Security-Policy'];
+        delete headers['content-security-policy-report-only'];
+        delete headers['Content-Security-Policy-Report-Only'];
+        callback({ responseHeaders: headers });
+      });
+
+      win = new BrowserWindow({
+        show: false,
+        width: 1280,
+        height: 2200,
+        webPreferences: {
+          partition: WEBVIEW_PARTITION,
+          nodeIntegration: false,
+          contextIsolation: true,
+          sandbox: false,
+        },
+      });
+
+      await win.loadURL(url);
+      const deadline = Date.now() + Math.max(4000, Math.min(timeoutMs ?? 9000, 15000));
+      let visibleFrames: Array<{ src: string; x: number; y: number; width: number; height: number }> = [];
+
+      while (Date.now() < deadline) {
+        const r = await win.webContents.executeJavaScript(`
+          (function() {
+            return Array.from(document.querySelectorAll('iframe')).map(function(el) {
+              var src = String(el.getAttribute('src') || el.src || '');
+              var rect = el.getBoundingClientRect();
+              return {
+                src: src,
+                x: Math.round(rect.x),
+                y: Math.round(rect.y),
+                width: Math.round(rect.width),
+                height: Math.round(rect.height),
+              };
+            }).filter(function(item) {
+              return item.src.indexOf('claudemcpcontent.com/mcp_apps') >= 0 && item.width > 20 && item.height > 20;
+            });
+          })()
+        `);
+        if (Array.isArray(r) && r.length > 0) {
+          visibleFrames = r;
+          break;
+        }
+        await new Promise(r => setTimeout(r, 250));
+      }
+
+      if (!visibleFrames.length) {
+        return { success: false, error: 'no-visible-mcp-iframes' };
+      }
+
+      const items: Array<{ index: number; src: string; mimeType: string; contentBase64: string; width: number; height: number }> = [];
+      for (let i = 0; i < visibleFrames.length; i++) {
+        const f = visibleFrames[i];
+        const img = await win.webContents.capturePage({
+          x: Math.max(0, f.x),
+          y: Math.max(0, f.y),
+          width: Math.max(1, f.width),
+          height: Math.max(1, f.height),
+        });
+        items.push({
+          index: i,
+          src: f.src,
+          mimeType: 'image/png',
+          contentBase64: img.toPNG().toString('base64'),
+          width: f.width,
+          height: f.height,
+        });
+      }
+
+      return { success: true, items };
+    } catch (err) {
+      return { success: false, error: String(err) };
+    } finally {
+      if (win && !win.isDestroyed()) win.destroy();
+    }
+  });
+
+  ipcMain.handle(IPC.WB_CAPTURE_GUEST_RECTS, async (event, rects: Array<{ x: number; y: number; width: number; height: number }>) => {
+    try {
+      const { getGuest } = await import('../../plugins/web-bridge/infrastructure/guest-registry');
+      const guest = getGuest(event.sender.id);
+      if (!guest) return { success: false, error: 'no guest for sender' };
+      const items: Array<{ index: number; mimeType: string; contentBase64: string; width: number; height: number }> = [];
+      for (let i = 0; i < (Array.isArray(rects) ? rects.length : 0); i++) {
+        const r = rects[i];
+        const img = await guest.capturePage({
+          x: Math.max(0, Math.round(r.x)),
+          y: Math.max(0, Math.round(r.y)),
+          width: Math.max(1, Math.round(r.width)),
+          height: Math.max(1, Math.round(r.height)),
+        });
+        items.push({
+          index: i,
+          mimeType: 'image/png',
+          contentBase64: img.toPNG().toString('base64'),
+          width: Math.round(r.width),
+          height: Math.round(r.height),
+        });
+      }
+      return { success: true, items };
     } catch (err) {
       return { success: false, error: String(err) };
     }

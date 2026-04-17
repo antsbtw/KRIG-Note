@@ -301,6 +301,10 @@ contextBridge.exposeInMainWorld('viewAPI', {
     ipcRenderer.invoke(IPC.WB_CAPTURE_DOWNLOAD_ONCE, timeoutMs),
   wbFetchBinary: (params: { url: string; headers?: Record<string, string>; timeoutMs?: number }) =>
     ipcRenderer.invoke(IPC.WB_FETCH_BINARY, params),
+  wbCaptureIsolatedSegment: (url: string, timeoutMs?: number) =>
+    ipcRenderer.invoke(IPC.WB_CAPTURE_ISOLATED_SEGMENT, url, timeoutMs),
+  wbCaptureGuestRects: (rects: Array<{ x: number; y: number; width: number; height: number }>) =>
+    ipcRenderer.invoke(IPC.WB_CAPTURE_GUEST_RECTS, rects),
 
   aiExtractDebug: (params: { markdown: string; serviceId: string }) =>
     ipcRenderer.invoke(IPC.AI_EXTRACT_DEBUG, params),

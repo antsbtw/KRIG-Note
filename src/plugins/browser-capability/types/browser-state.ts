@@ -53,6 +53,9 @@ export type DownloadState = {
   filename: string;
   mimeType?: string;
   byteLength?: number;
+  sha256?: string;
+  extension?: string;
+  mtime?: string;
   storageRef?: string;
   status: 'started' | 'completed' | 'failed' | 'cancelled';
   error?: string;

@@ -67,7 +67,7 @@ export const CARD_ROOT_FILTER_FN = `
  * conversation hash (not per-artifact), so multiple iframes share the
  * same hostname prefix — distinguish them by DOM order or full URL query.
  */
-export const IFRAME_SELECTOR = 'iframe[src*="claudemcpcontent"]';
+export const IFRAME_SELECTOR = 'iframe[src*="isolated-segment.html"]';
 
 /**
  * Menu item offsets relative to the iframe's "..." hotspot at

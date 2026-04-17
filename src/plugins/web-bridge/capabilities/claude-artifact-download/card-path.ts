@@ -81,12 +81,19 @@ function buildProbeAndClickScript(ref: ClaudeArtifactRef): string {
           if (cls.indexOf('group/artifact-block') >= 0) return false;
           p = p.parentElement;
         }
-        return true;
+        var btns = Array.from(el.querySelectorAll('button, [role="button"], a'));
+        for (var bi = 0; bi < btns.length; bi++) {
+          var b = btns[bi];
+          var label = ((b.innerText || b.textContent || '') + ' ' +
+            (b.getAttribute('aria-label') || '') + ' ' +
+            (b.getAttribute('title') || '')).toLowerCase();
+          if (label.indexOf('download') >= 0) return true;
+        }
+        return false;
       });
       var allIframes = Array.from(document.querySelectorAll(${JSON.stringify(IFRAME_SELECTOR)}));
-      var standaloneIframes = allIframes.filter(function(f) { return !f.closest(${JSON.stringify(CARD_ROOT_SELECTOR)}); });
       var merged = cards.map(function(el) { return { form: 'card', el: el }; })
-        .concat(standaloneIframes.map(function(el) { return { form: 'iframe', el: el }; }));
+        .concat(allIframes.map(function(el) { return { form: 'iframe', el: el }; }));
 
       // Sort by document order.
       merged.sort(function(a, b) {

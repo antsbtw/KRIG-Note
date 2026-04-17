@@ -4,9 +4,10 @@ import { getArtifactPostMessageHookScript } from '../../web-bridge/injection/inj
 import { getDomToMarkdownScript } from '../../web-bridge/injection/inject-scripts/dom-to-markdown';
 import { SlotToggle } from '../../../shared/components/SlotToggle';
 import { WebViewContextMenu, type ContextMenuItem, type MenuContext } from '../context-menu';
-import { extractClaudeConversation } from '../../web-bridge/capabilities/claude-api-extractor';
+import { countArtifactPlaceholders, extractClaudeConversation } from '../../web-bridge/capabilities/claude-api-extractor';
 import { extractContent as extractChatGPTContent } from '../../web-bridge/capabilities/chatgpt-content-extractor';
 import { extractContent as extractGeminiContent } from '../../web-bridge/capabilities/gemini-content-extractor';
+import { downloadClaudeIframeArtifact } from '../../web-bridge/capabilities/claude-artifact-download';
 import {
   getAIServiceProfile,
   getAIServiceList,
@@ -38,6 +39,8 @@ declare const viewAPI: {
     Promise<{ success: boolean; error?: string; count?: number; matches?: Array<{ url: string; statusCode: number; mimeType: string; body: string | null; bodyLength: number; timestamp: number }> }>;
   wbSendMouse: (events: Array<{ type: string; x: number; y: number; button?: string; buttons?: number; clickCount?: number }>) =>
     Promise<{ success: boolean; error?: string; count?: number }>;
+  wbSendKey: (events: Array<{ type: string; key: string; code?: string; windowsVirtualKeyCode?: number }>) =>
+    Promise<{ success: boolean; error?: string; count?: number }>;
   wbReadClipboardImage: () =>
     Promise<{ success: boolean; empty?: boolean; dataUrl?: string; width?: number; height?: number }>;
   wbFetchBinary: (params: { url: string; headers?: Record<string, string>; timeoutMs?: number }) =>
@@ -52,6 +55,16 @@ declare const viewAPI: {
   }>;
   mediaPutBase64: (input: string, mimeType?: string, filename?: string) =>
     Promise<{ success: boolean; mediaUrl?: string; mediaId?: string; error?: string }>;
+  wbCaptureIsolatedSegment: (url: string, timeoutMs?: number) => Promise<{
+    success: boolean;
+    items?: Array<{ index: number; src: string; mimeType: string; contentBase64: string; width: number; height: number }>;
+    error?: string;
+  }>;
+  wbCaptureGuestRects: (rects: Array<{ x: number; y: number; width: number; height: number }>) => Promise<{
+    success: boolean;
+    items?: Array<{ index: number; mimeType: string; contentBase64: string; width: number; height: number }>;
+    error?: string;
+  }>;
   closeSlot: () => void;
 };
 
@@ -293,6 +306,103 @@ function pickDownloadCardProbe(artifactProbe: Array<any>): any | null {
   return candidates[0];
 }
 
+function pickIframeProbes(artifactProbe: Array<any>): any[] {
+  if (!Array.isArray(artifactProbe) || artifactProbe.length === 0) return [];
+  return artifactProbe
+    .filter((entry) => entry && entry.form === 'iframe' && typeof entry.ordinal === 'number')
+    .sort((a, b) => {
+      const ao = typeof a.ordinal === 'number' ? a.ordinal : 999999;
+      const bo = typeof b.ordinal === 'number' ? b.ordinal : 999999;
+      return ao - bo;
+    });
+}
+
+function replaceLeadingArtifactCallouts(
+  markdown: string,
+  replacements: string[],
+): string {
+  if (!markdown || !Array.isArray(replacements) || replacements.length === 0) return markdown;
+  const normalized = markdown.replace(/\r\n/g, '\n');
+  const pattern = /> \[!note\][\s\S]*?> \[在 Claude 中查看原图\]\([^)]+\)/g;
+  let idx = 0;
+  return normalized.replace(pattern, (match) => {
+    if (idx >= replacements.length) return match;
+    const next = replacements[idx++];
+    return next && next.trim() ? next.trim() : match;
+  });
+}
+
+function iframeDownloadToMarkdownPiece(
+  dl: Awaited<ReturnType<typeof downloadClaudeIframeArtifact>>,
+): string {
+  return `![Claude Artifact](${bytesToDataUrl(dl.bytes, dl.mime || 'image/svg+xml')})`;
+}
+
+async function listClaudeIsolatedSegmentUrls(webview: Electron.WebviewTag): Promise<string[]> {
+  try {
+    const result = await webview.executeJavaScript(`
+      (function() {
+        return Array.from(document.querySelectorAll('iframe')).map(function(el) {
+          return String(el.getAttribute('src') || el.src || '');
+        }).filter(function(src) {
+          return src.indexOf('isolated-segment.html') >= 0;
+        });
+      })()
+    `);
+    return Array.isArray(result) ? result.filter((x) => typeof x === 'string' && x) : [];
+  } catch {
+    return [];
+  }
+}
+
+async function getClaudeVisualSectionRect(
+  webview: Electron.WebviewTag,
+  heading: string,
+): Promise<{ heading: string; x: number; y: number; width: number; height: number } | null> {
+  try {
+    const result = await webview.executeJavaScript(`
+      (function() {
+        var label = ${JSON.stringify(heading)};
+        var headingNodes = Array.from(document.querySelectorAll('h1,h2,h3,h4,h5,h6,[role="heading"]'));
+        var h = headingNodes.find(function(node) {
+          return String(node.innerText || node.textContent || '').indexOf(label) >= 0;
+        });
+        if (!h) return null;
+        try {
+          window.__krigAllowProgrammaticScroll = true;
+          h.scrollIntoView({ block: 'start', behavior: 'instant' });
+          window.__krigAllowProgrammaticScroll = false;
+        } catch (e) {}
+        var startRect = h.getBoundingClientRect();
+        var startY = Math.max(0, Math.round(startRect.bottom + 8));
+        var next = null;
+        for (var i = 0; i < headingNodes.length; i++) {
+          var node = headingNodes[i];
+          if (node === h) continue;
+          var nr = node.getBoundingClientRect();
+          if (nr.top > startRect.top + 40) {
+            next = nr;
+            break;
+          }
+        }
+        var endY = next ? Math.round(next.top - 8) : Math.round(window.innerHeight - 24);
+        var width = Math.max(1, Math.round(window.innerWidth - 48));
+        var height = Math.max(1, endY - startY);
+        return {
+          heading: label,
+          x: 24,
+          y: startY,
+          width: width,
+          height: height,
+        };
+      })()
+    `);
+    return result && typeof result === 'object' ? result : null;
+  } catch {
+    return null;
+  }
+}
+
 export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
   void _workModeId; // workModeId is kept for prop-API stability; not used yet.
   const webviewRef = useRef<Electron.WebviewTag | null>(null);
@@ -382,7 +492,15 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
             if (cls.indexOf('group/artifact-block') >= 0) return false;
             p = p.parentElement;
           }
-          return true;
+          var buttons = Array.from(el.querySelectorAll('button, [role="button"], a'));
+          for (var bi = 0; bi < buttons.length; bi++) {
+            var b = buttons[bi];
+            var label = ((b.innerText || b.textContent || '') + ' ' +
+              (b.getAttribute('aria-label') || '') + ' ' +
+              (b.getAttribute('title') || '')).toLowerCase();
+            if (label.indexOf('download') >= 0) return true;
+          }
+          return false;
         });
       }
       var list = [];
@@ -420,11 +538,19 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
       hit.setAttribute('data-krig-target', '1');
       hit.setAttribute('data-krig-click-x', String(${x}));
       hit.setAttribute('data-krig-click-y', String(${y}));
+      function isClaudeArtifactIframe(node) {
+        if (!node || node.tagName !== 'IFRAME') return false;
+        var src = String(node.getAttribute('src') || node.src || '');
+        if (!src) return false;
+        if (src.indexOf('isolated-segment.html') < 0) return false;
+        var rect = node.getBoundingClientRect ? node.getBoundingClientRect() : null;
+        if (rect && rect.width <= 2 && rect.height <= 2) return false;
+        return true;
+      }
       var cards = topLevelCards();
-      var allIframes = Array.from(document.querySelectorAll('iframe[src*="claudemcpcontent"]'));
-      var standaloneIframes = allIframes.filter(function(f) { return !f.closest('[class*="group/artifact-block"]'); });
+      var allIframes = Array.from(document.querySelectorAll('iframe')).filter(isClaudeArtifactIframe);
       var merged = cards.map(function(node) { return { form: 'card', el: node }; })
-        .concat(standaloneIframes.map(function(node) { return { form: 'iframe', el: node }; }));
+        .concat(allIframes.map(function(node) { return { form: 'iframe', el: node }; }));
       merged.sort(function(a, b) {
         var rel = a.el.compareDocumentPosition(b.el);
         if (rel & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
@@ -433,7 +559,7 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
       });
       var artifactEl = null;
       if (el) {
-        if (el.tagName === 'IFRAME' && String(el.src || '').indexOf('claudemcpcontent') >= 0) artifactEl = el;
+        if (isClaudeArtifactIframe(el)) artifactEl = el;
         if (!artifactEl && el.closest) artifactEl = el.closest('[class*="group/artifact-block"]');
       }
       var artifactOrdinal = null;
@@ -468,11 +594,12 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
     } catch {}
   }, []);
 
-  const probeClaudeArtifactsInScope = useCallback(async (webview: Electron.WebviewTag) => {
+  const probeClaudeArtifactsInScope = useCallback(async (webview: Electron.WebviewTag, expectedCount = 0) => {
     try {
       const script = `
-        (function() {
+        (async function() {
           var scope = document.querySelector('[data-krig-target="1"]');
+          var expectedCount = ${Math.max(0, expectedCount)};
           function findNearestHeadingText(node) {
             var cur = node;
             while (cur) {
@@ -550,27 +677,62 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
           function topLevelCards() {
             return Array.from(document.querySelectorAll('[class*="group/artifact-block"]')).filter(function(el) {
               var p = el.parentElement;
-              while (p) {
-                var cls = '';
-                try { cls = (p.className && String(p.className)) || ''; } catch (e) {}
-                if (cls.indexOf('group/artifact-block') >= 0) return false;
-                p = p.parentElement;
-              }
-              return true;
-            });
+          while (p) {
+            var cls = '';
+            try { cls = (p.className && String(p.className)) || ''; } catch (e) {}
+            if (cls.indexOf('group/artifact-block') >= 0) return false;
+            p = p.parentElement;
           }
-          var cards = topLevelCards();
-          var allIframes = Array.from(document.querySelectorAll('iframe[src*="claudemcpcontent"]'));
-          var standaloneIframes = allIframes.filter(function(f) { return !f.closest('[class*="group/artifact-block"]'); });
-          var merged = cards.map(function(el) { return { form: 'card', el: el }; })
-            .concat(standaloneIframes.map(function(el) { return { form: 'iframe', el: el }; }));
-          merged.sort(function(a, b) {
-            var rel = a.el.compareDocumentPosition(b.el);
-            if (rel & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
-            if (rel & Node.DOCUMENT_POSITION_PRECEDING) return 1;
-            return 0;
+          var buttons = Array.from(el.querySelectorAll('button, [role="button"], a'));
+          for (var bi = 0; bi < buttons.length; bi++) {
+            var b = buttons[bi];
+            var label = ((b.innerText || b.textContent || '') + ' ' +
+              (b.getAttribute('aria-label') || '') + ' ' +
+              (b.getAttribute('title') || '')).toLowerCase();
+            if (label.indexOf('download') >= 0) return true;
+          }
+          return false;
+        });
+          }
+          function buildMerged() {
+            function isClaudeArtifactIframe(node) {
+              if (!node || node.tagName !== 'IFRAME') return false;
+              var src = String(node.getAttribute('src') || node.src || '');
+              if (!src) return false;
+              if (src.indexOf('isolated-segment.html') < 0) return false;
+              var rect = node.getBoundingClientRect ? node.getBoundingClientRect() : null;
+              if (rect && rect.width <= 2 && rect.height <= 2) return false;
+              return true;
+            }
+            var cards = topLevelCards();
+            var allIframes = Array.from(document.querySelectorAll('iframe')).filter(isClaudeArtifactIframe);
+            var merged = cards.map(function(el) { return { form: 'card', el: el }; })
+              .concat(allIframes.map(function(el) { return { form: 'iframe', el: el }; }));
+            merged.sort(function(a, b) {
+              var rel = a.el.compareDocumentPosition(b.el);
+              if (rel & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+              if (rel & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+              return 0;
+            });
+            return merged;
+          }
+          // Mirror the DevTools-verified enumeration path:
+          // 1 top-level download card + all isolated-segment artifact iframes, merged in document order.
+          var merged = buildMerged();
+          var allIframeDebug = Array.from(document.querySelectorAll('iframe')).map(function(el, idx) {
+            var rect = el.getBoundingClientRect();
+            return {
+              idx: idx,
+              src: String(el.getAttribute('src') || el.src || ''),
+              className: String((el.className && String(el.className)) || '').slice(0, 240),
+              top: Math.round(rect.top),
+              bottom: Math.round(rect.bottom),
+              height: Math.round(rect.height),
+              width: Math.round(rect.width),
+            };
           });
-          return merged.map(function(entry, ordinal) {
+          return {
+            entries: merged.map(function(entry, ordinal) {
             var rect = entry.el.getBoundingClientRect();
             var titleEl = entry.form === 'card'
               ? entry.el.querySelector('[class*="font-medium"], [data-testid="artifact-title"]')
@@ -616,10 +778,28 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
               cardSummary: summarizeEl(entry.el),
               buttonAncestors: downloadBtn ? ancestorChain(downloadBtn, entry.el) : [],
             };
-          });
+          }),
+            iframeDebug: allIframeDebug,
+          };
         })()
       `;
-      return await withTimeout(webview.executeJavaScript(script), 2_000, 'probeClaudeArtifactsInScope');
+      const result = await withTimeout(webview.executeJavaScript(script), 5_000, 'probeClaudeArtifactsInScope');
+      if (Array.isArray(result)) return result;
+      if (result && Array.isArray(result.entries)) {
+        try {
+          await viewAPI.aiExtractionCacheWrite({
+            extractionId: `probe-debug-${Date.now()}`,
+            stage: 'artifact-probe-iframes',
+            serviceId: 'claude',
+            markdown: '',
+            meta: {
+              iframeDebug: result.iframeDebug || [],
+            },
+          });
+        } catch {}
+        return result.entries;
+      }
+      return [];
     } catch {
       return [];
     }
@@ -795,7 +975,8 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
               reason: 'temporary-bypass-for-hang-debug',
             },
           }).catch(() => {});
-          const artifactProbe = await probeClaudeArtifactsInScope(webview);
+          const expectedArtifactCount = countArtifactPlaceholders(markdown);
+          const artifactProbe = await probeClaudeArtifactsInScope(webview, expectedArtifactCount > 0 ? expectedArtifactCount : 0);
           await viewAPI.aiExtractionCacheWrite({
             extractionId,
             stage: 'artifact-probe',
@@ -807,12 +988,149 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
             markdown,
             meta: {
               artifactOrdinal: (ctx as MenuContext & { artifactOrdinal?: number | null }).artifactOrdinal ?? null,
+              expectedArtifactCount,
               candidates: Array.isArray(artifactProbe) ? artifactProbe.length : 0,
               probe: artifactProbe,
             },
           }).catch(() => {});
           markdown = processClaudeArtifactsLive(markdown, url);
           markdown = relocateTrailingAttachmentSection(markdown, Array.isArray(artifactProbe) ? artifactProbe : []);
+          const iframeProbes = pickIframeProbes(Array.isArray(artifactProbe) ? artifactProbe : []);
+          if (iframeProbes.length > 0) {
+            const iframePieces: string[] = [];
+            for (const iframeProbe of iframeProbes.slice(0, 2)) {
+              try {
+                const dl = await withTimeout(
+                  downloadClaudeIframeArtifact(
+                    webview,
+                    viewAPI,
+                    { ordinal: iframeProbe.ordinal },
+                    { format: 'svg', timeout: 6_000 },
+                  ),
+                  8_000,
+                  'downloadClaudeIframeArtifact',
+                );
+                iframePieces.push(iframeDownloadToMarkdownPiece(dl));
+              } catch (iframeErr) {
+                await viewAPI.aiExtractionCacheWrite({
+                  extractionId,
+                  stage: 'artifact-iframe-download-failed',
+                  serviceId: profile.id,
+                  url,
+                  msgIndex,
+                  preview: (ctx as MenuContext & { preview?: string }).preview || '',
+                  userMessage,
+                  markdown,
+                  meta: {
+                    artifactOrdinal: iframeProbe.ordinal,
+                    error: iframeErr instanceof Error ? iframeErr.message : String(iframeErr),
+                  },
+                }).catch(() => {});
+              }
+            }
+            if (iframePieces.length > 0) {
+              markdown = replaceLeadingArtifactCallouts(markdown, iframePieces);
+              await viewAPI.aiExtractionCacheWrite({
+                extractionId,
+                stage: 'artifact-iframe-download-done',
+                serviceId: profile.id,
+                url,
+                msgIndex,
+                preview: (ctx as MenuContext & { preview?: string }).preview || '',
+                userMessage,
+                markdown,
+                meta: {
+                  ordinals: iframeProbes.slice(0, iframePieces.length).map((entry) => entry.ordinal),
+                  pieces: iframePieces.length,
+                },
+              }).catch(() => {});
+            }
+          }
+          if (iframeProbes.length === 0) {
+            try {
+              const headings = ['2. SVG', '3. 流程图'];
+              const sectionRects: Array<{ heading: string; x: number; y: number; width: number; height: number }> = [];
+              const iframePieces: string[] = [];
+
+              for (const heading of headings) {
+                const rect = await getClaudeVisualSectionRect(webview, heading);
+                if (!rect) continue;
+                sectionRects.push(rect);
+
+                const captured = await withTimeout(
+                  viewAPI.wbCaptureGuestRects([
+                    { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+                  ]),
+                  12_000,
+                  `wbCaptureGuestRects:${heading}`,
+                );
+
+                if (captured?.success && Array.isArray(captured.items) && captured.items.length > 0) {
+                  const item = captured.items[0];
+                  iframePieces.push(`![Claude Artifact](data:${item.mimeType || 'image/png'};base64,${item.contentBase64})`);
+                }
+              }
+
+              if (sectionRects.length === 0) {
+                await viewAPI.aiExtractionCacheWrite({
+                  extractionId,
+                  stage: 'artifact-isolated-capture-failed',
+                  serviceId: profile.id,
+                  url,
+                  msgIndex,
+                  preview: (ctx as MenuContext & { preview?: string }).preview || '',
+                  userMessage,
+                  markdown,
+                  meta: { error: 'no-section-rects' },
+                }).catch(() => {});
+              } else if (iframePieces.length > 0) {
+                markdown = replaceLeadingArtifactCallouts(markdown, iframePieces);
+                await viewAPI.aiExtractionCacheWrite({
+                  extractionId,
+                  stage: 'artifact-isolated-capture-done',
+                  serviceId: profile.id,
+                  url,
+                  msgIndex,
+                  preview: (ctx as MenuContext & { preview?: string }).preview || '',
+                  userMessage,
+                  markdown,
+                  meta: {
+                    count: iframePieces.length,
+                    rects: sectionRects,
+                  },
+                }).catch(() => {});
+              } else {
+                await viewAPI.aiExtractionCacheWrite({
+                  extractionId,
+                  stage: 'artifact-isolated-capture-failed',
+                  serviceId: profile.id,
+                  url,
+                  msgIndex,
+                  preview: (ctx as MenuContext & { preview?: string }).preview || '',
+                  userMessage,
+                  markdown,
+                  meta: {
+                    rects: sectionRects,
+                    error: 'no-items',
+                  },
+                }).catch(() => {});
+              }
+            } catch (isolatedErr) {
+              await viewAPI.aiExtractionCacheWrite({
+                extractionId,
+                stage: 'artifact-isolated-capture-failed',
+                serviceId: profile.id,
+                url,
+                msgIndex,
+                preview: (ctx as MenuContext & { preview?: string }).preview || '',
+                userMessage,
+                markdown,
+                meta: {
+                  error: isolatedErr instanceof Error ? isolatedErr.message : String(isolatedErr),
+                },
+              }).catch(() => {});
+            }
+          }
           const downloadCardProbe = pickDownloadCardProbe(Array.isArray(artifactProbe) ? artifactProbe : []);
           if (downloadCardProbe && typeof downloadCardProbe.ordinal === 'number') {
             try {

@@ -1,3 +1,6 @@
+import { createHash } from 'node:crypto';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { app, webContents } from 'electron';
 import type { Session, OnBeforeRequestListenerDetails, OnCompletedListenerDetails, OnErrorOccurredListenerDetails, DownloadItem, WebContents } from 'electron';
 import type { NetworkRecord } from '../types';
@@ -46,6 +49,84 @@ function shouldTraceNetwork(record: Pick<NetworkRecord, 'url' | 'resourceType'>)
   if (record.resourceType && NOISY_RESOURCE_TYPES.has(record.resourceType)) return false;
   if (NOISY_URL_SUBSTRINGS.some((part) => record.url.includes(part))) return false;
   return true;
+}
+
+function readCompletedDownloadFileMeta(savePath: string | undefined): Pick<NonNullable<ReturnType<typeof buildDownloadRecord>>, 'byteLength' | 'sha256' | 'extension' | 'mtime' | 'storageRef'> {
+  if (!savePath) return {};
+  try {
+    if (!fs.existsSync(savePath)) {
+      return {
+        storageRef: savePath,
+        extension: path.extname(savePath).replace(/^\./, '') || undefined,
+      };
+    }
+    const fileBuffer = fs.readFileSync(savePath);
+    const stat = fs.statSync(savePath);
+    return {
+      storageRef: savePath,
+      byteLength: fileBuffer.byteLength,
+      sha256: createHash('sha256').update(fileBuffer).digest('hex'),
+      extension: path.extname(savePath).replace(/^\./, '') || undefined,
+      mtime: stat.mtime.toISOString(),
+    };
+  } catch {
+    return {
+      storageRef: savePath,
+      extension: path.extname(savePath).replace(/^\./, '') || undefined,
+    };
+  }
+}
+
+function buildDownloadRecord(input: {
+  downloadId: string;
+  pageId: string;
+  frameId: string | null;
+  item: DownloadItem;
+  status: 'completed' | 'cancelled' | 'failed';
+  startedAt: string;
+  finishedAt: string;
+}): {
+  downloadId: string;
+  pageId: string;
+  frameId: string | null;
+  url: string;
+  filename: string;
+  mimeType?: string;
+  byteLength?: number;
+  sha256?: string;
+  extension?: string;
+  mtime?: string;
+  storageRef?: string;
+  status: 'completed' | 'cancelled' | 'failed';
+  error?: string;
+  startedAt: string;
+  finishedAt: string;
+} {
+  const storageRef = input.item.getSavePath() || undefined;
+  const fileMeta = input.status === 'completed'
+    ? readCompletedDownloadFileMeta(storageRef)
+    : {
+        storageRef,
+        byteLength: input.item.getReceivedBytes() || undefined,
+        extension: storageRef ? path.extname(storageRef).replace(/^\./, '') || undefined : undefined,
+      };
+  return {
+    downloadId: input.downloadId,
+    pageId: input.pageId,
+    frameId: input.frameId,
+    url: input.item.getURL(),
+    filename: input.item.getFilename(),
+    mimeType: input.item.getMimeType(),
+    byteLength: fileMeta.byteLength ?? input.item.getReceivedBytes() ?? undefined,
+    sha256: fileMeta.sha256,
+    extension: fileMeta.extension,
+    mtime: fileMeta.mtime,
+    storageRef: fileMeta.storageRef,
+    status: input.status,
+    error: input.status === 'completed' ? undefined : input.status,
+    startedAt: input.startedAt,
+    finishedAt: input.finishedAt,
+  };
 }
 
 function toNetworkRecord(
@@ -115,6 +196,7 @@ export function attachSessionNetworkCapture(session: Session, bus: NetworkEventB
           browserCapabilityTraceWriter.writeNetwork({
             kind: 'request-start',
             pageId,
+            frameId: record.frameId,
             requestId: record.requestId,
             method: record.method,
             resourceType: record.resourceType,
@@ -146,6 +228,7 @@ export function attachSessionNetworkCapture(session: Session, bus: NetworkEventB
           browserCapabilityTraceWriter.writeNetwork({
             kind: 'response-complete',
             pageId,
+            frameId: completed.frameId,
             requestId: completed.requestId,
             status: completed.status,
             resourceType: completed.resourceType,
@@ -182,20 +265,15 @@ export function attachSessionNetworkCapture(session: Session, bus: NetworkEventB
           : state === 'cancelled'
             ? 'cancelled'
             : 'failed';
-      const download = {
+      const download = buildDownloadRecord({
         downloadId,
         pageId,
         frameId: webContents?.mainFrame?.routingId ? String(webContents.mainFrame.routingId) : null,
-        url: item.getURL(),
-        filename: item.getFilename(),
-        mimeType: item.getMimeType(),
-        byteLength: item.getReceivedBytes(),
-        storageRef: item.getSavePath() || undefined,
+        item,
         status,
-        error: state === 'completed' ? undefined : state,
         startedAt,
         finishedAt: new Date().toISOString(),
-      };
+      });
       bus.recordDownloadComplete(download);
       if (download.status === 'completed') {
         browserCapabilityTraceWriter.recordDownloadedArtifact(download);
@@ -211,10 +289,17 @@ export function attachSessionNetworkCapture(session: Session, bus: NetworkEventB
         browserCapabilityTraceWriter.writeNetwork({
           kind: 'download-complete',
           pageId,
+          frameId: download.frameId,
           downloadId: download.downloadId,
           filename: download.filename,
           status: download.status,
           url: download.url,
+          mimeType: download.mimeType,
+          byteLength: download.byteLength,
+          sha256: download.sha256,
+          extension: download.extension,
+          mtime: download.mtime,
+          storageRef: download.storageRef,
           at: download.finishedAt ?? new Date().toISOString(),
         });
       }

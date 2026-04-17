@@ -1,4 +1,5 @@
 import type { WebContents } from 'electron';
+import type { DomAnchor, PageInteraction } from './types';
 import type { BrowserOwner, BrowserState, BrowserVisibility, FrameState, ReadyState } from './types';
 import { browserCapabilityTraceWriter } from './persistence';
 import {
@@ -33,8 +34,11 @@ const bindings = new Map<number, BindingRecord>();
 
 function buildMainFrame(webContents: WebContents): FrameState {
   const url = safeGetURL(webContents);
+  const routingFrameId = webContents.mainFrame?.routingId
+    ? String(webContents.mainFrame.routingId)
+    : null;
   return {
-    frameId: `frame:${webContents.id}:main`,
+    frameId: routingFrameId ?? `frame:${webContents.id}:main`,
     parentFrameId: null,
     url,
     origin: safeGetOrigin(url),
@@ -69,6 +73,17 @@ function safeGetOrigin(url: string): string {
   }
 }
 
+function toRect(value: unknown): { x: number; y: number; width: number; height: number } | null {
+  if (!value || typeof value !== 'object') return null;
+  const record = value as Record<string, unknown>;
+  return {
+    x: Number(record.x) || 0,
+    y: Number(record.y) || 0,
+    width: Number(record.width) || 0,
+    height: Number(record.height) || 0,
+  };
+}
+
 function updateSnapshot(
   webContents: WebContents,
   patch: Partial<Omit<BrowserState, 'pageId' | 'frames' | 'downloads' | 'capturedAt'>>,
@@ -85,6 +100,151 @@ function updateSnapshot(
   const frames = [buildMainFrame(webContents)];
   pageRegistry.setFrames(pageId, frames);
   browserCapabilityTraceWriter.updateFrameSnapshot(pageId, frames);
+}
+
+async function captureVisibleSurface(
+  webContents: WebContents,
+): Promise<{ anchors: DomAnchor[]; interactions: PageInteraction[] }> {
+  const pageId = getPageIdForWebContents(webContents);
+  if (!pageId || webContents.isDestroyed()) return { anchors: [], interactions: [] };
+  try {
+    const snapshot = await webContents.executeJavaScript(`
+      (() => {
+        const rectOf = (el) => {
+          const rect = el.getBoundingClientRect();
+          return {
+            x: rect.x,
+            y: rect.y,
+            width: rect.width,
+            height: rect.height,
+          };
+        };
+        const textOf = (el) => (el.getAttribute('aria-label') || el.getAttribute('title') || el.innerText || el.textContent || '').trim().slice(0, 160);
+        const iframes = Array.from(document.querySelectorAll('iframe'));
+        const anchors = iframes.map((el, index) => {
+          const src = typeof el.src === 'string' ? el.src : '';
+          const rect = rectOf(el);
+          const visible = rect.width > 0 && rect.height > 0;
+          const title = el.getAttribute('title') || el.getAttribute('aria-label') || '';
+          return {
+            anchorId: 'anchor:iframe:' + (index + 1),
+            selectorHint: 'iframe',
+            textPreview: title || src || undefined,
+            rect,
+            role: 'iframe',
+            headingPath: [],
+            ordinal: index + 1,
+            visible,
+            frameUrl: src || undefined,
+            frameOrigin: (() => {
+              try {
+                return src ? new URL(src).origin : undefined;
+              } catch {
+                return undefined;
+              }
+            })(),
+          };
+        }).filter((anchor) => anchor.visible);
+        const interactiveSelector = 'button, a[href], input, textarea, select, summary, [role="button"], [role="link"], [role="textbox"], [contenteditable="true"]';
+        const interactions = Array.from(document.querySelectorAll(interactiveSelector)).map((el, index) => {
+          const rect = rectOf(el);
+          const visible = rect.width > 0 && rect.height > 0;
+          const tag = el.tagName.toLowerCase();
+          const role = el.getAttribute('role') || tag;
+          const disabled = !!(el.disabled || el.getAttribute('aria-disabled') === 'true');
+          let kind = 'click';
+          if (tag === 'input' || tag === 'textarea' || el.getAttribute('contenteditable') === 'true') kind = 'input';
+          else if (tag === 'select') kind = 'select';
+          else if (tag === 'a') kind = 'navigate';
+          else if (tag === 'summary') kind = 'toggle';
+          let surfaceScope = 'global';
+          if (el.closest('aside, nav')) surfaceScope = 'sidebar';
+          else if (el.closest('form') || /write your prompt|send message|use voice mode|add files|sonnet|opus|haiku/i.test(textOf(el))) surfaceScope = 'composer';
+          else if (el.closest('header') || rect.y < 80) surfaceScope = 'header';
+          else if (el.closest('article, [data-testid*="message"], [class*="message"]')) surfaceScope = 'message';
+          return {
+            interactionId: 'interaction:' + tag + ':' + (index + 1),
+            anchorId: undefined,
+            kind,
+            surfaceScope,
+            role,
+            label: textOf(el) || undefined,
+            selectorHint: tag,
+            textPreview: textOf(el) || undefined,
+            rect,
+            visible,
+            enabled: !disabled,
+          };
+        }).filter((item) => item.visible);
+        return { anchors, interactions };
+      })();
+    `, true);
+    const rawAnchors: Array<Record<string, unknown>> = Array.isArray(snapshot?.anchors) ? snapshot.anchors : [];
+    const rawInteractions: Array<Record<string, unknown>> = Array.isArray(snapshot?.interactions) ? snapshot.interactions : [];
+    const anchors = rawAnchors.map((anchor: Record<string, unknown>, index: number) => ({
+      anchorId: typeof anchor?.anchorId === 'string' ? anchor.anchorId : `anchor:iframe:${index + 1}`,
+      pageId,
+      frameId: null,
+      frameUrl: typeof anchor?.frameUrl === 'string' ? anchor.frameUrl : undefined,
+      frameOrigin: typeof anchor?.frameOrigin === 'string' ? anchor.frameOrigin : undefined,
+      selectorHint: typeof anchor?.selectorHint === 'string' ? anchor.selectorHint : 'iframe',
+      textPreview: typeof anchor?.textPreview === 'string' ? anchor.textPreview : undefined,
+      rect: toRect(anchor?.rect),
+      role: typeof anchor?.role === 'string' ? anchor.role : 'iframe',
+      headingPath: [],
+      ordinal: typeof anchor?.ordinal === 'number' ? anchor.ordinal : index + 1,
+      visible: anchor?.visible !== false,
+    }));
+    const interactions: PageInteraction[] = rawInteractions.map((interaction: Record<string, unknown>, index: number) => ({
+      interactionId: typeof interaction?.interactionId === 'string' ? interaction.interactionId : `interaction:${index + 1}`,
+      pageId,
+      anchorId: typeof interaction?.anchorId === 'string' ? interaction.anchorId : undefined,
+      frameId: null,
+      kind: (() => {
+        const kind = interaction?.kind;
+        return kind === 'input' || kind === 'select' || kind === 'navigate' || kind === 'toggle' || kind === 'unknown'
+          ? kind
+          : 'click';
+      })(),
+      surfaceScope: (() => {
+        const scope = interaction?.surfaceScope;
+        return scope === 'artifact' || scope === 'composer' || scope === 'sidebar' || scope === 'header' || scope === 'message' || scope === 'unknown'
+          ? scope
+          : 'global';
+      })(),
+      role: typeof interaction?.role === 'string' ? interaction.role : undefined,
+      label: typeof interaction?.label === 'string' ? interaction.label : undefined,
+      selectorHint: typeof interaction?.selectorHint === 'string' ? interaction.selectorHint : undefined,
+      textPreview: typeof interaction?.textPreview === 'string' ? interaction.textPreview : undefined,
+      rect: toRect(interaction?.rect),
+      visible: interaction?.visible !== false,
+      enabled: interaction?.enabled !== false,
+    }));
+    return { anchors, interactions };
+  } catch {
+    return { anchors: [], interactions: [] };
+  }
+}
+
+function scheduleAnchorRefresh(webContents: WebContents): void {
+  const delays = [250, 1500, 4000];
+  for (const delay of delays) {
+    setTimeout(() => {
+      if (webContents.isDestroyed()) return;
+      const pageId = getPageIdForWebContents(webContents);
+      if (!pageId) return;
+      void captureVisibleSurface(webContents)
+        .then((surface) => {
+          if (surface.anchors.length > 0) {
+            browserCapabilityTraceWriter.updateAnchorSnapshot(pageId, surface.anchors);
+          }
+          if (surface.interactions.length > 0) {
+            browserCapabilityTraceWriter.updateInteractionSnapshot(pageId, surface.interactions);
+          }
+        })
+        .catch(() => {});
+    }, delay);
+  }
 }
 
 export const browserCapabilityServices = {
@@ -131,15 +291,18 @@ export function bindWebContentsPage(webContents: WebContents, input: BindPageInp
 
   webContents.on('did-stop-loading', () => {
     updateSnapshot(webContents, { loading: false }, 'complete');
+    scheduleAnchorRefresh(webContents);
   });
 
   webContents.on('did-navigate', (_event, url) => {
     updateSnapshot(webContents, { loading: false, url }, 'interactive');
+    scheduleAnchorRefresh(webContents);
   });
 
   webContents.on('did-navigate-in-page', (_event, url, isMainFrame) => {
     if (!isMainFrame) return;
     updateSnapshot(webContents, { url }, 'interactive');
+    scheduleAnchorRefresh(webContents);
   });
 
   webContents.on('page-title-updated', (event, title) => {

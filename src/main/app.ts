@@ -19,6 +19,7 @@ import { mediaSurrealStore as mediaStore } from './media/media-surreal-store';
 import { setupExtractionInterceptor } from '../plugins/web/main/extraction-handler';
 import { setupCSPBypass } from '../plugins/web-bridge/infrastructure/csp-bypass';
 import { registerGuest } from '../plugins/web-bridge/infrastructure/guest-registry';
+import { browserCapabilityServices, browserCapabilityTraceWriter } from '../plugins/browser-capability';
 
 /**
  * KRIG Note — 应用入口
@@ -505,6 +506,18 @@ app.whenReady().then(() => {
   // 2. IPC 处理器 + Divider 控制器
   registerIpcHandlers(getMainWindow);
   setupDividerController(getMainWindow);
+
+  if (!app.isPackaged) {
+    browserCapabilityTraceWriter.init();
+    const meta = browserCapabilityTraceWriter.getCurrentMeta();
+    if (meta) {
+      console.log('[BrowserCapability][Trace] run-ready', meta);
+    }
+    void browserCapabilityServices.core.subscribeLifecycle((event) => {
+      console.log('[BrowserCapability]', event.kind, event);
+      browserCapabilityTraceWriter.writeLifecycle(event);
+    });
+  }
 
   // 3. 恢复 Session 或创建默认 Workspace
   const session = loadSession();
