@@ -13,6 +13,9 @@
 - [KRIG-Browser-Capability-Layer-测试方案.md](/Users/wenwu/Documents/VPN-Server/KRIG-Note/docs/web/browser-capability/KRIG-Browser-Capability-Layer-测试方案.md)
   定义 Browser Capability Layer 的测试目标、测试模块、夹具策略和比对方法。
 
+- [Defuddle-vs-Browser-Capability-对比分析.md](/Users/wenwu/Documents/VPN-Server/KRIG-Note/docs/web/browser-capability/Defuddle-vs-Browser-Capability-对比分析.md)
+  Defuddle（mirro-desktop 生产实现）与 Browser Capability Layer 的逐能力对比、差异分析和整合建议。
+
 ## 推荐阅读顺序
 
 1. 先读“设计”
