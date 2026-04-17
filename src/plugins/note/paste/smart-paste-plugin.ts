@@ -85,9 +85,9 @@ function pasteIsSafe(state: import('prosemirror-state').EditorState, tr: import(
     // 如果 depth 减小了，说明有祖先节点被删除
     if ($mapped.depth < $from.depth) return false;
     // 检查每层祖先类型是否一致
-    for (let d = 1; d < ancestorTypes.length; d++) {
+    for (let d = 1; d <= ancestorTypes.length; d++) {
       if (d > $mapped.depth) return false;
-      if ($mapped.node(d).type.name !== ancestorTypes[d]) return false;
+      if ($mapped.node(d).type.name !== ancestorTypes[d - 1]) return false;
     }
   } catch {
     // resolve 失败说明位置无效，文档结构被破坏
@@ -163,6 +163,12 @@ export function smartPastePlugin(): Plugin {
             const tr = view.state.tr.replaceSelection(slice).scrollIntoView();
             if (pasteIsSafe(view.state, tr)) {
               view.dispatch(tr);
+            } else {
+              // slice 会破坏容器结构（如 caption 内粘贴），降级为纯文本插入
+              const text = slice.content.textBetween(0, slice.content.size, '\n\n');
+              if (text) {
+                view.dispatch(view.state.tr.insertText(text).scrollIntoView());
+              }
             }
             return true;
           }
@@ -173,7 +179,6 @@ export function smartPastePlugin(): Plugin {
           html: cd.getData('text/html') || '',
           hasImage: Array.from(cd.items).some(it => it.kind === 'file' && it.type.startsWith('image/')),
         };
-
         // Let paste-media handle pure-image payloads. (Word/Excel sends
         // a PNG alongside HTML; paste-media itself already defers to
         // us in that case — see paste-media.ts.)
@@ -230,6 +235,12 @@ export function smartPastePlugin(): Plugin {
             }
             if (pasteIsSafe(state, tr)) {
               view.dispatch(tr);
+            } else {
+              // block slice 会破坏容器结构（如 caption），降级为纯文本插入
+              const text = fragment.textBetween(0, fragment.size, '\n\n');
+              if (text) {
+                view.dispatch(state.tr.insertText(text).scrollIntoView());
+              }
             }
           } catch (err) {
             console.warn('[smart-paste] PM insert failed:', err);
@@ -293,6 +304,9 @@ function insertAsPlainText(view: any, text: string) {
   }
   if (pasteIsSafe(state, tr)) {
     view.dispatch(tr);
+  } else {
+    // block nodes 会破坏容器结构（如 caption），降级为 insertText
+    view.dispatch(state.tr.insertText(text).scrollIntoView());
   }
 }
 
