@@ -4,10 +4,9 @@ import { getArtifactPostMessageHookScript } from '../../web-bridge/injection/inj
 import { getDomToMarkdownScript } from '../../web-bridge/injection/inject-scripts/dom-to-markdown';
 import { SlotToggle } from '../../../shared/components/SlotToggle';
 import { WebViewContextMenu, type ContextMenuItem, type MenuContext } from '../context-menu';
-import { countArtifactPlaceholders, extractClaudeConversation } from '../../web-bridge/capabilities/claude-api-extractor';
+import { extractClaudeConversation } from '../../web-bridge/capabilities/claude-api-extractor';
 import { extractContent as extractChatGPTContent } from '../../web-bridge/capabilities/chatgpt-content-extractor';
 import { extractContent as extractGeminiContent } from '../../web-bridge/capabilities/gemini-content-extractor';
-import { downloadClaudeIframeArtifact } from '../../web-bridge/capabilities/claude-artifact-download';
 import {
   getAIServiceProfile,
   getAIServiceList,
@@ -16,8 +15,7 @@ import {
 } from '../../../shared/types/ai-service-types';
 import type { AIServiceId } from '../../../shared/types/ai-service-types';
 import { WEBVIEW_PARTITION } from '../../../shared/constants/webview-partition';
-import { processClaudeArtifactsFull, processClaudeArtifactsLive } from '../../ai-note-bridge';
-import { downloadClaudeCardArtifact } from '../../web-bridge/capabilities/claude-artifact-download';
+import { processClaudeArtifactsLive } from '../../ai-note-bridge';
 import '../web.css';
 
 declare const viewAPI: {
@@ -63,6 +61,29 @@ declare const viewAPI: {
   wbCaptureGuestRects: (rects: Array<{ x: number; y: number; width: number; height: number }>) => Promise<{
     success: boolean;
     items?: Array<{ index: number; mimeType: string; contentBase64: string; width: number; height: number }>;
+    error?: string;
+  }>;
+  browserCapabilityDebugLog: (payload: unknown) => Promise<{ success: boolean; pageId?: string; error?: string }>;
+  browserCapabilityExtractTurn: (params: { msgIndex: number }) => Promise<{
+    success: boolean;
+    index?: number;
+    userMessage?: string;
+    markdown?: string;
+    timestamp?: string;
+    artifactCount?: number;
+    error?: string;
+  }>;
+  browserCapabilityExtractFull: () => Promise<{
+    success: boolean;
+    title?: string;
+    model?: string;
+    turns?: Array<{
+      index: number;
+      userMessage: string;
+      markdown: string;
+      timestamp?: string;
+      artifactCount: number;
+    }>;
     error?: string;
   }>;
   closeSlot: () => void;
@@ -206,138 +227,6 @@ function loadLastService(): AIServiceId {
   return DEFAULT_AI_SERVICE;
 }
 
-function relocateTrailingAttachmentSection(
-  markdown: string,
-  artifactProbe: Array<any>,
-): string {
-  if (!markdown || !Array.isArray(artifactProbe) || artifactProbe.length === 0) return markdown;
-  const hasDownloadCard = artifactProbe.some((entry) =>
-    entry &&
-    entry.form === 'card' &&
-    entry.downloadButton &&
-    (
-      String(entry.downloadButton.text || '').toLowerCase().includes('download') ||
-      String(entry.downloadButton.ariaLabel || '').toLowerCase().includes('download')
-    ),
-  );
-  if (!hasDownloadCard) return markdown;
-
-  const normalized = markdown.replace(/\r\n/g, '\n');
-  const sectionPattern =
-    /(?:^|\n)(###\s+.*附件[^\n]*\n)(> \[!note\][\s\S]*?> \[在 Claude 中查看原图\]\([^)]+\)\n)(?:\n?---\n)([\s\S]*)$/m;
-  const match = normalized.match(sectionPattern);
-  if (!match) return markdown;
-
-  const headingBlock = match[1].trimEnd();
-  const calloutBlock = match[2].trimEnd();
-  const trailing = match[3].trim();
-  if (!trailing) return markdown;
-
-  const before = normalized.slice(0, match.index).replace(/\s+$/, '');
-  return [
-    before,
-    '---',
-    headingBlock,
-    '---',
-    trailing,
-    '---',
-    calloutBlock,
-  ].filter(Boolean).join('\n\n');
-}
-
-function normalizeFenceLanguage(raw: string): string {
-  const lang = (raw || '').trim().toLowerCase();
-  if (!lang) return 'text';
-  if (lang === 'js' || lang === 'javascript') return 'javascript';
-  if (lang === 'ts') return 'typescript';
-  if (lang === 'py') return 'python';
-  if (lang === 'md') return 'markdown';
-  return lang;
-}
-
-function bytesToDataUrl(bytes: Uint8Array, mime: string): string {
-  let binary = '';
-  const chunk = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunk) {
-    binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + chunk)));
-  }
-  return `data:${mime};base64,${btoa(binary)}`;
-}
-
-async function downloadToMarkdownPiece(
-  dl: Awaited<ReturnType<typeof downloadClaudeCardArtifact>>,
-): Promise<string> {
-  const filename = (dl.filename || dl.title || 'attachment').replace(/[\]\r\n]+/g, ' ').trim();
-  const mime = dl.mime || 'application/octet-stream';
-  const dataUrl = bytesToDataUrl(dl.bytes, mime);
-  const stored = await viewAPI.mediaPutBase64(dataUrl, mime, filename);
-  if (stored?.success && stored.mediaUrl) {
-    return `!attach[${filename}](${stored.mediaUrl})`;
-  }
-  return `!attach[${filename}](${dataUrl})`;
-}
-
-function replaceTrailingAttachmentCallout(
-  markdown: string,
-  replacement: string,
-): string {
-  if (!markdown || !replacement.trim()) return markdown;
-  const normalized = markdown.replace(/\r\n/g, '\n');
-  const pattern =
-    /\n\n---\n\n(> \[!note\][\s\S]*?> \[在 Claude 中查看原图\]\([^)]+\))\s*$/m;
-  if (!pattern.test(normalized)) return markdown;
-  return normalized.replace(pattern, `\n\n---\n\n${replacement.trim()}\n`);
-}
-
-function pickDownloadCardProbe(artifactProbe: Array<any>): any | null {
-  if (!Array.isArray(artifactProbe) || artifactProbe.length === 0) return null;
-  const candidates = artifactProbe.filter((entry) => {
-    if (!entry || entry.form !== 'card' || typeof entry.ordinal !== 'number') return false;
-    const downloadText = String(entry.downloadButton?.text || '').toLowerCase();
-    const downloadAria = String(entry.downloadButton?.ariaLabel || '').toLowerCase();
-    return downloadText.includes('download') || downloadAria.includes('download');
-  });
-  if (candidates.length === 0) return null;
-  candidates.sort((a, b) => {
-    const ab = typeof a.bottom === 'number' ? a.bottom : 0;
-    const bb = typeof b.bottom === 'number' ? b.bottom : 0;
-    return bb - ab;
-  });
-  return candidates[0];
-}
-
-function pickIframeProbes(artifactProbe: Array<any>): any[] {
-  if (!Array.isArray(artifactProbe) || artifactProbe.length === 0) return [];
-  return artifactProbe
-    .filter((entry) => entry && entry.form === 'iframe' && typeof entry.ordinal === 'number')
-    .sort((a, b) => {
-      const ao = typeof a.ordinal === 'number' ? a.ordinal : 999999;
-      const bo = typeof b.ordinal === 'number' ? b.ordinal : 999999;
-      return ao - bo;
-    });
-}
-
-function replaceLeadingArtifactCallouts(
-  markdown: string,
-  replacements: string[],
-): string {
-  if (!markdown || !Array.isArray(replacements) || replacements.length === 0) return markdown;
-  const normalized = markdown.replace(/\r\n/g, '\n');
-  const pattern = /> \[!note\][\s\S]*?> \[在 Claude 中查看原图\]\([^)]+\)/g;
-  let idx = 0;
-  return normalized.replace(pattern, (match) => {
-    if (idx >= replacements.length) return match;
-    const next = replacements[idx++];
-    return next && next.trim() ? next.trim() : match;
-  });
-}
-
-function iframeDownloadToMarkdownPiece(
-  dl: Awaited<ReturnType<typeof downloadClaudeIframeArtifact>>,
-): string {
-  return `![Claude Artifact](${bytesToDataUrl(dl.bytes, dl.mime || 'image/svg+xml')})`;
-}
-
 async function listClaudeIsolatedSegmentUrls(webview: Electron.WebviewTag): Promise<string[]> {
   try {
     const result = await webview.executeJavaScript(`
@@ -345,61 +234,14 @@ async function listClaudeIsolatedSegmentUrls(webview: Electron.WebviewTag): Prom
         return Array.from(document.querySelectorAll('iframe')).map(function(el) {
           return String(el.getAttribute('src') || el.src || '');
         }).filter(function(src) {
-          return src.indexOf('isolated-segment.html') >= 0;
+          return src.indexOf('claudemcpcontent.com/mcp_apps') >= 0 ||
+            src.indexOf('isolated-segment.html') >= 0;
         });
       })()
     `);
     return Array.isArray(result) ? result.filter((x) => typeof x === 'string' && x) : [];
   } catch {
     return [];
-  }
-}
-
-async function getClaudeVisualSectionRect(
-  webview: Electron.WebviewTag,
-  heading: string,
-): Promise<{ heading: string; x: number; y: number; width: number; height: number } | null> {
-  try {
-    const result = await webview.executeJavaScript(`
-      (function() {
-        var label = ${JSON.stringify(heading)};
-        var headingNodes = Array.from(document.querySelectorAll('h1,h2,h3,h4,h5,h6,[role="heading"]'));
-        var h = headingNodes.find(function(node) {
-          return String(node.innerText || node.textContent || '').indexOf(label) >= 0;
-        });
-        if (!h) return null;
-        try {
-          window.__krigAllowProgrammaticScroll = true;
-          h.scrollIntoView({ block: 'start', behavior: 'instant' });
-          window.__krigAllowProgrammaticScroll = false;
-        } catch (e) {}
-        var startRect = h.getBoundingClientRect();
-        var startY = Math.max(0, Math.round(startRect.bottom + 8));
-        var next = null;
-        for (var i = 0; i < headingNodes.length; i++) {
-          var node = headingNodes[i];
-          if (node === h) continue;
-          var nr = node.getBoundingClientRect();
-          if (nr.top > startRect.top + 40) {
-            next = nr;
-            break;
-          }
-        }
-        var endY = next ? Math.round(next.top - 8) : Math.round(window.innerHeight - 24);
-        var width = Math.max(1, Math.round(window.innerWidth - 48));
-        var height = Math.max(1, endY - startY);
-        return {
-          heading: label,
-          x: 24,
-          y: startY,
-          width: width,
-          height: height,
-        };
-      })()
-    `);
-    return result && typeof result === 'object' ? result : null;
-  } catch {
-    return null;
   }
 }
 
@@ -410,6 +252,8 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
   const [loading, setLoading] = useState(true);
   const [showServiceMenu, setShowServiceMenu] = useState(false);
   const [aiStatus, setAiStatus] = useState<'idle' | 'injecting' | 'waiting' | 'capturing'>('idle');
+  const [artifactDownloadBusy, setArtifactDownloadBusy] = useState(false);
+  const [artifactDownloadStatus, setArtifactDownloadStatus] = useState('');
   const [isExtractionLocked, setIsExtractionLocked] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -542,7 +386,8 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
         if (!node || node.tagName !== 'IFRAME') return false;
         var src = String(node.getAttribute('src') || node.src || '');
         if (!src) return false;
-        if (src.indexOf('isolated-segment.html') < 0) return false;
+        if (src.indexOf('claudemcpcontent.com/mcp_apps') < 0 &&
+            src.indexOf('isolated-segment.html') < 0) return false;
         var rect = node.getBoundingClientRect ? node.getBoundingClientRect() : null;
         if (rect && rect.width <= 2 && rect.height <= 2) return false;
         return true;
@@ -699,7 +544,8 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
               if (!node || node.tagName !== 'IFRAME') return false;
               var src = String(node.getAttribute('src') || node.src || '');
               if (!src) return false;
-              if (src.indexOf('isolated-segment.html') < 0) return false;
+              if (src.indexOf('claudemcpcontent.com/mcp_apps') < 0 &&
+                  src.indexOf('isolated-segment.html') < 0) return false;
               var rect = node.getBoundingClientRect ? node.getBoundingClientRect() : null;
               if (rect && rect.width <= 2 && rect.height <= 2) return false;
               return true;
@@ -716,8 +562,9 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
             });
             return merged;
           }
-          // Mirror the DevTools-verified enumeration path:
-          // 1 top-level download card + all isolated-segment artifact iframes, merged in document order.
+          // Mirror the current Claude enumeration path:
+          // top-level download cards + artifact iframes (mcp_apps / legacy isolated-segment),
+          // merged in document order.
           var merged = buildMerged();
           var allIframeDebug = Array.from(document.querySelectorAll('iframe')).map(function(el, idx) {
             var rect = el.getBoundingClientRect();
@@ -805,69 +652,6 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
     }
   }, []);
 
-  const freezeViewport = useCallback(async (webview: Electron.WebviewTag) => {
-    try {
-      await webview.executeJavaScript(`
-        (function() {
-          if (window.__krigFreezeViewport) return;
-          var sx = window.scrollX || window.pageXOffset || 0;
-          var sy = window.scrollY || window.pageYOffset || 0;
-          var orig = {
-            scrollTo: window.scrollTo,
-            scrollBy: window.scrollBy,
-            scrollIntoView: Element.prototype.scrollIntoView,
-          };
-          window.__krigFreezeViewport = { sx: sx, sy: sy, orig: orig };
-          window.__krigAllowProgrammaticScroll = false;
-          window.scrollTo = function() {
-            if (window.__krigAllowProgrammaticScroll) {
-              return orig.scrollTo.apply(window, arguments);
-            }
-          };
-          window.scrollBy = function() {
-            if (window.__krigAllowProgrammaticScroll) {
-              return orig.scrollBy.apply(window, arguments);
-            }
-          };
-          Element.prototype.scrollIntoView = function() {
-            if (window.__krigAllowProgrammaticScroll) {
-              return orig.scrollIntoView.apply(this, arguments);
-            }
-          };
-          var root = document.scrollingElement || document.documentElement || document.body;
-          if (root) root.style.scrollBehavior = 'auto';
-          document.documentElement.style.overscrollBehavior = 'none';
-          document.body.style.overscrollBehavior = 'none';
-          document.documentElement.style.overflow = 'hidden';
-          document.body.style.overflow = 'hidden';
-          window.addEventListener('scroll', function() { orig.scrollTo.call(window, sx, sy); }, true);
-          orig.scrollTo.call(window, sx, sy);
-        })()
-      `).catch(() => {});
-    } catch {}
-  }, []);
-
-  const restoreViewport = useCallback(async (webview: Electron.WebviewTag) => {
-    try {
-      await webview.executeJavaScript(`
-        (function() {
-          var frozen = window.__krigFreezeViewport;
-          if (!frozen) return;
-          window.scrollTo = frozen.orig.scrollTo;
-          window.scrollBy = frozen.orig.scrollBy;
-          Element.prototype.scrollIntoView = frozen.orig.scrollIntoView;
-          delete window.__krigAllowProgrammaticScroll;
-          document.documentElement.style.overscrollBehavior = '';
-          document.body.style.overscrollBehavior = '';
-          document.documentElement.style.overflow = '';
-          document.body.style.overflow = '';
-          frozen.orig.scrollTo.call(window, frozen.sx, frozen.sy);
-          delete window.__krigFreezeViewport;
-        })()
-      `).catch(() => {});
-    } catch {}
-  }, []);
-
   const cdpStartedRef = useRef(false);
 
   /**
@@ -912,318 +696,30 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
       let markdown = '';
 
       if (profile.id === 'claude') {
-        const resolvedTurn = await resolveClaudeTurnFromApi(
-          webview,
-          msgIndex,
-          (ctx as MenuContext & { preview?: string }).preview || '',
-        );
-        if (!resolvedTurn) return;
-        userMessage = resolvedTurn.userMessage;
-        markdown = resolvedTurn.baseMarkdown;
-        await viewAPI.aiExtractionCacheWrite({
-          extractionId,
-          stage: 'base',
-          serviceId: profile.id,
-          url,
-          msgIndex,
-          preview: (ctx as MenuContext & { preview?: string }).preview || '',
-          userMessage,
-          markdown,
-          meta: {
-            artifactOrdinal: (ctx as MenuContext & { artifactOrdinal?: number | null }).artifactOrdinal ?? null,
-          },
-        }).catch(() => {});
-        try {
-          await viewAPI.aiExtractionCacheWrite({
-            extractionId,
-            stage: 'artifact-enter',
-            serviceId: profile.id,
-            url,
+        // Try browser-capability extraction first (has full artifact content)
+        const capResult = await viewAPI.browserCapabilityExtractTurn({ msgIndex });
+        if (capResult.success && capResult.markdown) {
+          userMessage = capResult.userMessage ?? '';
+          markdown = capResult.markdown;
+          console.log('[AIWebView Extract] capability-based extraction succeeded', {
             msgIndex,
-            preview: (ctx as MenuContext & { preview?: string }).preview || '',
-            userMessage,
-            markdown,
-            meta: {
-              artifactOrdinal: (ctx as MenuContext & { artifactOrdinal?: number | null }).artifactOrdinal ?? null,
-            },
-          }).catch(() => {});
-          await withTimeout(freezeViewport(webview), 3_000, 'freezeViewport');
-          await viewAPI.aiExtractionCacheWrite({
-            extractionId,
-            stage: 'artifact-frozen',
-            serviceId: profile.id,
-            url,
+            artifactCount: capResult.artifactCount,
+          });
+        } else {
+          // Fallback: API extraction without artifact content
+          console.log('[AIWebView Extract] capability fallback to API extraction', {
             msgIndex,
-            preview: (ctx as MenuContext & { preview?: string }).preview || '',
-            userMessage,
-            markdown,
-            meta: {
-              artifactOrdinal: (ctx as MenuContext & { artifactOrdinal?: number | null }).artifactOrdinal ?? null,
-            },
-          }).catch(() => {});
-          await viewAPI.aiExtractionCacheWrite({
-            extractionId,
-            stage: 'artifact-bypassed',
-            serviceId: profile.id,
-            url,
+            capError: capResult.error,
+          });
+          const resolvedTurn = await resolveClaudeTurnFromApi(
+            webview,
             msgIndex,
-            preview: (ctx as MenuContext & { preview?: string }).preview || '',
-            userMessage,
-            markdown,
-            meta: {
-              artifactOrdinal: (ctx as MenuContext & { artifactOrdinal?: number | null }).artifactOrdinal ?? null,
-              reason: 'temporary-bypass-for-hang-debug',
-            },
-          }).catch(() => {});
-          const expectedArtifactCount = countArtifactPlaceholders(markdown);
-          const artifactProbe = await probeClaudeArtifactsInScope(webview, expectedArtifactCount > 0 ? expectedArtifactCount : 0);
-          await viewAPI.aiExtractionCacheWrite({
-            extractionId,
-            stage: 'artifact-probe',
-            serviceId: profile.id,
-            url,
-            msgIndex,
-            preview: (ctx as MenuContext & { preview?: string }).preview || '',
-            userMessage,
-            markdown,
-            meta: {
-              artifactOrdinal: (ctx as MenuContext & { artifactOrdinal?: number | null }).artifactOrdinal ?? null,
-              expectedArtifactCount,
-              candidates: Array.isArray(artifactProbe) ? artifactProbe.length : 0,
-              probe: artifactProbe,
-            },
-          }).catch(() => {});
+            (ctx as MenuContext & { preview?: string }).preview || '',
+          );
+          if (!resolvedTurn) return;
+          userMessage = resolvedTurn.userMessage;
+          markdown = resolvedTurn.baseMarkdown;
           markdown = processClaudeArtifactsLive(markdown, url);
-          markdown = relocateTrailingAttachmentSection(markdown, Array.isArray(artifactProbe) ? artifactProbe : []);
-          const iframeProbes = pickIframeProbes(Array.isArray(artifactProbe) ? artifactProbe : []);
-          if (iframeProbes.length > 0) {
-            const iframePieces: string[] = [];
-            for (const iframeProbe of iframeProbes.slice(0, 2)) {
-              try {
-                const dl = await withTimeout(
-                  downloadClaudeIframeArtifact(
-                    webview,
-                    viewAPI,
-                    { ordinal: iframeProbe.ordinal },
-                    { format: 'svg', timeout: 6_000 },
-                  ),
-                  8_000,
-                  'downloadClaudeIframeArtifact',
-                );
-                iframePieces.push(iframeDownloadToMarkdownPiece(dl));
-              } catch (iframeErr) {
-                await viewAPI.aiExtractionCacheWrite({
-                  extractionId,
-                  stage: 'artifact-iframe-download-failed',
-                  serviceId: profile.id,
-                  url,
-                  msgIndex,
-                  preview: (ctx as MenuContext & { preview?: string }).preview || '',
-                  userMessage,
-                  markdown,
-                  meta: {
-                    artifactOrdinal: iframeProbe.ordinal,
-                    error: iframeErr instanceof Error ? iframeErr.message : String(iframeErr),
-                  },
-                }).catch(() => {});
-              }
-            }
-            if (iframePieces.length > 0) {
-              markdown = replaceLeadingArtifactCallouts(markdown, iframePieces);
-              await viewAPI.aiExtractionCacheWrite({
-                extractionId,
-                stage: 'artifact-iframe-download-done',
-                serviceId: profile.id,
-                url,
-                msgIndex,
-                preview: (ctx as MenuContext & { preview?: string }).preview || '',
-                userMessage,
-                markdown,
-                meta: {
-                  ordinals: iframeProbes.slice(0, iframePieces.length).map((entry) => entry.ordinal),
-                  pieces: iframePieces.length,
-                },
-              }).catch(() => {});
-            }
-          }
-          if (iframeProbes.length === 0) {
-            try {
-              const headings = ['2. SVG', '3. 流程图'];
-              const sectionRects: Array<{ heading: string; x: number; y: number; width: number; height: number }> = [];
-              const iframePieces: string[] = [];
-
-              for (const heading of headings) {
-                const rect = await getClaudeVisualSectionRect(webview, heading);
-                if (!rect) continue;
-                sectionRects.push(rect);
-
-                const captured = await withTimeout(
-                  viewAPI.wbCaptureGuestRects([
-                    { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
-                  ]),
-                  12_000,
-                  `wbCaptureGuestRects:${heading}`,
-                );
-
-                if (captured?.success && Array.isArray(captured.items) && captured.items.length > 0) {
-                  const item = captured.items[0];
-                  iframePieces.push(`![Claude Artifact](data:${item.mimeType || 'image/png'};base64,${item.contentBase64})`);
-                }
-              }
-
-              if (sectionRects.length === 0) {
-                await viewAPI.aiExtractionCacheWrite({
-                  extractionId,
-                  stage: 'artifact-isolated-capture-failed',
-                  serviceId: profile.id,
-                  url,
-                  msgIndex,
-                  preview: (ctx as MenuContext & { preview?: string }).preview || '',
-                  userMessage,
-                  markdown,
-                  meta: { error: 'no-section-rects' },
-                }).catch(() => {});
-              } else if (iframePieces.length > 0) {
-                markdown = replaceLeadingArtifactCallouts(markdown, iframePieces);
-                await viewAPI.aiExtractionCacheWrite({
-                  extractionId,
-                  stage: 'artifact-isolated-capture-done',
-                  serviceId: profile.id,
-                  url,
-                  msgIndex,
-                  preview: (ctx as MenuContext & { preview?: string }).preview || '',
-                  userMessage,
-                  markdown,
-                  meta: {
-                    count: iframePieces.length,
-                    rects: sectionRects,
-                  },
-                }).catch(() => {});
-              } else {
-                await viewAPI.aiExtractionCacheWrite({
-                  extractionId,
-                  stage: 'artifact-isolated-capture-failed',
-                  serviceId: profile.id,
-                  url,
-                  msgIndex,
-                  preview: (ctx as MenuContext & { preview?: string }).preview || '',
-                  userMessage,
-                  markdown,
-                  meta: {
-                    rects: sectionRects,
-                    error: 'no-items',
-                  },
-                }).catch(() => {});
-              }
-            } catch (isolatedErr) {
-              await viewAPI.aiExtractionCacheWrite({
-                extractionId,
-                stage: 'artifact-isolated-capture-failed',
-                serviceId: profile.id,
-                url,
-                msgIndex,
-                preview: (ctx as MenuContext & { preview?: string }).preview || '',
-                userMessage,
-                markdown,
-                meta: {
-                  error: isolatedErr instanceof Error ? isolatedErr.message : String(isolatedErr),
-                },
-              }).catch(() => {});
-            }
-          }
-          const downloadCardProbe = pickDownloadCardProbe(Array.isArray(artifactProbe) ? artifactProbe : []);
-          if (downloadCardProbe && typeof downloadCardProbe.ordinal === 'number') {
-            try {
-              const dl = await withTimeout(
-                downloadClaudeCardArtifact(
-                  webview,
-                  viewAPI,
-                  { ordinal: downloadCardProbe.ordinal },
-                  { timeout: 6_000 },
-                ),
-                8_000,
-                'downloadClaudeCardArtifact',
-              );
-              markdown = replaceTrailingAttachmentCallout(markdown, await downloadToMarkdownPiece(dl));
-              await viewAPI.aiExtractionCacheWrite({
-                extractionId,
-                stage: 'artifact-card-download-done',
-                serviceId: profile.id,
-                url,
-                msgIndex,
-                preview: (ctx as MenuContext & { preview?: string }).preview || '',
-                userMessage,
-                markdown,
-                meta: {
-                  artifactOrdinal: downloadCardProbe.ordinal,
-                  filename: dl.filename,
-                  mime: dl.mime,
-                  kind: dl.kind,
-                  title: dl.title,
-                },
-              }).catch(() => {});
-            } catch (cardErr) {
-              await viewAPI.aiExtractionCacheWrite({
-                extractionId,
-                stage: 'artifact-card-download-failed',
-                serviceId: profile.id,
-                url,
-                msgIndex,
-                preview: (ctx as MenuContext & { preview?: string }).preview || '',
-                userMessage,
-                markdown,
-                meta: {
-                  artifactOrdinal: downloadCardProbe.ordinal,
-                  error: cardErr instanceof Error ? cardErr.message : String(cardErr),
-                },
-              }).catch(() => {});
-            }
-          }
-          await viewAPI.aiExtractionCacheWrite({
-            extractionId,
-            stage: 'artifact-live-done',
-            serviceId: profile.id,
-            url,
-            msgIndex,
-            preview: (ctx as MenuContext & { preview?: string }).preview || '',
-            userMessage,
-            markdown,
-            meta: {
-              artifactOrdinal: (ctx as MenuContext & { artifactOrdinal?: number | null }).artifactOrdinal ?? null,
-            },
-          }).catch(() => {});
-        } catch (artifactErr) {
-          console.warn('[AIWebView Extract] Artifact processing fallback:', artifactErr);
-          markdown = processClaudeArtifactsLive(markdown, url);
-          await viewAPI.aiExtractionCacheWrite({
-            extractionId,
-            stage: 'artifact-timeout-fallback',
-            serviceId: profile.id,
-            url,
-            msgIndex,
-            preview: (ctx as MenuContext & { preview?: string }).preview || '',
-            userMessage,
-            markdown,
-            meta: {
-              artifactOrdinal: (ctx as MenuContext & { artifactOrdinal?: number | null }).artifactOrdinal ?? null,
-              error: artifactErr instanceof Error ? artifactErr.message : String(artifactErr),
-            },
-          }).catch(() => {});
-        } finally {
-          await viewAPI.aiExtractionCacheWrite({
-            extractionId,
-            stage: 'cleanup-bypassed',
-            serviceId: profile.id,
-            url,
-            msgIndex,
-            preview: (ctx as MenuContext & { preview?: string }).preview || '',
-            userMessage,
-            markdown,
-            meta: {
-              artifactOrdinal: (ctx as MenuContext & { artifactOrdinal?: number | null }).artifactOrdinal ?? null,
-              reason: 'temporary-cleanup-bypass-for-hang-debug',
-            },
-          }).catch(() => {});
         }
       } else if (profile.id === 'chatgpt') {
         const c = await extractChatGPTContent(webview, viewAPI as any);
@@ -1588,6 +1084,13 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
     aiStatus === 'waiting' ? 'AI 回复中...' :
     '提取中...';
 
+  // Phase B will implement this via browser-capability artifact data.
+  const triggerClaudeArtifactDownloads = useCallback(async () => {
+    setArtifactDownloadBusy(true);
+    setArtifactDownloadStatus('Artifact 下载功能正在迁移中...');
+    setTimeout(() => setArtifactDownloadBusy(false), 2000);
+  }, []);
+
   return (
     <div className="web-view">
       {/* AI Toolbar — no URL bar */}
@@ -1634,8 +1137,31 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
         {statusText && (
           <span style={{ color: '#6366f1', fontSize: 12, fontWeight: 500 }}>{statusText}</span>
         )}
+        {artifactDownloadStatus && (
+          <span style={{ color: '#8ab4f8', fontSize: 12 }}>{artifactDownloadStatus}</span>
+        )}
 
         <div style={{ flex: 1 }} />
+
+        {currentService === 'claude' && (
+          <button
+            style={{
+              background: artifactDownloadBusy ? '#2d4a7a' : '#1f3b64',
+              border: '1px solid #335a92',
+              borderRadius: 6,
+              color: '#e8eaed',
+              fontSize: 12,
+              padding: '4px 10px',
+              cursor: artifactDownloadBusy ? 'default' : 'pointer',
+              opacity: artifactDownloadBusy ? 0.7 : 1,
+            }}
+            onClick={() => { if (!artifactDownloadBusy) void triggerClaudeArtifactDownloads(); }}
+            title="手动触发当前 Claude 页当前可见 Artifact 的下载"
+            disabled={artifactDownloadBusy}
+          >
+            {artifactDownloadBusy ? '下载中...' : '下载全部 Artifacts'}
+          </button>
+        )}
 
         {/* Open view in right slot (Note / eBook / Web / Thought) */}
         <SlotToggle />

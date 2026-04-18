@@ -75,12 +75,14 @@ export const imageConverter: AtomConverter = {
   pmType: 'image',
 
   toAtom(node: PMNode, parentId?: string): Atom {
+    // caption 是子节点 textBlock 的文字内容，不是 attr
+    const captionText = node.firstChild?.textContent || undefined;
     return createAtom('image', {
       src: node.attrs.src || '',
       alt: node.attrs.alt || undefined,
       width: node.attrs.width || undefined,
       height: node.attrs.height || undefined,
-      caption: node.attrs.caption || undefined,
+      caption: captionText,
     } as ImageContent, parentId);
   },
 

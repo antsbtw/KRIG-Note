@@ -345,6 +345,10 @@ export const IPC = {
   WB_FETCH_BINARY: 'wb:fetch-binary',                 // renderer → main：main 进程 fetch URL（绕过 CORS / 页面 CSP），返回 base64 + mime（Gemini Imagen 图像下载用）
   WB_CAPTURE_ISOLATED_SEGMENT: 'wb:capture-isolated-segment', // renderer → main：隐藏窗口加载 Claude isolated-segment 页面并截图内部可见 mcp iframe
   WB_CAPTURE_GUEST_RECTS: 'wb:capture-guest-rects', // renderer → main：对当前 sender 对应的 guest webContents 按矩形截图
+  BROWSER_CAPABILITY_DOWNLOAD_CLAUDE_ARTIFACTS: 'browser-capability:download-claude-artifacts', // renderer → main：手动触发当前 Claude 页可下载 artifact 的自动下载
+  BROWSER_CAPABILITY_DEBUG_LOG: 'browser-capability:debug-log', // renderer → main：写入 browser-capability 调试日志
+  BROWSER_CAPABILITY_EXTRACT_TURN: 'browser-capability:extract-turn', // renderer → main：从 conversation 数据提取单条 turn（含 artifact 内容）
+  BROWSER_CAPABILITY_EXTRACT_FULL: 'browser-capability:extract-full', // renderer → main：从 conversation 数据提取完整对话
 
   // yt-dlp
   YTDLP_CHECK_STATUS: 'ytdlp:check-status',

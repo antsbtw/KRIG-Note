@@ -30,10 +30,14 @@ function resourceTypesMatch(left: string | undefined, right: string | undefined)
  * This is the minimal execution core behind IBrowserNetworkAPI.
  */
 export class NetworkEventBus implements IBrowserNetworkAPI {
+  private static readonly MAX_REQUESTS_PER_PAGE = 500;
+  private static readonly MAX_RESPONSE_BODIES = 256;
+  private static readonly MAX_PROVIDER_REQUESTS = 1024;
   private subscriptions = new Map<string, Subscription>();
   private requests = new Map<string, NetworkRecord[]>();
   private responseBodies = new Map<string, Uint8Array>();
   private responseBodiesByRef = new Map<string, Uint8Array>();
+  private bodyRefsByRequestId = new Map<string, string>();
   private downloads = new Map<string, BrowserState['downloads']>();
   private providerRequests = new Map<string, {
     pageId: string;
@@ -95,9 +99,8 @@ export class NetworkEventBus implements IBrowserNetworkAPI {
         bodyBytes: input.body.byteLength,
       };
       list[i] = next;
-      this.requests.set(input.pageId, [...list]);
-      this.responseBodies.set(record.requestId, input.body);
-      this.responseBodiesByRef.set(input.bodyRef, input.body);
+      this.requests.set(input.pageId, this.limitRequests([...list]));
+      this.storeResponseBody(record.requestId, input.bodyRef, input.body);
       return record.requestId;
     }
     return null;
@@ -135,6 +138,7 @@ export class NetworkEventBus implements IBrowserNetworkAPI {
       binding.canonicalRequestId = canonicalRequestId;
     }
     this.providerRequests.set(key, binding);
+    this.pruneProviderRequests();
   }
 
   attachResponseBodyFromProvider(
@@ -192,14 +196,12 @@ export class NetworkEventBus implements IBrowserNetworkAPI {
         responseHeaders: input.responseHeaders ?? record.responseHeaders,
       };
     });
-    this.requests.set(pageId, next);
-    this.responseBodies.set(requestId, input.body);
-    this.responseBodiesByRef.set(input.bodyRef, input.body);
+    this.requests.set(pageId, this.limitRequests(next));
+    this.storeResponseBody(requestId, input.bodyRef, input.body);
   }
 
   storeDetachedResponseBody(requestId: string, bodyRef: string, body: Uint8Array): void {
-    this.responseBodies.set(requestId, body);
-    this.responseBodiesByRef.set(bodyRef, body);
+    this.storeResponseBody(requestId, bodyRef, body);
   }
 
   async waitForRequest(
@@ -283,7 +285,7 @@ export class NetworkEventBus implements IBrowserNetworkAPI {
       ? { ...record, providerRequestId: canonicalProviderRequestId }
       : record;
     const next = [...list.filter((item) => item.requestId !== record.requestId), nextRecord];
-    this.requests.set(record.pageId, next);
+    this.requests.set(record.pageId, this.limitRequests(next));
     this.emit({
       kind: 'request-start',
       pageId: nextRecord.pageId,
@@ -319,8 +321,8 @@ export class NetworkEventBus implements IBrowserNetworkAPI {
   recordResponseComplete(record: NetworkRecord, body?: Uint8Array): void {
     const list = this.requests.get(record.pageId) ?? [];
     const next = [...list.filter((item) => item.requestId !== record.requestId), record];
-    this.requests.set(record.pageId, next);
-    if (body) this.responseBodies.set(record.requestId, body);
+    this.requests.set(record.pageId, this.limitRequests(next));
+    if (body && record.bodyRef) this.storeResponseBody(record.requestId, record.bodyRef, body);
     this.emit({
       kind: 'response-complete',
       pageId: record.pageId,
@@ -362,8 +364,40 @@ export class NetworkEventBus implements IBrowserNetworkAPI {
         if (!url || !url.includes(subscription.urlIncludes)) continue;
       }
       void Promise.resolve(subscription.listener(event)).catch(() => {
-        // Keep event delivery isolated from subscriber failures.
+        console.warn('[BrowserCapability][Network] subscriber failed', {
+          pageId: event.pageId,
+          kind: event.kind,
+        });
       });
+    }
+  }
+
+  private limitRequests(records: NetworkRecord[]): NetworkRecord[] {
+    if (records.length <= NetworkEventBus.MAX_REQUESTS_PER_PAGE) return records;
+    return records.slice(-NetworkEventBus.MAX_REQUESTS_PER_PAGE);
+  }
+
+  private pruneProviderRequests(): void {
+    while (this.providerRequests.size > NetworkEventBus.MAX_PROVIDER_REQUESTS) {
+      const firstKey = this.providerRequests.keys().next().value;
+      if (!firstKey) break;
+      this.providerRequests.delete(firstKey);
+    }
+  }
+
+  private storeResponseBody(requestId: string, bodyRef: string, body: Uint8Array): void {
+    this.responseBodies.set(requestId, body);
+    this.responseBodiesByRef.set(bodyRef, body);
+    this.bodyRefsByRequestId.set(requestId, bodyRef);
+    while (this.responseBodies.size > NetworkEventBus.MAX_RESPONSE_BODIES) {
+      const oldestRequestId = this.responseBodies.keys().next().value;
+      if (!oldestRequestId) break;
+      this.responseBodies.delete(oldestRequestId);
+      const oldestBodyRef = this.bodyRefsByRequestId.get(oldestRequestId);
+      if (oldestBodyRef) {
+        this.responseBodiesByRef.delete(oldestBodyRef);
+      }
+      this.bodyRefsByRequestId.delete(oldestRequestId);
     }
   }
 

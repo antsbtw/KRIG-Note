@@ -19,5 +19,4 @@ export type {
 
 export {
   processClaudeArtifactsLive,
-  processClaudeArtifactsFull,
 } from './pipeline/claude-artifacts';

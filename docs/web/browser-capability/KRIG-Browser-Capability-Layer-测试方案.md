@@ -3,11 +3,23 @@
 > 文档类型：测试设计文档  
 > 关联文档：`KRIG-Browser-Capability-Layer-设计.md`  
 > 关联任务：`KRIG-Browser-Capability-Layer-实施任务清单.md`  
-> 状态：设计阶段 | 创建日期：2026-04-16 | 版本：v0.1
+> 状态：执行验证中 | 创建日期：2026-04-16 | 版本：v0.2
 
 ---
 
 ## 一、测试目标
+
+当前执行状态：
+
+- 目录化 trace 已成为当前第一类验证证据
+- Claude 页面已经验证通了：
+  - `conversation.json`
+  - `artifacts.json`
+  - `downloads.json`
+  - `frames.json`
+  - `anchors.json`
+  - `interactions.json`
+- 当前自动化 comparator 仍在规划中，现阶段以“目录化 trace + 人工核对 + 多轮回归”作为主验证方式
 
 Browser Capability Layer 的测试目标，不是只验证某个站点“代码能跑”，而是验证：
 

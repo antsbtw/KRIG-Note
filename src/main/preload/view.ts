@@ -306,6 +306,18 @@ contextBridge.exposeInMainWorld('viewAPI', {
   wbCaptureGuestRects: (rects: Array<{ x: number; y: number; width: number; height: number }>) =>
     ipcRenderer.invoke(IPC.WB_CAPTURE_GUEST_RECTS, rects),
 
+  browserCapabilityDownloadClaudeArtifacts: () =>
+    ipcRenderer.invoke(IPC.BROWSER_CAPABILITY_DOWNLOAD_CLAUDE_ARTIFACTS),
+
+  browserCapabilityDebugLog: (payload: unknown) =>
+    ipcRenderer.invoke(IPC.BROWSER_CAPABILITY_DEBUG_LOG, payload),
+
+  browserCapabilityExtractTurn: (params: { msgIndex: number }) =>
+    ipcRenderer.invoke(IPC.BROWSER_CAPABILITY_EXTRACT_TURN, params),
+
+  browserCapabilityExtractFull: () =>
+    ipcRenderer.invoke(IPC.BROWSER_CAPABILITY_EXTRACT_FULL),
+
   aiExtractDebug: (params: { markdown: string; serviceId: string }) =>
     ipcRenderer.invoke(IPC.AI_EXTRACT_DEBUG, params),
 

@@ -19,7 +19,10 @@ export class LifecycleMonitor {
   emit(event: PageLifecycleEvent): void {
     for (const listener of Array.from(this.listeners)) {
       void Promise.resolve(listener(event)).catch(() => {
-        // Keep lifecycle delivery isolated from individual listener failures.
+        console.warn('[BrowserCapability][Lifecycle] listener failed', {
+          kind: event.kind,
+          pageId: event.pageId,
+        });
       });
     }
   }

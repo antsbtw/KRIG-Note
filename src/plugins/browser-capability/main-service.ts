@@ -1,4 +1,4 @@
-import type { WebContents } from 'electron';
+import { webContents as electronWebContents, type WebContents } from 'electron';
 import type { DomAnchor, PageInteraction } from './types';
 import type { BrowserOwner, BrowserState, BrowserVisibility, FrameState, ReadyState } from './types';
 import { browserCapabilityTraceWriter } from './persistence';
@@ -31,6 +31,7 @@ const coreService = new BrowserCoreService(lifecycleMonitor);
 const networkService = new NetworkEventBus();
 
 const bindings = new Map<number, BindingRecord>();
+const anchorRefreshTimers = new Map<number, ReturnType<typeof setTimeout>[]>();
 
 function buildMainFrame(webContents: WebContents): FrameState {
   const url = safeGetURL(webContents);
@@ -91,13 +92,21 @@ function updateSnapshot(
 ): void {
   const pageId = getPageIdForWebContents(webContents);
   if (!pageId) return;
+  const currentState = pageRegistry.getPageState(pageId);
+  const resolvedUrl = typeof patch.url === 'string'
+    ? patch.url
+    : currentState?.url || safeGetURL(webContents);
   pageRegistry.updatePage(pageId, {
     title: safeGetTitle(webContents),
-    url: safeGetURL(webContents),
+    url: resolvedUrl,
     ...patch,
     ...(readyState ? { readyState } : {}),
   });
-  const frames = [buildMainFrame(webContents)];
+  const frames = [{
+    ...buildMainFrame(webContents),
+    url: resolvedUrl,
+    origin: safeGetOrigin(resolvedUrl),
+  }];
   pageRegistry.setFrames(pageId, frames);
   browserCapabilityTraceWriter.updateFrameSnapshot(pageId, frames);
 }
@@ -124,7 +133,8 @@ async function captureVisibleSurface(
         const anchors = iframes.map((el, index) => {
           const src = typeof el.src === 'string' ? el.src : '';
           const rect = rectOf(el);
-          const visible = rect.width > 0 && rect.height > 0;
+          const inViewportBand = rect.bottom > -64 && rect.top < (window.innerHeight + 64);
+          const visible = rect.width > 0 && rect.height > 0 && inViewportBand;
           const title = el.getAttribute('title') || el.getAttribute('aria-label') || '';
           return {
             anchorId: 'anchor:iframe:' + (index + 1),
@@ -226,10 +236,100 @@ async function captureVisibleSurface(
   }
 }
 
+function clearAnchorRefreshTimers(webContentsId: number): void {
+  const timers = anchorRefreshTimers.get(webContentsId);
+  if (!timers) return;
+  for (const timer of timers) {
+    clearTimeout(timer);
+  }
+  anchorRefreshTimers.delete(webContentsId);
+}
+
+/**
+ * 当检测到 Claude 对话页面时，主动 fetch conversation API 以获取完整对话数据。
+ * 解决：用户已在对话页面时 SPA 不会重新请求 API，导致 conversation.json 缺失的问题。
+ */
+async function probeClaudeConversation(webContents: WebContents): Promise<void> {
+  const pageId = getPageIdForWebContents(webContents);
+  if (!pageId || webContents.isDestroyed()) return;
+
+  const url = safeGetURL(webContents);
+  if (!url.includes('claude.ai/chat/')) return;
+
+  // 如果已经有 conversation.json，跳过
+  if (browserCapabilityTraceWriter.hasExtractedFile(pageId, 'conversation.json')) return;
+
+  try {
+    const result = await webContents.executeJavaScript(`
+      (async () => {
+        try {
+          const url = window.location.href;
+          const chatMatch = url.match(/\\/chat\\/([^/?#]+)/);
+          if (!chatMatch) return null;
+          const conversationId = chatMatch[1];
+
+          // 从已有 API 请求中推断 org ID
+          const orgMatch = document.cookie.match(/lastActiveOrg=([^;]+)/)
+            || document.querySelector('meta[name="organization-id"]')?.content;
+          let orgId = null;
+
+          // 从页面中的 API URL 推断
+          const scripts = document.querySelectorAll('script[src*="claude.ai"]');
+          // 更可靠的方式：从 fetch 拦截或已有请求中获取
+          // 直接尝试从 URL 路径中获取
+          const apiLinks = document.querySelectorAll('a[href*="/api/organizations/"]');
+          if (apiLinks.length > 0) {
+            const m = apiLinks[0].href.match(/\\/organizations\\/([^/]+)/);
+            if (m) orgId = m[1];
+          }
+
+          // 如果从 DOM 找不到，尝试从 performance entries 中找
+          if (!orgId) {
+            const entries = performance.getEntriesByType('resource');
+            for (const entry of entries) {
+              const m = entry.name.match(/claude\\.ai\\/api\\/organizations\\/([0-9a-f-]{36})/);
+              if (m) { orgId = m[1]; break; }
+            }
+          }
+
+          if (!orgId) return null;
+
+          const apiUrl = '/api/organizations/' + orgId + '/chat_conversations/' + conversationId
+            + '?tree=True&rendering_mode=messages&render_all_tools=true';
+          const resp = await fetch(apiUrl, { credentials: 'include' });
+          if (!resp.ok) return null;
+          const text = await resp.text();
+          return { apiUrl, text, status: resp.status };
+        } catch (e) {
+          return null;
+        }
+      })()
+    `);
+
+    if (!result?.text) return;
+
+    const bodyBytes = Buffer.from(result.text, 'utf8');
+    browserCapabilityTraceWriter.writeResponseBody({
+      pageId,
+      requestId: `probe:conversation:${Date.now()}`,
+      url: `https://claude.ai${result.apiUrl}`,
+      method: 'GET',
+      status: result.status,
+      mimeType: 'application/json',
+      resourceType: 'xhr',
+      body: bodyBytes,
+    });
+  } catch {
+    // 注入失败（页面已销毁、跨域等），静默忽略
+  }
+}
+
 function scheduleAnchorRefresh(webContents: WebContents): void {
+  clearAnchorRefreshTimers(webContents.id);
   const delays = [250, 1500, 4000];
+  const timers: ReturnType<typeof setTimeout>[] = [];
   for (const delay of delays) {
-    setTimeout(() => {
+    const timer = setTimeout(() => {
       if (webContents.isDestroyed()) return;
       const pageId = getPageIdForWebContents(webContents);
       if (!pageId) return;
@@ -242,9 +342,24 @@ function scheduleAnchorRefresh(webContents: WebContents): void {
             browserCapabilityTraceWriter.updateInteractionSnapshot(pageId, surface.interactions);
           }
         })
-        .catch(() => {});
+        .catch((error) => {
+          console.warn('[BrowserCapability][Runtime] anchor refresh failed', {
+            webContentsId: webContents.id,
+            pageId,
+            error,
+          });
+        });
     }, delay);
+    timers.push(timer);
   }
+  anchorRefreshTimers.set(webContents.id, timers);
+
+  // Claude 对话页面：在页面稳定后主动拉取 conversation 数据
+  const probeTimer = setTimeout(() => {
+    if (webContents.isDestroyed()) return;
+    void probeClaudeConversation(webContents);
+  }, 2000);
+  timers.push(probeTimer);
 }
 
 export const browserCapabilityServices = {
@@ -312,6 +427,7 @@ export function bindWebContentsPage(webContents: WebContents, input: BindPageInp
   });
 
   webContents.on('destroyed', () => {
+    clearAnchorRefreshTimers(webContents.id);
     bindings.delete(webContents.id);
     pageRegistry.destroyPage(pageId);
   });
@@ -321,6 +437,16 @@ export function bindWebContentsPage(webContents: WebContents, input: BindPageInp
 
 export function getPageIdForWebContents(webContents: WebContents): string | null {
   return bindings.get(webContents.id)?.pageId ?? null;
+}
+
+export function getWebContentsForPage(pageId: string): WebContents | null {
+  for (const [webContentsId, binding] of bindings.entries()) {
+    if (binding.pageId !== pageId) continue;
+    const instance = electronWebContents.fromId(webContentsId);
+    if (!instance || instance.isDestroyed()) return null;
+    return instance;
+  }
+  return null;
 }
 
 export function setWebContentsVisibility(webContents: WebContents, visibility: BrowserVisibility): void {

@@ -26,8 +26,14 @@ function createPageId(): string {
  */
 export class LeaseManager {
   private leases = new Map<string, PageResourceLease>();
+  private readonly sweepTimer: ReturnType<typeof setInterval>;
 
-  constructor(private readonly pageRegistry: PageRegistry) {}
+  constructor(private readonly pageRegistry: PageRegistry) {
+    this.sweepTimer = setInterval(() => {
+      this.sweepExpired();
+    }, 60_000);
+    this.sweepTimer.unref?.();
+  }
 
   acquire(input: AcquireLeaseInput): PageResourceLease {
     this.sweepExpired();

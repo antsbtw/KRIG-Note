@@ -36,9 +36,20 @@ import { navSideRegistry } from '../navside/registry';
 import { bookmarkSurrealStore as webBookmarkStore } from '../../plugins/web/main/bookmark-surreal-store';
 import { historySurrealStore as webHistoryStore } from '../../plugins/web/main/history-surreal-store';
 import { WEBVIEW_PARTITION } from '../../shared/constants/webview-partition';
+import {
+  browserArtifactService,
+  browserCapabilityTraceWriter,
+  getPageIdForWebContents,
+} from '../../plugins/browser-capability';
 
 // 待打开的 noteId（导入完成后设置，NoteEditor ready 后拉取）
 let pendingNoteId: string | null = null;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
 
 export function setPendingNoteId(noteId: string): void {
   pendingNoteId = noteId;
@@ -1156,6 +1167,128 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
       return { success: true, items };
     } catch (err) {
       return { success: false, error: String(err) };
+    }
+  });
+
+  ipcMain.handle(IPC.BROWSER_CAPABILITY_DOWNLOAD_CLAUDE_ARTIFACTS, async (event) => {
+    try {
+      const { getGuest } = await import('../../plugins/web-bridge/infrastructure/guest-registry');
+      const guest = getGuest(event.sender.id);
+      if (!guest) return { success: false, error: 'no guest for sender' };
+
+      const pageId = getPageIdForWebContents(guest);
+      if (!pageId) return { success: false, error: 'guest page not bound' };
+
+      const readinessDeadline = Date.now() + 8_000;
+      let artifacts = browserCapabilityTraceWriter.getArtifacts(pageId)
+        .filter((artifact) => artifact.acquisition === 'downloadable');
+      while (
+        artifacts.length === 0 &&
+        !browserCapabilityTraceWriter.hasExtractedFile(pageId, 'conversation.json') &&
+        Date.now() < readinessDeadline
+      ) {
+        await sleep(400);
+        artifacts = browserCapabilityTraceWriter.getArtifacts(pageId)
+          .filter((artifact) => artifact.acquisition === 'downloadable');
+      }
+
+      if (artifacts.length === 0) {
+        const hasConversation = browserCapabilityTraceWriter.hasExtractedFile(pageId, 'conversation.json');
+        return {
+          success: true,
+          pageId,
+          attempted: 0,
+          completed: 0,
+          downloads: [],
+          reason: hasConversation ? 'no-downloadable-artifacts' : 'artifacts-not-ready',
+        };
+      }
+
+      const downloads: Array<{
+        artifactId: string;
+        filename?: string;
+        status: 'completed' | 'failed' | 'cancelled' | 'timeout';
+        storageRef?: string;
+        error?: string;
+      }> = [];
+
+      for (const artifact of artifacts) {
+        try {
+          const download = await browserArtifactService.downloadAttachment(pageId, artifact.artifactId);
+          downloads.push({
+            artifactId: artifact.artifactId,
+            filename: download?.filename,
+            status: download?.status === 'completed' || download?.status === 'failed' || download?.status === 'cancelled'
+              ? download.status
+              : 'timeout',
+            storageRef: download?.storageRef,
+          });
+        } catch (error) {
+          downloads.push({
+            artifactId: artifact.artifactId,
+            status: 'failed',
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+
+      return {
+        success: true,
+        pageId,
+        attempted: artifacts.length,
+        completed: downloads.filter((entry) => entry.status === 'completed').length,
+        downloads,
+      };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipcMain.handle(IPC.BROWSER_CAPABILITY_DEBUG_LOG, async (event, payload: unknown) => {
+    try {
+      const { getGuest } = await import('../../plugins/web-bridge/infrastructure/guest-registry');
+      const guest = getGuest(event.sender.id);
+      if (!guest) return { success: false, error: 'no guest for sender' };
+      const pageId = getPageIdForWebContents(guest);
+      if (!pageId) return { success: false, error: 'guest page not bound' };
+      browserCapabilityTraceWriter.writeDebugLog(pageId, 'artifact-download', payload);
+      return { success: true, pageId };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  // BROWSER_CAPABILITY_EXTRACT_TURN: extract a single turn from conversation data
+  ipcMain.handle(IPC.BROWSER_CAPABILITY_EXTRACT_TURN, async (event, params: { msgIndex: number }) => {
+    try {
+      const { getGuest } = await import('../../plugins/web-bridge/infrastructure/guest-registry');
+      const guest = getGuest(event.sender.id);
+      if (!guest) return { success: false, error: 'no guest for sender' };
+      const pageId = getPageIdForWebContents(guest);
+      if (!pageId) return { success: false, error: 'guest page not bound' };
+      const { extractTurn } = await import('../../plugins/browser-capability/artifact/extract-turn');
+      const result = await extractTurn(pageId, params.msgIndex);
+      if (!result) return { success: false, error: 'no conversation data or message not found' };
+      return { success: true, ...result };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  // BROWSER_CAPABILITY_EXTRACT_FULL: extract full conversation
+  ipcMain.handle(IPC.BROWSER_CAPABILITY_EXTRACT_FULL, async (event) => {
+    try {
+      const { getGuest } = await import('../../plugins/web-bridge/infrastructure/guest-registry');
+      const guest = getGuest(event.sender.id);
+      if (!guest) return { success: false, error: 'no guest for sender' };
+      const pageId = getPageIdForWebContents(guest);
+      if (!pageId) return { success: false, error: 'guest page not bound' };
+      const { extractFullConversation } = await import('../../plugins/browser-capability/artifact/extract-turn');
+      const result = await extractFullConversation(pageId);
+      if (!result) return { success: false, error: 'no conversation data' };
+      return { success: true, ...result };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
   });
 

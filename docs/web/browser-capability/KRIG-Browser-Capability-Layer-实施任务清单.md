@@ -2,7 +2,7 @@
 
 > 文档类型：实施任务清单  
 > 关联文档：`KRIG-Browser-Capability-Layer-设计.md`  
-> 状态：执行规划 | 创建日期：2026-04-16 | 版本：v0.1
+> 状态：执行中 | 创建日期：2026-04-16 | 版本：v0.2
 
 ---
 
@@ -23,6 +23,21 @@
 
 ## 二、阶段总览
 
+### 当前进度表
+
+| 阶段 | 当前状态 | 说明 |
+| --- | --- | --- |
+| Phase 0：骨架与类型边界 | 已完成 | 文档、目录、接口与基础类型已建立 |
+| Phase 1：State / Lease / Trace | 已完成第一版 | per-page trace、page state、lease 主链已接通 |
+| Phase 2：Network Capture | 已完成第一版 | request/response、body capture、下载事件、provider 抽象已落地 |
+| Phase 3：Runtime / Interaction | 已完成第一版页面扫描 | anchors/interactions 轻量扫描已工作，runtime bridge 仍待抽象 |
+| Phase 4：Render / Frame Capture | 已完成第一版 frame 观察 | frame/subframe 观察与落盘已工作，截图主链未系统化推进 |
+| Phase 5：Artifact Pipeline | 已完成第一版 | artifact 发现、语义合并、下载升级、frame/anchor 归属已打通 |
+| Phase 6：通用网页对象模型落地 | 进行中 | Claude 样本已验证闭环，正向通用 iframe/embed 推广 |
+| Phase 7：多类型网页验证 / Adapter 增强 | 未开始系统化推进 | 仍以 Claude 为主样本，尚未形成批量对照样本 |
+| Phase 8：Module 5 Browser Tools | 未开始 | 还未输出面向 Module 5 的稳定 browser tools |
+| Phase 9：Testing / Verification | 进行中 | 目录化 trace 已成为第一类验证证据，系统化 comparator 仍待补齐 |
+
 ### Phase 0：骨架与类型边界
 
 目标：建立目录、接口、类型、文档索引。
@@ -42,25 +57,69 @@
 
 目标：先建立“页面是谁、由谁持有、状态如何、调试怎么落盘”的基础设施。
 
+状态：
+
+- 已完成第一版 page registry / page state / trace writer
+- 已完成 per-page run/page/summary/network 落盘
+- 已完成当前调试主链对 `debug/browser-capability-traces/<runId>/` 的统一输出
+
 ### Phase 2：Network Capture
 
 目标：统一请求、响应、SSE、下载、流式订阅与 response body provider 抽象。
+
+状态：
+
+- 已完成第一版 request/response 观察
+- 已完成 response body capture 与 `responses/` 落盘
+- 已完成 canonical request 关联
+- 已完成 response body provider 抽象的第一版落地
+- 已完成下载事件、文件 meta 与 trace summary 对齐
 
 ### Phase 3：Runtime / Interaction
 
 目标：统一 DOM 查询、选区、滚动、点击、输入、等待。
 
+状态：
+
+- 已完成第一版轻量 runtime 扫描
+- 已落盘 `anchors.json` 与 `interactions.json`
+- 已完成 interaction 基础分层：`sidebar/header/composer/artifact/...`
+- 正式的 runtime bridge 仍待抽象
+
 ### Phase 4：Render / Frame Capture
 
 目标：统一页面截图、区域截图、frame 截图、可视区域抓取。
+
+状态：
+
+- 已完成第一版 frame/subframe 观察与 `frames.json` 落盘
+- 已完成 artifact 到具体 subframe 的关联
+- 截图、rect capture、frame capture 仍待系统化推进
 
 ### Phase 5：Artifact Pipeline
 
 目标：统一正文、附件、widget、iframe、fallback 的结构化处理链。
 
+状态：
+
+- 已完成第一版 `artifacts.json` / `downloads.json`
+- 已打通 message semantics -> artifact -> download/meta 合并
+- 已打通 artifact -> subframe -> domAnchor -> interaction 的闭环
+- 当前仍以 Claude 样本作为首个验证对象
+
 ### Phase 6：通用网页对象模型落地
 
 目标：建立对任意网页成立的页面级结构化缓存与验证模型。
+
+状态：
+
+- 已在 Claude 页面上验证通用页面级缓存模型：
+  - `frames.json`
+  - `anchors.json`
+  - `interactions.json`
+  - `artifacts.json`
+  - `downloads.json`
+- 下一步是推广到更通用的 iframe / embed 页面，而不是停留在单一样本
 
 ### Phase 7：多类型网页验证 / Adapter 增强
 
@@ -668,6 +727,8 @@
 
 ### Milestone A：能力底座可运行
 
+当前状态：已达成
+
 包含：
 
 - page-registry
@@ -685,6 +746,8 @@
 
 ### Milestone B：单网页提取闭环
 
+当前状态：已达成第一版
+
 包含：
 
 - runtime-bridge
@@ -700,6 +763,8 @@
 
 ### Milestone C：通用网页对象模型闭环
 
+当前状态：已部分达成
+
 包含：
 
 - 页面级结构化缓存
@@ -714,6 +779,8 @@
 
 ### Milestone D：多类型网页验证 / Adapter 增强
 
+当前状态：未开始系统化推进
+
 包含：
 
 - 普通网页样本
@@ -726,6 +793,8 @@
 - adapter 仅作为增强层，不破坏通用缓存模型
 
 ### Milestone E：Module 5 接入
+
+当前状态：未开始
 
 包含：
 
@@ -741,16 +810,10 @@
 
 ## 六、立即可执行的下一步
 
-建议立刻开始这 4 个任务：
+建议按当前实现状态继续推进这 5 个方向：
 
-1. `Task 1.1 page-registry`
-2. `Task 1.3 lease-manager`
-3. `Task 2.1 request-observer`
-4. `Task 2.3 network-event-bus`
-
-这是最小可落地起点，也是后续所有浏览器能力的公共底座。
-
-并行建议尽早启动：
-
-5. `Task 9.1 testing 目录骨架`
-6. `Task 9.4 目录化 trace/run 测试产物`
+1. 将 `artifact -> anchor -> interaction` 闭环推广到通用 iframe / embed 页面。
+2. 继续收敛 `interactions.json` 的噪声、分层和 artifact 归属规则。
+3. 将当前轻量页面扫描抽象成正式的 `runtime-bridge`。
+4. 开始系统化推进 `render / rect / frame capture`，补齐截图能力。
+5. 为 Module 5 设计第一版稳定的 browser capability surface。

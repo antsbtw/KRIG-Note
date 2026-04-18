@@ -127,6 +127,7 @@ type PageMeta = {
   pageFile: string;
   lifecycleFile: string;
   networkFile: string;
+  debugFile: string;
   summaryFile: string;
   extractedDir: string;
   responseDir: string;
@@ -170,6 +171,9 @@ type ResponseBodyCapture = {
   body: Uint8Array;
 };
 
+const MAX_PENDING_TRACE_TASKS = 512;
+const MAX_JSON_PARSE_BYTES = 5 * 1024 * 1024;
+
 export class BrowserCapabilityTraceWriter {
   private initialized = false;
   private traceRootDir = '';
@@ -180,6 +184,7 @@ export class BrowserCapabilityTraceWriter {
   private runId = '';
   private createdAt = '';
   private queue: Promise<void> = Promise.resolve();
+  private queuedTaskCount = 0;
   private runSummary: RunSummary | null = null;
   private pages = new Map<string, PageMeta>();
   private pageSummaries = new Map<string, PageSummary>();
@@ -247,6 +252,58 @@ export class BrowserCapabilityTraceWriter {
     };
   }
 
+  getArtifacts(pageId: string): ArtifactRecord[] {
+    return this.ensureExtractedState(pageId).artifacts.map((artifact) => ({ ...artifact }));
+  }
+
+  getArtifactCandidates(pageId: string): ArtifactRecord[] {
+    return this.ensureExtractedState(pageId).artifactCandidates.map((artifact) => ({ ...artifact }));
+  }
+
+  getAnchors(pageId: string): DomAnchor[] {
+    return this.ensureExtractedState(pageId).anchors.map((anchor) => ({ ...anchor }));
+  }
+
+  getInteractions(pageId: string): PageInteraction[] {
+    return this.ensureExtractedState(pageId).interactions.map((interaction) => ({ ...interaction }));
+  }
+
+  getFrames(pageId: string): FrameState[] {
+    return this.ensureExtractedState(pageId).frames.map((frame) => ({ ...frame }));
+  }
+
+  getConversationRaw(pageId: string): Record<string, unknown> | null {
+    const pageMeta = this.pages.get(pageId);
+    if (!pageMeta) return null;
+    const payload = this.tryReadJsonFile(path.join(pageMeta.extractedDir, 'conversation.json'));
+    if (!payload || typeof payload !== 'object') return null;
+    const record = payload as Record<string, unknown>;
+    const data = record.data;
+    if (!data || typeof data !== 'object') return null;
+    return data as Record<string, unknown>;
+  }
+
+  hasExtractedFile(pageId: string, filename: string): boolean {
+    const pageMeta = this.pages.get(pageId);
+    if (!pageMeta) return false;
+    return fs.existsSync(path.join(pageMeta.extractedDir, filename));
+  }
+
+  writeDebugLog(pageId: string, category: string, payload: unknown): void {
+    if (!this.initialized) this.init();
+    const pageMeta = this.ensurePage(pageId);
+    const entry = {
+      at: new Date().toISOString(),
+      category,
+      payload,
+    };
+    this.enqueue(
+      () => fs.promises.appendFile(pageMeta.debugFile, `${JSON.stringify(entry)}\n`, 'utf8'),
+      'debug log append',
+      true,
+    );
+  }
+
   writeLifecycle(event: PageLifecycleEvent): void {
     if (!this.initialized) this.init();
     const pageMeta = this.ensurePage(event.pageId);
@@ -262,11 +319,14 @@ export class BrowserCapabilityTraceWriter {
         url: event.url,
         origin: this.safeGetOrigin(event.url),
       });
-    } else if (event.kind === 'frame-updated' && event.frame.kind === 'main') {
-      this.updatePageSnapshot(event.pageId, {
-        url: event.frame.url,
-        origin: event.frame.origin,
-      });
+    } else if (event.kind === 'frame-updated' && event.frame.kind === 'main' && event.frame.url) {
+      const summary = this.pageSummaries.get(event.pageId);
+      if (!summary?.currentUrl) {
+        this.updatePageSnapshot(event.pageId, {
+          url: event.frame.url,
+          origin: event.frame.origin,
+        });
+      }
     }
 
     this.append(pageMeta.lifecycleFile, {
@@ -300,11 +360,7 @@ export class BrowserCapabilityTraceWriter {
     if (patch.partition !== undefined) summary.partition = patch.partition;
     summary.updatedAt = new Date().toISOString();
 
-    this.queue = this.queue
-      .then(() => this.flushPageArtifacts(pageMeta, summary))
-      .catch((error) => {
-        console.error('[BrowserCapability][Trace] snapshot flush failed', error);
-      });
+    this.enqueue(() => this.flushPageArtifacts(pageMeta, summary), 'snapshot flush', true);
   }
 
   updateFrameSnapshot(pageId: string, frames: FrameState[]): void {
@@ -332,14 +388,14 @@ export class BrowserCapabilityTraceWriter {
     if (state.anchors.length > 0) {
       state.anchors = this.attachFrameIdsToAnchors(pageId, state.anchors);
     }
+    this.refreshGenericFrameArtifacts(pageId);
     if (state.artifacts.length > 0) {
       state.artifacts = this.reconcileArtifactsWithAnchors(
         pageId,
         this.attachClaudeSubframeContext(pageId, state.artifacts),
       );
     }
-    this.queue = this.queue
-      .then(() => fs.promises.writeFile(
+    this.enqueue(() => fs.promises.writeFile(
         path.join(pageMeta.extractedDir, 'frames.json'),
         JSON.stringify({
           pageId,
@@ -347,14 +403,10 @@ export class BrowserCapabilityTraceWriter {
           frames: state.frames,
         }, null, 2),
         'utf8',
-      ))
-      .catch((error) => {
-        console.error('[BrowserCapability][Trace] frame snapshot flush failed', error);
-      });
+      ), 'frame snapshot flush', true);
 
     if (state.artifacts.length > 0) {
-      this.queue = this.queue
-        .then(() => fs.promises.writeFile(
+      this.enqueue(() => fs.promises.writeFile(
           path.join(pageMeta.extractedDir, 'artifacts.json'),
           JSON.stringify({
             pageId,
@@ -362,10 +414,7 @@ export class BrowserCapabilityTraceWriter {
             artifacts: state.artifacts,
           }, null, 2),
           'utf8',
-        ))
-        .catch((error) => {
-          console.error('[BrowserCapability][Trace] artifacts refresh after frame snapshot failed', error);
-        });
+        ), 'artifacts refresh after frame snapshot', true);
     }
   }
 
@@ -381,14 +430,14 @@ export class BrowserCapabilityTraceWriter {
     const pageMeta = this.ensurePage(pageId);
     const state = this.ensureExtractedState(pageId);
     state.anchors = this.attachFrameIdsToAnchors(pageId, anchors);
+    this.refreshGenericFrameArtifacts(pageId);
     if (state.artifacts.length > 0) {
       state.artifacts = this.reconcileArtifactsWithAnchors(pageId, state.artifacts);
     }
     if (state.interactions.length > 0) {
       state.interactions = this.reconcileInteractions(pageId, state.interactions);
     }
-    this.queue = this.queue
-      .then(() => fs.promises.writeFile(
+    this.enqueue(() => fs.promises.writeFile(
         path.join(pageMeta.extractedDir, 'anchors.json'),
         JSON.stringify({
           pageId,
@@ -396,14 +445,10 @@ export class BrowserCapabilityTraceWriter {
           anchors: state.anchors,
         }, null, 2),
         'utf8',
-      ))
-      .catch((error) => {
-        console.error('[BrowserCapability][Trace] anchor snapshot flush failed', error);
-      });
+      ), 'anchor snapshot flush', true);
 
     if (state.artifacts.length > 0) {
-      this.queue = this.queue
-        .then(() => fs.promises.writeFile(
+      this.enqueue(() => fs.promises.writeFile(
           path.join(pageMeta.extractedDir, 'artifacts.json'),
           JSON.stringify({
             pageId,
@@ -411,15 +456,11 @@ export class BrowserCapabilityTraceWriter {
             artifacts: state.artifacts,
           }, null, 2),
           'utf8',
-        ))
-        .catch((error) => {
-          console.error('[BrowserCapability][Trace] artifacts refresh after anchor snapshot failed', error);
-        });
+        ), 'artifacts refresh after anchor snapshot', true);
     }
 
     if (state.interactions.length > 0) {
-      this.queue = this.queue
-        .then(() => fs.promises.writeFile(
+      this.enqueue(() => fs.promises.writeFile(
           path.join(pageMeta.extractedDir, 'interactions.json'),
           JSON.stringify({
             pageId,
@@ -427,10 +468,7 @@ export class BrowserCapabilityTraceWriter {
             interactions: state.interactions,
           }, null, 2),
           'utf8',
-        ))
-        .catch((error) => {
-          console.error('[BrowserCapability][Trace] interactions refresh after anchor snapshot failed', error);
-        });
+        ), 'interactions refresh after anchor snapshot', true);
     }
   }
 
@@ -439,8 +477,7 @@ export class BrowserCapabilityTraceWriter {
     const pageMeta = this.ensurePage(pageId);
     const state = this.ensureExtractedState(pageId);
     state.interactions = this.reconcileInteractions(pageId, interactions);
-    this.queue = this.queue
-      .then(() => fs.promises.writeFile(
+    this.enqueue(() => fs.promises.writeFile(
         path.join(pageMeta.extractedDir, 'interactions.json'),
         JSON.stringify({
           pageId,
@@ -448,10 +485,7 @@ export class BrowserCapabilityTraceWriter {
           interactions: state.interactions,
         }, null, 2),
         'utf8',
-      ))
-      .catch((error) => {
-        console.error('[BrowserCapability][Trace] interaction snapshot flush failed', error);
-      });
+      ), 'interaction snapshot flush', true);
   }
 
   writeResponseBody(input: ResponseBodyCapture): string {
@@ -462,8 +496,7 @@ export class BrowserCapabilityTraceWriter {
     const capturedAt = new Date().toISOString();
     const serialized = this.serializeResponseBody(input, bodyRef, capturedAt);
 
-    this.queue = this.queue
-      .then(async () => {
+    this.enqueue(async () => {
         await fs.promises.writeFile(outputFile, JSON.stringify(serialized, null, 2), 'utf8');
         this.writeNetworkDerivedExtraction(input.pageId, input, serialized, capturedAt);
         this.writeNetwork({
@@ -479,10 +512,7 @@ export class BrowserCapabilityTraceWriter {
           bodyBytes: input.body.byteLength,
           at: capturedAt,
         });
-      })
-      .catch((error) => {
-        console.error('[BrowserCapability][Trace] response body flush failed', error);
-      });
+      }, 'response body flush');
 
     return bodyRef;
   }
@@ -501,6 +531,7 @@ export class BrowserCapabilityTraceWriter {
       pageFile: path.join(pageDir, 'page.json'),
       lifecycleFile: path.join(pageDir, 'lifecycle.jsonl'),
       networkFile: path.join(pageDir, 'network.jsonl'),
+      debugFile: path.join(pageDir, 'debug.jsonl'),
       summaryFile: path.join(pageDir, 'summary.json'),
       extractedDir,
       responseDir,
@@ -575,14 +606,10 @@ export class BrowserCapabilityTraceWriter {
 
   private append(filePath: string, entry: TraceEntry): void {
     const line = `${JSON.stringify(entry)}\n`;
-    this.queue = this.queue
-      .then(async () => {
+    this.enqueue(async () => {
         await fs.promises.appendFile(filePath, line, 'utf8');
         await this.flushAllSummaries();
-      })
-      .catch((error) => {
-        console.error('[BrowserCapability][Trace] append failed', error);
-      });
+      }, 'append');
   }
 
   private async flushAllSummaries(): Promise<void> {
@@ -727,10 +754,7 @@ export class BrowserCapabilityTraceWriter {
       });
       this.cacheClaudeConversationArtifacts(parsed, conversationArtifacts);
       this.indexArtifactCandidates(pageId, conversationArtifacts);
-      this.writeArtifactsExtraction(
-        pageId,
-        this.prioritizeCurrentLeafArtifacts(conversationArtifacts),
-      );
+      this.writeArtifactsExtraction(pageId, conversationArtifacts);
       this.reconcileArtifactsWithCandidates(pageId);
       this.writeExtractedJson(pageId, 'conversation.json', {
         kind: 'claude-conversation',
@@ -765,8 +789,7 @@ export class BrowserCapabilityTraceWriter {
     const pageMeta = this.pages.get(pageId);
     if (!pageMeta) return;
 
-    this.queue = this.queue
-      .then(() => fs.promises.writeFile(
+    this.enqueue(() => fs.promises.writeFile(
         path.join(pageMeta.extractedDir, 'downloads.json'),
         JSON.stringify({
           pageId,
@@ -774,10 +797,7 @@ export class BrowserCapabilityTraceWriter {
           downloads: summary.downloads,
         }, null, 2),
         'utf8',
-      ))
-      .catch((error) => {
-        console.error('[BrowserCapability][Trace] downloads extraction flush failed', error);
-      });
+      ), 'downloads extraction flush', true);
   }
 
   private writeArtifactsExtraction(pageId: string, artifacts: ArtifactRecord[]): void {
@@ -804,8 +824,7 @@ export class BrowserCapabilityTraceWriter {
     if (state.interactions.length > 0) {
       state.interactions = this.reconcileInteractions(pageId, state.interactions);
     }
-    this.queue = this.queue
-      .then(() => fs.promises.writeFile(
+    this.enqueue(() => fs.promises.writeFile(
         path.join(pageMeta.extractedDir, 'artifacts.json'),
         JSON.stringify({
           pageId,
@@ -813,13 +832,9 @@ export class BrowserCapabilityTraceWriter {
           artifacts: state.artifacts,
         }, null, 2),
         'utf8',
-      ))
-      .catch((error) => {
-        console.error('[BrowserCapability][Trace] artifacts extraction flush failed', error);
-      });
+      ), 'artifacts extraction flush', true);
     if (state.interactions.length > 0) {
-      this.queue = this.queue
-        .then(() => fs.promises.writeFile(
+      this.enqueue(() => fs.promises.writeFile(
           path.join(pageMeta.extractedDir, 'interactions.json'),
           JSON.stringify({
             pageId,
@@ -827,10 +842,7 @@ export class BrowserCapabilityTraceWriter {
             interactions: state.interactions,
           }, null, 2),
           'utf8',
-        ))
-        .catch((error) => {
-          console.error('[BrowserCapability][Trace] interactions refresh after artifact flush failed', error);
-        });
+        ), 'interactions refresh after artifact flush', true);
     }
   }
 
@@ -874,8 +886,7 @@ export class BrowserCapabilityTraceWriter {
       }),
     );
 
-    this.queue = this.queue
-      .then(() => fs.promises.writeFile(
+    this.enqueue(() => fs.promises.writeFile(
         path.join(pageMeta.extractedDir, 'artifacts.json'),
         JSON.stringify({
           pageId,
@@ -883,10 +894,7 @@ export class BrowserCapabilityTraceWriter {
           artifacts: state.artifacts,
         }, null, 2),
         'utf8',
-      ))
-      .catch((error) => {
-        console.error('[BrowserCapability][Trace] artifact reconciliation flush failed', error);
-      });
+      ), 'artifact reconciliation flush', true);
   }
 
   private hydrateArtifactCandidatesFromExtractedFiles(pageId: string): void {
@@ -1016,11 +1024,11 @@ export class BrowserCapabilityTraceWriter {
   private writeExtractedJson(pageId: string, filename: string, payload: unknown): void {
     const pageMeta = this.pages.get(pageId);
     if (!pageMeta) return;
-    this.queue = this.queue
-      .then(() => fs.promises.writeFile(path.join(pageMeta.extractedDir, filename), JSON.stringify(payload, null, 2), 'utf8'))
-      .catch((error) => {
-        console.error('[BrowserCapability][Trace] extracted flush failed', error);
-      });
+    this.enqueue(
+      () => fs.promises.writeFile(path.join(pageMeta.extractedDir, filename), JSON.stringify(payload, null, 2), 'utf8'),
+      'extracted flush',
+      true,
+    );
   }
 
   private ensureExtractedState(pageId: string): GenericExtractedState {
@@ -1093,6 +1101,14 @@ export class BrowserCapabilityTraceWriter {
   private tryParseJsonFromSerialized(serialized: Record<string, unknown>): unknown | null {
     const bodyText = typeof serialized.bodyText === 'string' ? serialized.bodyText : null;
     if (!bodyText) return null;
+    const byteLength = Buffer.byteLength(bodyText, 'utf8');
+    if (byteLength > MAX_JSON_PARSE_BYTES) {
+      console.warn('[BrowserCapability][Trace] skip oversized JSON parse', {
+        bodyRef: serialized.bodyRef,
+        byteLength,
+      });
+      return null;
+    }
     try {
       return JSON.parse(bodyText);
     } catch {
@@ -1190,8 +1206,7 @@ export class BrowserCapabilityTraceWriter {
       }
     }
 
-    if (options?.preferCurrentLeaf === false) return artifacts;
-    return this.prioritizeCurrentLeafArtifacts(artifacts);
+    return artifacts;
   }
 
   private extractClaudeMessageFileArtifacts(
@@ -1271,18 +1286,48 @@ export class BrowserCapabilityTraceWriter {
     const input = part.input && typeof part.input === 'object' ? (part.input as Record<string, unknown>) : null;
     if (!input) return null;
 
+    const widgetCode = this.readString(input.widget_code);
+    const fileText = this.readString(input.file_text);
+    const filePath = this.readString(input.path);
+    const filePaths = Array.isArray(input.filepaths) ? input.filepaths : null;
+
+    const isShowWidget = toolName.includes('show_widget');
+    const isCreateFile = toolName === 'create_file';
+    const isPresentFiles = toolName === 'present_files';
+    const isViewFile = toolName === 'view';
+    const isArtifactTool = isShowWidget || isCreateFile || isPresentFiles || isViewFile;
+
+    if (!isArtifactTool) {
+      // 不认识的 tool，仅在有 widget_code 时才当 artifact
+      if (!widgetCode) return null;
+    }
+
     const title =
       this.readString(input.title)
       ?? this.readString(input.name)
+      ?? (filePath ? filePath.split('/').pop() : null)
       ?? this.readString(part.id)
       ?? `${meta.messageUuid}-${toolName || 'tool-artifact'}`;
-    const widgetCode = this.readString(input.widget_code);
-    const mimeType = this.detectWidgetMimeType(widgetCode);
-    const kind = toolName.includes('show_widget')
-      ? this.classifyArtifactKind(mimeType, title, widgetCode)
-      : 'unknown';
 
-    if (kind === 'unknown' && !widgetCode) return null;
+    const mimeType = this.detectWidgetMimeType(widgetCode)
+      ?? this.inferMimeTypeFromNameOrUrl(title, filePath ?? undefined);
+
+    let kind: ArtifactRecord['kind'];
+    if (isShowWidget) {
+      kind = this.classifyArtifactKind(mimeType, title, widgetCode);
+    } else if (isCreateFile) {
+      kind = this.classifyArtifactKind(mimeType, title, fileText);
+      if (kind === 'unknown') kind = 'file';
+    } else if (isPresentFiles) {
+      kind = 'file';
+    } else if (isViewFile) {
+      kind = this.classifyArtifactKind(mimeType, title);
+      if (kind === 'unknown') kind = 'file';
+    } else {
+      kind = this.classifyArtifactKind(mimeType, title, widgetCode);
+    }
+
+    if (kind === 'unknown' && !widgetCode && !fileText && !filePaths) return null;
 
     return {
       artifactId: this.makeArtifactId({
@@ -1305,6 +1350,7 @@ export class BrowserCapabilityTraceWriter {
       mimeType: mimeType ?? undefined,
       createdAt: capturedAt,
       previewRef: widgetCode ? 'inline:conversation-tool-use' : undefined,
+      url: filePath ?? undefined,
     };
   }
 
@@ -1471,6 +1517,121 @@ export class BrowserCapabilityTraceWriter {
     });
   }
 
+  private refreshGenericFrameArtifacts(pageId: string): void {
+    const state = this.ensureExtractedState(pageId);
+    const baseArtifacts = state.artifacts.filter((artifact) => artifact.sourceLayer !== 'frame');
+    if (this.shouldSuppressGenericFrameArtifacts(pageId, baseArtifacts) || state.anchors.length === 0) {
+      state.artifacts = baseArtifacts;
+      return;
+    }
+
+    const derived = this.deriveGenericFrameArtifacts(pageId, baseArtifacts);
+    state.artifacts = [...baseArtifacts, ...derived];
+  }
+
+  private deriveGenericFrameArtifacts(pageId: string, existingArtifacts: ArtifactRecord[]): ArtifactRecord[] {
+    const state = this.ensureExtractedState(pageId);
+    const claimedAnchorIds = new Set(
+      existingArtifacts
+        .map((artifact) => artifact.domAnchorId)
+        .filter((value): value is string => typeof value === 'string' && value.length > 0),
+    );
+    const claimedFrameIds = new Set(
+      existingArtifacts
+        .map((artifact) => artifact.frameId)
+        .filter((value): value is string => typeof value === 'string' && value.length > 0),
+    );
+
+    return state.anchors.flatMap((anchor) => {
+      if (!anchor.visible) return [];
+      if (!anchor.frameId && !anchor.frameUrl) return [];
+      if (claimedAnchorIds.has(anchor.anchorId)) return [];
+      if (anchor.frameId && claimedFrameIds.has(anchor.frameId)) return [];
+
+      const frame = anchor.frameId
+        ? state.frames.find((item) => item.frameId === anchor.frameId)
+        : undefined;
+      const frameUrl = anchor.frameUrl ?? frame?.url;
+      if (!frameUrl) return [];
+      if (this.isClaudeWidgetFrame(frameUrl)) return [];
+      const title = this.buildGenericFrameArtifactTitle(anchor, frameUrl);
+      if (this.isNoisyGenericFrameArtifact(frameUrl, title)) return [];
+      const artifactId = this.makeArtifactId({
+        rawId: anchor.frameId ?? frameUrl,
+        title: `embed:${title}`,
+      });
+
+      return [{
+        artifactId,
+        pageId,
+        frameId: anchor.frameId ?? frame?.frameId ?? null,
+        frameUrl,
+        frameOrigin: anchor.frameOrigin ?? frame?.origin,
+        frameKind: frame?.kind ?? 'subframe',
+        acquisition: 'discovered',
+        surfaceScope: frame?.kind === 'main' ? 'frame-main' : 'frame-subframe',
+        surfaceRef: anchor.anchorId,
+        kind: 'widget',
+        sourceLayer: 'frame',
+        title,
+        mimeType: this.inferMimeTypeFromNameOrUrl(title, frameUrl) ?? 'text/html',
+        domAnchorId: anchor.anchorId,
+        previewRef: anchor.textPreview ? `anchor:${anchor.anchorId}` : undefined,
+        createdAt: new Date().toISOString(),
+      } satisfies ArtifactRecord];
+    });
+  }
+
+  private shouldSuppressGenericFrameArtifacts(pageId: string, artifacts: ArtifactRecord[]): boolean {
+    if (artifacts.some((artifact) =>
+      artifact.messageUuid ||
+      artifact.toolUseId ||
+      artifact.previewRef === 'inline:conversation-tool-use'
+    )) {
+      return true;
+    }
+    const summary = this.pageSummaries.get(pageId);
+    if (summary?.currentOrigin?.includes('claude.ai')) return true;
+    return false;
+  }
+
+  private buildGenericFrameArtifactTitle(anchor: DomAnchor, frameUrl: string): string {
+    const preview = anchor.textPreview?.trim();
+    if (preview) return preview;
+    try {
+      const url = new URL(frameUrl);
+      const path = url.pathname.replace(/\/+$/, '');
+      const lastSegment = path.split('/').filter(Boolean).pop();
+      return lastSegment || url.hostname;
+    } catch {
+      return frameUrl;
+    }
+  }
+
+  private isNoisyGenericFrameArtifact(frameUrl: string, title: string): boolean {
+    const haystack = `${frameUrl} ${title}`.toLowerCase();
+    return [
+      'recaptcha',
+      'captcha',
+      'intercom',
+      'doubleclick',
+      'googlesyndication',
+      'googleads',
+      'adservice',
+      'adnxs',
+      'rubiconproject',
+      'criteo',
+      'taboola',
+      'analytics',
+      'datadog',
+      'cookie',
+      'consent',
+      'onetrust',
+      'scorecardresearch',
+      'bounceexchange',
+    ].some((token) => haystack.includes(token));
+  }
+
   private reconcileInteractions(pageId: string, interactions: PageInteraction[]): PageInteraction[] {
     const state = this.ensureExtractedState(pageId);
     const artifactAnchors = state.anchors.filter((anchor) => anchor.frameId && anchor.rect);
@@ -1550,11 +1711,8 @@ export class BrowserCapabilityTraceWriter {
     return best?.anchor ?? null;
   }
 
-  private prioritizeCurrentLeafArtifacts(artifacts: ArtifactRecord[]): ArtifactRecord[] {
-    const currentLeafArtifacts = artifacts.filter((artifact) => artifact.isCurrentLeaf);
-    if (currentLeafArtifacts.length > 0) return currentLeafArtifacts;
-    return artifacts;
-  }
+  // isCurrentLeaf is retained as metadata on each ArtifactRecord for consumers
+  // to filter if needed, but extraction itself always returns all artifacts.
 
   private resolveArtifactMergeTarget(
     state: GenericExtractedState,
@@ -1785,10 +1943,34 @@ export class BrowserCapabilityTraceWriter {
   private tryReadJsonFile(filePath: string): unknown | null {
     try {
       if (!fs.existsSync(filePath)) return null;
-      return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      const text = fs.readFileSync(filePath, 'utf8');
+      if (Buffer.byteLength(text, 'utf8') > MAX_JSON_PARSE_BYTES) {
+        console.warn('[BrowserCapability][Trace] skip oversized JSON file', { filePath });
+        return null;
+      }
+      return JSON.parse(text);
     } catch {
       return null;
     }
+  }
+
+  private enqueue(task: () => Promise<void>, label: string, dropIfBusy = false): void {
+    if (dropIfBusy && this.queuedTaskCount >= MAX_PENDING_TRACE_TASKS) {
+      console.warn('[BrowserCapability][Trace] skip queued task under pressure', {
+        label,
+        queuedTaskCount: this.queuedTaskCount,
+      });
+      return;
+    }
+    this.queuedTaskCount += 1;
+    this.queue = this.queue
+      .then(() => task())
+      .catch((error) => {
+        console.error(`[BrowserCapability][Trace] ${label} failed`, error);
+      })
+      .finally(() => {
+        this.queuedTaskCount = Math.max(0, this.queuedTaskCount - 1);
+      });
   }
 
   private readClaudeSender(value: unknown): ArtifactRecord['sender'] {

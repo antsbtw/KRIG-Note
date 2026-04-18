@@ -63,11 +63,18 @@ export const CARD_ROOT_FILTER_FN = `
 // ─────────────────────────────────────────────────────────────
 
 /**
- * Selector for the inline-rendered artifact iframes. Subdomain is a per-
- * conversation hash (not per-artifact), so multiple iframes share the
- * same hostname prefix — distinguish them by DOM order or full URL query.
+ * Selector for inline-rendered Claude artifact iframes.
+ *
+ * Claude has used multiple URL shapes over time:
+ * - older builds: isolated-segment.html
+ * - current builds: claudemcpcontent.com/mcp_apps
+ *
+ * Keep both so the downloader works across traces / web builds.
  */
-export const IFRAME_SELECTOR = 'iframe[src*="isolated-segment.html"]';
+export const IFRAME_SELECTOR = [
+  'iframe[src*="claudemcpcontent.com/mcp_apps"]',
+  'iframe[src*="isolated-segment.html"]',
+].join(', ');
 
 /**
  * Menu item offsets relative to the iframe's "..." hotspot at

@@ -131,6 +131,18 @@ export class PageRegistry {
         });
       }
     }
+    for (const prev of prevFrames) {
+      if (frames.some((frame) => frame.frameId === prev.frameId)) continue;
+      this.lifecycle.emit({
+        kind: 'frame-updated',
+        pageId,
+        frame: {
+          ...prev,
+          visible: false,
+        },
+        at: new Date().toISOString(),
+      });
+    }
     return frames;
   }
 

@@ -9,7 +9,13 @@ import { browserCapabilityTraceWriter } from '../persistence';
 import { NetworkEventBus } from './network-event-bus';
 
 const attachedSessions = new WeakSet<Session>();
-const requestCache = new Map<string, NetworkRecord>();
+const requestCache = new Map<string, { record: NetworkRecord; touchedAt: number }>();
+const MAX_REQUEST_CACHE_SIZE = 2048;
+const REQUEST_CACHE_TTL_MS = 5 * 60 * 1000;
+const requestCacheSweepTimer = setInterval(() => {
+  sweepRequestCache();
+}, 60_000);
+requestCacheSweepTimer.unref?.();
 
 const NOISY_RESOURCE_TYPES = new Set(['font', 'image', 'ping']);
 const NOISY_URL_SUBSTRINGS = [
@@ -51,17 +57,18 @@ function shouldTraceNetwork(record: Pick<NetworkRecord, 'url' | 'resourceType'>)
   return true;
 }
 
-function readCompletedDownloadFileMeta(savePath: string | undefined): Pick<NonNullable<ReturnType<typeof buildDownloadRecord>>, 'byteLength' | 'sha256' | 'extension' | 'mtime' | 'storageRef'> {
+async function readCompletedDownloadFileMeta(savePath: string | undefined): Promise<{
+  byteLength?: number;
+  sha256?: string;
+  extension?: string;
+  mtime?: string;
+  storageRef?: string;
+}> {
   if (!savePath) return {};
   try {
-    if (!fs.existsSync(savePath)) {
-      return {
-        storageRef: savePath,
-        extension: path.extname(savePath).replace(/^\./, '') || undefined,
-      };
-    }
-    const fileBuffer = fs.readFileSync(savePath);
-    const stat = fs.statSync(savePath);
+    await fs.promises.access(savePath, fs.constants.F_OK);
+    const fileBuffer = await fs.promises.readFile(savePath);
+    const stat = await fs.promises.stat(savePath);
     return {
       storageRef: savePath,
       byteLength: fileBuffer.byteLength,
@@ -77,7 +84,7 @@ function readCompletedDownloadFileMeta(savePath: string | undefined): Pick<NonNu
   }
 }
 
-function buildDownloadRecord(input: {
+async function buildDownloadRecord(input: {
   downloadId: string;
   pageId: string;
   frameId: string | null;
@@ -85,7 +92,7 @@ function buildDownloadRecord(input: {
   status: 'completed' | 'cancelled' | 'failed';
   startedAt: string;
   finishedAt: string;
-}): {
+}): Promise<{
   downloadId: string;
   pageId: string;
   frameId: string | null;
@@ -101,10 +108,10 @@ function buildDownloadRecord(input: {
   error?: string;
   startedAt: string;
   finishedAt: string;
-} {
+}> {
   const storageRef = input.item.getSavePath() || undefined;
   const fileMeta = input.status === 'completed'
-    ? readCompletedDownloadFileMeta(storageRef)
+    ? await readCompletedDownloadFileMeta(storageRef)
     : {
         storageRef,
         byteLength: input.item.getReceivedBytes() || undefined,
@@ -127,6 +134,41 @@ function buildDownloadRecord(input: {
     startedAt: input.startedAt,
     finishedAt: input.finishedAt,
   };
+}
+
+function sweepRequestCache(): void {
+  const now = Date.now();
+  for (const [key, entry] of Array.from(requestCache.entries())) {
+    if (now - entry.touchedAt > REQUEST_CACHE_TTL_MS) {
+      requestCache.delete(key);
+    }
+  }
+  while (requestCache.size > MAX_REQUEST_CACHE_SIZE) {
+    const oldestKey = requestCache.keys().next().value;
+    if (!oldestKey) break;
+    requestCache.delete(oldestKey);
+  }
+}
+
+function setRequestCache(details: { id: number; webContentsId?: number }, record: NetworkRecord): void {
+  sweepRequestCache();
+  requestCache.set(makeRequestCacheKey(details), {
+    record,
+    touchedAt: Date.now(),
+  });
+}
+
+function getRequestCache(details: { id: number; webContentsId?: number }): NetworkRecord | null {
+  const key = makeRequestCacheKey(details);
+  const entry = requestCache.get(key);
+  if (!entry) return null;
+  entry.touchedAt = Date.now();
+  requestCache.set(key, entry);
+  return entry.record;
+}
+
+function deleteRequestCache(details: { id: number; webContentsId?: number }): void {
+  requestCache.delete(makeRequestCacheKey(details));
 }
 
 function toNetworkRecord(
@@ -182,7 +224,7 @@ export function attachSessionNetworkCapture(session: Session, bus: NetworkEventB
     const pageId = resolvePageId(details.webContentsId);
     if (pageId) {
       const record = toNetworkRecord(pageId, details);
-      requestCache.set(makeRequestCacheKey(details), record);
+      setRequestCache(details, record);
       bus.recordRequest(record);
       if (!app.isPackaged) {
         console.log('[BrowserCapability][Network] request-start', {
@@ -210,8 +252,7 @@ export function attachSessionNetworkCapture(session: Session, bus: NetworkEventB
   });
 
   session.webRequest.onCompleted((details) => {
-    const key = makeRequestCacheKey(details);
-    const prev = requestCache.get(key);
+    const prev = getRequestCache(details);
     const pageId = prev?.pageId ?? resolvePageId(details.webContentsId);
     if (prev && pageId) {
       const completed = mergeCompleted(prev, details);
@@ -237,17 +278,16 @@ export function attachSessionNetworkCapture(session: Session, bus: NetworkEventB
           });
         }
       }
-      requestCache.delete(key);
+      deleteRequestCache(details);
     }
   });
 
   session.webRequest.onErrorOccurred((details) => {
-    const key = makeRequestCacheKey(details);
-    const prev = requestCache.get(key);
+    const prev = getRequestCache(details);
     const pageId = prev?.pageId ?? resolvePageId(details.webContentsId);
     if (prev && pageId) {
       bus.recordResponseComplete(mergeErrored(prev, details));
-      requestCache.delete(key);
+      deleteRequestCache(details);
     }
   });
 
@@ -265,7 +305,7 @@ export function attachSessionNetworkCapture(session: Session, bus: NetworkEventB
           : state === 'cancelled'
             ? 'cancelled'
             : 'failed';
-      const download = buildDownloadRecord({
+      void buildDownloadRecord({
         downloadId,
         pageId,
         frameId: webContents?.mainFrame?.routingId ? String(webContents.mainFrame.routingId) : null,
@@ -273,36 +313,43 @@ export function attachSessionNetworkCapture(session: Session, bus: NetworkEventB
         status,
         startedAt,
         finishedAt: new Date().toISOString(),
+      }).then((download) => {
+        bus.recordDownloadComplete(download);
+        if (download.status === 'completed') {
+          browserCapabilityTraceWriter.recordDownloadedArtifact(download);
+        }
+        if (!app.isPackaged) {
+          console.log('[BrowserCapability][Network] download-complete', {
+            pageId,
+            downloadId: download.downloadId,
+            filename: download.filename,
+            status: download.status,
+            url: download.url,
+          });
+          browserCapabilityTraceWriter.writeNetwork({
+            kind: 'download-complete',
+            pageId,
+            frameId: download.frameId,
+            downloadId: download.downloadId,
+            filename: download.filename,
+            status: download.status,
+            url: download.url,
+            mimeType: download.mimeType,
+            byteLength: download.byteLength,
+            sha256: download.sha256,
+            extension: download.extension,
+            mtime: download.mtime,
+            storageRef: download.storageRef,
+            at: download.finishedAt ?? new Date().toISOString(),
+          });
+        }
+      }).catch((error) => {
+        console.warn('[BrowserCapability][Network] download meta read failed', {
+          pageId,
+          downloadId,
+          error,
+        });
       });
-      bus.recordDownloadComplete(download);
-      if (download.status === 'completed') {
-        browserCapabilityTraceWriter.recordDownloadedArtifact(download);
-      }
-      if (!app.isPackaged) {
-        console.log('[BrowserCapability][Network] download-complete', {
-          pageId,
-          downloadId: download.downloadId,
-          filename: download.filename,
-          status: download.status,
-          url: download.url,
-        });
-        browserCapabilityTraceWriter.writeNetwork({
-          kind: 'download-complete',
-          pageId,
-          frameId: download.frameId,
-          downloadId: download.downloadId,
-          filename: download.filename,
-          status: download.status,
-          url: download.url,
-          mimeType: download.mimeType,
-          byteLength: download.byteLength,
-          sha256: download.sha256,
-          extension: download.extension,
-          mtime: download.mtime,
-          storageRef: download.storageRef,
-          at: download.finishedAt ?? new Date().toISOString(),
-        });
-      }
     });
   });
 }
