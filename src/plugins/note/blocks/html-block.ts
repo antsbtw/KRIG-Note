@@ -19,11 +19,15 @@ import type { EditorView } from 'prosemirror-view';
 async function loadHtmlContent(src: string): Promise<string | null> {
   try {
     if (src.startsWith('data:text/html;base64,')) {
-      return atob(src.split(',')[1]);
+      const binary = atob(src.split(',')[1]);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      return new TextDecoder('utf-8').decode(bytes);
     }
     const response = await fetch(src);
     if (!response.ok) return null;
-    return await response.text();
+    const buf = await response.arrayBuffer();
+    return new TextDecoder('utf-8').decode(buf);
   } catch {
     return null;
   }
@@ -167,12 +171,47 @@ const htmlBlockRenderer: RenderBlockRenderer = {
       iframe.style.borderRadius = '0 0 8px 8px';
       iframe.style.backgroundColor = '#ffffff';
 
-      // 加载 HTML 内容
+      // 加载 HTML 内容，注入高度上报脚本
       loadHtmlContent(node.attrs.src).then((html) => {
         if (html) {
-          iframe.srcdoc = html;
+          // 注入脚本：内容加载后通过 postMessage 上报实际高度
+          const heightScript = `<script>
+            (function() {
+              function reportHeight() {
+                var h = Math.max(
+                  document.body.scrollHeight,
+                  document.body.offsetHeight,
+                  document.documentElement.scrollHeight,
+                  document.documentElement.offsetHeight
+                );
+                parent.postMessage({ type: 'krig-iframe-height', height: h }, '*');
+              }
+              window.addEventListener('load', function() { setTimeout(reportHeight, 100); });
+              new MutationObserver(reportHeight).observe(document.body, { childList: true, subtree: true, attributes: true });
+              setTimeout(reportHeight, 500);
+            })();
+          </script>`;
+          // 注入到 </body> 或末尾
+          if (html.includes('</body>')) {
+            iframe.srcdoc = html.replace('</body>', heightScript + '</body>');
+          } else {
+            iframe.srcdoc = html + heightScript;
+          }
         }
       });
+
+      // 监听 iframe 高度上报
+      const onMessage = (e: MessageEvent) => {
+        if (e.data?.type === 'krig-iframe-height' && typeof e.data.height === 'number') {
+          // 确认消息来自这个 iframe（source 检查）
+          if (e.source === iframe.contentWindow) {
+            const h = Math.max(200, Math.min(e.data.height + 20, 2000));
+            iframe.style.height = `${h}px`;
+          }
+        }
+      };
+      window.addEventListener('message', onMessage);
+      (content as any)._messageListener = onMessage;
 
       // 高度调整 handle
       const resizeHandle = document.createElement('div');
@@ -230,6 +269,11 @@ const htmlBlockRenderer: RenderBlockRenderer = {
 
   getContentDOM(contentEl: HTMLElement) {
     return (contentEl as any)._captionDOM as HTMLElement;
+  },
+
+  destroy(contentEl: HTMLElement) {
+    const listener = (contentEl as any)._messageListener;
+    if (listener) window.removeEventListener('message', listener);
   },
 };
 
