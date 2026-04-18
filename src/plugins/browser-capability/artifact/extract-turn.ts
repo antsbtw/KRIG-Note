@@ -6,6 +6,9 @@
  * and send to Note via as:append-turn.
  */
 
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { app } from 'electron';
 import {
   getConversationData,
   type ArtifactContent,
@@ -46,6 +49,32 @@ export type ExtractedConversation = {
   turns: ExtractedTurn[];
 };
 
+// ── Pre-extraction cleanup ──
+
+/**
+ * Clear previously extracted artifact files from media store.
+ * Called before each full extraction to ensure clean state.
+ */
+function clearExtractedArtifactCache(): void {
+  try {
+    const mediaDir = path.join(app.getPath('userData'), 'krig-data', 'media', 'images');
+    if (!fs.existsSync(mediaDir)) return;
+    const files = fs.readdirSync(mediaDir);
+    let cleared = 0;
+    for (const file of files) {
+      if (file.endsWith('.svg')) {
+        fs.unlinkSync(path.join(mediaDir, file));
+        cleared++;
+      }
+    }
+    if (cleared > 0) {
+      console.log(`[extract-turn] cleared ${cleared} cached SVG files before extraction`);
+    }
+  } catch (err) {
+    console.warn('[extract-turn] failed to clear artifact cache', err);
+  }
+}
+
 // ── SVG preprocessing ──
 
 /**
@@ -72,7 +101,23 @@ function prepareSvgForImgTag(raw: string): string {
     svg = svg.replace('width="100%"', `width="${vbWidth}"`);
   }
 
-  // 3. Replace CSS variables with light-theme concrete values
+  // 3. Remove onclick/onmouseover/etc event handler attributes.
+  //    Claude widget SVGs contain onclick="sendPrompt('什么叫"无法再分解"...')"
+  //    where inner ASCII quotes make the XML malformed. Can't use simple regex
+  //    because the attribute value itself contains unescaped `"`.
+  //    Strategy: find ` on<word>=` and delete from there to the next `>`,
+  //    then re-close the tag with `>`.
+  svg = svg.replace(/ on\w+=(?:"[^>]*>|'[^>]*>)/g, '>');
+  // Also clean any remaining onclick-like fragments on lines
+  svg = svg.split('\n').map((line) => {
+    if (/ on\w+=/.test(line)) {
+      // Remove everything from ` onclick=` to the end of the tag attribute section
+      return line.replace(/ on\w+=.*?(?=>)/, '');
+    }
+    return line;
+  }).join('\n');
+
+  // 4. Replace CSS variables with light-theme concrete values
   const cssVarMap: Record<string, string> = {
     'var(--color-border-tertiary)': '#e5e5e5',
     'var(--color-border-secondary)': '#d4d4d4',
@@ -83,9 +128,14 @@ function prepareSvgForImgTag(raw: string): string {
     'var(--color-bg-primary)': '#ffffff',
     'var(--color-bg-secondary)': '#f5f5f5',
     'var(--color-bg-tertiary)': '#e5e5e5',
+    'var(--color-background-primary)': '#ffffff',
+    'var(--color-background-secondary)': '#f5f5f5',
+    'var(--color-background-tertiary)': '#e5e5e5',
     'var(--text-color-primary)': '#171717',
     'var(--text-color-secondary)': '#525252',
+    'var(--text-color-tertiary)': '#737373',
     'var(--bg-color)': '#ffffff',
+    'var(--fg-color)': '#171717',
   };
   for (const [cssVar, value] of Object.entries(cssVarMap)) {
     while (svg.includes(cssVar)) {
@@ -300,8 +350,15 @@ export async function extractTurn(
 export async function extractFullConversation(
   pageId: string,
 ): Promise<ExtractedConversation | null> {
+  clearExtractedArtifactCache();
+
   const conversation = getConversationData(pageId);
-  if (!conversation || conversation.messages.length === 0) return null;
+  if (!conversation || conversation.messages.length === 0) {
+    browserCapabilityTraceWriter.writeDebugLog(pageId, 'extract-full', {
+      error: conversation ? 'no messages' : 'no conversation data',
+    });
+    return null;
+  }
 
   const turns: ExtractedTurn[] = [];
 
@@ -315,18 +372,36 @@ export async function extractFullConversation(
     );
     const humanMsg = humanMsgs.length > 0 ? humanMsgs[humanMsgs.length - 1] : null;
 
+    const markdown = await messageToMarkdown(msg);
     turns.push({
       index: msg.index,
       userMessage: humanMsg?.textContent.trim() ?? '',
-      markdown: await messageToMarkdown(msg),
+      markdown,
       timestamp: msg.createdAt,
       artifactCount: msg.artifacts.length,
     });
   }
 
-  return {
+  const result: ExtractedConversation = {
     title: conversation.name || '未命名对话',
     model: conversation.model,
     turns,
   };
+
+  // Cache full extraction data for debugging
+  browserCapabilityTraceWriter.writeDebugLog(pageId, 'extract-full', {
+    title: result.title,
+    model: result.model,
+    totalMessages: conversation.messages.length,
+    totalTurns: turns.length,
+    turns: turns.map((t) => ({
+      index: t.index,
+      userMessagePreview: t.userMessage.slice(0, 80),
+      markdownLength: t.markdown.length,
+      markdownPreview: t.markdown.slice(0, 300),
+      artifactCount: t.artifactCount,
+    })),
+  });
+
+  return result;
 }

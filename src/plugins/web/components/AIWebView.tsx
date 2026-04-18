@@ -1084,11 +1084,48 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
     aiStatus === 'waiting' ? 'AI 回复中...' :
     '提取中...';
 
-  // Phase B will implement this via browser-capability artifact data.
-  const triggerClaudeArtifactDownloads = useCallback(async () => {
+  const triggerFullConversationExtract = useCallback(async () => {
     setArtifactDownloadBusy(true);
-    setArtifactDownloadStatus('Artifact 下载功能正在迁移中...');
-    setTimeout(() => setArtifactDownloadBusy(false), 2000);
+    setArtifactDownloadStatus('提取整页对话...');
+    try {
+      await viewAPI.ensureRightSlot('demo-a');
+      const result = await viewAPI.browserCapabilityExtractFull();
+      if (!result.success || !result.turns || result.turns.length === 0) {
+        setArtifactDownloadStatus(result.error || '未能提取到对话内容');
+        return;
+      }
+
+      // Send each turn via as:import-conversation
+      const webview = webviewRef.current;
+      const url = webview?.getURL?.() ?? '';
+      const profile = detectAIServiceByUrl(url);
+
+      viewAPI.sendToOtherSlot({
+        protocol: 'ai-sync',
+        action: 'as:import-conversation',
+        payload: {
+          title: result.title ?? '未命名对话',
+          turns: result.turns,
+          source: {
+            serviceId: profile?.id ?? 'claude',
+            serviceName: profile?.name ?? 'Claude',
+            url,
+          },
+          metadata: {
+            model: result.model,
+          },
+        },
+      });
+
+      const totalArtifacts = result.turns.reduce((sum: number, t: any) => sum + (t.artifactCount || 0), 0);
+      setArtifactDownloadStatus(
+        `已提取 ${result.turns.length} 条回复，${totalArtifacts} 个 artifact`,
+      );
+    } catch (err) {
+      setArtifactDownloadStatus(err instanceof Error ? err.message : String(err));
+    } finally {
+      setArtifactDownloadBusy(false);
+    }
   }, []);
 
   return (
@@ -1155,11 +1192,11 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
               cursor: artifactDownloadBusy ? 'default' : 'pointer',
               opacity: artifactDownloadBusy ? 0.7 : 1,
             }}
-            onClick={() => { if (!artifactDownloadBusy) void triggerClaudeArtifactDownloads(); }}
-            title="手动触发当前 Claude 页当前可见 Artifact 的下载"
+            onClick={() => { if (!artifactDownloadBusy) void triggerFullConversationExtract(); }}
+            title="提取整个对话（含所有 artifact）到 Note"
             disabled={artifactDownloadBusy}
           >
-            {artifactDownloadBusy ? '下载中...' : '下载全部 Artifacts'}
+            {artifactDownloadBusy ? '提取中...' : '提取整页对话'}
           </button>
         )}
 

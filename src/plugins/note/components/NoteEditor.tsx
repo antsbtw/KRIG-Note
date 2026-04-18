@@ -772,6 +772,45 @@ export function NoteEditor() {
             payload: { reason: String(err) },
           });
         });
+      } else if (msg.protocol === 'ai-sync' && msg.action === 'as:import-conversation') {
+        const { title, turns, source } = msg.payload ?? {} as any;
+        if (!Array.isArray(turns) || turns.length === 0) return;
+        queue = queue.then(async () => {
+          const view = viewRef.current;
+          if (!view || view.isDestroyed || !currentNoteIdRef.current) return;
+
+          // Insert title as heading
+          const { schema } = view.state;
+          const headingType = schema.nodes.heading;
+          if (headingType && title) {
+            const headingNode = headingType.create(
+              { level: 2 },
+              [schema.text(String(title))],
+            );
+            const tr = view.state.tr;
+            tr.setMeta('ai-sync', true);
+            const pos = view.state.doc.content.size;
+            tr.insert(pos, headingNode);
+            view.dispatch(tr);
+          }
+
+          // Insert each turn sequentially
+          const { insertTurnIntoNote } = await import('../ai-workflow/sync-note-receiver');
+          for (const turn of turns) {
+            await insertTurnIntoNote(view, {
+              turn: {
+                index: turn.index,
+                userMessage: turn.userMessage ?? '',
+                markdown: turn.markdown ?? '',
+                timestamp: turn.timestamp ?? Date.now(),
+              },
+              source: source ?? { serviceId: 'claude', serviceName: 'Claude' },
+            });
+          }
+          console.log(`[SyncNote] Imported conversation "${title}": ${turns.length} turns`);
+        }).catch(err => {
+          console.warn('[SyncNote] import-conversation failed:', err);
+        });
       } else if (msg.protocol === 'ai-sync' && msg.action === 'as:probe') {
         // Peer asks "are you open?" — reply immediately.
         viewAPI.sendToOtherSlot({
