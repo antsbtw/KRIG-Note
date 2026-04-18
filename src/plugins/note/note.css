@@ -3090,35 +3090,8 @@
 
 /* ─── HTML Block ────────────────────────────────── */
 .html-block__wrapper {
-  border: 1px solid var(--color-border, #e5e5e5);
   border-radius: 8px;
   overflow: hidden;
-}
-.html-block__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 4px 8px;
-  background: var(--color-bg-secondary, #f5f5f5);
-  border-bottom: 1px solid var(--color-border, #e5e5e5);
-  font-size: 12px;
-}
-.html-block__title {
-  font-weight: 500;
-  color: var(--color-text-secondary, #525252);
-}
-.html-block__toolbar button {
-  background: transparent;
-  border: 1px solid var(--color-border, #d4d4d4);
-  border-radius: 4px;
-  padding: 2px 8px;
-  font-size: 11px;
-  cursor: pointer;
-  margin-left: 4px;
-  color: var(--color-text-secondary, #525252);
-}
-.html-block__toolbar button:hover {
-  background: rgba(0,0,0,0.05);
 }
 .html-block__iframe {
   display: block;

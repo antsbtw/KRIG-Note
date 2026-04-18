@@ -19,11 +19,15 @@ import type { EditorView } from 'prosemirror-view';
 async function loadHtmlContent(src: string): Promise<string | null> {
   try {
     if (src.startsWith('data:text/html;base64,')) {
-      return atob(src.split(',')[1]);
+      const binary = atob(src.split(',')[1]);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      return new TextDecoder('utf-8').decode(bytes);
     }
     const response = await fetch(src);
     if (!response.ok) return null;
-    return await response.text();
+    const buf = await response.arrayBuffer();
+    return new TextDecoder('utf-8').decode(buf);
   } catch {
     return null;
   }
@@ -92,7 +96,7 @@ function setupHeightResize(
 }
 
 const htmlBlockRenderer: RenderBlockRenderer = {
-  label() { return 'HTML'; },
+  label(node: PMNode) { return node.attrs.title || 'HTML'; },
 
   createContent(node: PMNode, view: EditorView, getPos: () => number | undefined): HTMLElement {
     const content = document.createElement('div');
@@ -114,49 +118,6 @@ const htmlBlockRenderer: RenderBlockRenderer = {
       const wrapper = document.createElement('div');
       wrapper.classList.add('html-block__wrapper');
 
-      // Header bar
-      const header = document.createElement('div');
-      header.classList.add('html-block__header');
-
-      const titleSpan = document.createElement('span');
-      titleSpan.classList.add('html-block__title');
-      titleSpan.textContent = node.attrs.title || 'HTML Preview';
-
-      const toolbar = document.createElement('div');
-      toolbar.classList.add('html-block__toolbar');
-
-      // 查看源码按钮
-      const srcBtn = document.createElement('button');
-      srcBtn.textContent = '源码';
-      srcBtn.title = '查看 HTML 源码';
-      srcBtn.addEventListener('mousedown', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        toggleSourceView(wrapper, node.attrs.src);
-      });
-
-      // 在新窗口打开按钮
-      const openBtn = document.createElement('button');
-      openBtn.textContent = '新窗口';
-      openBtn.title = '在新窗口中打开';
-      openBtn.addEventListener('mousedown', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        // 加载 HTML 内容并在新窗口打开
-        loadHtmlContent(node.attrs.src).then((html) => {
-          if (html) {
-            const blob = new Blob([html], { type: 'text/html' });
-            const url = URL.createObjectURL(blob);
-            window.open(url, '_blank');
-          }
-        });
-      });
-
-      toolbar.appendChild(srcBtn);
-      toolbar.appendChild(openBtn);
-      header.appendChild(titleSpan);
-      header.appendChild(toolbar);
-
       // iframe sandbox
       const iframe = document.createElement('iframe');
       iframe.classList.add('html-block__iframe');
@@ -164,15 +125,50 @@ const htmlBlockRenderer: RenderBlockRenderer = {
       iframe.style.width = '100%';
       iframe.style.height = `${node.attrs.height || 400}px`;
       iframe.style.border = 'none';
-      iframe.style.borderRadius = '0 0 8px 8px';
+      iframe.style.borderRadius = '8px';
       iframe.style.backgroundColor = '#ffffff';
 
-      // 加载 HTML 内容
+      // 加载 HTML 内容，注入高度上报脚本
       loadHtmlContent(node.attrs.src).then((html) => {
         if (html) {
-          iframe.srcdoc = html;
+          const heightScript = `<script>
+            (function() {
+              function reportHeight() {
+                var h = Math.max(
+                  document.body.scrollHeight,
+                  document.body.offsetHeight,
+                  document.documentElement.scrollHeight,
+                  document.documentElement.offsetHeight
+                );
+                parent.postMessage({ type: 'krig-iframe-height', height: h }, '*');
+              }
+              window.addEventListener('load', function() { setTimeout(reportHeight, 100); });
+              new MutationObserver(reportHeight).observe(document.body, { childList: true, subtree: true, attributes: true });
+              setTimeout(reportHeight, 500);
+            })();
+          </script>`;
+          if (html.includes('</body>')) {
+            iframe.srcdoc = html.replace('</body>', heightScript + '</body>');
+          } else {
+            iframe.srcdoc = html + heightScript;
+          }
         }
       });
+
+      // 监听 iframe 高度上报
+      const onMessage = (e: MessageEvent) => {
+        if (e.data?.type === 'krig-iframe-height' && typeof e.data.height === 'number') {
+          if (e.source === iframe.contentWindow) {
+            const h = Math.max(200, Math.min(e.data.height + 20, 2000));
+            iframe.style.height = `${h}px`;
+          }
+        }
+      };
+      window.addEventListener('message', onMessage);
+      (content as any)._messageListener = onMessage;
+
+      // 存储 src 供 toolbarButtons 回调使用
+      (content as any)._src = node.attrs.src;
 
       // 高度调整 handle
       const resizeHandle = document.createElement('div');
@@ -181,7 +177,6 @@ const htmlBlockRenderer: RenderBlockRenderer = {
         updateAttrs({ height: newHeight });
       });
 
-      wrapper.appendChild(header);
       wrapper.appendChild(iframe);
       wrapper.appendChild(resizeHandle);
       content.appendChild(wrapper);
@@ -209,17 +204,12 @@ const htmlBlockRenderer: RenderBlockRenderer = {
   },
 
   update(node: PMNode, contentEl: HTMLElement): boolean {
-    // 检测状态切换（placeholder ↔ 渲染）→ 重建
     const hasWrapper = !!contentEl.querySelector('.html-block__wrapper');
     const hasSrc = !!node.attrs.src;
     if (hasWrapper !== hasSrc) return false;
 
     if (node.attrs.src) {
-      // 更新 title
-      const titleEl = contentEl.querySelector('.html-block__title');
-      if (titleEl) titleEl.textContent = node.attrs.title || 'HTML Preview';
-
-      // 更新 iframe 高度
+      (contentEl as any)._src = node.attrs.src;
       const iframe = contentEl.querySelector('.html-block__iframe') as HTMLIFrameElement;
       if (iframe && node.attrs.height) {
         iframe.style.height = `${node.attrs.height}px`;
@@ -228,8 +218,44 @@ const htmlBlockRenderer: RenderBlockRenderer = {
     return true;
   },
 
+  toolbarButtons(node: PMNode, contentEl?: HTMLElement): ToolbarGroup[] {
+    if (!node.attrs.src) return [];
+    const src = (contentEl as any)?._src || node.attrs.src;
+    return [{
+      id: 'actions',
+      buttons: [
+        {
+          icon: '{ }',
+          title: '查看源码',
+          onClick: () => {
+            const wrapper = contentEl?.querySelector('.html-block__wrapper') as HTMLElement;
+            if (wrapper) toggleSourceView(wrapper, src);
+          },
+        },
+        {
+          icon: '↗',
+          title: '在新窗口中打开',
+          onClick: () => {
+            loadHtmlContent(src).then((html) => {
+              if (html) {
+                const blob = new Blob([html], { type: 'text/html' });
+                const url = URL.createObjectURL(blob);
+                window.open(url, '_blank');
+              }
+            });
+          },
+        },
+      ],
+    }];
+  },
+
   getContentDOM(contentEl: HTMLElement) {
     return (contentEl as any)._captionDOM as HTMLElement;
+  },
+
+  destroy(contentEl: HTMLElement) {
+    const listener = (contentEl as any)._messageListener;
+    if (listener) window.removeEventListener('message', listener);
   },
 };
 

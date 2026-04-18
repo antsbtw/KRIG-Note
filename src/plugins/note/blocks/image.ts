@@ -90,8 +90,20 @@ function injectSvgStyles(container: HTMLElement): void {
   }
 }
 
+/** 从 src 推断图片格式标签 */
+function getImageLabel(src: string | null): string {
+  if (!src) return 'Image';
+  // data URL: data:image/png;base64,...
+  const dataMatch = src.match(/^data:image\/(\w+)/);
+  if (dataMatch) return dataMatch[1].toUpperCase();
+  // 文件扩展名
+  const extMatch = src.match(/\.(\w+)(?:\?.*)?$/);
+  if (extMatch) return extMatch[1].toUpperCase();
+  return 'Image';
+}
+
 const imageRenderer: RenderBlockRenderer = {
-  label() { return 'Image'; },
+  label(node: PMNode) { return getImageLabel(node.attrs.src); },
 
   createContent(node: PMNode, view: EditorView, getPos: () => number | undefined): HTMLElement {
     const content = document.createElement('div');
