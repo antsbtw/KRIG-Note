@@ -21,7 +21,7 @@ export interface ExtractedListItem {
 }
 
 export interface ExtractedBlock {
-  type: 'paragraph' | 'heading' | 'blockquote' | 'callout' | 'code' | 'math' | 'image' | 'video' | 'audio' | 'bulletList' | 'orderedList' | 'table' | 'file';
+  type: 'paragraph' | 'heading' | 'blockquote' | 'callout' | 'code' | 'math' | 'image' | 'video' | 'audio' | 'bulletList' | 'orderedList' | 'table' | 'file' | 'htmlBlock';
   tag: string;
   text: string;
   headingLevel: number;

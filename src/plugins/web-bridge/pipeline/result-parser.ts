@@ -221,6 +221,20 @@ export class ResultParser {
         continue;
       }
 
+      // HTML Block: !html[title](url)
+      const htmlMatch = line.trim().match(/^!html\[([^\]]*)\]\(([^)]+)\)\s*$/);
+      if (htmlMatch) {
+        blocks.push({
+          type: 'htmlBlock',
+          tag: 'div',
+          text: htmlMatch[1],
+          src: htmlMatch[2],
+          headingLevel: 0,
+        });
+        i++;
+        continue;
+      }
+
       // Image: ![alt](url) or ![alt](image:pageN:xA,yB,wC,hD)
       const imageMatch = line.trim().match(/^!\[([^\]]*)\]\(([^)]+)\)\s*$/);
       if (imageMatch) {
@@ -298,6 +312,7 @@ export class ResultParser {
         if (next.match(/^#{1,6}\s/) || next.match(/^>\s/) ||
             next.match(/^[-*+]\s/) || next.match(/^\d+\.\s/) ||
             next.trim().startsWith('```') || next.trim().startsWith('$$') ||
+            next.trim().match(/^!html\[([^\]]*)\]\(([^)]+)\)\s*$/) ||
             next.trim().match(/^!\[([^\]]*)\]\(([^)]+)\)\s*$/) ||
             next.trim().match(/^<<IMAGE:/) ||
             next.trim().match(/^<center>.*<\/center>$/i) ||

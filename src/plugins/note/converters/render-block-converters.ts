@@ -19,6 +19,7 @@ import type {
   PageAnchorContent,
   FileBlockContent,
   ExternalRefContent,
+  HtmlBlockContent,
 } from '../../../shared/types/atom-types';
 import { createAtom } from '../../../shared/types/atom-types';
 import type { AtomConverter, PMNodeJSON } from './converter-types';
@@ -248,6 +249,39 @@ export const externalRefConverter: AtomConverter = {
         size:       c.size ?? null,
         modifiedAt: c.modifiedAt ?? null,
       },
+    };
+  },
+};
+
+// ── htmlBlock ──
+
+export const htmlBlockConverter: AtomConverter = {
+  atomTypes: ['htmlBlock'],
+  pmType: 'htmlBlock',
+
+  toAtom(node: PMNode, parentId?: string): Atom {
+    const captionText = node.firstChild?.textContent || undefined;
+    return createAtom('htmlBlock', {
+      src: node.attrs.src || '',
+      title: node.attrs.title || '',
+      height: node.attrs.height || 400,
+      caption: captionText,
+    } as HtmlBlockContent, parentId);
+  },
+
+  toPM(atom: Atom): PMNodeJSON {
+    const c = atom.content as HtmlBlockContent;
+    const captionContent = c.caption
+      ? [{ type: 'text', text: c.caption }]
+      : [];
+    return {
+      type: 'htmlBlock',
+      attrs: {
+        src: c.src,
+        title: c.title,
+        height: c.height,
+      },
+      content: [{ type: 'textBlock', content: captionContent }],
     };
   },
 };

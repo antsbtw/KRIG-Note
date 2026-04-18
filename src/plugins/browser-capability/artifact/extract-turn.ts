@@ -205,7 +205,21 @@ async function artifactToMarkdown(artifact: MessageArtifact): Promise<string> {
       const encoded = Buffer.from(content.code, 'utf-8').toString('base64');
       return `![${artifact.title}](data:image/svg+xml;base64,${encoded})\n`;
     }
-    // HTML widget: render as code block
+    // HTML widget: save to media store, reference as !html block
+    try {
+      const put = await ensureMediaStore();
+      if (put) {
+        const dataUrl = `data:text/html;base64,${Buffer.from(content.code, 'utf-8').toString('base64')}`;
+        const result = await put(dataUrl, 'text/html', `${artifact.title}.html`);
+        console.log('[extract-turn] html media store put result', { title: artifact.title, success: result.success, mediaUrl: result.mediaUrl });
+        if (result.success && result.mediaUrl) {
+          return `!html[${artifact.title}](${result.mediaUrl})\n`;
+        }
+      }
+    } catch (err) {
+      console.warn('[extract-turn] html media store put failed', { title: artifact.title, error: err });
+    }
+    // Fallback: code block
     return `\`\`\`html\n${content.code.trimEnd()}\n\`\`\`\n`;
   }
 

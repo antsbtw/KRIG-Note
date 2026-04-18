@@ -15,6 +15,7 @@ import type {
   TableCellContent,
   NoteTitleContent,
   FileBlockContent,
+  HtmlBlockContent,
 } from '../../../shared/types/atom-types';
 import type { ExtractedBlock, ExtractedInline } from '../../../shared/types/extraction-types';
 
@@ -275,6 +276,13 @@ export function createAtomsFromExtracted(blocks: ExtractedBlock[], pageTitle?: s
         title: block.text || 'Audio',
       };
       atoms.push(createAtom('audio', content, rootAtom.id));
+
+    } else if (block.type === 'htmlBlock' && block.src) {
+      const content: HtmlBlockContent = {
+        src: block.src,
+        title: block.text || 'HTML Preview',
+      };
+      atoms.push(createAtom('htmlBlock', content, rootAtom.id));
 
     } else if (block.type === 'file' && block.src) {
       const content: FileBlockContent = {

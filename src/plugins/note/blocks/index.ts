@@ -28,6 +28,7 @@ import { tweetBlockBlock } from './tweet-block';
 import { mathVisualBlock } from './math-visual';
 import { fileBlockBlock } from './file-block';
 import { externalRefBlock } from './external-ref';
+import { htmlBlockBlock } from './html-block';
 
 // ── Inline ──
 import { hardBreakBlock } from './hard-break';
@@ -79,6 +80,7 @@ export function registerAllBlocks(): void {
   blockRegistry.register(mathVisualBlock);
   blockRegistry.register(fileBlockBlock);
   blockRegistry.register(externalRefBlock);
+  blockRegistry.register(htmlBlockBlock);
 
   // ── Inline ──
   blockRegistry.register(hardBreakBlock);
