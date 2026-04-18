@@ -26,11 +26,17 @@ function isSvgSrc(src: string | null): boolean {
 async function loadSvgContent(src: string): Promise<string | null> {
   try {
     if (src.startsWith('data:image/svg+xml;base64,')) {
-      return atob(src.split(',')[1]);
+      // atob 只处理 Latin1，需要用 TextDecoder 处理 UTF-8 多字节字符
+      const binary = atob(src.split(',')[1]);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      return new TextDecoder('utf-8').decode(bytes);
     }
     const response = await fetch(src);
     if (!response.ok) return null;
-    return await response.text();
+    // 强制 UTF-8 解码，避免 media:// 协议返回的 response 编码不正确
+    const buf = await response.arrayBuffer();
+    return new TextDecoder('utf-8').decode(buf);
   } catch {
     return null;
   }
