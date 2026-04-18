@@ -9,6 +9,7 @@
 import {
   getConversationData,
   type ArtifactContent,
+  type ContentPart,
   type ConversationMessage,
   type MessageArtifact,
 } from './conversation-query';
@@ -45,6 +46,83 @@ export type ExtractedConversation = {
   turns: ExtractedTurn[];
 };
 
+// ── SVG preprocessing ──
+
+/**
+ * Prepare SVG for rendering via <img> tag:
+ * 1. Add xmlns if missing (required for external SVG files)
+ * 2. Replace width="100%" with fixed width from viewBox
+ * 3. Replace CSS variables with concrete color values
+ * 4. Inject <style> block for Claude widget CSS classes
+ * 5. Inject white background rect
+ */
+function prepareSvgForImgTag(raw: string): string {
+  let svg = raw;
+
+  // 1. xmlns
+  if (!svg.includes('xmlns=')) {
+    svg = svg.replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg"');
+  }
+
+  // 2. Fixed width from viewBox
+  const viewBoxMatch = svg.match(/viewBox=["']0\s+0\s+(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)["']/);
+  const vbWidth = viewBoxMatch ? viewBoxMatch[1] : null;
+  const vbHeight = viewBoxMatch ? viewBoxMatch[2] : null;
+  if (vbWidth && svg.includes('width="100%"')) {
+    svg = svg.replace('width="100%"', `width="${vbWidth}"`);
+  }
+
+  // 3. Replace CSS variables with light-theme concrete values
+  const cssVarMap: Record<string, string> = {
+    'var(--color-border-tertiary)': '#e5e5e5',
+    'var(--color-border-secondary)': '#d4d4d4',
+    'var(--color-border-primary)': '#a3a3a3',
+    'var(--color-text-primary)': '#171717',
+    'var(--color-text-secondary)': '#525252',
+    'var(--color-text-tertiary)': '#737373',
+    'var(--color-bg-primary)': '#ffffff',
+    'var(--color-bg-secondary)': '#f5f5f5',
+    'var(--color-bg-tertiary)': '#e5e5e5',
+    'var(--text-color-primary)': '#171717',
+    'var(--text-color-secondary)': '#525252',
+    'var(--bg-color)': '#ffffff',
+  };
+  for (const [cssVar, value] of Object.entries(cssVarMap)) {
+    while (svg.includes(cssVar)) {
+      svg = svg.replace(cssVar, value);
+    }
+  }
+
+  // 4. Inject <style> for Claude widget CSS classes + white background
+  const svgOpenEnd = svg.indexOf('>', svg.indexOf('<svg'));
+  if (svgOpenEnd > 0) {
+    const bgWidth = vbWidth ?? '100%';
+    const bgHeight = vbHeight ?? '100%';
+    const injected = [
+      `<rect width="${bgWidth}" height="${bgHeight}" fill="#ffffff" rx="8"/>`,
+      `<style>`,
+      `  .ts { font-size: 13px; fill: #525252; font-family: system-ui, -apple-system, sans-serif; }`,
+      `  .th { font-size: 15px; fill: #171717; font-weight: 600; font-family: system-ui, -apple-system, sans-serif; }`,
+      `  .node rect, .node path { stroke-width: 1.5; }`,
+      `  .node text { fill: #171717; }`,
+      `  .c-gray rect { fill: #f5f5f5; stroke: #d4d4d4; }`,
+      `  .c-amber rect { fill: #fffbeb; stroke: #f59e0b; }`,
+      `  .c-purple rect { fill: #faf5ff; stroke: #a855f7; }`,
+      `  .c-teal rect { fill: #f0fdfa; stroke: #14b8a6; }`,
+      `  .c-coral rect { fill: #fff7ed; stroke: #f97316; }`,
+      `  .c-blue rect { fill: #eff6ff; stroke: #3b82f6; }`,
+      `  .c-green rect { fill: #f0fdf4; stroke: #22c55e; }`,
+      `  .c-red rect { fill: #fef2f2; stroke: #ef4444; }`,
+      `  .c-indigo rect { fill: #eef2ff; stroke: #6366f1; }`,
+      `  text { font-family: system-ui, -apple-system, sans-serif; }`,
+      `</style>`,
+    ].join('\n');
+    svg = svg.slice(0, svgOpenEnd + 1) + '\n' + injected + '\n' + svg.slice(svgOpenEnd + 1);
+  }
+
+  return svg;
+}
+
 // ── Artifact → markdown ──
 
 async function artifactToMarkdown(artifact: MessageArtifact): Promise<string> {
@@ -60,16 +138,7 @@ async function artifactToMarkdown(artifact: MessageArtifact): Promise<string> {
       try {
         const put = await ensureMediaStore();
         if (put) {
-          // Ensure SVG has xmlns (required for <img> rendering as external file)
-          let svgCode = content.code;
-          if (!svgCode.includes('xmlns=')) {
-            svgCode = svgCode.replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg"');
-          }
-          // Replace width="100%" with fixed width from viewBox if available
-          const viewBoxMatch = svgCode.match(/viewBox="0\s+0\s+(\d+)\s+(\d+)"/);
-          if (viewBoxMatch && svgCode.includes('width="100%"')) {
-            svgCode = svgCode.replace('width="100%"', `width="${viewBoxMatch[1]}"`);
-          }
+          let svgCode = prepareSvgForImgTag(content.code);
           const dataUrl = `data:image/svg+xml;base64,${Buffer.from(svgCode, 'utf-8').toString('base64')}`;
           const result = await put(dataUrl, 'image/svg+xml', `${artifact.title}.svg`);
           console.log('[extract-turn] media store put result', { title: artifact.title, success: result.success, mediaUrl: result.mediaUrl });
@@ -114,18 +183,29 @@ async function artifactToMarkdown(artifact: MessageArtifact): Promise<string> {
 }
 
 async function messageToMarkdown(msg: ConversationMessage): Promise<string> {
-  const parts: string[] = [];
+  // Use contentParts to preserve original interleaving order
+  if (msg.contentParts.length > 0) {
+    const parts: string[] = [];
+    for (const part of msg.contentParts) {
+      if (part.type === 'text') {
+        const trimmed = part.text.trim();
+        if (trimmed) parts.push(trimmed);
+      } else if (part.type === 'artifact') {
+        const md = await artifactToMarkdown(part.artifact);
+        if (md.trim()) parts.push(md.trim());
+      }
+    }
+    return parts.join('\n\n');
+  }
 
-  // Text content
+  // Fallback for messages without contentParts
+  const parts: string[] = [];
   if (msg.textContent.trim()) {
     parts.push(msg.textContent.trim());
   }
-
-  // Artifacts inline
   for (const artifact of msg.artifacts) {
     parts.push(await artifactToMarkdown(artifact));
   }
-
   return parts.join('\n\n');
 }
 

@@ -20,6 +20,10 @@ export type ConversationData = {
   messages: ConversationMessage[];
 };
 
+export type ContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'artifact'; artifact: MessageArtifact };
+
 export type ConversationMessage = {
   uuid: string;
   sender: 'human' | 'assistant' | 'system';
@@ -27,6 +31,8 @@ export type ConversationMessage = {
   createdAt?: string;
   textContent: string;
   artifacts: MessageArtifact[];
+  /** content parts in original order (text and artifacts interleaved) */
+  contentParts: ContentPart[];
 };
 
 export type MessageArtifact = {
@@ -179,9 +185,41 @@ export function getConversationData(pageId: string): ConversationData | null {
     const rawText = readString(record.text);
     const textContent = rawText ?? extractTextFromContent(content);
 
-    const msgArtifacts = sender === 'assistant'
-      ? extractArtifactsFromContent(content, msgUuid, artifacts)
-      : [];
+    // Build content parts in original order and collect artifacts
+    const contentParts: ContentPart[] = [];
+    const msgArtifacts: MessageArtifact[] = [];
+
+    if (sender === 'assistant' && content.length > 0) {
+      // Build artifact lookup for this message
+      const artifactsByToolUseId = new Map<string, MessageArtifact>();
+      for (const a of extractArtifactsFromContent(content, msgUuid, artifacts)) {
+        artifactsByToolUseId.set(a.toolUseId, a);
+        msgArtifacts.push(a);
+      }
+
+      for (const part of content) {
+        if (!part || typeof part !== 'object') continue;
+        const partRecord = part as Record<string, unknown>;
+        if (partRecord.type === 'text') {
+          const text = readString(partRecord.text);
+          if (text) contentParts.push({ type: 'text', text });
+        } else if (partRecord.type === 'tool_use') {
+          const toolUseId = readString(partRecord.id);
+          if (toolUseId) {
+            const artifact = artifactsByToolUseId.get(toolUseId);
+            if (artifact) {
+              contentParts.push({ type: 'artifact', artifact });
+            }
+          }
+        }
+        // skip tool_result and other types
+      }
+    } else {
+      // human / system messages — just text
+      if (textContent.trim()) {
+        contentParts.push({ type: 'text', text: textContent });
+      }
+    }
 
     messages.push({
       uuid: msgUuid,
@@ -190,6 +228,7 @@ export function getConversationData(pageId: string): ConversationData | null {
       createdAt: readString(record.created_at) ?? undefined,
       textContent,
       artifacts: msgArtifacts,
+      contentParts,
     });
   }
 
