@@ -354,6 +354,99 @@ Phase C：整页提取（新功能）
 | C.3 | UI 入口：整页提取按钮 | AIWebView 工具栏或菜单 |
 | C.4 | 验证：完整对话导入 | 验证长对话、多 artifact、混合类型 |
 
+### Phase E：SVG Block（Note 渲染增强）
+
+#### 问题
+
+当前 SVG artifact 通过 `<img>` 标签渲染，存在本质局限：
+
+| `<img>` 渲染 SVG 的局限 | 影响 |
+|------------------------|------|
+| CSS 变量/外部样式不可用 | SVG 中 `var(--color-*)` 全部失效，需要预处理替换 |
+| 无法交互 | hover、点击节点等原生 SVG 交互丢失 |
+| 分辨率受容器宽度限制 | 大图缩小后细节模糊 |
+| 中文字体 fallback | SVG 指定的字体在 `<img>` 隔离上下文中不可用，字距偏差 |
+| 无法导出/复制源码 | 用户无法获取原始 SVG |
+
+当前 `prepareSvgForImgTag()` 通过预处理（替换 CSS 变量、注入 `<style>` 和白背景）部分缓解了问题，但这是治标不治本的方案。
+
+#### 方案：SVG 独立 Block
+
+在 Note 编辑器中新增 `svg-block`（类似 `image-block`），使用 `<div>` 容器 + `innerHTML` 直接渲染 SVG DOM，而非 `<img>` 标签：
+
+```
+image-block:  <img src="media://xxx.svg">     ← 隔离上下文，CSS/交互不可用
+svg-block:    <div class="svg-block">          ← 完整 DOM 上下文
+                <div class="svg-block__canvas">
+                  {SVG DOM 直接插入}
+                </div>
+                <div class="svg-block__toolbar">
+                  [缩放] [导出 PNG] [查看源码]
+                </div>
+              </div>
+```
+
+#### SVG Block 的能力
+
+| 能力 | 说明 |
+|------|------|
+| 完整 CSS 支持 | 可注入 Claude 主题变量或自定义样式表 |
+| 主题适配 | Note 暗色/亮色主题切换时，SVG 跟随变化 |
+| 交互保留 | hover 高亮、点击节点跳转、tooltip |
+| 缩放 | pinch-zoom 或按钮缩放，不损失清晰度（矢量） |
+| 导出 | 导出为 PNG/SVG 文件 |
+| 源码查看 | 开发者可查看/复制原始 SVG |
+| 自适应宽度 | 根据容器宽度自动缩放 viewBox |
+
+#### Schema 设计
+
+```ts
+// ProseMirror node spec
+svgBlock: {
+  attrs: {
+    src: { default: null },          // media:// URL（SVG 文件）
+    svgContent: { default: null },   // 内联 SVG 源码（优先于 src）
+    alt: { default: null },
+    caption: { default: null },
+    width: { default: null },
+    height: { default: null },
+    viewBox: { default: null },
+    theme: { default: 'light' },     // 'light' | 'dark' | 'auto'
+  },
+  group: 'block',
+  draggable: true,
+}
+```
+
+#### 与 Artifact 提取的关系
+
+当 `extract-turn.ts` 遇到 SVG artifact 时：
+
+```
+当前: widget_code → prepareSvgForImgTag() → media store → ![alt](media://xxx.svg) → image-block
+未来: widget_code → media store + svgContent → svg-block atom → svg-block 渲染
+```
+
+`svg-block` 同时保存 `src`（media store 持久化）和 `svgContent`（渲染用），确保离线可用。
+
+#### 实施任务
+
+| # | 任务 | 说明 |
+|---|------|------|
+| E.1 | 定义 `svg-block` schema | ProseMirror node spec + attrs |
+| E.2 | 实现 `svg-block` NodeView | DOM 渲染 + 样式注入 + 主题适配 |
+| E.3 | 实现缩放/导出工具栏 | zoom + export PNG + view source |
+| E.4 | `extract-turn` 输出 svg-block atom | 替代当前的 image-block 输出 |
+| E.5 | Atom 序列化/反序列化 | svg-block ↔ Atom ↔ JSON 双向转换 |
+| E.6 | 验证：多种 SVG 类型渲染 | 流程图/数据图/思维导图/代码图 |
+
+#### 优先级
+
+Phase E 在 Phase B/C 之后，因为：
+- 当前 `<img>` + `prepareSvgForImgTag()` 已经可用（基本可读）
+- SVG block 需要 Note 编辑器层面的改动，工作量较大
+- 可以和其他 Note block 增强（video-block 等）一起推进
+
 ---
 
 ## 八、风险与约束
@@ -363,7 +456,7 @@ Phase C：整页提取（新功能）
 | conversation API 结构变化 | API 是 Claude 官方接口，比 DOM 结构稳定得多；且 trace-writer 已有容错 |
 | widget_code 不包含外部资源 | 大部分 widget 是自包含的；如果引用外部 CDN 资源，需要额外处理 |
 | 非 Claude 页面无 conversation API | Phase B 保留 fallback 到旧链路；Phase C 仅面向有 conversation 数据的页面 |
-| SVG 在 Note 中渲染 | 需要确认 Note 的 image block 支持 SVG 引用 |
+| SVG 在 Note 中渲染 | 当前用 `<img>` + 预处理可用但有局限；Phase E 规划了 svg-block 独立渲染方案 |
 | 大对话导入性能 | 整页提取可能产生大量 atoms，需要测试 ProseMirror 的渲染性能 |
 
 ---
