@@ -38,6 +38,7 @@ import { columnCollapsePlugin } from '../plugins/column-collapse';
 import { registerConverterTest } from '../converters/converter-test';
 import { converterRegistry } from '../converters/registry';
 import { setTextBlockLevel } from '../commands/set-text-block-level';
+import { toggleTextIndent } from '../commands/editor-commands';
 import type { Atom, NoteTitleContent } from '../../../shared/types/atom-types';
 import { createAtom } from '../../../shared/types/atom-types';
 import { sanitizeAtoms } from '../../../shared/sanitize-atoms';
@@ -140,7 +141,6 @@ function buildPlugins(s: ReturnType<typeof getSchema>) {
     if (!editorView) return false;
     const target = resolveTextBlock(editorView.state);
     if (!target) return false;
-    const { toggleTextIndent } = require('../commands/editor-commands');
     return toggleTextIndent(editorView, target.pos);
   };
 

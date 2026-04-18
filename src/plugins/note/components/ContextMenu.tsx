@@ -54,7 +54,16 @@ export function ContextMenu({ view }: ContextMenuProps) {
     },
     {
       id: 'paste', label: 'Paste', icon: '📄', shortcut: '⌘V',
-      action: () => { document.execCommand('paste'); close(); },
+      action: () => {
+        // execCommand('paste') 在 Electron contextIsolation 下不可用，
+        // 改用 Clipboard API 读取文本后手动插入。
+        navigator.clipboard.readText().then((text) => {
+          if (!text || !view) return;
+          view.focus();
+          view.dispatch(view.state.tr.insertText(text).scrollIntoView());
+        }).catch(() => {});
+        close();
+      },
     },
     {
       id: 'delete', label: 'Delete', icon: '🗑', shortcut: '⌫',
