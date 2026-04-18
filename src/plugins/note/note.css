@@ -783,6 +783,19 @@
 .image-block__resize-handle--right::after { right: 0; }
 .image-block__img-area:hover .image-block__resize-handle { opacity: 1; }
 .image-block--resizing .image-block__resize-handle { opacity: 1; }
+/* SVG canvas（直接渲染 SVG DOM，替代 <img>） */
+.image-block__svg-canvas {
+  display: flex;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #ffffff;
+}
+.image-block__svg-canvas svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
 /* Caption */
 
 /* ═══════════════════════════════════════════════════════════
@@ -3074,4 +3087,61 @@
 .external-ref__btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+/* ─── HTML Block ────────────────────────────────── */
+.html-block__wrapper {
+  border: 1px solid var(--color-border, #e5e5e5);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.html-block__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  background: var(--color-bg-secondary, #f5f5f5);
+  border-bottom: 1px solid var(--color-border, #e5e5e5);
+  font-size: 12px;
+}
+.html-block__title {
+  font-weight: 500;
+  color: var(--color-text-secondary, #525252);
+}
+.html-block__toolbar button {
+  background: transparent;
+  border: 1px solid var(--color-border, #d4d4d4);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  margin-left: 4px;
+  color: var(--color-text-secondary, #525252);
+}
+.html-block__toolbar button:hover {
+  background: rgba(0,0,0,0.05);
+}
+.html-block__iframe {
+  display: block;
+  width: 100%;
+}
+.html-block__resize-height {
+  height: 6px;
+  cursor: ns-resize;
+  background: transparent;
+}
+.html-block__resize-height:hover {
+  background: var(--color-border, #e5e5e5);
+}
+.html-block__source {
+  max-height: 400px;
+  overflow: auto;
+  padding: 12px;
+  margin: 0;
+  font-size: 12px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  background: #1e1e1e;
+  color: #d4d4d4;
+  white-space: pre-wrap;
+  word-break: break-all;
 }

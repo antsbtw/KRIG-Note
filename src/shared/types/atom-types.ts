@@ -120,7 +120,8 @@ export type RenderAtomType =
   | 'audio'
   | 'tweet'
   | 'fileBlock'      // 附件 — AI/user 自包含资产，字节存在 media store
-  | 'externalRef';   // 外部引用 — 对本机路径或网络 URL 的指向（不复制字节）
+  | 'externalRef'    // 外部引用 — 对本机路径或网络 URL 的指向（不复制字节）
+  | 'htmlBlock';     // HTML 预览 — sandbox iframe 渲染 AI 生成的 HTML artifact
 
 // ── 特殊 ──
 export type SpecialAtomType =
@@ -306,6 +307,13 @@ export interface ExternalRefContent {
   modifiedAt?: number;
 }
 
+export interface HtmlBlockContent {
+  src: string;
+  title?: string;
+  height?: number;
+  caption?: string;
+}
+
 export interface TweetContent {
   tweetUrl: string;
   tweetId?: string;
@@ -347,6 +355,7 @@ export type AtomContent =
   | TweetContent
   | FileBlockContent
   | ExternalRefContent
+  | HtmlBlockContent
   | PageAnchorContent;
 
 // ═══════════════════════════════════════════════════════
