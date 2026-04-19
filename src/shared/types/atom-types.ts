@@ -413,7 +413,7 @@ export type Mark =
   | { type: 'code' }
   | { type: 'highlight'; color?: string }
   | { type: 'textStyle'; color?: string }
-  | { type: 'thought'; thoughtId: string; thoughtType?: string };
+  | { type: 'thought'; thoughtId: string; thoughtType?: string; anchorType?: string };
 
 // ═══════════════════════════════════════════════════════
 // §6  工具函数
