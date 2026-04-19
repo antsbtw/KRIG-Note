@@ -791,9 +791,10 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
     prompt: string;
     noteId: string;
     thoughtId: string;
+    images?: string[];
   }) => {
     try {
-      console.log('[AI_ASK_VISIBLE] Starting...', { serviceId: params.serviceId, promptLen: params.prompt.length });
+      console.log('[AI_ASK_VISIBLE] Starting...', { serviceId: params.serviceId, promptLen: params.prompt.length, imageCount: params.images?.length ?? 0 });
 
       const mainWindow = getMainWindow();
       if (!mainWindow) return { success: false, error: 'No main window' };

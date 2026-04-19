@@ -1,12 +1,16 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import type { EditorView } from 'prosemirror-view';
 import { showDictionaryPanel, showTranslationPanel } from '../learning';
 import { deleteCurrentBlock, deleteSelection } from '../commands/editor-commands';
+import { THOUGHT_ACTION } from '../../thought/thought-protocol';
+import { addThought } from '../commands/thought-commands';
+import { openAskAIPanel } from './AskAIPanel';
+import { getSelectionCache } from '../commands/selection-cache';
 
 /**
  * ContextMenu — 右键菜单
  *
- * Cut / Copy / Paste + Delete
+ * Cut / Copy / Paste + Delete + 添加标注 + 问 AI
  */
 
 interface ContextMenuProps {
@@ -15,17 +19,38 @@ interface ContextMenuProps {
 
 interface MenuState {
   coords: { left: number; top: number };
+  /** 右键打开时预计算的内容预览（此时选区可能还未被折叠） */
+  contentPreview: string;
 }
 
 export function ContextMenu({ view }: ContextMenuProps) {
   const [menu, setMenu] = useState<MenuState | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  // 主菜单位置（视口边界修正后的）
+  const [adjustedCoords, setAdjustedCoords] = useState<{ left: number; top: number } | null>(null);
+
+  // 菜单渲染后修正位置，防止超出视口
+  useLayoutEffect(() => {
+    if (!menu || !menuRef.current) { setAdjustedCoords(null); return; }
+    const el = menuRef.current;
+    const rect = el.getBoundingClientRect();
+    const pad = 8;
+    let { left, top } = menu.coords;
+    if (left + rect.width > window.innerWidth - pad) left = window.innerWidth - rect.width - pad;
+    if (top + rect.height > window.innerHeight - pad) top = window.innerHeight - rect.height - pad;
+    if (left < pad) left = pad;
+    if (top < pad) top = pad;
+    setAdjustedCoords({ left, top });
+  }, [menu]);
 
   useEffect(() => {
     if (!view) return;
 
     const handler = (e: MouseEvent) => {
       e.preventDefault();
-      setMenu({ coords: { left: e.clientX, top: e.clientY } });
+      const cache = getSelectionCache();
+      const contentPreview = cache?.markdown || '';
+      setMenu({ coords: { left: e.clientX, top: e.clientY }, contentPreview });
     };
 
     const close = () => setMenu(null);
@@ -97,7 +122,7 @@ export function ContextMenu({ view }: ContextMenuProps) {
           if (api?.sendToOtherSlot) {
             api.sendToOtherSlot({
               protocol: 'note-thought',
-              action: 'thought:delete',
+              action: THOUGHT_ACTION.DELETE,
               payload: { thoughtId },
             });
           }
@@ -128,7 +153,7 @@ export function ContextMenu({ view }: ContextMenuProps) {
             if (api?.sendToOtherSlot) {
               api.sendToOtherSlot({
                 protocol: 'note-thought',
-                action: 'thought:delete',
+                action: THOUGHT_ACTION.DELETE,
                 payload: { thoughtId },
               });
             }
@@ -148,11 +173,11 @@ export function ContextMenu({ view }: ContextMenuProps) {
 
   // 学习模块：选中文本时显示查词/翻译
   const { from, to } = view.state.selection;
-  if (from !== to) {
+  const hasSelection = from !== to;
+  if (hasSelection) {
     const selectedText = view.state.doc.textBetween(from, to, ' ').trim();
     if (selectedText) {
       const isWord = !/\s/.test(selectedText);
-      // 获取选区所在段落作为上下文
       const $from = view.state.selection.$from;
       const parentStart = $from.start($from.depth);
       const parentEnd = $from.end($from.depth);
@@ -171,15 +196,39 @@ export function ContextMenu({ view }: ContextMenuProps) {
     }
   }
 
+  // 标注 + 问 AI：有选区或光标在 block 中时可用
+  const hasContent = hasSelection || view.state.selection.$from.parent.content.size > 0;
+  if (hasContent) {
+    // "添加标注" — 一键执行，默认"思考"类型，后续在 ThoughtView 中调整
+    items.push({
+      id: 'add-thought', label: '添加标注', icon: '💭', separator: true,
+      action: () => { addThought(view); close(); },
+    });
+
+    // "问 AI" — 收起菜单，弹出独立浮窗
+    items.push({
+      id: 'ask-ai', label: '问 AI', icon: '🤖',
+      action: () => {
+        const { coords, contentPreview } = menu;
+        close();
+        openAskAIPanel(view, coords, contentPreview);
+      },
+    });
+  }
+
+  const pos = adjustedCoords || menu.coords;
+
   return (
-    <div style={{ ...styles.container, left: menu.coords.left, top: menu.coords.top }} onClick={(e) => e.stopPropagation()}>
+    <div ref={menuRef} style={{ ...styles.container, left: pos.left, top: pos.top }} onClick={(e) => e.stopPropagation()}>
       {items.map((item) => (
         <div key={item.id}>
           {item.separator && <div style={styles.separator} />}
           <div
             style={styles.item}
             onMouseDown={(e) => { e.preventDefault(); item.action(); }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = '#3a3a3a')}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = '#3a3a3a';
+            }}
             onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
           >
             <span style={styles.icon}>{item.icon}</span>
@@ -188,6 +237,7 @@ export function ContextMenu({ view }: ContextMenuProps) {
           </div>
         </div>
       ))}
+
     </div>
   );
 }

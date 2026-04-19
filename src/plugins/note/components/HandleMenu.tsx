@@ -3,11 +3,10 @@ import type { EditorView } from 'prosemirror-view';
 import { TextSelection } from 'prosemirror-state';
 import { blockRegistry } from '../registry';
 import { toggleHeadingCollapse } from '../plugins/heading-collapse';
-import { askAI } from '../commands/ask-ai-command';
+import { openAskAIPanel } from './AskAIPanel';
 import { setTextBlockLevel } from '../commands/set-text-block-level';
 import { deleteBlockAt, applyTextColor as applyTextColorCmd, applyHighlight as applyHighlightCmd, toggleTextIndent as toggleTextIndentCmd, setTextAlign as setTextAlignCmd } from '../commands/editor-commands';
-import { DEFAULT_AI_SERVICE } from '../../../shared/types/ai-service-types';
-import type { AIServiceId } from '../../../shared/types/ai-service-types';
+import { addThought } from '../commands/thought-commands';
 
 /**
  * HandleMenu — 手柄点击后的操作菜单
@@ -135,22 +134,6 @@ export function HandleMenu({ view }: HandleMenuProps) {
     close();
   };
 
-  const askAIBlock = () => {
-    const node = view.state.doc.nodeAt(menu.pos);
-    if (node) {
-      // Select the entire block so askAI can pick up the selection
-      const from = menu.pos;
-      const to = menu.pos + node.nodeSize;
-      const tr = view.state.tr.setSelection(TextSelection.create(view.state.doc, from + 1, to - 1));
-      view.dispatch(tr);
-      // Open the AI panel — use a small delay so the selection is applied
-      setTimeout(() => {
-        // Trigger the FloatingToolbar's AI panel via custom event
-        view.dom.dispatchEvent(new CustomEvent('ask-ai-from-handle', { detail: { pos: menu.pos } }));
-      }, 100);
-    }
-    close();
-  };
 
   /** Turn Into: 把当前 block 转换为目标类型 */
   const turnInto = (item: { blockName: string; attrs?: Record<string, unknown> }) => {
@@ -394,10 +377,40 @@ export function HandleMenu({ view }: HandleMenuProps) {
           <span>Copy</span>
         </div>
 
-        {/* Ask AI */}
+        {/* Thought — 一键添加标注（默认"思考"类型） */}
         <div
           style={styles.item}
-          onMouseDown={(e) => { e.preventDefault(); askAIBlock(); }}
+          onMouseDown={(e) => {
+            e.preventDefault();
+            // 选中当前 block 再 addThought
+            const node = view.state.doc.nodeAt(menu.pos);
+            if (node) {
+              try {
+                const tr = view.state.tr.setSelection(
+                  TextSelection.create(view.state.doc, menu.pos + 1, menu.pos + node.nodeSize - 1),
+                );
+                view.dispatch(tr);
+              } catch { /* ok */ }
+            }
+            addThought(view);
+            close();
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = '#3a3a3a'; setSubMenu(null); }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+        >
+          <span style={styles.icon}>💭</span>
+          <span>Thought</span>
+        </div>
+
+        {/* Ask AI — 收起菜单，弹出独立浮窗 */}
+        <div
+          style={styles.item}
+          onMouseDown={(e) => {
+            e.preventDefault();
+            const coords = menu.coords;
+            close();
+            openAskAIPanel(view, coords);
+          }}
           onMouseEnter={(e) => { e.currentTarget.style.background = '#3a3a3a'; setSubMenu(null); }}
           onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
         >
@@ -526,6 +539,7 @@ export function HandleMenu({ view }: HandleMenuProps) {
           })()}
         </div>
       )}
+
     </>
   );
 }

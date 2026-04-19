@@ -94,7 +94,7 @@ function pmMarksToAtom(marks: readonly import('prosemirror-model').Mark[]): Mark
       case 'code': result.push({ type: 'code' }); break;
       case 'highlight': result.push({ type: 'highlight', color: mark.attrs.color }); break;
       case 'textStyle': result.push({ type: 'textStyle', color: mark.attrs.color }); break;
-      case 'thought': result.push({ type: 'thought', thoughtId: mark.attrs.thoughtId, thoughtType: mark.attrs.thoughtType }); break;
+      case 'thought': result.push({ type: 'thought', thoughtId: mark.attrs.thoughtId, thoughtType: mark.attrs.thoughtType, anchorType: mark.attrs.anchorType || 'inline' }); break;
     }
   }
   return result;
@@ -163,7 +163,7 @@ function atomMarkToPM(mark: Mark): { type: string; attrs?: Record<string, unknow
     case 'code': return { type: 'code' };
     case 'highlight': return { type: 'highlight', attrs: { color: mark.color } };
     case 'textStyle': return { type: 'textStyle', attrs: { color: mark.color } };
-    case 'thought': return { type: 'thought', attrs: { thoughtId: mark.thoughtId, thoughtType: mark.thoughtType || 'thought' } };
+    case 'thought': return { type: 'thought', attrs: { thoughtId: mark.thoughtId, thoughtType: mark.thoughtType || 'thought', anchorType: mark.anchorType || 'inline' } };
     default: return { type: 'bold' }; // fallback
   }
 }

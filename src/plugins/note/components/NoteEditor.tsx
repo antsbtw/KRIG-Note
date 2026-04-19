@@ -20,6 +20,8 @@ import { SlashMenu } from './SlashMenu';
 import { FloatingToolbar } from './FloatingToolbar';
 import { HandleMenu } from './HandleMenu';
 import { ContextMenu } from './ContextMenu';
+import { AskAIPanel } from './AskAIPanel';
+import { updateSelectionCache, clearSelectionCache, startMouseSelectionTracker } from '../commands/selection-cache';
 import { blockHandlePlugin } from '../plugins/block-handle';
 import { blockSelectionPlugin } from '../plugins/block-selection';
 import { indentPlugin } from '../plugins/indent';
@@ -315,6 +317,8 @@ export function NoteEditor() {
         if (view.isDestroyed) return;
         const newState = view.state.apply(tr);
         view.updateState(newState);
+        // 更新选区缓存（供 ContextMenu 问 AI 等使用）
+        updateSelectionCache(view);
         // 文档变化时触发自动保存（排除分片追加的 addToHistory=false 事务）
         if (tr.docChanged && tr.getMeta('addToHistory') !== false) {
           // AI sync: notify peer slot that user is typing (debounce source)
@@ -344,6 +348,10 @@ export function NoteEditor() {
 
     viewRef.current = view;
     setEditorView(view);
+
+    // 鼠标选区追踪（ProseMirror 鼠标拖选不经过 dispatchTransaction）
+    const cleanupMouseTracker = startMouseSelectionTracker(view);
+    (view as any).__cleanupMouseTracker = cleanupMouseTracker;
 
     // TOC 指示器
     if (tocRef.current) tocRef.current.destroy();
@@ -651,7 +659,9 @@ export function NoteEditor() {
         tocRef.current.destroy();
         tocRef.current = null;
       }
+      clearSelectionCache();
       if (viewRef.current) {
+        (viewRef.current as any).__cleanupMouseTracker?.();
         viewRef.current.destroy();
         viewRef.current = null;
       }
@@ -849,6 +859,7 @@ export function NoteEditor() {
       <FloatingToolbar view={editorView} />
       <HandleMenu view={editorView} />
       <ContextMenu view={editorView} />
+      <AskAIPanel view={editorView} />
     </div>
   );
 }

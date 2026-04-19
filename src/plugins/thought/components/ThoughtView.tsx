@@ -72,6 +72,7 @@ export function ThoughtView() {
     if (!api) return;
 
     const unsub = api.onMessage((msg) => {
+      if (msg.protocol && msg.protocol !== 'note-thought') return;
       switch (msg.action) {
         case THOUGHT_ACTION.NOTE_LOADED: {
           const nId = (msg.payload as any).noteId;
@@ -115,6 +116,15 @@ export function ThoughtView() {
           break;
         }
         case THOUGHT_ACTION.SCROLL_SYNC: {
+          // Note 滚动时同步：高亮与可见锚点对应的 ThoughtCard
+          const visibleIds: string[] = (msg.payload as any).visibleIds || [];
+          if (visibleIds.length > 0) {
+            // 激活第一个可见锚点对应的 thought（自动跟随滚动）
+            setActiveId((prev) => {
+              if (prev && visibleIds.includes(prev)) return prev;
+              return visibleIds[0];
+            });
+          }
           break;
         }
 

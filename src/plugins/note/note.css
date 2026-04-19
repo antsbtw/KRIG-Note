@@ -1419,6 +1419,18 @@
   font-style: italic;
 }
 
+/* mathInline 上的 thought 标注线（KaTeX 内部元素会吞掉 text-decoration，改用 border-bottom） */
+.math-inline.thought-anchor {
+  border-bottom: 2px solid #4a9eff;
+  padding-bottom: 1px;
+}
+.math-inline.thought-anchor[data-thought-type="thought"]     { border-bottom-color: #4a9eff; }
+.math-inline.thought-anchor[data-thought-type="question"]    { border-bottom-color: #ff5252; }
+.math-inline.thought-anchor[data-thought-type="important"]   { border-bottom-color: #ffab40; }
+.math-inline.thought-anchor[data-thought-type="todo"]        { border-bottom-color: #4caf50; }
+.math-inline.thought-anchor[data-thought-type="analysis"]    { border-bottom-color: #ab47bc; }
+.math-inline.thought-anchor[data-thought-type="ai-response"] { border-bottom-color: #6366f1; }
+
 /* ── mathInline Editor Popup ── */
 .math-inline-editor {
   position: fixed;
@@ -2961,9 +2973,9 @@
 }
 
 /* ── Thought 锚点样式 ── */
-/* 直线下划线，颜色跟随 data-thought-type */
 
-.thought-anchor {
+/* ── Inline 锚点：下划线 ── */
+.thought-anchor--inline {
   text-decoration: underline;
   text-decoration-thickness: 2px;
   text-underline-offset: 3px;
@@ -2972,20 +2984,120 @@
   transition: text-decoration-color 0.15s;
 }
 
-/* 默认 thought = 蓝色 */
-.thought-anchor                                         { text-decoration-color: #4a9eff; }
-.thought-anchor[data-thought-type="thought"]            { text-decoration-color: #4a9eff; }
-.thought-anchor[data-thought-type="question"]           { text-decoration-color: #ff5252; }
-.thought-anchor[data-thought-type="important"]          { text-decoration-color: #ffab40; }
-.thought-anchor[data-thought-type="todo"]               { text-decoration-color: #4caf50; }
-.thought-anchor[data-thought-type="analysis"]           { text-decoration-color: #ab47bc; }
+.thought-anchor--inline                                         { text-decoration-color: #4a9eff; }
+.thought-anchor--inline[data-thought-type="thought"]            { text-decoration-color: #4a9eff; }
+.thought-anchor--inline[data-thought-type="question"]           { text-decoration-color: #ff5252; }
+.thought-anchor--inline[data-thought-type="important"]          { text-decoration-color: #ffab40; }
+.thought-anchor--inline[data-thought-type="todo"]               { text-decoration-color: #4caf50; }
+.thought-anchor--inline[data-thought-type="analysis"]           { text-decoration-color: #ab47bc; }
+.thought-anchor--inline[data-thought-type="ai-response"]        { text-decoration-color: #6366f1; }
+
+/* ── Block 锚点内部 mark span — 完全透明，视觉交给外层 decoration ── */
+.thought-anchor--block {
+  display: contents !important;
+  text-decoration: none !important;
+  border: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  background: none !important;
+}
+
+/* ── Block 线框 decoration（node decoration 添加到 block DOM 上） ── */
+
+.thought-block-frame {
+  border-left: 3px solid #4a9eff;
+  border-right: 3px solid #4a9eff;
+  padding-left: 8px;
+  padding-right: 8px;
+  margin-left: -11px;
+  margin-right: -11px;
+  transition: border-color 0.15s;
+  cursor: pointer;
+  position: relative;
+}
+
+/* 单个 block — 四边完整框 */
+.thought-block-frame--only {
+  border-top: 3px solid #4a9eff;
+  border-bottom: 3px solid #4a9eff;
+  border-radius: 6px;
+  margin-top: 2px;
+  margin-bottom: 2px;
+}
+
+/* 多 block 首 — 上边 + 左右 */
+.thought-block-frame--first {
+  border-top: 3px solid #4a9eff;
+  border-radius: 6px 6px 0 0;
+  margin-top: 2px;
+}
+
+/* 多 block 中间 — 只有左右 */
+.thought-block-frame--middle {
+  border-radius: 0;
+}
+
+/* 多 block 尾 — 下边 + 左右 */
+.thought-block-frame--last {
+  border-bottom: 3px solid #4a9eff;
+  border-radius: 0 0 6px 6px;
+  margin-bottom: 2px;
+}
+
+/* 线框颜色跟随类型 */
+.thought-block-frame[data-thought-type="thought"]     { border-color: #4a9eff; }
+.thought-block-frame[data-thought-type="question"]    { border-color: #ff5252; }
+.thought-block-frame[data-thought-type="important"]   { border-color: #ffab40; }
+.thought-block-frame[data-thought-type="todo"]        { border-color: #4caf50; }
+.thought-block-frame[data-thought-type="analysis"]    { border-color: #ab47bc; }
+.thought-block-frame[data-thought-type="ai-response"] { border-color: #6366f1; }
+
+/* hover 背景 */
+.thought-block-frame:hover {
+  background: rgba(74, 158, 255, 0.04);
+}
+.thought-block-frame[data-thought-type="question"]:hover    { background: rgba(255, 82, 82, 0.04); }
+.thought-block-frame[data-thought-type="important"]:hover   { background: rgba(255, 171, 64, 0.04); }
+.thought-block-frame[data-thought-type="todo"]:hover        { background: rgba(76, 175, 80, 0.04); }
+.thought-block-frame[data-thought-type="analysis"]:hover    { background: rgba(171, 71, 188, 0.04); }
+.thought-block-frame[data-thought-type="ai-response"]:hover { background: rgba(99, 102, 241, 0.04); }
+
+/* ── 通用状态（inline + block 共用） ── */
+.thought-anchor {
+  cursor: pointer;
+}
 
 .thought-anchor--active {
   animation: thought-flash 0.4s ease-in-out 3;
 }
 
-.thought-anchor--resolved {
+/* AI 状态 — inline */
+.thought-anchor--inline.thought-anchor--ai-pending {
+  text-decoration-style: dotted;
+  animation: thought-flash 0.8s ease-in-out infinite;
+}
+.thought-anchor--inline.thought-anchor--ai-ready {
+  text-decoration-style: solid;
+}
+.thought-anchor--inline.thought-anchor--ai-error {
+  text-decoration-color: #ff5252 !important;
+  text-decoration-style: wavy;
+}
+.thought-anchor--inline.thought-anchor--resolved {
   text-decoration-style: dashed;
+  opacity: 0.5;
+}
+
+/* AI 状态 — block decoration */
+.thought-block-frame.thought-anchor--ai-pending {
+  border-style: dotted;
+  animation: thought-flash 0.8s ease-in-out infinite;
+}
+.thought-block-frame.thought-anchor--ai-error {
+  border-color: #ff5252 !important;
+}
+.thought-block-frame.thought-anchor--resolved {
+  border-style: dashed;
   opacity: 0.5;
 }
 
@@ -2993,16 +3105,23 @@
   50% { opacity: 0.4; }
 }
 
-/* Node 锚点（image, codeBlock 等） */
+/* Node 锚点（image, codeBlock 等）— 完整边框 */
 [data-thought-id].thought-anchor-node {
-  outline: 2px solid #ffd400;
+  outline: 2px solid #4a9eff;
   outline-offset: 2px;
+  border-radius: 4px;
   cursor: pointer;
+  transition: outline-color 0.15s;
 }
-
 [data-thought-id].thought-anchor-node:hover {
   outline-width: 3px;
 }
+[data-thought-id].thought-anchor-node[data-thought-type="thought"]     { outline-color: #4a9eff; }
+[data-thought-id].thought-anchor-node[data-thought-type="question"]    { outline-color: #ff5252; }
+[data-thought-id].thought-anchor-node[data-thought-type="important"]   { outline-color: #ffab40; }
+[data-thought-id].thought-anchor-node[data-thought-type="todo"]        { outline-color: #4caf50; }
+[data-thought-id].thought-anchor-node[data-thought-type="analysis"]    { outline-color: #ab47bc; }
+[data-thought-id].thought-anchor-node[data-thought-type="ai-response"] { outline-color: #6366f1; }
 
 
 /* ═══════════════════════════════════════════════════════════════
