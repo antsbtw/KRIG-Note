@@ -21,6 +21,7 @@ import { FloatingToolbar } from './FloatingToolbar';
 import { HandleMenu } from './HandleMenu';
 import { ContextMenu } from './ContextMenu';
 import { AskAIPanel } from './AskAIPanel';
+import { startSelectionCache } from '../commands/selection-cache';
 import { blockHandlePlugin } from '../plugins/block-handle';
 import { blockSelectionPlugin } from '../plugins/block-selection';
 import { indentPlugin } from '../plugins/indent';
@@ -346,6 +347,10 @@ export function NoteEditor() {
     viewRef.current = view;
     setEditorView(view);
 
+    // 选区内容缓存（供 ContextMenu 问 AI 等使用）
+    if ((window as any).__cleanupSelCache) (window as any).__cleanupSelCache();
+    (window as any).__cleanupSelCache = startSelectionCache(view);
+
     // TOC 指示器
     if (tocRef.current) tocRef.current.destroy();
     tocRef.current = createTocIndicator(editorRef.current, view);
@@ -652,6 +657,7 @@ export function NoteEditor() {
         tocRef.current.destroy();
         tocRef.current = null;
       }
+      if ((window as any).__cleanupSelCache) { (window as any).__cleanupSelCache(); delete (window as any).__cleanupSelCache; }
       if (viewRef.current) {
         viewRef.current.destroy();
         viewRef.current = null;

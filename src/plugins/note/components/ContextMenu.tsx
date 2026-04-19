@@ -5,8 +5,7 @@ import { deleteCurrentBlock, deleteSelection } from '../commands/editor-commands
 import { THOUGHT_ACTION } from '../../thought/thought-protocol';
 import { addThought } from '../commands/thought-commands';
 import { openAskAIPanel } from './AskAIPanel';
-import { selectionToMarkdown } from '../commands/selection-to-markdown';
-import { blockSelectionKey } from '../plugins/block-selection';
+import { getSelectionCache } from '../commands/selection-cache';
 
 /**
  * ContextMenu — 右键菜单
@@ -49,27 +48,9 @@ export function ContextMenu({ view }: ContextMenuProps) {
 
     const handler = (e: MouseEvent) => {
       e.preventDefault();
-      // 在右键时预计算内容预览（此时 PM 选区可能还未被折叠）
-      let contentPreview = '';
-      const state = view.state;
-      const blockSel = blockSelectionKey.getState(state);
-      if (blockSel?.active && blockSel.selectedPositions.length > 0) {
-        const sorted = [...blockSel.selectedPositions].sort((a, b) => a - b);
-        const first = sorted[0];
-        const lastPos = sorted[sorted.length - 1];
-        const lastNode = state.doc.nodeAt(lastPos);
-        const to = lastNode ? lastPos + lastNode.nodeSize : lastPos + 1;
-        contentPreview = state.doc.textBetween(first, to, '\n\n').slice(0, 500);
-      } else {
-        const { from, to } = state.selection;
-        if (from !== to) {
-          contentPreview = selectionToMarkdown(view).markdown;
-        } else {
-          const $from = state.selection.$from;
-          const depth = Math.min($from.depth, 1);
-          contentPreview = state.doc.textBetween($from.start(depth), $from.end(depth), '\n').slice(0, 500);
-        }
-      }
+      // 从选区缓存读取内容预览（在选区变化时已实时提取 Markdown）
+      const cache = getSelectionCache();
+      const contentPreview = cache?.markdown || '';
       setMenu({ coords: { left: e.clientX, top: e.clientY }, contentPreview });
     };
 
