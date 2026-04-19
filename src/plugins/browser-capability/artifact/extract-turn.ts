@@ -261,6 +261,24 @@ async function artifactToMarkdown(artifact: MessageArtifact): Promise<string> {
     if (content.mimeType?.startsWith('image/') || content.storageRef.match(/\.(svg|png|jpg|jpeg|gif|webp)$/i)) {
       return `![${artifact.title}](${content.storageRef})\n`;
     }
+    // HTML files → save to media store as html-block
+    if (content.storageRef.match(/\.html?$/i) || content.mimeType === 'text/html') {
+      try {
+        const fs = await import('node:fs');
+        const htmlContent = fs.readFileSync(content.storageRef, 'utf-8');
+        const put = await ensureMediaStore();
+        if (put && htmlContent) {
+          const dataUrl = `data:text/html;base64,${Buffer.from(htmlContent, 'utf-8').toString('base64')}`;
+          const filename = content.storageRef.split('/').pop() || `${artifact.title}.html`;
+          const result = await put(dataUrl, 'text/html', filename);
+          if (result.success && result.mediaUrl) {
+            return `!html[${artifact.title}](${result.mediaUrl})\n`;
+          }
+        }
+      } catch (err) {
+        console.warn('[extract-turn] downloaded html put failed', { title: artifact.title, error: err });
+      }
+    }
     return `> 📎 [${artifact.title}](${content.storageRef})\n`;
   }
 
