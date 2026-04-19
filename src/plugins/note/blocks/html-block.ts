@@ -1,5 +1,6 @@
 import type { BlockDef } from '../types';
 import { createRenderBlockView, createPlaceholder, type RenderBlockRenderer, type ToolbarGroup } from './render-block-base';
+import { claudeThemeStyleTag } from './claude-theme';
 import type { Node as PMNode } from 'prosemirror-model';
 import type { EditorView } from 'prosemirror-view';
 
@@ -154,6 +155,8 @@ const htmlBlockRenderer: RenderBlockRenderer = {
       // 加载 HTML 内容，注入高度上报脚本
       loadHtmlContent(node.attrs.src).then((html) => {
         if (html) {
+          // 注入 Claude CSS 变量定义，让 HTML 中的 var() 引用正确解析
+          const themeStyle = claudeThemeStyleTag();
           const heightScript = `<script>
             (function() {
               function reportHeight() {
@@ -170,10 +173,20 @@ const htmlBlockRenderer: RenderBlockRenderer = {
               setTimeout(reportHeight, 500);
             })();
           </script>`;
-          if (html.includes('</body>')) {
-            iframe.srcdoc = html.replace('</body>', heightScript + '</body>');
+          // 注入主题变量：插入到 <head> 中或 HTML 开头
+          let prepared = html;
+          if (prepared.includes('</head>')) {
+            prepared = prepared.replace('</head>', themeStyle + '</head>');
+          } else if (prepared.includes('<body')) {
+            prepared = prepared.replace('<body', themeStyle + '<body');
           } else {
-            iframe.srcdoc = html + heightScript;
+            prepared = themeStyle + prepared;
+          }
+
+          if (prepared.includes('</body>')) {
+            iframe.srcdoc = prepared.replace('</body>', heightScript + '</body>');
+          } else {
+            iframe.srcdoc = prepared + heightScript;
           }
         }
       });
