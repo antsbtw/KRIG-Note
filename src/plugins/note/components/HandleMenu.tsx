@@ -3,11 +3,9 @@ import type { EditorView } from 'prosemirror-view';
 import { TextSelection } from 'prosemirror-state';
 import { blockRegistry } from '../registry';
 import { toggleHeadingCollapse } from '../plugins/heading-collapse';
-import { askAI } from '../commands/ask-ai-command';
-import { AskAIPanel } from './AskAIPanel';
+import { openAskAIPanel } from './AskAIPanel';
 import { setTextBlockLevel } from '../commands/set-text-block-level';
 import { deleteBlockAt, applyTextColor as applyTextColorCmd, applyHighlight as applyHighlightCmd, toggleTextIndent as toggleTextIndentCmd, setTextAlign as setTextAlignCmd } from '../commands/editor-commands';
-import type { AIServiceId } from '../../../shared/types/ai-service-types';
 import { addThought } from '../commands/thought-commands';
 
 /**
@@ -28,7 +26,7 @@ interface MenuState {
   coords: { left: number; top: number };
 }
 
-type SubMenu = 'turnInto' | 'color' | 'format' | 'ai' | null;
+type SubMenu = 'turnInto' | 'color' | 'format' | null;
 
 // ── 颜色定义（复用 ColorPicker） ──
 
@@ -136,12 +134,6 @@ export function HandleMenu({ view }: HandleMenuProps) {
     close();
   };
 
-  /** 获取当前 handle block 的内容预览 */
-  const getBlockPreview = (): string => {
-    const node = view.state.doc.nodeAt(menu.pos);
-    if (!node) return '';
-    return view.state.doc.textBetween(menu.pos + 1, menu.pos + node.nodeSize - 1, '\n').slice(0, 500);
-  };
 
   /** Turn Into: 把当前 block 转换为目标类型 */
   const turnInto = (item: { blockName: string; attrs?: Record<string, unknown> }) => {
@@ -410,15 +402,20 @@ export function HandleMenu({ view }: HandleMenuProps) {
           <span>Thought</span>
         </div>
 
-        {/* Ask AI */}
+        {/* Ask AI — 收起菜单，弹出独立浮窗 */}
         <div
           style={styles.item}
-          onMouseEnter={(e) => { e.currentTarget.style.background = '#3a3a3a'; setSubMenu('ai'); }}
+          onMouseDown={(e) => {
+            e.preventDefault();
+            const coords = menu.coords;
+            close();
+            openAskAIPanel(view, coords);
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = '#3a3a3a'; setSubMenu(null); }}
           onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
         >
           <span style={styles.icon}>🤖</span>
-          <span style={{ flex: 1 }}>Ask AI</span>
-          <span style={styles.arrow}>▸</span>
+          <span>Ask AI</span>
         </div>
 
         <div style={styles.separator} />
@@ -543,36 +540,6 @@ export function HandleMenu({ view }: HandleMenuProps) {
         </div>
       )}
 
-      {/* AI 面板 */}
-      {subMenu === 'ai' && (
-        <div
-          ref={subMenuRef}
-          className="handle-submenu"
-          style={{ ...getSubMenuStyle(), minWidth: 'auto' }}
-          onMouseDown={(e) => e.stopPropagation()}
-          onMouseEnter={() => setSubMenu('ai')}
-        >
-          <AskAIPanel
-            view={view}
-            contentPreview={getBlockPreview()}
-            onSend={(serviceId, instruction) => {
-              // 先选中 block 内容，再调用 askAI
-              const node = view.state.doc.nodeAt(menu.pos);
-              if (node) {
-                try {
-                  const tr = view.state.tr.setSelection(
-                    TextSelection.create(view.state.doc, menu.pos + 1, menu.pos + node.nodeSize - 1),
-                  );
-                  view.dispatch(tr);
-                } catch { /* ok */ }
-              }
-              askAI(view, serviceId, instruction);
-              close();
-            }}
-            onClose={() => setSubMenu(null)}
-          />
-        </div>
-      )}
     </>
   );
 }

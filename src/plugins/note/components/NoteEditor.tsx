@@ -20,6 +20,7 @@ import { SlashMenu } from './SlashMenu';
 import { FloatingToolbar } from './FloatingToolbar';
 import { HandleMenu } from './HandleMenu';
 import { ContextMenu } from './ContextMenu';
+import { AskAIPanel } from './AskAIPanel';
 import { blockHandlePlugin } from '../plugins/block-handle';
 import { blockSelectionPlugin } from '../plugins/block-selection';
 import { indentPlugin } from '../plugins/indent';
@@ -849,6 +850,7 @@ export function NoteEditor() {
       <FloatingToolbar view={editorView} />
       <HandleMenu view={editorView} />
       <ContextMenu view={editorView} />
+      <AskAIPanel view={editorView} />
     </div>
   );
 }

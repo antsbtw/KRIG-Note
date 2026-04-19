@@ -4,11 +4,7 @@ import { showDictionaryPanel, showTranslationPanel } from '../learning';
 import { deleteCurrentBlock, deleteSelection } from '../commands/editor-commands';
 import { THOUGHT_ACTION } from '../../thought/thought-protocol';
 import { addThought } from '../commands/thought-commands';
-import { askAI } from '../commands/ask-ai-command';
-import { AskAIPanel } from './AskAIPanel';
-import { selectionToMarkdown } from '../commands/selection-to-markdown';
-import { blockSelectionKey } from '../plugins/block-selection';
-import type { AIServiceId } from '../../../shared/types/ai-service-types';
+import { openAskAIPanel } from './AskAIPanel';
 
 /**
  * ContextMenu — 右键菜单
@@ -26,7 +22,6 @@ interface MenuState {
 
 export function ContextMenu({ view }: ContextMenuProps) {
   const [menu, setMenu] = useState<MenuState | null>(null);
-  const [subMenu, setSubMenu] = useState<'ai' | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   // 主菜单位置（视口边界修正后的）
   const [adjustedCoords, setAdjustedCoords] = useState<{ left: number; top: number } | null>(null);
@@ -51,10 +46,9 @@ export function ContextMenu({ view }: ContextMenuProps) {
     const handler = (e: MouseEvent) => {
       e.preventDefault();
       setMenu({ coords: { left: e.clientX, top: e.clientY } });
-      setSubMenu(null);
     };
 
-    const close = () => { setMenu(null); setSubMenu(null); };
+    const close = () => setMenu(null);
 
     view.dom.addEventListener('contextmenu', handler);
     document.addEventListener('click', close);
@@ -67,9 +61,9 @@ export function ContextMenu({ view }: ContextMenuProps) {
 
   if (!menu || !view) return null;
 
-  const close = () => { setMenu(null); setSubMenu(null); };
+  const close = () => setMenu(null);
 
-  const items: { id: string; label: string; icon: string; shortcut?: string; separator?: boolean; hasArrow?: boolean; action: () => void }[] = [
+  const items: { id: string; label: string; icon: string; shortcut?: string; separator?: boolean; action: () => void }[] = [
     {
       id: 'cut', label: 'Cut', icon: '✂', shortcut: '⌘X',
       action: () => { document.execCommand('cut'); close(); },
@@ -206,10 +200,14 @@ export function ContextMenu({ view }: ContextMenuProps) {
       action: () => { addThought(view); close(); },
     });
 
-    // "问 AI" — 弹出 AskAIPanel
+    // "问 AI" — 收起菜单，弹出独立浮窗
     items.push({
-      id: 'ask-ai', label: '问 AI', icon: '🤖', hasArrow: true,
-      action: () => { setSubMenu(subMenu === 'ai' ? null : 'ai'); },
+      id: 'ask-ai', label: '问 AI', icon: '🤖',
+      action: () => {
+        const coords = menu.coords;
+        close();
+        openAskAIPanel(view, coords);
+      },
     });
   }
 
@@ -225,83 +223,18 @@ export function ContextMenu({ view }: ContextMenuProps) {
             onMouseDown={(e) => { e.preventDefault(); item.action(); }}
             onMouseEnter={(e) => {
               e.currentTarget.style.background = '#3a3a3a';
-              // 非子菜单项 hover 时关闭子菜单
-              if (!item.hasArrow) setSubMenu(null);
             }}
             onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
           >
             <span style={styles.icon}>{item.icon}</span>
             <span style={styles.label}>{item.label}</span>
             {item.shortcut && <span style={styles.shortcut}>{item.shortcut}</span>}
-            {item.hasArrow && <span style={styles.arrow}>▸</span>}
           </div>
         </div>
       ))}
 
-      {/* 标注类型子菜单 */}
-      {/* AI 面板 */}
-      {subMenu === 'ai' && (() => {
-        // 计算子面板位置：优先右侧，超出则左侧
-        const menuRect = menuRef.current?.getBoundingClientRect();
-        const subLeft = menuRect
-          ? (menuRect.right + 330 > window.innerWidth ? menuRect.left - 334 : menuRect.right + 4)
-          : pos.left + 190;
-        const subTop = menuRect
-          ? Math.min(menuRect.top, window.innerHeight - 300)
-          : pos.top;
-        return (
-        <div
-          style={{ position: 'fixed', zIndex: 1001, left: subLeft, top: subTop }}
-          onMouseDown={(e) => e.stopPropagation()}
-        >
-          <AskAIPanel
-            view={view}
-            contentPreview={getContentPreview(view)}
-            onSend={(serviceId, instruction) => {
-              askAI(view, serviceId, instruction);
-              close();
-            }}
-            onClose={() => { setSubMenu(null); }}
-          />
-        </div>
-        );
-      })()}
     </div>
   );
-}
-
-/**
- * 根据当前上下文计算 AI 问答的内容预览：
- * - block-selection 激活 → 所有选中 block 的 Markdown
- * - 有文字选区 → 选区的 Markdown
- * - 无选区 → 当前光标所在 block 的 Markdown
- */
-function getContentPreview(view: EditorView): string {
-  const state = view.state;
-
-  // 多 block 选择
-  const blockSel = blockSelectionKey.getState(state);
-  if (blockSel?.active && blockSel.selectedPositions.length > 0) {
-    const sorted = [...blockSel.selectedPositions].sort((a, b) => a - b);
-    const first = sorted[0];
-    const lastPos = sorted[sorted.length - 1];
-    const lastNode = state.doc.nodeAt(lastPos);
-    const to = lastNode ? lastPos + lastNode.nodeSize : lastPos + 1;
-    return state.doc.textBetween(first, to, '\n\n').slice(0, 500);
-  }
-
-  // 有文字选区
-  const { from, to } = state.selection;
-  if (from !== to) {
-    return selectionToMarkdown(view).markdown;
-  }
-
-  // 无选区 → 当前 block
-  const $from = state.selection.$from;
-  const depth = Math.min($from.depth, 1);
-  const blockStart = $from.start(depth);
-  const blockEnd = $from.end(depth);
-  return state.doc.textBetween(blockStart, blockEnd, '\n').slice(0, 500);
 }
 
 const styles: Record<string, React.CSSProperties> = {
@@ -317,6 +250,5 @@ const styles: Record<string, React.CSSProperties> = {
   icon: { width: '24px', textAlign: 'center' as const, marginRight: '8px', flexShrink: 0 },
   label: { flex: 1 },
   shortcut: { fontSize: '11px', color: '#888', marginLeft: '16px' },
-  arrow: { fontSize: '10px', color: '#888', marginLeft: '4px' },
   separator: { height: '1px', background: '#444', margin: '4px 8px' },
 };

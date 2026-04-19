@@ -1,73 +1,121 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import type { EditorView } from 'prosemirror-view';
+import { askAI } from '../commands/ask-ai-command';
 import { selectionToMarkdown } from '../commands/selection-to-markdown';
+import { blockSelectionKey } from '../plugins/block-selection';
 import { getAIServiceList, DEFAULT_AI_SERVICE } from '../../../shared/types/ai-service-types';
 import type { AIServiceId } from '../../../shared/types/ai-service-types';
 
 /**
- * AskAIPanel — 问 AI 弹窗（ContextMenu / HandleMenu 共用）
+ * AskAIPanel — 独立浮窗组件
  *
- * 显示选中内容的 Markdown 预览 + 指令输入框 + AI 服务选择 + 发送按钮。
- * 调用方通过 contentPreview 传入预览文本（可选），否则从 view 当前选区读取。
+ * 由 ContextMenu / HandleMenu 通过自定义事件 `open-ask-ai-panel` 触发。
+ * 菜单发事件后自行收起，AskAIPanel 独立浮动显示。
+ *
+ * 事件 detail: { coords: { left, top }, contentPreview: string }
  */
 
 interface AskAIPanelProps {
-  view: EditorView;
-  /** 预渲染的内容预览（用于 block-selection 等选区已丢失的场景） */
-  contentPreview?: string;
-  onSend: (serviceId: AIServiceId, instruction: string) => void;
-  onClose: () => void;
+  view: EditorView | null;
 }
 
-export function AskAIPanel({ view, contentPreview, onSend, onClose }: AskAIPanelProps) {
+interface PanelState {
+  coords: { left: number; top: number };
+  contentPreview: string;
+}
+
+export function AskAIPanel({ view }: AskAIPanelProps) {
+  const [panel, setPanel] = useState<PanelState | null>(null);
   const [instruction, setInstruction] = useState('');
   const [serviceId, setServiceId] = useState<AIServiceId>(DEFAULT_AI_SERVICE);
   const [showServiceMenu, setShowServiceMenu] = useState(false);
-  const [previewMarkdown] = useState(() => contentPreview || selectionToMarkdown(view).markdown);
+  const panelRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
+  // 监听打开事件
   useEffect(() => {
-    setTimeout(() => inputRef.current?.focus(), 50);
-  }, []);
+    if (!view) return;
 
-  const handleSend = () => {
-    if (!instruction.trim() && !previewMarkdown.trim()) return;
-    onSend(serviceId, instruction);
-  };
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      setPanel({
+        coords: detail.coords,
+        contentPreview: detail.contentPreview || '',
+      });
+      setInstruction('');
+      setShowServiceMenu(false);
+      setTimeout(() => inputRef.current?.focus(), 50);
+    };
+
+    view.dom.addEventListener('open-ask-ai-panel', handler);
+    return () => view.dom.removeEventListener('open-ask-ai-panel', handler);
+  }, [view]);
+
+  // 点击外部关闭
+  useEffect(() => {
+    if (!panel) return;
+    const handler = (e: MouseEvent) => {
+      if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
+        setPanel(null);
+      }
+    };
+    // 延迟注册，避免打开时的 click 立即关闭
+    const timer = setTimeout(() => document.addEventListener('mousedown', handler), 100);
+    return () => { clearTimeout(timer); document.removeEventListener('mousedown', handler); };
+  }, [panel]);
+
+  const close = useCallback(() => {
+    setPanel(null);
+    view?.focus();
+  }, [view]);
+
+  const handleSend = useCallback(() => {
+    if (!view || !panel) return;
+    if (!instruction.trim() && !panel.contentPreview.trim()) return;
+    askAI(view, serviceId, instruction);
+    setPanel(null);
+  }, [view, panel, instruction, serviceId]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
-    }
-    if (e.key === 'Escape') {
-      onClose();
-    }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
+    if (e.key === 'Escape') close();
   };
+
+  if (!panel || !view) return null;
 
   const services = getAIServiceList();
   const currentService = services.find(s => s.id === serviceId) || services[0];
-  const previewText = previewMarkdown.length > 200 ? previewMarkdown.slice(0, 200) + '...' : previewMarkdown;
+  const preview = panel.contentPreview.length > 200
+    ? panel.contentPreview.slice(0, 200) + '...'
+    : panel.contentPreview;
+
+  // 视口边界修正
+  const pad = 8;
+  let { left, top } = panel.coords;
+  if (left + 330 > window.innerWidth - pad) left = window.innerWidth - 330 - pad;
+  if (top + 280 > window.innerHeight - pad) top = window.innerHeight - 280 - pad;
+  if (left < pad) left = pad;
+  if (top < pad) top = pad;
 
   return (
     <div
-      style={styles.container}
+      ref={panelRef}
+      style={{ ...styles.container, left, top }}
       onMouseDown={(e) => e.stopPropagation()}
     >
       {/* Header */}
       <div style={styles.header}>
         <span style={{ color: '#aaa', fontSize: 12 }}>🤖 问 AI</span>
-        <button style={styles.closeBtn} onClick={onClose} title="关闭 (Esc)">×</button>
+        <button style={styles.closeBtn} onClick={close} title="关闭 (Esc)">×</button>
       </div>
 
       {/* Preview */}
-      <div style={styles.preview}>
-        <span style={styles.previewLabel}>
-          选中内容：
-          {!previewText && <span style={{ color: '#666', fontStyle: 'italic' }}>请在编辑器中选择文字</span>}
-        </span>
-        {previewText && <pre style={styles.previewText}>{previewText}</pre>}
-      </div>
+      {preview && (
+        <div style={styles.preview}>
+          <span style={styles.previewLabel}>选中内容：</span>
+          <pre style={styles.previewText}>{preview}</pre>
+        </div>
+      )}
 
       {/* Input */}
       <textarea
@@ -102,9 +150,9 @@ export function AskAIPanel({ view, contentPreview, onSend, onClose }: AskAIPanel
         </div>
 
         <button
-          style={{ ...styles.sendBtn, opacity: (!instruction.trim() && !previewMarkdown.trim()) ? 0.4 : 1 }}
+          style={{ ...styles.sendBtn, opacity: (!instruction.trim() && !preview.trim()) ? 0.4 : 1 }}
           onClick={handleSend}
-          disabled={!instruction.trim() && !previewMarkdown.trim()}
+          disabled={!instruction.trim() && !preview.trim()}
         >
           发送 ▶
         </button>
@@ -113,10 +161,51 @@ export function AskAIPanel({ view, contentPreview, onSend, onClose }: AskAIPanel
   );
 }
 
+/**
+ * 触发 AskAIPanel 打开（供 ContextMenu / HandleMenu 调用）
+ *
+ * 自动检测当前上下文生成内容预览：
+ * - block-selection → 多 block 文本
+ * - 有选区 → Markdown
+ * - 无选区 → 光标所在 block 文本
+ */
+export function openAskAIPanel(view: EditorView, coords: { left: number; top: number }): void {
+  const state = view.state;
+  let contentPreview = '';
+
+  // 多 block 选择
+  const blockSel = blockSelectionKey.getState(state);
+  if (blockSel?.active && blockSel.selectedPositions.length > 0) {
+    const sorted = [...blockSel.selectedPositions].sort((a, b) => a - b);
+    const first = sorted[0];
+    const lastPos = sorted[sorted.length - 1];
+    const lastNode = state.doc.nodeAt(lastPos);
+    const to = lastNode ? lastPos + lastNode.nodeSize : lastPos + 1;
+    contentPreview = state.doc.textBetween(first, to, '\n\n').slice(0, 500);
+  } else {
+    const { from, to } = state.selection;
+    if (from !== to) {
+      contentPreview = selectionToMarkdown(view).markdown;
+    } else {
+      // 无选区 → 当前 block
+      const $from = state.selection.$from;
+      const depth = Math.min($from.depth, 1);
+      const blockStart = $from.start(depth);
+      const blockEnd = $from.end(depth);
+      contentPreview = state.doc.textBetween(blockStart, blockEnd, '\n').slice(0, 500);
+    }
+  }
+
+  view.dom.dispatchEvent(new CustomEvent('open-ask-ai-panel', {
+    detail: { coords, contentPreview },
+  }));
+}
+
 const styles: Record<string, React.CSSProperties> = {
   container: {
+    position: 'fixed', zIndex: 1100,
     background: '#2a2a2a', border: '1px solid #555', borderRadius: 10,
-    padding: 12, width: 320, boxShadow: '0 8px 24px rgba(0,0,0,0.5)', zIndex: 1000,
+    padding: 12, width: 320, boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
   },
   header: {
     display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8,
