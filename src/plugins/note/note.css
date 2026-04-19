@@ -3123,6 +3123,67 @@
 [data-thought-id].thought-anchor-node[data-thought-type="analysis"]    { outline-color: #ab47bc; }
 [data-thought-id].thought-anchor-node[data-thought-type="ai-response"] { outline-color: #6366f1; }
 
+/* ── Block 框定（通用能力） ── */
+
+.block-frame {
+  border-left: var(--frame-style, solid) 1px var(--frame-color, #337EA9);
+  border-right: var(--frame-style, solid) 1px var(--frame-color, #337EA9);
+  padding-left: 6px;
+  padding-right: 6px;
+  position: relative;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+/* double 样式需要更粗的边框才能显示效果 */
+.block-frame[style*="--frame-style: double"] {
+  border-left-width: 3px;
+  border-right-width: 3px;
+}
+
+/* 单个 block — 四边完整框 */
+.block-frame--only {
+  border-top: var(--frame-style, solid) 1px var(--frame-color, #337EA9);
+  border-bottom: var(--frame-style, solid) 1px var(--frame-color, #337EA9);
+  border-radius: 4px;
+  margin-top: 2px;
+  margin-bottom: 2px;
+}
+.block-frame--only[style*="--frame-style: double"] {
+  border-top-width: 3px;
+  border-bottom-width: 3px;
+}
+
+/* 多 block 首 — 上边 + 左右 */
+.block-frame--first {
+  border-top: var(--frame-style, solid) 1px var(--frame-color, #337EA9);
+  border-radius: 4px 4px 0 0;
+  margin-top: 2px;
+}
+.block-frame--first[style*="--frame-style: double"] {
+  border-top-width: 3px;
+}
+
+/* 多 block 中间 — 只有左右 */
+.block-frame--middle {
+  border-radius: 0;
+}
+
+/* 多 block 尾 — 下边 + 左右 */
+.block-frame--last {
+  border-bottom: var(--frame-style, solid) 1px var(--frame-color, #337EA9);
+  border-radius: 0 0 4px 4px;
+  margin-bottom: 2px;
+}
+.block-frame--last[style*="--frame-style: double"] {
+  border-bottom-width: 3px;
+}
+
+/* hover 背景 */
+.block-frame:hover {
+  background: color-mix(in srgb, var(--frame-color, #337EA9) 6%, transparent);
+}
+
 
 /* ═══════════════════════════════════════════════════════════════
  * fileBlock & externalRef — AI-Note Step 0b

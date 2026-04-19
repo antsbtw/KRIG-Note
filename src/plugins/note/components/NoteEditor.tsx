@@ -30,6 +30,7 @@ import { smartPastePlugin } from '../paste/smart-paste-plugin';
 import { renderBlockFocusPlugin } from '../plugins/render-block-focus';
 import { vocabHighlightPlugin, updateVocabDefs, dispatchVocabUpdate } from '../learning/vocab-highlight-plugin';
 import { thoughtPlugin } from '../plugins/thought-plugin';
+import { blockFramePlugin } from '../plugins/block-frame';
 import { fromPageDecorationPlugin } from '../plugins/from-page-decoration';
 import { updateVocabList } from '../learning';
 import { buildTestDocument } from '../test-content';
@@ -186,6 +187,7 @@ function buildPlugins(s: ReturnType<typeof getSchema>) {
     vocabHighlightPlugin(),
     fromPageDecorationPlugin,
     thoughtPlugin(),
+    blockFramePlugin(),
     history(),
     dropCursor({ color: '#8ab4f8', width: 2 }),
     gapCursor(),
