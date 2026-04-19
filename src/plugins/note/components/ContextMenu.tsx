@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import type { EditorView } from 'prosemirror-view';
 import { showDictionaryPanel, showTranslationPanel } from '../learning';
 import { deleteCurrentBlock, deleteSelection } from '../commands/editor-commands';
@@ -27,6 +27,23 @@ interface MenuState {
 export function ContextMenu({ view }: ContextMenuProps) {
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [subMenu, setSubMenu] = useState<'ai' | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  // 主菜单位置（视口边界修正后的）
+  const [adjustedCoords, setAdjustedCoords] = useState<{ left: number; top: number } | null>(null);
+
+  // 菜单渲染后修正位置，防止超出视口
+  useLayoutEffect(() => {
+    if (!menu || !menuRef.current) { setAdjustedCoords(null); return; }
+    const el = menuRef.current;
+    const rect = el.getBoundingClientRect();
+    const pad = 8;
+    let { left, top } = menu.coords;
+    if (left + rect.width > window.innerWidth - pad) left = window.innerWidth - rect.width - pad;
+    if (top + rect.height > window.innerHeight - pad) top = window.innerHeight - rect.height - pad;
+    if (left < pad) left = pad;
+    if (top < pad) top = pad;
+    setAdjustedCoords({ left, top });
+  }, [menu]);
 
   useEffect(() => {
     if (!view) return;
@@ -196,8 +213,10 @@ export function ContextMenu({ view }: ContextMenuProps) {
     });
   }
 
+  const pos = adjustedCoords || menu.coords;
+
   return (
-    <div style={{ ...styles.container, left: menu.coords.left, top: menu.coords.top }} onClick={(e) => e.stopPropagation()}>
+    <div ref={menuRef} style={{ ...styles.container, left: pos.left, top: pos.top }} onClick={(e) => e.stopPropagation()}>
       {items.map((item) => (
         <div key={item.id}>
           {item.separator && <div style={styles.separator} />}
@@ -221,12 +240,18 @@ export function ContextMenu({ view }: ContextMenuProps) {
 
       {/* 标注类型子菜单 */}
       {/* AI 面板 */}
-      {subMenu === 'ai' && (
+      {subMenu === 'ai' && (() => {
+        // 计算子面板位置：优先右侧，超出则左侧
+        const menuRect = menuRef.current?.getBoundingClientRect();
+        const subLeft = menuRect
+          ? (menuRect.right + 330 > window.innerWidth ? menuRect.left - 334 : menuRect.right + 4)
+          : pos.left + 190;
+        const subTop = menuRect
+          ? Math.min(menuRect.top, window.innerHeight - 300)
+          : pos.top;
+        return (
         <div
-          style={{ ...styles.subMenu, left: '100%', top: (() => {
-            const idx = items.findIndex(i => i.id === 'ask-ai');
-            return idx * 34 + 4;
-          })(), minWidth: 'auto' }}
+          style={{ position: 'fixed', zIndex: 1001, left: subLeft, top: subTop }}
           onMouseDown={(e) => e.stopPropagation()}
         >
           <AskAIPanel
@@ -239,7 +264,8 @@ export function ContextMenu({ view }: ContextMenuProps) {
             onClose={() => { setSubMenu(null); }}
           />
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
@@ -293,10 +319,4 @@ const styles: Record<string, React.CSSProperties> = {
   shortcut: { fontSize: '11px', color: '#888', marginLeft: '16px' },
   arrow: { fontSize: '10px', color: '#888', marginLeft: '4px' },
   separator: { height: '1px', background: '#444', margin: '4px 8px' },
-  subMenu: {
-    position: 'absolute' as const, zIndex: 1001,
-    background: '#2a2a2a', border: '1px solid #444', borderRadius: '8px',
-    padding: '4px', minWidth: '140px', boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
-    marginLeft: '4px',
-  },
 };
