@@ -28,6 +28,7 @@ const viewAPI = () => (window as any).viewAPI as {
 export async function addThought(
   view: EditorView,
   type: ThoughtType = 'thought',
+  savedBlockPositions?: number[],
 ): Promise<void> {
   const api = viewAPI();
   if (!api) return;
@@ -39,10 +40,12 @@ export async function addThought(
   const thoughtMarkType = state.schema.marks.thought;
   if (!thoughtMarkType) return;
 
-  // ── 路径 0: block-selection plugin 激活 → 多 block 标注 ──
+  // ── 路径 0: 多 block 标注（block-selection 或外部传入的 positions） ──
   const blockSel = blockSelectionKey.getState(state);
-  if (blockSel?.active && blockSel.selectedPositions.length > 0) {
-    await addBlockThought(view, api, noteId, type, thoughtMarkType, blockSel.selectedPositions);
+  const multiBlockPositions = savedBlockPositions
+    || (blockSel?.active && blockSel.selectedPositions.length > 0 ? blockSel.selectedPositions : null);
+  if (multiBlockPositions && multiBlockPositions.length > 0) {
+    await addBlockThought(view, api, noteId, type, thoughtMarkType, multiBlockPositions);
     return;
   }
 
@@ -143,6 +146,7 @@ async function addBlockThought(
 
   // 使用框定系统：颜色来自 thought 类型
   const frameColor = THOUGHT_TYPE_META[type].color;
+  console.log('[addBlockThought] frameColor:', frameColor, 'positions:', validPositions);
   addBlockFrameGroup(view, validPositions, frameColor, 'solid');
 
   await openAndNotify(api, record.id, 'block', anchorText, first, type, noteId);
