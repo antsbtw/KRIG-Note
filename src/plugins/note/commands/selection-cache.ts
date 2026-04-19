@@ -66,16 +66,15 @@ export function startSelectionCache(view: EditorView): () => void {
     }
   };
 
-  // 用 rAF 轮询（与 FloatingToolbar 一致，可靠追踪所有选区变化）
-  let rafId: number;
-  const poll = () => {
-    update();
-    rafId = requestAnimationFrame(poll);
-  };
-  rafId = requestAnimationFrame(poll);
+  // selectionchange 在选区变化时同步触发（比 rAF 更及时）
+  const onSelChange = () => update();
+  document.addEventListener('selectionchange', onSelChange);
+
+  // 初始化一次
+  update();
 
   return () => {
-    cancelAnimationFrame(rafId);
+    document.removeEventListener('selectionchange', onSelChange);
     currentCache = null;
   };
 }

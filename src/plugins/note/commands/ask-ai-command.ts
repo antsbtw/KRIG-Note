@@ -3,6 +3,7 @@ import type { AnchorType } from '../../../shared/types/thought-types';
 import type { AIServiceId } from '../../../shared/types/ai-service-types';
 import { THOUGHT_ACTION } from '../../thought/thought-protocol';
 import { selectionToMarkdown } from './selection-to-markdown';
+import { getSelectionCache } from './selection-cache';
 
 /**
  * askAI — 选中文字后向 AI 提问，回复写入 Thought
@@ -59,15 +60,30 @@ export async function askAI(
   if (!noteId) return;
 
   const { state } = view;
-  const { selection } = state;
-  const { from, to, empty } = selection;
   const thoughtMarkType = state.schema.marks.thought;
   if (!thoughtMarkType) return;
 
-  if (empty) return;
+  // 优先用当前选区，选区为空时从 selection cache 读取
+  let from = state.selection.from;
+  let to = state.selection.to;
+  let selectedMarkdown = '';
+  let images: string[] = [];
 
-  // 无损序列化选区为 Markdown（保留公式、代码块、表格等结构）
-  const { markdown: selectedMarkdown, images } = selectionToMarkdown(view);
+  if (from !== to) {
+    const result = selectionToMarkdown(view);
+    selectedMarkdown = result.markdown;
+    images = result.images;
+  } else {
+    // 选区被折叠（右键菜单场景）— 从缓存读取
+    const cache = getSelectionCache();
+    if (cache && cache.markdown.trim()) {
+      selectedMarkdown = cache.markdown;
+      images = cache.images;
+      from = cache.from;
+      to = cache.to;
+    }
+  }
+
   if (!selectedMarkdown.trim()) return;
 
   // Compose the full prompt: instruction + selected content (Markdown)
@@ -76,8 +92,7 @@ export async function askAI(
     : selectedMarkdown;
 
   const anchorType: AnchorType = 'inline';
-  // anchorText 用于 UI 预览，纯文本即可
-  const anchorText = state.doc.textBetween(from, to, ' ').slice(0, 100);
+  const anchorText = state.doc.textBetween(from, Math.min(to, state.doc.content.size), ' ').slice(0, 100);
   const anchorPos = from;
 
   // 1. Create ThoughtRecord in DB (pending state)
