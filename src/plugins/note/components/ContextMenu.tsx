@@ -2,11 +2,18 @@ import { useState, useEffect } from 'react';
 import type { EditorView } from 'prosemirror-view';
 import { showDictionaryPanel, showTranslationPanel } from '../learning';
 import { deleteCurrentBlock, deleteSelection } from '../commands/editor-commands';
+import { THOUGHT_ACTION } from '../../thought/thought-protocol';
+import { addThought } from '../commands/thought-commands';
+import { askAI } from '../commands/ask-ai-command';
+import { THOUGHT_TYPE_META } from '../../../shared/types/thought-types';
+import type { ThoughtType } from '../../../shared/types/thought-types';
+import { getAIServiceList } from '../../../shared/types/ai-service-types';
+import type { AIServiceId } from '../../../shared/types/ai-service-types';
 
 /**
  * ContextMenu — 右键菜单
  *
- * Cut / Copy / Paste + Delete
+ * Cut / Copy / Paste + Delete + 添加标注 + 问 AI
  */
 
 interface ContextMenuProps {
@@ -19,6 +26,7 @@ interface MenuState {
 
 export function ContextMenu({ view }: ContextMenuProps) {
   const [menu, setMenu] = useState<MenuState | null>(null);
+  const [subMenu, setSubMenu] = useState<'thought' | 'ai' | null>(null);
 
   useEffect(() => {
     if (!view) return;
@@ -26,9 +34,10 @@ export function ContextMenu({ view }: ContextMenuProps) {
     const handler = (e: MouseEvent) => {
       e.preventDefault();
       setMenu({ coords: { left: e.clientX, top: e.clientY } });
+      setSubMenu(null);
     };
 
-    const close = () => setMenu(null);
+    const close = () => { setMenu(null); setSubMenu(null); };
 
     view.dom.addEventListener('contextmenu', handler);
     document.addEventListener('click', close);
@@ -41,9 +50,9 @@ export function ContextMenu({ view }: ContextMenuProps) {
 
   if (!menu || !view) return null;
 
-  const close = () => setMenu(null);
+  const close = () => { setMenu(null); setSubMenu(null); };
 
-  const items: { id: string; label: string; icon: string; shortcut?: string; separator?: boolean; action: () => void }[] = [
+  const items: { id: string; label: string; icon: string; shortcut?: string; separator?: boolean; hasArrow?: boolean; action: () => void }[] = [
     {
       id: 'cut', label: 'Cut', icon: '✂', shortcut: '⌘X',
       action: () => { document.execCommand('cut'); close(); },
@@ -97,7 +106,7 @@ export function ContextMenu({ view }: ContextMenuProps) {
           if (api?.sendToOtherSlot) {
             api.sendToOtherSlot({
               protocol: 'note-thought',
-              action: 'thought:delete',
+              action: THOUGHT_ACTION.DELETE,
               payload: { thoughtId },
             });
           }
@@ -128,7 +137,7 @@ export function ContextMenu({ view }: ContextMenuProps) {
             if (api?.sendToOtherSlot) {
               api.sendToOtherSlot({
                 protocol: 'note-thought',
-                action: 'thought:delete',
+                action: THOUGHT_ACTION.DELETE,
                 payload: { thoughtId },
               });
             }
@@ -148,11 +157,11 @@ export function ContextMenu({ view }: ContextMenuProps) {
 
   // 学习模块：选中文本时显示查词/翻译
   const { from, to } = view.state.selection;
-  if (from !== to) {
+  const hasSelection = from !== to;
+  if (hasSelection) {
     const selectedText = view.state.doc.textBetween(from, to, ' ').trim();
     if (selectedText) {
       const isWord = !/\s/.test(selectedText);
-      // 获取选区所在段落作为上下文
       const $from = view.state.selection.$from;
       const parentStart = $from.start($from.depth);
       const parentEnd = $from.end($from.depth);
@@ -171,6 +180,23 @@ export function ContextMenu({ view }: ContextMenuProps) {
     }
   }
 
+  // 标注 + 问 AI：有选区或光标在 block 中时可用
+  // 检测是否有可标注的内容（选区 或 光标所在 block）
+  const hasContent = hasSelection || view.state.selection.$from.parent.content.size > 0;
+  if (hasContent) {
+    // "添加标注" — 展开子菜单选类型
+    items.push({
+      id: 'add-thought', label: '添加标注', icon: '💭', separator: true, hasArrow: true,
+      action: () => { setSubMenu(subMenu === 'thought' ? null : 'thought'); },
+    });
+
+    // "问 AI" — 展开子菜单选服务
+    items.push({
+      id: 'ask-ai', label: '问 AI', icon: '🤖', hasArrow: true,
+      action: () => { setSubMenu(subMenu === 'ai' ? null : 'ai'); },
+    });
+  }
+
   return (
     <div style={{ ...styles.container, left: menu.coords.left, top: menu.coords.top }} onClick={(e) => e.stopPropagation()}>
       {items.map((item) => (
@@ -179,15 +205,82 @@ export function ContextMenu({ view }: ContextMenuProps) {
           <div
             style={styles.item}
             onMouseDown={(e) => { e.preventDefault(); item.action(); }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = '#3a3a3a')}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = '#3a3a3a';
+              // 非子菜单项 hover 时关闭子菜单
+              if (!item.hasArrow) setSubMenu(null);
+            }}
             onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
           >
             <span style={styles.icon}>{item.icon}</span>
             <span style={styles.label}>{item.label}</span>
             {item.shortcut && <span style={styles.shortcut}>{item.shortcut}</span>}
+            {item.hasArrow && <span style={styles.arrow}>▸</span>}
           </div>
         </div>
       ))}
+
+      {/* 标注类型子菜单 */}
+      {subMenu === 'thought' && (
+        <div
+          style={{ ...styles.subMenu, left: '100%', top: (() => {
+            const idx = items.findIndex(i => i.id === 'add-thought');
+            return idx * 34 + 4;
+          })() }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          {(Object.keys(THOUGHT_TYPE_META) as ThoughtType[])
+            .filter(t => t !== 'ai-response')
+            .map((t) => {
+              const m = THOUGHT_TYPE_META[t];
+              return (
+                <div
+                  key={t}
+                  style={styles.item}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    addThought(view, t);
+                    close();
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = '#3a3a3a')}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                >
+                  <span style={styles.icon}>{m.icon}</span>
+                  <span>{m.label}</span>
+                </div>
+              );
+            })}
+        </div>
+      )}
+
+      {/* AI 服务子菜单 */}
+      {subMenu === 'ai' && (
+        <div
+          style={{ ...styles.subMenu, left: '100%', top: (() => {
+            const idx = items.findIndex(i => i.id === 'ask-ai');
+            return idx * 34 + 4;
+          })() }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          {getAIServiceList().map((s) => (
+            <div
+              key={s.id}
+              style={styles.item}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                // TODO: askAI 也需要支持 range 参数
+                askAI(view, s.id as AIServiceId, '');
+                close();
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = '#3a3a3a')}
+              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+            >
+              <span style={styles.icon}>{s.icon}</span>
+              <span>{s.name}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -205,5 +298,12 @@ const styles: Record<string, React.CSSProperties> = {
   icon: { width: '24px', textAlign: 'center' as const, marginRight: '8px', flexShrink: 0 },
   label: { flex: 1 },
   shortcut: { fontSize: '11px', color: '#888', marginLeft: '16px' },
+  arrow: { fontSize: '10px', color: '#888', marginLeft: '4px' },
   separator: { height: '1px', background: '#444', margin: '4px 8px' },
+  subMenu: {
+    position: 'absolute' as const, zIndex: 1001,
+    background: '#2a2a2a', border: '1px solid #444', borderRadius: '8px',
+    padding: '4px', minWidth: '140px', boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+    marginLeft: '4px',
+  },
 };

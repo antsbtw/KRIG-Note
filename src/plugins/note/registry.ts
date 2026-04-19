@@ -125,19 +125,23 @@ class BlockRegistry {
         attrs: {
           thoughtId: {},
           thoughtType: { default: 'thought' },
+          anchorType: { default: 'inline' },
         },
         inclusive: false,
         parseDOM: [{ tag: 'span[data-thought-id]', getAttrs(dom: HTMLElement) {
           return {
             thoughtId: dom.getAttribute('data-thought-id'),
             thoughtType: dom.getAttribute('data-thought-type') || 'thought',
+            anchorType: dom.getAttribute('data-anchor-type') || 'inline',
           };
         }}],
         toDOM(mark: any) {
+          const anchor = mark.attrs.anchorType || 'inline';
           return ['span', {
             'data-thought-id': mark.attrs.thoughtId,
             'data-thought-type': mark.attrs.thoughtType || 'thought',
-            class: 'thought-anchor',
+            'data-anchor-type': anchor,
+            class: `thought-anchor thought-anchor--${anchor}`,
           }, 0];
         },
       },

@@ -6,6 +6,7 @@ import { applyLink as applyLinkCmd, removeLink as removeLinkCmd, insertInlineMat
 import { ColorPicker } from './ColorPicker';
 import { addThought } from '../commands/thought-commands';
 import { askAI, getSelectedText } from '../commands/ask-ai-command';
+import { selectionToMarkdown } from '../commands/selection-to-markdown';
 import { THOUGHT_TYPE_META } from '../../../shared/types/thought-types';
 import type { ThoughtType } from '../../../shared/types/thought-types';
 import { getAIServiceList, DEFAULT_AI_SERVICE } from '../../../shared/types/ai-service-types';
@@ -208,6 +209,32 @@ export function FloatingToolbar({ view }: FloatingToolbarProps) {
     { label: 'code', mark: s.marks.code, render: <span style={{ fontFamily: 'monospace', fontSize: '12px' }}>&lt;&gt;</span> },
   ].filter((b) => b.mark);
 
+  // 互斥：AskAIPanel 打开时，只显示 AI 弹窗，隐藏 toolbar 按钮行
+  if (showAIMenu && view) {
+    return (
+      <div
+        ref={toolbarRef}
+        style={{
+          position: 'fixed',
+          top: position.top,
+          left: position.left,
+          transform: 'translate(-50%, -100%)',
+          zIndex: 900,
+        }}
+        onMouseDown={(e) => e.preventDefault()}
+      >
+        <AskAIPanel
+          view={view}
+          onSend={(serviceId, instruction) => {
+            setShowAIMenu(false);
+            askAI(view, serviceId, instruction);
+          }}
+          onClose={() => { setShowAIMenu(false); view.focus(); }}
+        />
+      </div>
+    );
+  }
+
   return (
     <div
       ref={toolbarRef}
@@ -314,27 +341,14 @@ export function FloatingToolbar({ view }: FloatingToolbarProps) {
         </div>
       )}
 
-      {/* 问 AI 按钮 + 输入面板 */}
+      {/* 问 AI 按钮 */}
       <button
-        className={`ft-btn ${showAIMenu ? 'ft-btn--active' : ''}`}
-        onClick={() => { setShowAIMenu(!showAIMenu); setShowThoughtMenu(false); setShowColorPicker(false); setShowLinkPanel(false); }}
+        className="ft-btn"
+        onClick={() => { setShowAIMenu(true); setShowThoughtMenu(false); setShowColorPicker(false); setShowLinkPanel(false); }}
         title="问 AI"
       >
         <span style={{ fontSize: '13px' }}>🤖</span>
       </button>
-
-      {showAIMenu && view && (
-        <div style={{ position: 'absolute', top: '100%', left: '50%', transform: 'translateX(-50%)', marginTop: 4 }}>
-          <AskAIPanel
-            view={view}
-            onSend={(serviceId, instruction) => {
-              setShowAIMenu(false);
-              askAI(view, serviceId, instruction);
-            }}
-            onClose={() => { setShowAIMenu(false); view.focus(); }}
-          />
-        </div>
-      )}
 
       {/* 链接面板 */}
       {showLinkPanel && (
@@ -539,7 +553,8 @@ function AskAIPanel({ view, onSend, onClose }: AskAIPanelProps) {
   const [instruction, setInstruction] = useState('');
   const [serviceId, setServiceId] = useState<AIServiceId>(DEFAULT_AI_SERVICE);
   const [showServiceMenu, setShowServiceMenu] = useState(false);
-  const [selectedText, setSelectedText] = useState(() => getSelectedText(view));
+  // 使用 Markdown 格式预览选中内容（保留公式、代码块等结构）
+  const [previewMarkdown, setPreviewMarkdown] = useState(() => selectionToMarkdown(view).markdown);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -549,21 +564,18 @@ function AskAIPanel({ view, onSend, onClose }: AskAIPanelProps) {
   // Track selection changes — update preview when user re-selects
   useEffect(() => {
     const handleSelectionUpdate = () => {
-      const text = getSelectedText(view);
-      if (text && text !== selectedText) {
-        setSelectedText(text);
+      const { markdown } = selectionToMarkdown(view);
+      if (markdown && markdown !== previewMarkdown) {
+        setPreviewMarkdown(markdown);
       }
     };
-    // ProseMirror doesn't have a simple selection event, so poll briefly
-    // when the view regains focus (user clicked back to re-select)
     const interval = setInterval(handleSelectionUpdate, 500);
     return () => clearInterval(interval);
-  }, [view, selectedText]);
+  }, [view, previewMarkdown]);
 
   const handleSend = () => {
-    // Re-read the latest selection at send time
-    const latestText = getSelectedText(view) || selectedText;
-    if (!instruction.trim() && !latestText.trim()) return;
+    const latestMd = selectionToMarkdown(view).markdown || previewMarkdown;
+    if (!instruction.trim() && !latestMd.trim()) return;
     onSend(serviceId, instruction);
   };
 
@@ -579,7 +591,7 @@ function AskAIPanel({ view, onSend, onClose }: AskAIPanelProps) {
 
   const services = getAIServiceList();
   const currentService = services.find(s => s.id === serviceId) || services[0];
-  const previewText = selectedText.length > 120 ? selectedText.slice(0, 120) + '...' : selectedText;
+  const previewText = previewMarkdown.length > 200 ? previewMarkdown.slice(0, 200) + '...' : previewMarkdown;
 
   return (
     <div
@@ -602,13 +614,13 @@ function AskAIPanel({ view, onSend, onClose }: AskAIPanelProps) {
         </button>
       </div>
 
-      {/* Selected content preview */}
+      {/* Selected content preview (Markdown format) */}
       <div style={askAIPanelStyles.preview}>
         <span style={askAIPanelStyles.previewLabel}>
           选中内容：
           {!previewText && <span style={{ color: '#666', fontStyle: 'italic' }}>请在编辑器中选择文字</span>}
         </span>
-        {previewText && <span style={askAIPanelStyles.previewText}>{previewText}</span>}
+        {previewText && <pre style={askAIPanelStyles.previewText}>{previewText}</pre>}
       </div>
 
       {/* Instruction input */}
@@ -653,10 +665,10 @@ function AskAIPanel({ view, onSend, onClose }: AskAIPanelProps) {
         <button
           style={{
             ...askAIPanelStyles.sendBtn,
-            opacity: (!instruction.trim() && !selectedText.trim()) ? 0.4 : 1,
+            opacity: (!instruction.trim() && !previewMarkdown.trim()) ? 0.4 : 1,
           }}
           onClick={handleSend}
-          disabled={!instruction.trim() && !selectedText.trim()}
+          disabled={!instruction.trim() && !previewMarkdown.trim()}
         >
           发送 ▶
         </button>
@@ -708,6 +720,12 @@ const askAIPanelStyles: Record<string, React.CSSProperties> = {
   previewText: {
     color: '#ccc',
     wordBreak: 'break-word' as const,
+    whiteSpace: 'pre-wrap' as const,
+    fontFamily: 'ui-monospace, "SF Mono", Monaco, "Cascadia Code", monospace',
+    fontSize: 11,
+    margin: 0,
+    maxHeight: 120,
+    overflowY: 'auto' as const,
   },
   textarea: {
     width: '100%',

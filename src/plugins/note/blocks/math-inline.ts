@@ -16,6 +16,22 @@ const mathInlineNodeView: NodeViewFactory = (node, view, getPos) => {
   dom.classList.add('math-inline');
   let lastLatex: string | null = null;  // 缓存上次渲染的 LaTeX
 
+  /** 同步 thought mark 的视觉状态到 DOM（标注线） */
+  function syncThoughtMark(n: typeof node) {
+    const thoughtMark = n.marks.find(m => m.type.name === 'thought');
+    if (thoughtMark && thoughtMark.attrs.anchorType !== 'block') {
+      // inline 标注 — 显示 border-bottom
+      dom.classList.add('thought-anchor');
+      dom.setAttribute('data-thought-id', thoughtMark.attrs.thoughtId);
+      dom.setAttribute('data-thought-type', thoughtMark.attrs.thoughtType || 'thought');
+    } else {
+      // block 标注或无标注 — 不显示（block 视觉由外层 decoration 处理）
+      dom.classList.remove('thought-anchor');
+      dom.removeAttribute('data-thought-id');
+      dom.removeAttribute('data-thought-type');
+    }
+  }
+
   function render() {
     const latex = (node.attrs.latex as string).trim();
     if (latex === lastLatex) return;
@@ -39,6 +55,7 @@ const mathInlineNodeView: NodeViewFactory = (node, view, getPos) => {
   }
 
   render();
+  syncThoughtMark(node);
 
   // 双击编辑
   dom.addEventListener('dblclick', (e) => {
@@ -146,6 +163,7 @@ const mathInlineNodeView: NodeViewFactory = (node, view, getPos) => {
       if (updatedNode.type.name !== 'mathInline') return false;
       node = updatedNode;
       render();
+      syncThoughtMark(updatedNode);
       return true;
     },
     stopEvent() { return false; },

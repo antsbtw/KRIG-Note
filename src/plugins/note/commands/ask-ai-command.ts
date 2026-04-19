@@ -2,6 +2,7 @@ import type { EditorView } from 'prosemirror-view';
 import type { AnchorType } from '../../../shared/types/thought-types';
 import type { AIServiceId } from '../../../shared/types/ai-service-types';
 import { THOUGHT_ACTION } from '../../thought/thought-protocol';
+import { selectionToMarkdown } from './selection-to-markdown';
 
 /**
  * askAI — 选中文字后向 AI 提问，回复写入 Thought
@@ -32,6 +33,7 @@ const viewAPI = () => (window as any).viewAPI as {
     prompt: string;
     noteId: string;
     thoughtId: string;
+    images?: string[];
   }) => Promise<{ success: boolean; markdown?: string; error?: string }>;
 } | undefined;
 
@@ -64,16 +66,18 @@ export async function askAI(
 
   if (empty) return;
 
-  const selectedText = state.doc.textBetween(from, to, '\n');
-  if (!selectedText.trim()) return;
+  // 无损序列化选区为 Markdown（保留公式、代码块、表格等结构）
+  const { markdown: selectedMarkdown, images } = selectionToMarkdown(view);
+  if (!selectedMarkdown.trim()) return;
 
-  // Compose the full prompt: instruction + selected content
+  // Compose the full prompt: instruction + selected content (Markdown)
   const fullPrompt = instruction.trim()
-    ? `${instruction.trim()}\n\n---\n\n${selectedText}`
-    : selectedText;
+    ? `${instruction.trim()}\n\n---\n\n${selectedMarkdown}`
+    : selectedMarkdown;
 
   const anchorType: AnchorType = 'inline';
-  const anchorText = selectedText.slice(0, 100);
+  // anchorText 用于 UI 预览，纯文本即可
+  const anchorText = state.doc.textBetween(from, to, ' ').slice(0, 100);
   const anchorPos = from;
 
   // 1. Create ThoughtRecord in DB (pending state)
@@ -97,9 +101,17 @@ export async function askAI(
   });
 
   // 3. Add thought mark to selection
+  // 检测是否是整段选中（block 级别）
+  const $from = state.selection.$from;
+  const blockStart = $from.start($from.depth);
+  const blockEnd = $from.end($from.depth);
+  const isBlockSelection = from <= blockStart && to >= blockEnd;
+  const markAnchorType = isBlockSelection ? 'block' : 'inline';
+
   const mark = thoughtMarkType.create({
     thoughtId: record.id,
     thoughtType: 'ai-response',
+    anchorType: markAnchorType,
   });
   view.dispatch(state.tr.addMark(from, to, mark));
 
@@ -108,87 +120,99 @@ export async function askAI(
   await api.openRightSlot('ai-web');
 
   // 5. Send to AI via visible WebView (main process orchestrates)
-  console.log('[askAI] Step 5: Sending to AI via aiAskVisible...', { serviceId, promptLength: fullPrompt.length });
+  console.log('[askAI] Step 5: Sending to AI via aiAskVisible...', { serviceId, promptLength: fullPrompt.length, imageCount: images.length });
   const result = await api.aiAskVisible({
     serviceId,
     prompt: fullPrompt,
     noteId,
     thoughtId: record.id,
+    images: images.length > 0 ? images : undefined,
   });
 
   console.log('[askAI] Step 5 result:', { success: result.success, markdownLength: result.markdown?.length ?? 0, error: result.error });
 
   // 6. AI response captured — switch to ThoughtView
+  // Switch Right Slot to ThoughtView
+  await api.openRightSlot('thought');
+
+  // 等待 ThoughtView renderer 加载就绪（轮询检测，替代硬编码 setTimeout）
+  await waitForSlotReady(api, 3000);
+
+  console.log('[askAI] Step 6: Sending CREATE to ThoughtView...');
+
+  // 先发送 CREATE，ThoughtView 追加卡片
+  api.sendToOtherSlot({
+    protocol: 'note-thought',
+    action: THOUGHT_ACTION.CREATE,
+    payload: {
+      thoughtId: record.id,
+      anchorType,
+      anchorText,
+      anchorPos,
+      type: 'ai-response',
+      serviceId,
+    },
+  });
+
+  // 等一个 React 渲染周期，确保 CREATE 的 setState 已执行
+  await nextFrame();
+
   if (result.success && result.markdown) {
-    console.log('[askAI] Step 6: AI responded successfully (main handler already parsed + saved atoms)');
-    // Note: The main IPC handler (AI_ASK_VISIBLE) already parsed the markdown
-    // into structured Atoms via ResultParser + createAtomsFromExtracted
-    // and saved them to ThoughtStore. We just need to switch to ThoughtView.
-
-    // Switch Right Slot to ThoughtView
-    await api.openRightSlot('thought');
-
-    // Wait for ThoughtView to load
-    await new Promise(resolve => setTimeout(resolve, 1200));
-
-    console.log('[askAI] Step 6: Sending CREATE + AI_RESPONSE_READY to ThoughtView...');
-
-    // Notify ThoughtView: new AI thought with content
+    console.log('[askAI] Step 6: Sending AI_RESPONSE_READY...');
     api.sendToOtherSlot({
       protocol: 'note-thought',
-      action: THOUGHT_ACTION.CREATE,
+      action: THOUGHT_ACTION.AI_RESPONSE_READY,
       payload: {
         thoughtId: record.id,
-        anchorType,
-        anchorText,
-        anchorPos,
-        type: 'ai-response',
+        markdown: result.markdown,
         serviceId,
       },
     });
-
-    // Send the response content (delay to ensure CREATE is processed first)
-    setTimeout(() => {
-      console.log('[askAI] Step 6: Sending AI_RESPONSE_READY with markdown...');
-      api.sendToOtherSlot({
-        protocol: 'note-thought',
-        action: THOUGHT_ACTION.AI_RESPONSE_READY,
-        payload: {
-          thoughtId: record.id,
-          markdown: result.markdown,
-          serviceId,
-        },
-      });
-    }, 800);
   } else {
-    console.log('[askAI] Step 6: AI FAILED, switching to ThoughtView for error display...', result.error);
-
-    // Switch Right Slot to ThoughtView and show error
-    await api.openRightSlot('thought');
-    await new Promise(resolve => setTimeout(resolve, 1200));
-
+    console.log('[askAI] Step 6: Sending AI_ERROR...', result.error);
     api.sendToOtherSlot({
       protocol: 'note-thought',
-      action: THOUGHT_ACTION.CREATE,
+      action: THOUGHT_ACTION.AI_ERROR,
       payload: {
         thoughtId: record.id,
-        anchorType,
-        anchorText,
-        anchorPos,
-        type: 'ai-response',
-        serviceId,
+        error: result.error || 'Unknown error',
       },
     });
+  }
+}
 
-    setTimeout(() => {
+/** 等待 Right Slot renderer 加载就绪（轮询 sendToOtherSlot 可达性） */
+async function waitForSlotReady(
+  api: NonNullable<ReturnType<typeof viewAPI>>,
+  timeoutMs: number = 3000,
+): Promise<void> {
+  const start = Date.now();
+  const interval = 200;
+  while (Date.now() - start < timeoutMs) {
+    try {
+      // sendToOtherSlot 在 slot 未就绪时会抛出或静默丢弃；
+      // 我们发一个无害的探测消息，如果不抛就认为通道可用
       api.sendToOtherSlot({
         protocol: 'note-thought',
-        action: THOUGHT_ACTION.AI_ERROR,
-        payload: {
-          thoughtId: record.id,
-          error: result.error || 'Unknown error',
-        },
+        action: '__probe__',
+        payload: {},
       });
-    }, 800);
+      return;
+    } catch {
+      await new Promise(r => setTimeout(r, interval));
+    }
   }
+  // 超时后仍然尝试发送（ThoughtView 启动时也会从 DB 拉取，消息丢失不致命）
+  console.warn('[askAI] waitForSlotReady timed out, proceeding anyway');
+}
+
+/** 等一个 requestAnimationFrame + microtask，确保 React setState 已 flush */
+function nextFrame(): Promise<void> {
+  return new Promise(resolve => {
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => setTimeout(resolve, 0));
+    } else {
+      setTimeout(resolve, 50);
+    }
+  });
 }

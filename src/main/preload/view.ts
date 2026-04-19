@@ -270,7 +270,7 @@ contextBridge.exposeInMainWorld('viewAPI', {
   aiAsk: (params: { serviceId: string; prompt: string; noteId?: string; thoughtId?: string }) =>
     ipcRenderer.invoke(IPC.AI_ASK, params),
 
-  aiAskVisible: (params: { serviceId: string; prompt: string; noteId: string; thoughtId: string }) =>
+  aiAskVisible: (params: { serviceId: string; prompt: string; noteId: string; thoughtId: string; images?: string[] }) =>
     ipcRenderer.invoke(IPC.AI_ASK_VISIBLE, params),
 
   aiStatus: () =>
