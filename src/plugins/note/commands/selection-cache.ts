@@ -31,50 +31,36 @@ export function getSelectionCache(): SelectionCacheData | null {
   return currentCache;
 }
 
-/** 启动选区缓存追踪，返回 cleanup 函数 */
-export function startSelectionCache(view: EditorView): () => void {
-  let prevFrom = -1;
-  let prevTo = -1;
+/**
+ * 在 dispatchTransaction 中调用，更新选区缓存。
+ * 每次 ProseMirror state 变化时由 NoteEditor 调用。
+ */
+export function updateSelectionCache(view: EditorView): void {
+  const state = view.state;
 
-  const update = () => {
-    // 优先检查 block-selection
-    const state = view.state;
-    const blockSel = blockSelectionKey.getState(state);
-    if (blockSel?.active && blockSel.selectedPositions.length > 0) {
-      const sorted = [...blockSel.selectedPositions].sort((a, b) => a - b);
-      const first = sorted[0];
-      const lastPos = sorted[sorted.length - 1];
-      const lastNode = state.doc.nodeAt(lastPos);
-      const to = lastNode ? lastPos + lastNode.nodeSize : lastPos + 1;
-      if (first !== prevFrom || to !== prevTo) {
-        prevFrom = first;
-        prevTo = to;
-        // block-selection 用 textBetween（selectionToMarkdown 依赖 PM selection）
-        const md = state.doc.textBetween(first, to, '\n\n');
-        currentCache = { markdown: md, images: [], from: first, to, timestamp: Date.now() };
-      }
-      return;
-    }
+  // 优先检查 block-selection
+  const blockSel = blockSelectionKey.getState(state);
+  if (blockSel?.active && blockSel.selectedPositions.length > 0) {
+    const sorted = [...blockSel.selectedPositions].sort((a, b) => a - b);
+    const first = sorted[0];
+    const lastPos = sorted[sorted.length - 1];
+    const lastNode = state.doc.nodeAt(lastPos);
+    const to = lastNode ? lastPos + lastNode.nodeSize : lastPos + 1;
+    const md = state.doc.textBetween(first, to, '\n\n');
+    currentCache = { markdown: md, images: [], from: first, to, timestamp: Date.now() };
+    return;
+  }
 
-    // 普通选区
-    const { from, to } = state.selection;
-    if (from !== to && (from !== prevFrom || to !== prevTo)) {
-      prevFrom = from;
-      prevTo = to;
-      const result = selectionToMarkdown(view);
-      currentCache = { ...result, from, to, timestamp: Date.now() };
-    }
-  };
+  // 普通选区：非空时更新缓存
+  const { from, to } = state.selection;
+  if (from !== to) {
+    const result = selectionToMarkdown(view);
+    currentCache = { ...result, from, to, timestamp: Date.now() };
+  }
+  // 选区为空时不清除缓存（保留上次选区的内容，供右键菜单使用）
+}
 
-  // selectionchange 在选区变化时同步触发（比 rAF 更及时）
-  const onSelChange = () => update();
-  document.addEventListener('selectionchange', onSelChange);
-
-  // 初始化一次
-  update();
-
-  return () => {
-    document.removeEventListener('selectionchange', onSelChange);
-    currentCache = null;
-  };
+/** 清除缓存 */
+export function clearSelectionCache(): void {
+  currentCache = null;
 }
