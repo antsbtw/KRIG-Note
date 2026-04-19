@@ -22,8 +22,10 @@ interface ContextMenuProps {
 
 interface MenuState {
   coords: { left: number; top: number };
-  /** 右键打开时预计算的内容预览（此时选区可能还未被折叠） */
+  /** 右键打开时预计算的内容预览 */
   contentPreview: string;
+  /** 右键打开时保存的 block-selection positions（之后可能被清除） */
+  blockPositions: number[];
 }
 
 export function ContextMenu({ view }: ContextMenuProps) {
@@ -54,7 +56,9 @@ export function ContextMenu({ view }: ContextMenuProps) {
       e.preventDefault();
       const cache = getSelectionCache();
       const contentPreview = cache?.markdown || '';
-      setMenu({ coords: { left: e.clientX, top: e.clientY }, contentPreview });
+      // 保存 block-selection positions（之后 block-selection 可能被右键交互清除）
+      const blockPositions = getSelectedBlockPositions(view);
+      setMenu({ coords: { left: e.clientX, top: e.clientY }, contentPreview, blockPositions });
       setShowFramePicker(false);
     };
 
@@ -241,7 +245,11 @@ export function ContextMenu({ view }: ContextMenuProps) {
     // "添加标注" — 一键执行，默认"思考"类型，后续在 ThoughtView 中调整
     items.push({
       id: 'add-thought', label: '添加标注', icon: '💭', separator: true,
-      action: () => { addThought(view); close(); },
+      action: () => {
+        // 传入右键时保存的 block positions（此时 block-selection 可能已退出）
+        addThought(view, 'thought', menu.blockPositions.length > 1 ? menu.blockPositions : undefined);
+        close();
+      },
     });
 
     // "问 AI" — 收起菜单，弹出独立浮窗
