@@ -56,8 +56,8 @@ export function ContextMenu({ view }: ContextMenuProps) {
       e.preventDefault();
       const cache = getSelectionCache();
       const contentPreview = cache?.markdown || '';
-      // 保存 block-selection positions（之后 block-selection 可能被右键交互清除）
-      const blockPositions = getSelectedBlockPositions(view);
+      // 从缓存读 block positions（dispatchTransaction 中已保存，不受右键清除影响）
+      const blockPositions = cache?.blockPositions || [];
       setMenu({ coords: { left: e.clientX, top: e.clientY }, contentPreview, blockPositions });
       setShowFramePicker(false);
     };
