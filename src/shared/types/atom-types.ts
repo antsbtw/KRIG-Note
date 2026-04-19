@@ -26,6 +26,9 @@ export interface Atom {
   // 来源追溯（一等字段）
   from?: FromReference;
 
+  // Block 框定（通用视觉能力，跨所有 block 类型）
+  frame?: { color: string; style: string; groupId: string | null };
+
   meta: AtomMeta;
 }
 

@@ -71,6 +71,10 @@ class BlockRegistry {
           ...(spec.attrs || {}),
           indent: spec.attrs?.indent ?? { default: 0 },
           fromPage: { default: null },  // from.pdfPage — 来源页码，用于 eBook↔Note 锚定同步
+          // ── Block 框定（通用能力） ──
+          frameColor: { default: null },     // 边框颜色，如 '#337EA9'
+          frameStyle: { default: null },     // 'solid' | 'double'
+          frameGroupId: { default: null },   // 多 block 分组 ID
         };
       }
       nodes[block.name] = spec;

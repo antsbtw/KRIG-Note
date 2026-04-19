@@ -6,6 +6,9 @@ import { THOUGHT_ACTION } from '../../thought/thought-protocol';
 import { addThought } from '../commands/thought-commands';
 import { openAskAIPanel } from './AskAIPanel';
 import { getSelectionCache } from '../commands/selection-cache';
+import { addBlockFrameGroup, updateBlockFrameColor, updateBlockFrameStyle, removeBlockFrame, getSelectedBlockPositions } from '../commands/frame-commands';
+import { FramePicker } from './FramePicker';
+import { FRAME_COLORS } from '../plugins/block-frame';
 
 /**
  * ContextMenu — 右键菜单
@@ -25,6 +28,7 @@ interface MenuState {
 
 export function ContextMenu({ view }: ContextMenuProps) {
   const [menu, setMenu] = useState<MenuState | null>(null);
+  const [showFramePicker, setShowFramePicker] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   // 主菜单位置（视口边界修正后的）
   const [adjustedCoords, setAdjustedCoords] = useState<{ left: number; top: number } | null>(null);
@@ -51,9 +55,10 @@ export function ContextMenu({ view }: ContextMenuProps) {
       const cache = getSelectionCache();
       const contentPreview = cache?.markdown || '';
       setMenu({ coords: { left: e.clientX, top: e.clientY }, contentPreview });
+      setShowFramePicker(false);
     };
 
-    const close = () => setMenu(null);
+    const close = () => { setMenu(null); setShowFramePicker(false); };
 
     view.dom.addEventListener('contextmenu', handler);
     document.addEventListener('click', close);
@@ -66,7 +71,7 @@ export function ContextMenu({ view }: ContextMenuProps) {
 
   if (!menu || !view) return null;
 
-  const close = () => setMenu(null);
+  const close = () => { setMenu(null); setShowFramePicker(false); };
 
   const items: { id: string; label: string; icon: string; shortcut?: string; separator?: boolean; action: () => void }[] = [
     {
@@ -171,6 +176,40 @@ export function ContextMenu({ view }: ContextMenuProps) {
     }
   }
 
+  // 框定：检测光标所在的 top-level block 是否有框定
+  const frameBlockPos = (() => {
+    const $from = view.state.selection.$from;
+    // 找到 top-level block 位置
+    for (let d = $from.depth; d >= 1; d--) {
+      const node = $from.node(d);
+      if (node.type.spec.group === 'block') {
+        return $from.before(d);
+      }
+    }
+    // depth 0 是 doc，检查 depth 1
+    if ($from.depth >= 1) return $from.before(1);
+    return null;
+  })();
+  const frameBlockNode = frameBlockPos != null ? view.state.doc.nodeAt(frameBlockPos) : null;
+  const hasFrame = !!frameBlockNode?.attrs.frameColor;
+
+  items.push({
+    id: 'frame', label: hasFrame ? '修改框定' : '框定', icon: '▣', separator: true,
+    action: () => { setShowFramePicker(!showFramePicker); },
+  });
+
+  if (hasFrame) {
+    items.push({
+      id: 'remove-frame', label: '删除框定', icon: '▢',
+      action: () => {
+        if (frameBlockPos != null) {
+          removeBlockFrame(view, frameBlockPos);
+        }
+        close();
+      },
+    });
+  }
+
   // 学习模块：选中文本时显示查词/翻译
   const { from, to } = view.state.selection;
   const hasSelection = from !== to;
@@ -218,27 +257,89 @@ export function ContextMenu({ view }: ContextMenuProps) {
 
   const pos = adjustedCoords || menu.coords;
 
-  return (
-    <div ref={menuRef} style={{ ...styles.container, left: pos.left, top: pos.top }} onClick={(e) => e.stopPropagation()}>
-      {items.map((item) => (
-        <div key={item.id}>
-          {item.separator && <div style={styles.separator} />}
-          <div
-            style={styles.item}
-            onMouseDown={(e) => { e.preventDefault(); item.action(); }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = '#3a3a3a';
-            }}
-            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-          >
-            <span style={styles.icon}>{item.icon}</span>
-            <span style={styles.label}>{item.label}</span>
-            {item.shortcut && <span style={styles.shortcut}>{item.shortcut}</span>}
-          </div>
-        </div>
-      ))}
+  // 框定操作回调
+  const handleFrameColorSelect = (color: string) => {
+    if (!view) return;
+    if (hasFrame && frameBlockPos != null) {
+      updateBlockFrameColor(view, frameBlockPos, color);
+    } else {
+      const positions = getSelectedBlockPositions(view);
+      if (positions.length > 0) {
+        addBlockFrameGroup(view, positions, color, 'solid');
+      } else if (frameBlockPos != null) {
+        addBlockFrameGroup(view, [frameBlockPos], color, 'solid');
+      }
+    }
+  };
 
-    </div>
+  const handleFrameStyleSelect = (style: 'solid' | 'double') => {
+    if (!view || frameBlockPos == null) return;
+    if (hasFrame) {
+      updateBlockFrameStyle(view, frameBlockPos, style);
+    }
+  };
+
+  const handleFrameRemove = () => {
+    if (frameBlockPos != null) {
+      removeBlockFrame(view, frameBlockPos);
+    }
+    close();
+  };
+
+  return (
+    <>
+      <div ref={menuRef} style={{ ...styles.container, left: pos.left, top: pos.top }} onClick={(e) => e.stopPropagation()}>
+        {items.map((item) => (
+          <div key={item.id}>
+            {item.separator && <div style={styles.separator} />}
+            <div
+              style={styles.item}
+              onMouseDown={(e) => { e.preventDefault(); item.action(); }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = '#3a3a3a';
+                // 非框定项时关闭框定子菜单
+                if (item.id !== 'frame') setShowFramePicker(false);
+              }}
+              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+            >
+              <span style={styles.icon}>{item.icon}</span>
+              <span style={styles.label}>{item.label}</span>
+              {item.id === 'frame' && <span style={styles.arrow}>▸</span>}
+              {item.shortcut && <span style={styles.shortcut}>{item.shortcut}</span>}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* 框定子菜单 */}
+      {showFramePicker && menuRef.current && (
+        <div
+          className="context-frame-picker"
+          style={{
+            position: 'fixed',
+            zIndex: 1001,
+            left: menuRef.current.getBoundingClientRect().right + 4,
+            top: menuRef.current.getBoundingClientRect().top,
+            background: '#2a2a2a',
+            border: '1px solid #444',
+            borderRadius: '8px',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+            minWidth: '200px',
+          }}
+          onClick={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <FramePicker
+            currentColor={frameBlockNode?.attrs.frameColor || null}
+            currentStyle={frameBlockNode?.attrs.frameStyle || null}
+            onColorSelect={handleFrameColorSelect}
+            onStyleSelect={handleFrameStyleSelect}
+            onRemove={handleFrameRemove}
+            showRemove={hasFrame}
+          />
+        </div>
+      )}
+    </>
   );
 }
 
@@ -255,5 +356,6 @@ const styles: Record<string, React.CSSProperties> = {
   icon: { width: '24px', textAlign: 'center' as const, marginRight: '8px', flexShrink: 0 },
   label: { flex: 1 },
   shortcut: { fontSize: '11px', color: '#888', marginLeft: '16px' },
+  arrow: { fontSize: '10px', color: '#888', marginLeft: '4px' },
   separator: { height: '1px', background: '#444', margin: '4px 8px' },
 };

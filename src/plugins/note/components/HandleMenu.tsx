@@ -7,6 +7,8 @@ import { openAskAIPanel } from './AskAIPanel';
 import { setTextBlockLevel } from '../commands/set-text-block-level';
 import { deleteBlockAt, applyTextColor as applyTextColorCmd, applyHighlight as applyHighlightCmd, toggleTextIndent as toggleTextIndentCmd, setTextAlign as setTextAlignCmd } from '../commands/editor-commands';
 import { addThought } from '../commands/thought-commands';
+import { addBlockFrame, updateBlockFrameColor, updateBlockFrameStyle, removeBlockFrame } from '../commands/frame-commands';
+import { FramePicker } from './FramePicker';
 
 /**
  * HandleMenu — 手柄点击后的操作菜单
@@ -26,7 +28,7 @@ interface MenuState {
   coords: { left: number; top: number };
 }
 
-type SubMenu = 'turnInto' | 'color' | 'format' | null;
+type SubMenu = 'turnInto' | 'color' | 'format' | 'frame' | null;
 
 // ── 颜色定义（复用 ColorPicker） ──
 
@@ -323,6 +325,22 @@ export function HandleMenu({ view }: HandleMenuProps) {
           <span style={styles.arrow}>▸</span>
         </div>
 
+        {/* Frame — 框定 */}
+        <div
+          style={styles.item}
+          onMouseEnter={(e) => { e.currentTarget.style.background = '#3a3a3a'; setSubMenu('frame'); }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+        >
+          <span style={styles.icon}>▣</span>
+          <span style={{ flex: 1 }}>
+            {(() => {
+              const node = view.state.doc.nodeAt(menu.pos);
+              return node?.attrs.frameColor ? '修改框定' : '框定';
+            })()}
+          </span>
+          <span style={styles.arrow}>▸</span>
+        </div>
+
         {/* Format — only for textBlock */}
         {(() => {
           const node = view.state.doc.nodeAt(menu.pos);
@@ -535,6 +553,46 @@ export function HandleMenu({ view }: HandleMenuProps) {
                   </div>
                 ))}
               </>
+            );
+          })()}
+        </div>
+      )}
+
+      {/* Frame 框定子菜单 */}
+      {subMenu === 'frame' && (
+        <div
+          ref={subMenuRef}
+          className="handle-submenu"
+          style={{ ...getSubMenuStyle(), minWidth: '200px' }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onMouseEnter={() => setSubMenu('frame')}
+        >
+          {(() => {
+            const node = view.state.doc.nodeAt(menu.pos);
+            const hasFrame = !!node?.attrs.frameColor;
+
+            return (
+              <FramePicker
+                currentColor={node?.attrs.frameColor || null}
+                currentStyle={node?.attrs.frameStyle || null}
+                onColorSelect={(color) => {
+                  if (hasFrame) {
+                    updateBlockFrameColor(view, menu.pos, color);
+                  } else {
+                    addBlockFrame(view, menu.pos, color, 'solid');
+                  }
+                }}
+                onStyleSelect={(style) => {
+                  if (hasFrame) {
+                    updateBlockFrameStyle(view, menu.pos, style);
+                  }
+                }}
+                onRemove={() => {
+                  removeBlockFrame(view, menu.pos);
+                  close();
+                }}
+                showRemove={hasFrame}
+              />
             );
           })()}
         </div>

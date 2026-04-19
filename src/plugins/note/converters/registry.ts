@@ -219,6 +219,15 @@ export class ConverterRegistry {
           atom.from.pdfPage = fromPage;
         }
       }
+      // 恢复 frame attrs → atom.frame（round-trip 保留）
+      const frameColor = node.attrs?.frameColor;
+      if (frameColor) {
+        atom.frame = {
+          color: frameColor,
+          style: node.attrs.frameStyle || 'solid',
+          groupId: node.attrs.frameGroupId || null,
+        };
+      }
       result.push(atom);
     }
 
@@ -241,6 +250,8 @@ export class ConverterRegistry {
 
     // 统一注入 from.pdfPage → attrs.fromPage（用于 eBook↔Note 锚定同步）
     this.injectFromPage(json, atom);
+    // 统一注入 frame → attrs.frameColor/frameStyle/frameGroupId
+    this.injectFrame(json, atom);
 
     if (children.length > 0 && !json.content) {
       json.content = [];
@@ -265,6 +276,7 @@ export class ConverterRegistry {
     const json = converter.toPM(atom, children);
 
     this.injectFromPage(json, atom);
+    this.injectFrame(json, atom);
 
     if (children.length > 0 && !json.content) {
       json.content = [];
@@ -283,6 +295,16 @@ export class ConverterRegistry {
     if (pdfPage != null) {
       if (!json.attrs) json.attrs = {};
       json.attrs.fromPage = pdfPage;
+    }
+  }
+
+  /** 将 atom.frame 注入到 PMNodeJSON.attrs.frameColor/frameStyle/frameGroupId */
+  private injectFrame(json: PMNodeJSON, atom: Atom): void {
+    if (atom.frame) {
+      if (!json.attrs) json.attrs = {};
+      json.attrs.frameColor = atom.frame.color;
+      json.attrs.frameStyle = atom.frame.style;
+      json.attrs.frameGroupId = atom.frame.groupId;
     }
   }
 
