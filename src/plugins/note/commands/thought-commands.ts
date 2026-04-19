@@ -1,7 +1,9 @@
 import type { EditorView } from 'prosemirror-view';
 import type { ThoughtType, AnchorType } from '../../../shared/types/thought-types';
+import { THOUGHT_TYPE_META } from '../../../shared/types/thought-types';
 import { THOUGHT_ACTION } from '../../thought/thought-protocol';
 import { blockSelectionKey } from '../plugins/block-selection';
+import { addBlockFrameGroup } from './frame-commands';
 
 /**
  * addThought — 在当前光标/选区位置创建 Thought 锚点
@@ -109,7 +111,7 @@ export async function addThought(
   }
 }
 
-/** 路径 0 & 2 共用：给一组 block positions 添加 thought 标注 */
+/** 路径 0 & 2 共用：给一组 block positions 添加 thought 标注（使用框定系统） */
 async function addBlockThought(
   view: EditorView,
   api: NonNullable<ReturnType<typeof viewAPI>>,
@@ -121,31 +123,29 @@ async function addBlockThought(
   const state = view.state;
   const sorted = [...positions].sort((a, b) => a - b);
 
-  // 收集所有 block 的文本范围
-  const blocks: { pos: number; innerFrom: number; innerTo: number }[] = [];
+  // 收集 block 信息
+  const validPositions: number[] = [];
   for (const pos of sorted) {
     const node = state.doc.nodeAt(pos);
-    if (!node) continue;
-    blocks.push({ pos, innerFrom: pos + 1, innerTo: pos + node.nodeSize - 1 });
+    if (node) validPositions.push(pos);
   }
-  if (blocks.length === 0) return;
+  if (validPositions.length === 0) return;
 
+  const first = validPositions[0];
+  const last = validPositions[validPositions.length - 1];
+  const lastNode = state.doc.nodeAt(last);
   const anchorText = state.doc.textBetween(
-    blocks[0].innerFrom, blocks[blocks.length - 1].innerTo, ' ',
+    first + 1, last + (lastNode?.nodeSize ?? 1) - 1, ' ',
   ).slice(0, 100);
 
-  const record = await createRecord(api, noteId, 'block', anchorText, blocks[0].pos, type);
+  const record = await createRecord(api, noteId, 'block', anchorText, first, type);
   if (!record) return;
 
-  // 给每个 block 内部文本加 mark
-  const mark = thoughtMarkType.create({ thoughtId: record.id, thoughtType: type, anchorType: 'block' });
-  const tr = view.state.tr;
-  for (const blk of blocks) {
-    tr.addMark(blk.innerFrom, blk.innerTo, mark);
-  }
-  view.dispatch(tr);
+  // 使用框定系统：颜色来自 thought 类型
+  const frameColor = THOUGHT_TYPE_META[type].color;
+  addBlockFrameGroup(view, validPositions, frameColor, 'solid');
 
-  await openAndNotify(api, record.id, 'block', anchorText, blocks[0].pos, type, noteId);
+  await openAndNotify(api, record.id, 'block', anchorText, first, type, noteId);
 }
 
 /** 判断选区是否在单个 textBlock 内且不覆盖整段 */
