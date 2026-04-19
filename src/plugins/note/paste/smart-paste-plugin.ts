@@ -72,6 +72,10 @@ const RENDER_BLOCK_TYPES = new Set(['image', 'audioBlock', 'videoBlock', 'tweetB
 function pasteIsSafe(state: import('prosemirror-state').EditorState, tr: import('prosemirror-state').Transaction): boolean {
   const $from = state.selection.$from;
 
+  // 光标在 doc 直接子节点中（depth <= 1）→ 粘贴总是安全的
+  // pasteIsSafe 只保护嵌套容器（caption、table cell 等 depth > 1）
+  if ($from.depth <= 1) return true;
+
   // 记录粘贴前光标的每层祖先节点类型
   const ancestorTypes: string[] = [];
   for (let d = 1; d <= $from.depth; d++) {
