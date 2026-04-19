@@ -35,7 +35,7 @@ export function getSelectionCache(): SelectionCacheData | null {
  * 在 dispatchTransaction 中调用，更新选区缓存。
  * 每次 ProseMirror state 变化时由 NoteEditor 调用。
  */
-export function updateSelectionCache(view: EditorView): void {
+function doUpdate(view: EditorView): void {
   const state = view.state;
 
   // 优先检查 block-selection
@@ -57,7 +57,27 @@ export function updateSelectionCache(view: EditorView): void {
     const result = selectionToMarkdown(view);
     currentCache = { ...result, from, to, timestamp: Date.now() };
   }
-  // 选区为空时不清除缓存（保留上次选区的内容，供右键菜单使用）
+}
+
+/** 在 dispatchTransaction 中调用（键盘选区等） */
+export function updateSelectionCache(view: EditorView): void {
+  doUpdate(view);
+}
+
+/**
+ * 启动鼠标选区监听。
+ * ProseMirror 鼠标拖选不经过 dispatchTransaction，
+ * 需要在 mouseup 时主动读取 view.state.selection。
+ */
+export function startMouseSelectionTracker(view: EditorView): () => void {
+  const onMouseUp = () => {
+    // 延迟一帧，等 ProseMirror 内部同步完 DOM selection → state.selection
+    requestAnimationFrame(() => {
+      if (!view.isDestroyed) doUpdate(view);
+    });
+  };
+  view.dom.addEventListener('mouseup', onMouseUp);
+  return () => view.dom.removeEventListener('mouseup', onMouseUp);
 }
 
 /** 清除缓存 */
