@@ -11,8 +11,6 @@ import * as path from 'node:path';
 import { app } from 'electron';
 import {
   getConversationData,
-  type ArtifactContent,
-  type ContentPart,
   type ConversationMessage,
   type MessageArtifact,
 } from './conversation-query';
@@ -78,12 +76,16 @@ function clearExtractedArtifactCache(): void {
 // ── SVG preprocessing ──
 
 /**
- * Prepare SVG for DOM rendering (minimal preprocessing):
+ * Prepare SVG for DOM rendering:
  * 1. Add xmlns if missing
- * 2. Remove event handlers (onclick etc.) — 安全性，且 Note 上下文中无法执行
+ * 2. Remove event handlers (onclick 等)
+ * 3. Replace CSS variables with Claude 暗色主题的具体颜色值
+ * 4. Inject <style> for CSS classes (.ts/.th/.node/.c-*)
  *
- * 不再做 CSS 变量替换、颜色注入、白色背景注入。
- * 这些由 renderer 端根据来源平台注入对应的 CSS 变量定义来解决。
+ * Claude widget_code 中的 SVG 使用 CSS 类和 CSS 变量，但这些在脱离
+ * Claude 页面后无法解析。下载的 SVG 之所以能正确显示，是因为浏览器
+ * 导出时自动把 computed styles 内联到了每个元素上。
+ * 这里在提取端做等价的处理，让 SVG 文件自包含。
  */
 function prepareSvgForDom(raw: string): string {
   let svg = raw;
@@ -94,19 +96,81 @@ function prepareSvgForDom(raw: string): string {
   }
 
   // 2. Remove onclick/onmouseover/etc event handler attributes.
-  //    Claude widget SVGs contain onclick="sendPrompt('什么叫"无法再分解"...')"
-  //    where inner ASCII quotes make the XML malformed. Can't use simple regex
-  //    because the attribute value itself contains unescaped `"`.
-  //    Strategy: find ` on<word>=` and delete from there to the next `>`,
-  //    then re-close the tag with `>`.
   svg = svg.replace(/ on\w+=(?:"[^>]*>|'[^>]*>)/g, '>');
-  // Also clean any remaining onclick-like fragments on lines
   svg = svg.split('\n').map((line) => {
     if (/ on\w+=/.test(line)) {
       return line.replace(/ on\w+=.*?(?=>)/, '');
     }
     return line;
   }).join('\n');
+
+  // 3. Replace CSS variables with Claude dark-theme concrete values
+  //    (从 Claude 页面下载的 SVG 中提取的实际 computed 颜色值)
+  const cssVarMap: Record<string, string> = {
+    'var(--color-border-tertiary)': 'rgba(222, 220, 209, 0.15)',
+    'var(--color-border-secondary)': 'rgba(222, 220, 209, 0.3)',
+    'var(--color-border-primary)': 'rgba(222, 220, 209, 0.5)',
+    'var(--color-text-primary)': 'rgb(250, 249, 245)',
+    'var(--color-text-secondary)': 'rgb(194, 192, 182)',
+    'var(--color-text-tertiary)': 'rgb(148, 146, 137)',
+    'var(--color-bg-primary)': 'rgb(43, 43, 40)',
+    'var(--color-bg-secondary)': 'rgb(55, 55, 52)',
+    'var(--color-bg-tertiary)': 'rgb(68, 68, 65)',
+    'var(--color-background-primary)': 'rgb(43, 43, 40)',
+    'var(--color-background-secondary)': 'rgb(55, 55, 52)',
+    'var(--color-background-tertiary)': 'rgb(68, 68, 65)',
+    'var(--text-color-primary)': 'rgb(250, 249, 245)',
+    'var(--text-color-secondary)': 'rgb(194, 192, 182)',
+    'var(--text-color-tertiary)': 'rgb(148, 146, 137)',
+    'var(--bg-color)': 'rgb(43, 43, 40)',
+    'var(--fg-color)': 'rgb(250, 249, 245)',
+  };
+  for (const [cssVar, value] of Object.entries(cssVarMap)) {
+    while (svg.includes(cssVar)) {
+      svg = svg.replace(cssVar, value);
+    }
+  }
+
+  // 4. Inject <style> for Claude widget CSS classes (暗色主题)
+  //    颜色值从 Claude 页面下载的 SVG 的 inline styles 中提取
+  const svgOpenEnd = svg.indexOf('>', svg.indexOf('<svg'));
+  if (svgOpenEnd > 0) {
+    const injected = [
+      `<style>`,
+      `  text { font-family: "Anthropic Sans", -apple-system, system-ui, sans-serif; }`,
+      `  .ts { font-size: 12px; fill: rgb(194, 192, 182); }`,
+      `  .th { font-size: 14px; fill: rgb(211, 209, 199); font-weight: 500; }`,
+      `  .node rect { stroke-width: 0.5; }`,
+      `  .c-gray rect { fill: rgb(68, 68, 65); stroke: rgb(180, 178, 169); }`,
+      `  .c-gray text { fill: rgb(180, 178, 169); }`,
+      `  .c-amber rect { fill: rgb(99, 56, 6); stroke: rgb(239, 159, 39); }`,
+      `  .c-amber .th { fill: rgb(250, 199, 117); }`,
+      `  .c-amber .ts { fill: rgb(239, 159, 39); }`,
+      `  .c-coral rect { fill: rgb(113, 43, 19); stroke: rgb(240, 153, 123); }`,
+      `  .c-coral .th { fill: rgb(245, 196, 179); }`,
+      `  .c-coral .ts { fill: rgb(240, 153, 123); }`,
+      `  .c-teal rect { fill: rgb(8, 80, 65); stroke: rgb(93, 202, 165); }`,
+      `  .c-teal .th { fill: rgb(159, 225, 203); }`,
+      `  .c-teal .ts { fill: rgb(93, 202, 165); }`,
+      `  .c-purple rect { fill: rgb(60, 52, 137); stroke: rgb(175, 169, 236); }`,
+      `  .c-purple .th { fill: rgb(206, 203, 246); }`,
+      `  .c-purple .ts { fill: rgb(175, 169, 236); }`,
+      `  .c-blue rect { fill: rgb(20, 60, 120); stroke: rgb(100, 160, 240); }`,
+      `  .c-blue .th { fill: rgb(180, 210, 250); }`,
+      `  .c-blue .ts { fill: rgb(100, 160, 240); }`,
+      `  .c-green rect { fill: rgb(15, 70, 40); stroke: rgb(80, 200, 120); }`,
+      `  .c-green .th { fill: rgb(160, 230, 180); }`,
+      `  .c-green .ts { fill: rgb(80, 200, 120); }`,
+      `  .c-red rect { fill: rgb(100, 30, 30); stroke: rgb(230, 80, 80); }`,
+      `  .c-red .th { fill: rgb(245, 170, 170); }`,
+      `  .c-red .ts { fill: rgb(230, 80, 80); }`,
+      `  .c-indigo rect { fill: rgb(45, 40, 120); stroke: rgb(130, 120, 220); }`,
+      `  .c-indigo .th { fill: rgb(190, 185, 240); }`,
+      `  .c-indigo .ts { fill: rgb(130, 120, 220); }`,
+      `</style>`,
+    ].join('\n');
+    svg = svg.slice(0, svgOpenEnd + 1) + '\n' + injected + '\n' + svg.slice(svgOpenEnd + 1);
+  }
 
   return svg;
 }
@@ -163,6 +227,25 @@ async function artifactToMarkdown(artifact: MessageArtifact): Promise<string> {
 
   if (content.type === 'file_text') {
     const ext = content.path.split('.').pop()?.toLowerCase() ?? '';
+
+    // HTML files → save to media store, render as html-block
+    if (ext === 'html' || ext === 'htm') {
+      try {
+        const put = await ensureMediaStore();
+        if (put) {
+          const dataUrl = `data:text/html;base64,${Buffer.from(content.text, 'utf-8').toString('base64')}`;
+          const filename = content.path.split('/').pop() || `${artifact.title}.html`;
+          const result = await put(dataUrl, 'text/html', filename);
+          console.log('[extract-turn] html file_text put result', { title: artifact.title, success: result.success, mediaUrl: result.mediaUrl });
+          if (result.success && result.mediaUrl) {
+            return `!html[${artifact.title}](${result.mediaUrl})\n`;
+          }
+        }
+      } catch (err) {
+        console.warn('[extract-turn] html file_text put failed', { title: artifact.title, error: err });
+      }
+    }
+
     const lang = ext === 'md' ? 'markdown'
       : ext === 'py' ? 'python'
       : ext === 'ts' ? 'typescript'

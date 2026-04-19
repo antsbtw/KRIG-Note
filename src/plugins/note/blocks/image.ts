@@ -26,18 +26,49 @@ function isSvgSrc(src: string | null): boolean {
 async function loadSvgContent(src: string): Promise<string | null> {
   try {
     if (src.startsWith('data:image/svg+xml;base64,')) {
-      // atob 只处理 Latin1，需要用 TextDecoder 处理 UTF-8 多字节字符
       const binary = atob(src.split(',')[1]);
       const bytes = new Uint8Array(binary.length);
       for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
       return new TextDecoder('utf-8').decode(bytes);
     }
-    const response = await fetch(src);
-    if (!response.ok) return null;
-    // 强制 UTF-8 解码，避免 media:// 协议返回的 response 编码不正确
-    const buf = await response.arrayBuffer();
-    return new TextDecoder('utf-8').decode(buf);
-  } catch {
+
+    // Try fetch first
+    try {
+      const response = await fetch(src);
+      if (response.ok) {
+        const buf = await response.arrayBuffer();
+        const text = new TextDecoder('utf-8').decode(buf);
+        if (text.includes('<svg')) return text;
+      }
+      console.warn('[image-block] SVG fetch failed, trying XHR', { src, status: response.status });
+    } catch (fetchErr) {
+      console.warn('[image-block] SVG fetch error, trying XHR', { src, error: fetchErr });
+    }
+
+    // Fallback: XMLHttpRequest (may work better with custom protocols)
+    return new Promise<string | null>((resolve) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('GET', src, true);
+      xhr.responseType = 'arraybuffer';
+      xhr.onload = () => {
+        if (xhr.response) {
+          const text = new TextDecoder('utf-8').decode(xhr.response);
+          if (text.includes('<svg')) {
+            resolve(text);
+            return;
+          }
+        }
+        console.warn('[image-block] SVG XHR: no SVG content', { src, status: xhr.status });
+        resolve(null);
+      };
+      xhr.onerror = () => {
+        console.warn('[image-block] SVG XHR error', { src });
+        resolve(null);
+      };
+      xhr.send();
+    });
+  } catch (err) {
+    console.warn('[image-block] SVG load failed', { src, error: err });
     return null;
   }
 }

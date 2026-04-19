@@ -24,10 +24,33 @@ async function loadHtmlContent(src: string): Promise<string | null> {
       for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
       return new TextDecoder('utf-8').decode(bytes);
     }
-    const response = await fetch(src);
-    if (!response.ok) return null;
-    const buf = await response.arrayBuffer();
-    return new TextDecoder('utf-8').decode(buf);
+
+    // Try fetch first
+    try {
+      const response = await fetch(src);
+      if (response.ok) {
+        const buf = await response.arrayBuffer();
+        const text = new TextDecoder('utf-8').decode(buf);
+        if (text.length > 0) return text;
+      }
+    } catch {}
+
+    // Fallback: XMLHttpRequest (for custom protocols like media://)
+    return new Promise<string | null>((resolve) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('GET', src, true);
+      xhr.responseType = 'arraybuffer';
+      xhr.onload = () => {
+        if (xhr.response) {
+          const text = new TextDecoder('utf-8').decode(xhr.response);
+          resolve(text.length > 0 ? text : null);
+        } else {
+          resolve(null);
+        }
+      };
+      xhr.onerror = () => resolve(null);
+      xhr.send();
+    });
   } catch {
     return null;
   }
