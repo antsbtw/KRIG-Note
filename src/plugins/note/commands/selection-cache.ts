@@ -38,16 +38,17 @@ export function getSelectionCache(): SelectionCacheData | null {
 function doUpdate(view: EditorView): void {
   const state = view.state;
 
-  // 优先检查 block-selection
+  // 优先检查 block-selection（ESC 块选择模式）
   const blockSel = blockSelectionKey.getState(state);
   if (blockSel?.active && blockSel.selectedPositions.length > 0) {
+    // 复用剪贴板路径获取完整 Slice，再序列化为 Markdown
+    const result = selectionToMarkdown(view);
     const sorted = [...blockSel.selectedPositions].sort((a, b) => a - b);
     const first = sorted[0];
     const lastPos = sorted[sorted.length - 1];
     const lastNode = state.doc.nodeAt(lastPos);
     const to = lastNode ? lastPos + lastNode.nodeSize : lastPos + 1;
-    const md = state.doc.textBetween(first, to, '\n\n');
-    currentCache = { markdown: md, images: [], from: first, to, timestamp: Date.now() };
+    currentCache = { ...result, from: first, to, timestamp: Date.now() };
     return;
   }
 
@@ -71,10 +72,13 @@ export function updateSelectionCache(view: EditorView): void {
  */
 export function startMouseSelectionTracker(view: EditorView): () => void {
   const onMouseUp = () => {
-    // 延迟一帧，等 ProseMirror 内部同步完 DOM selection → state.selection
-    requestAnimationFrame(() => {
-      if (!view.isDestroyed) doUpdate(view);
-    });
+    // 延迟更长时间，确保 ProseMirror 完成 DOM selection → state.selection 同步
+    setTimeout(() => {
+      if (view.isDestroyed) return;
+      const { from, to } = view.state.selection;
+      console.log('[MouseTracker] mouseup → sel:', from, to);
+      doUpdate(view);
+    }, 50);
   };
   view.dom.addEventListener('mouseup', onMouseUp);
   return () => view.dom.removeEventListener('mouseup', onMouseUp);
