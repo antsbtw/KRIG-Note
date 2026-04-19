@@ -19,6 +19,9 @@
 - [Artifact-Import-设计.md](/Users/wenwu/Documents/VPN-Server/KRIG-Note/docs/web/browser-capability/Artifact-Import-设计.md)
   基于 Browser Capability artifact 识别的 Note 导入设计：单条提取替代 + 整页提取新功能。
 
+- [Claude-Artifact-类型全表.md](/Users/wenwu/Documents/VPN-Server/KRIG-Note/docs/web/browser-capability/Claude-Artifact-类型全表.md)
+  Claude 所有 artifact 类型的完整分类、处理状态、待办优先级。确保不遗漏任何类型。
+
 ## 推荐阅读顺序
 
 1. 先读“设计”
