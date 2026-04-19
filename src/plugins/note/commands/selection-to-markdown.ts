@@ -1,13 +1,13 @@
 import type { EditorView } from 'prosemirror-view';
 import type { Node as PMNode, Mark, Fragment } from 'prosemirror-model';
+import { computeSliceForClipboard } from '../paste/internal-clipboard';
 
 /**
  * selectionToMarkdown — 将 ProseMirror 选区内容无损序列化为 Markdown
  *
- * 支持三种选择粒度：
- * 1. 段落内部分文字（inline marks + mathInline）
- * 2. 单个 block（codeBlock, mathBlock, image, table 等）
- * 3. 跨 block 选择（多个 block 逐一序列化后拼接）
+ * 使用 computeSliceForClipboard（与剪贴板复制相同路径）获取 Slice，
+ * 然后遍历 Slice 的 Fragment 进行 Markdown 序列化。
+ * 这确保了行内公式、代码块等所有节点类型都被完整保留。
  *
  * 返回 { markdown, images }：
  * - markdown: 完整 Markdown 文本
@@ -20,38 +20,34 @@ export interface SelectionMarkdownResult {
 }
 
 export function selectionToMarkdown(view: EditorView): SelectionMarkdownResult {
-  const { state } = view;
-  const { from, to, empty } = state.selection;
-  if (empty) return { markdown: '', images: [] };
+  const slice = computeSliceForClipboard(view.state);
+  if (!slice || slice.size === 0) return { markdown: '', images: [] };
 
   const images: string[] = [];
   const lines: string[] = [];
 
-  // 遍历选区内的顶层节点
-  state.doc.nodesBetween(from, to, (node, pos, parent, index) => {
-    // 只处理顶层 block 节点（或 doc 的直接子节点）
-    // 对于嵌套结构，由各自的序列化函数递归处理
-    if (node.isBlock && parent === state.doc) {
-      const blockMd = serializeBlock(node, 0, images, from, to);
-      if (blockMd !== null) {
-        lines.push(blockMd);
-        return false; // 不递归，serializeBlock 内部处理子节点
+  // Slice 可能是 open 的（部分选区在单个 textBlock 内）
+  // openStart > 0 时，content 的第一层是 inline 节点而非 block
+  if (slice.openStart > 0) {
+    // 把 open slice 的内容当作一个 inline 序列处理
+    const inlineParts: string[] = [];
+    slice.content.forEach((node) => {
+      if (node.isBlock) {
+        // open slice 可能包含完整的后续 block
+        const md = serializeBlock(node, 0, images);
+        if (md !== null) lines.push(md);
+      } else {
+        // inline 节点直接序列化
+        inlineParts.push(serializeInlineNode(node));
       }
-    }
-    return true;
-  });
-
-  // 如果没有收集到任何 block 级内容，说明选区完全在单个段落内部
-  if (lines.length === 0) {
-    const $from = state.selection.$from;
-    const parent = $from.parent;
-    if (parent.isTextblock) {
-      // 提取选区范围内的 inline 内容
-      const startOffset = from - $from.start($from.depth);
-      const endOffset = to - $from.start($from.depth);
-      const inlineMd = serializeInlineRange(parent, startOffset, endOffset);
-      lines.push(inlineMd);
-    }
+    });
+    if (inlineParts.length > 0) lines.unshift(inlineParts.join(''));
+  } else {
+    // closed slice：每个顶层节点都是完整 block
+    slice.content.forEach((node) => {
+      const blockMd = serializeBlock(node, 0, images);
+      if (blockMd !== null) lines.push(blockMd);
+    });
   }
 
   return {
@@ -66,11 +62,8 @@ function serializeBlock(
   node: PMNode,
   indent: number,
   images: string[],
-  selFrom?: number,
-  selTo?: number,
 ): string | null {
   const prefix = '  '.repeat(indent);
-
   switch (node.type.name) {
     case 'textBlock':
       return serializeTextBlock(node, prefix);
@@ -153,6 +146,15 @@ function serializeTextBlock(node: PMNode, prefix: string): string {
 
 // ─── Inline 内容序列化 ─────────────────────────────────────────
 
+/** 单个 inline 节点序列化 */
+function serializeInlineNode(node: PMNode): string {
+  if (node.isText) return wrapWithMarks(node.text || '', node.marks);
+  if (node.type.name === 'mathInline') return `$${node.attrs.latex || ''}$`;
+  if (node.type.name === 'hardBreak') return '  \n';
+  if (node.type.name === 'noteLink') return `[[${node.attrs.label || node.attrs.noteId || ''}]]`;
+  return node.textContent;
+}
+
 function serializeInlineContent(node: PMNode): string {
   return serializeInlineRange(node, 0, node.content.size);
 }
@@ -179,7 +181,6 @@ function serializeInlineRange(node: PMNode, startOffset: number, endOffset: numb
     } else if (child.type.name === 'noteLink') {
       parts.push(`[[${child.attrs.label || child.attrs.noteId || ''}]]`);
     } else {
-      // 未知 inline node — fallback to textContent
       parts.push(child.textContent);
     }
   });
