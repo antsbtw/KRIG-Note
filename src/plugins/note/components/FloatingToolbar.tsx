@@ -4,13 +4,6 @@ import type { MarkType } from 'prosemirror-model';
 import { toggleMark } from 'prosemirror-commands';
 import { applyLink as applyLinkCmd, removeLink as removeLinkCmd, insertInlineMath } from '../commands/editor-commands';
 import { ColorPicker } from './ColorPicker';
-import { addThought } from '../commands/thought-commands';
-import { askAI, getSelectedText } from '../commands/ask-ai-command';
-import { selectionToMarkdown } from '../commands/selection-to-markdown';
-import { THOUGHT_TYPE_META } from '../../../shared/types/thought-types';
-import type { ThoughtType } from '../../../shared/types/thought-types';
-import { getAIServiceList, DEFAULT_AI_SERVICE } from '../../../shared/types/ai-service-types';
-import type { AIServiceId } from '../../../shared/types/ai-service-types';
 
 /**
  * FloatingToolbar — 选中文字后弹出的格式化工具栏
@@ -57,8 +50,6 @@ export function FloatingToolbar({ view }: FloatingToolbarProps) {
   const [, forceUpdate] = useState(0);
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [showLinkPanel, setShowLinkPanel] = useState(false);
-  const [showThoughtMenu, setShowThoughtMenu] = useState(false);
-  const [showAIMenu, setShowAIMenu] = useState(false);
   const [lastTextColor, setLastTextColor] = useState('');
   const [lastBgColor, setLastBgColor] = useState('');
   const toolbarRef = useRef<HTMLDivElement>(null);
@@ -159,19 +150,6 @@ export function FloatingToolbar({ view }: FloatingToolbarProps) {
     return () => view.dom.removeEventListener('keydown', handler);
   }, [view]);
 
-  // Handle menu "Ask AI" trigger — auto-open AI panel
-  useEffect(() => {
-    if (!view) return;
-    const handler = () => {
-      setShowAIMenu(true);
-      setShowThoughtMenu(false);
-      setShowColorPicker(false);
-      setShowLinkPanel(false);
-    };
-    view.dom.addEventListener('ask-ai-from-handle', handler);
-    return () => view.dom.removeEventListener('ask-ai-from-handle', handler);
-  }, [view]);
-
   if (!visible || !view) return null;
 
   const s = view.state.schema;
@@ -208,32 +186,6 @@ export function FloatingToolbar({ view }: FloatingToolbarProps) {
     { label: 'strike', mark: s.marks.strike, render: <s>S</s> },
     { label: 'code', mark: s.marks.code, render: <span style={{ fontFamily: 'monospace', fontSize: '12px' }}>&lt;&gt;</span> },
   ].filter((b) => b.mark);
-
-  // 互斥：AskAIPanel 打开时，只显示 AI 弹窗，隐藏 toolbar 按钮行
-  if (showAIMenu && view) {
-    return (
-      <div
-        ref={toolbarRef}
-        style={{
-          position: 'fixed',
-          top: position.top,
-          left: position.left,
-          transform: 'translate(-50%, -100%)',
-          zIndex: 900,
-        }}
-        onMouseDown={(e) => e.preventDefault()}
-      >
-        <AskAIPanel
-          view={view}
-          onSend={(serviceId, instruction) => {
-            setShowAIMenu(false);
-            askAI(view, serviceId, instruction);
-          }}
-          onClose={() => { setShowAIMenu(false); view.focus(); }}
-        />
-      </div>
-    );
-  }
 
   return (
     <div
@@ -296,58 +248,6 @@ export function FloatingToolbar({ view }: FloatingToolbarProps) {
         title="颜色"
       >
         <span style={{ borderBottom: `2px solid ${lastTextColor || '#8ab4f8'}`, lineHeight: 1 }}>A</span>
-      </button>
-
-      {/* 思考按钮 + 类型菜单 */}
-      <div className="ft-separator" />
-      <button
-        className={`ft-btn ${showThoughtMenu ? 'ft-btn--active' : ''}`}
-        onClick={() => { setShowThoughtMenu(!showThoughtMenu); setShowAIMenu(false); setShowColorPicker(false); setShowLinkPanel(false); }}
-        title="添加思考 (⌘⇧M)"
-      >
-        <span style={{ fontSize: '13px' }}>💭</span>
-      </button>
-
-      {/* 思考类型选择菜单 */}
-      {showThoughtMenu && (
-        <div style={{
-          position: 'absolute', top: '100%', left: '50%', transform: 'translateX(-50%)',
-          marginTop: 4, background: '#2a2a2a', border: '1px solid #444', borderRadius: 8,
-          padding: 4, zIndex: 1000, boxShadow: '0 4px 12px rgba(0,0,0,0.4)', minWidth: 120,
-        }} onMouseDown={(e) => e.preventDefault()}>
-          {(Object.keys(THOUGHT_TYPE_META) as ThoughtType[]).map((t) => {
-            const m = THOUGHT_TYPE_META[t];
-            return (
-              <button
-                key={t}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 8, width: '100%',
-                  padding: '6px 12px', background: 'transparent', border: 'none',
-                  color: '#e8eaed', fontSize: 13, cursor: 'pointer', borderRadius: 4,
-                  textAlign: 'left' as const,
-                }}
-                onMouseEnter={(e) => (e.currentTarget.style.background = '#3a3a3a')}
-                onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                onClick={() => {
-                  setShowThoughtMenu(false);
-                  if (view) addThought(view, t);
-                }}
-              >
-                <span>{m.icon}</span>
-                <span>{m.label}</span>
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      {/* 问 AI 按钮 */}
-      <button
-        className="ft-btn"
-        onClick={() => { setShowAIMenu(true); setShowThoughtMenu(false); setShowColorPicker(false); setShowLinkPanel(false); }}
-        title="问 AI"
-      >
-        <span style={{ fontSize: '13px' }}>🤖</span>
       </button>
 
       {/* 链接面板 */}
@@ -541,254 +441,3 @@ const lpStyles: Record<string, React.CSSProperties> = {
   },
 };
 
-// ── AskAIPanel 组件 ──
-
-interface AskAIPanelProps {
-  view: EditorView;
-  onSend: (serviceId: AIServiceId, instruction: string) => void;
-  onClose: () => void;
-}
-
-function AskAIPanel({ view, onSend, onClose }: AskAIPanelProps) {
-  const [instruction, setInstruction] = useState('');
-  const [serviceId, setServiceId] = useState<AIServiceId>(DEFAULT_AI_SERVICE);
-  const [showServiceMenu, setShowServiceMenu] = useState(false);
-  // 使用 Markdown 格式预览选中内容（保留公式、代码块等结构）
-  const [previewMarkdown, setPreviewMarkdown] = useState(() => selectionToMarkdown(view).markdown);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
-
-  useEffect(() => {
-    setTimeout(() => inputRef.current?.focus(), 50);
-  }, []);
-
-  // Track selection changes — update preview when user re-selects
-  useEffect(() => {
-    const handleSelectionUpdate = () => {
-      const { markdown } = selectionToMarkdown(view);
-      if (markdown && markdown !== previewMarkdown) {
-        setPreviewMarkdown(markdown);
-      }
-    };
-    const interval = setInterval(handleSelectionUpdate, 500);
-    return () => clearInterval(interval);
-  }, [view, previewMarkdown]);
-
-  const handleSend = () => {
-    const latestMd = selectionToMarkdown(view).markdown || previewMarkdown;
-    if (!instruction.trim() && !latestMd.trim()) return;
-    onSend(serviceId, instruction);
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
-    }
-    if (e.key === 'Escape') {
-      onClose();
-    }
-  };
-
-  const services = getAIServiceList();
-  const currentService = services.find(s => s.id === serviceId) || services[0];
-  const previewText = previewMarkdown.length > 200 ? previewMarkdown.slice(0, 200) + '...' : previewMarkdown;
-
-  return (
-    <div
-      style={askAIPanelStyles.container}
-      onMouseDown={(e) => {
-        // Allow interaction with the panel without losing editor selection
-        // But stop propagation so the FloatingToolbar doesn't hide
-        e.stopPropagation();
-      }}
-    >
-      {/* Header with close button */}
-      <div style={askAIPanelStyles.header}>
-        <span style={{ color: '#aaa', fontSize: 12 }}>🤖 问 AI</span>
-        <button
-          style={askAIPanelStyles.closeBtn}
-          onClick={onClose}
-          title="关闭 (Esc)"
-        >
-          ×
-        </button>
-      </div>
-
-      {/* Selected content preview (Markdown format) */}
-      <div style={askAIPanelStyles.preview}>
-        <span style={askAIPanelStyles.previewLabel}>
-          选中内容：
-          {!previewText && <span style={{ color: '#666', fontStyle: 'italic' }}>请在编辑器中选择文字</span>}
-        </span>
-        {previewText && <pre style={askAIPanelStyles.previewText}>{previewText}</pre>}
-      </div>
-
-      {/* Instruction input */}
-      <textarea
-        ref={inputRef}
-        value={instruction}
-        onChange={(e) => setInstruction(e.target.value)}
-        onKeyDown={handleKeyDown}
-        placeholder="请输入你的问题..."
-        style={askAIPanelStyles.textarea}
-        rows={2}
-      />
-
-      {/* Bottom bar: service selector + send button */}
-      <div style={askAIPanelStyles.bottomBar}>
-        {/* Service selector */}
-        <div style={{ position: 'relative' }}>
-          <button
-            style={askAIPanelStyles.serviceBtn}
-            onClick={() => setShowServiceMenu(!showServiceMenu)}
-          >
-            {currentService.icon} {currentService.name} ▾
-          </button>
-          {showServiceMenu && (
-            <div style={askAIPanelStyles.serviceMenu}>
-              {services.map((s) => (
-                <button
-                  key={s.id}
-                  style={{
-                    ...askAIPanelStyles.serviceOption,
-                    background: s.id === serviceId ? '#3a3a3a' : 'transparent',
-                  }}
-                  onClick={() => { setServiceId(s.id as AIServiceId); setShowServiceMenu(false); }}
-                >
-                  {s.icon} {s.name}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <button
-          style={{
-            ...askAIPanelStyles.sendBtn,
-            opacity: (!instruction.trim() && !previewMarkdown.trim()) ? 0.4 : 1,
-          }}
-          onClick={handleSend}
-          disabled={!instruction.trim() && !previewMarkdown.trim()}
-        >
-          发送 ▶
-        </button>
-      </div>
-    </div>
-  );
-}
-
-const askAIPanelStyles: Record<string, React.CSSProperties> = {
-  container: {
-    background: '#2a2a2a',
-    border: '1px solid #555',
-    borderRadius: 10,
-    padding: 12,
-    width: 320,
-    boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
-    zIndex: 1000,
-  },
-  header: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  closeBtn: {
-    background: 'transparent',
-    border: 'none',
-    color: '#888',
-    fontSize: 16,
-    cursor: 'pointer',
-    padding: '0 4px',
-    lineHeight: 1,
-  },
-  preview: {
-    background: '#1e1e1e',
-    borderRadius: 6,
-    padding: '8px 10px',
-    marginBottom: 8,
-    fontSize: 12,
-    lineHeight: '1.4',
-    borderLeft: '3px solid #6366f1',
-  },
-  previewLabel: {
-    color: '#888',
-    display: 'block',
-    marginBottom: 4,
-    fontSize: 11,
-  },
-  previewText: {
-    color: '#ccc',
-    wordBreak: 'break-word' as const,
-    whiteSpace: 'pre-wrap' as const,
-    fontFamily: 'ui-monospace, "SF Mono", Monaco, "Cascadia Code", monospace',
-    fontSize: 11,
-    margin: 0,
-    maxHeight: 120,
-    overflowY: 'auto' as const,
-  },
-  textarea: {
-    width: '100%',
-    background: '#1e1e1e',
-    border: '1px solid #444',
-    borderRadius: 6,
-    color: '#e8eaed',
-    fontSize: 13,
-    padding: '8px 10px',
-    resize: 'vertical' as const,
-    outline: 'none',
-    fontFamily: 'inherit',
-    lineHeight: '1.4',
-    boxSizing: 'border-box' as const,
-  },
-  bottomBar: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  serviceBtn: {
-    background: '#333',
-    border: '1px solid #555',
-    borderRadius: 6,
-    color: '#ccc',
-    fontSize: 12,
-    padding: '4px 10px',
-    cursor: 'pointer',
-  },
-  serviceMenu: {
-    position: 'absolute' as const,
-    bottom: '100%',
-    left: 0,
-    marginBottom: 4,
-    background: '#2a2a2a',
-    border: '1px solid #444',
-    borderRadius: 8,
-    padding: 4,
-    boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
-    minWidth: 120,
-  },
-  serviceOption: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 8,
-    width: '100%',
-    padding: '6px 12px',
-    border: 'none',
-    color: '#e8eaed',
-    fontSize: 12,
-    cursor: 'pointer',
-    borderRadius: 4,
-    textAlign: 'left' as const,
-  },
-  sendBtn: {
-    background: '#6366f1',
-    border: 'none',
-    borderRadius: 6,
-    color: '#fff',
-    fontSize: 12,
-    padding: '5px 14px',
-    cursor: 'pointer',
-    fontWeight: 600,
-  },
-};

@@ -4,9 +4,9 @@ import { TextSelection } from 'prosemirror-state';
 import { blockRegistry } from '../registry';
 import { toggleHeadingCollapse } from '../plugins/heading-collapse';
 import { askAI } from '../commands/ask-ai-command';
+import { AskAIPanel } from './AskAIPanel';
 import { setTextBlockLevel } from '../commands/set-text-block-level';
 import { deleteBlockAt, applyTextColor as applyTextColorCmd, applyHighlight as applyHighlightCmd, toggleTextIndent as toggleTextIndentCmd, setTextAlign as setTextAlignCmd } from '../commands/editor-commands';
-import { DEFAULT_AI_SERVICE } from '../../../shared/types/ai-service-types';
 import type { AIServiceId } from '../../../shared/types/ai-service-types';
 import { addThought } from '../commands/thought-commands';
 import { THOUGHT_TYPE_META } from '../../../shared/types/thought-types';
@@ -30,7 +30,7 @@ interface MenuState {
   coords: { left: number; top: number };
 }
 
-type SubMenu = 'turnInto' | 'color' | 'format' | 'thought' | null;
+type SubMenu = 'turnInto' | 'color' | 'format' | 'thought' | 'ai' | null;
 
 // ── 颜色定义（复用 ColorPicker） ──
 
@@ -138,21 +138,11 @@ export function HandleMenu({ view }: HandleMenuProps) {
     close();
   };
 
-  const askAIBlock = () => {
+  /** 获取当前 handle block 的内容预览 */
+  const getBlockPreview = (): string => {
     const node = view.state.doc.nodeAt(menu.pos);
-    if (node) {
-      // Select the entire block so askAI can pick up the selection
-      const from = menu.pos;
-      const to = menu.pos + node.nodeSize;
-      const tr = view.state.tr.setSelection(TextSelection.create(view.state.doc, from + 1, to - 1));
-      view.dispatch(tr);
-      // Open the AI panel — use a small delay so the selection is applied
-      setTimeout(() => {
-        // Trigger the FloatingToolbar's AI panel via custom event
-        view.dom.dispatchEvent(new CustomEvent('ask-ai-from-handle', { detail: { pos: menu.pos } }));
-      }, 100);
-    }
-    close();
+    if (!node) return '';
+    return view.state.doc.textBetween(menu.pos + 1, menu.pos + node.nodeSize - 1, '\n').slice(0, 500);
   };
 
   /** Turn Into: 把当前 block 转换为目标类型 */
@@ -411,12 +401,12 @@ export function HandleMenu({ view }: HandleMenuProps) {
         {/* Ask AI */}
         <div
           style={styles.item}
-          onMouseDown={(e) => { e.preventDefault(); askAIBlock(); }}
-          onMouseEnter={(e) => { e.currentTarget.style.background = '#3a3a3a'; setSubMenu(null); }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = '#3a3a3a'; setSubMenu('ai'); }}
           onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
         >
           <span style={styles.icon}>🤖</span>
-          <span>Ask AI</span>
+          <span style={{ flex: 1 }}>Ask AI</span>
+          <span style={styles.arrow}>▸</span>
         </div>
 
         <div style={styles.separator} />
@@ -586,6 +576,37 @@ export function HandleMenu({ view }: HandleMenuProps) {
                 </div>
               );
             })}
+        </div>
+      )}
+
+      {/* AI 面板 */}
+      {subMenu === 'ai' && (
+        <div
+          ref={subMenuRef}
+          className="handle-submenu"
+          style={{ ...getSubMenuStyle(), minWidth: 'auto' }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onMouseEnter={() => setSubMenu('ai')}
+        >
+          <AskAIPanel
+            view={view}
+            contentPreview={getBlockPreview()}
+            onSend={(serviceId, instruction) => {
+              // 先选中 block 内容，再调用 askAI
+              const node = view.state.doc.nodeAt(menu.pos);
+              if (node) {
+                try {
+                  const tr = view.state.tr.setSelection(
+                    TextSelection.create(view.state.doc, menu.pos + 1, menu.pos + node.nodeSize - 1),
+                  );
+                  view.dispatch(tr);
+                } catch { /* ok */ }
+              }
+              askAI(view, serviceId, instruction);
+              close();
+            }}
+            onClose={() => setSubMenu(null)}
+          />
         </div>
       )}
     </>

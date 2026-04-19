@@ -5,9 +5,11 @@ import { deleteCurrentBlock, deleteSelection } from '../commands/editor-commands
 import { THOUGHT_ACTION } from '../../thought/thought-protocol';
 import { addThought } from '../commands/thought-commands';
 import { askAI } from '../commands/ask-ai-command';
+import { AskAIPanel } from './AskAIPanel';
+import { selectionToMarkdown } from '../commands/selection-to-markdown';
+import { blockSelectionKey } from '../plugins/block-selection';
 import { THOUGHT_TYPE_META } from '../../../shared/types/thought-types';
 import type { ThoughtType } from '../../../shared/types/thought-types';
-import { getAIServiceList } from '../../../shared/types/ai-service-types';
 import type { AIServiceId } from '../../../shared/types/ai-service-types';
 
 /**
@@ -253,36 +255,62 @@ export function ContextMenu({ view }: ContextMenuProps) {
         </div>
       )}
 
-      {/* AI 服务子菜单 */}
+      {/* AI 面板 */}
       {subMenu === 'ai' && (
         <div
           style={{ ...styles.subMenu, left: '100%', top: (() => {
             const idx = items.findIndex(i => i.id === 'ask-ai');
             return idx * 34 + 4;
-          })() }}
+          })(), minWidth: 'auto' }}
           onMouseDown={(e) => e.stopPropagation()}
         >
-          {getAIServiceList().map((s) => (
-            <div
-              key={s.id}
-              style={styles.item}
-              onMouseDown={(e) => {
-                e.preventDefault();
-                // TODO: askAI 也需要支持 range 参数
-                askAI(view, s.id as AIServiceId, '');
-                close();
-              }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = '#3a3a3a')}
-              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-            >
-              <span style={styles.icon}>{s.icon}</span>
-              <span>{s.name}</span>
-            </div>
-          ))}
+          <AskAIPanel
+            view={view}
+            contentPreview={getContentPreview(view)}
+            onSend={(serviceId, instruction) => {
+              askAI(view, serviceId, instruction);
+              close();
+            }}
+            onClose={() => { setSubMenu(null); }}
+          />
         </div>
       )}
     </div>
   );
+}
+
+/**
+ * 根据当前上下文计算 AI 问答的内容预览：
+ * - block-selection 激活 → 所有选中 block 的 Markdown
+ * - 有文字选区 → 选区的 Markdown
+ * - 无选区 → 当前光标所在 block 的 Markdown
+ */
+function getContentPreview(view: EditorView): string {
+  const state = view.state;
+
+  // 多 block 选择
+  const blockSel = blockSelectionKey.getState(state);
+  if (blockSel?.active && blockSel.selectedPositions.length > 0) {
+    const sorted = [...blockSel.selectedPositions].sort((a, b) => a - b);
+    const first = sorted[0];
+    const lastPos = sorted[sorted.length - 1];
+    const lastNode = state.doc.nodeAt(lastPos);
+    const to = lastNode ? lastPos + lastNode.nodeSize : lastPos + 1;
+    return state.doc.textBetween(first, to, '\n\n').slice(0, 500);
+  }
+
+  // 有文字选区
+  const { from, to } = state.selection;
+  if (from !== to) {
+    return selectionToMarkdown(view).markdown;
+  }
+
+  // 无选区 → 当前 block
+  const $from = state.selection.$from;
+  const depth = Math.min($from.depth, 1);
+  const blockStart = $from.start(depth);
+  const blockEnd = $from.end(depth);
+  return state.doc.textBetween(blockStart, blockEnd, '\n').slice(0, 500);
 }
 
 const styles: Record<string, React.CSSProperties> = {
