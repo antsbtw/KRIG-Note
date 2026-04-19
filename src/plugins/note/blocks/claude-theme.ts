@@ -78,5 +78,14 @@ export function claudeThemeStyleTag(): string {
   const vars = Object.entries(CLAUDE_THEME_VARS)
     .map(([k, v]) => `  ${k}: ${v};`)
     .join('\n');
-  return `<style>:root {\n${vars}\n}</style>`;
+  // 注入 :root 变量 + body 基础样式（背景/字体/颜色）
+  // Claude 页面中 body 继承了暗色主题，iframe 中需要显式声明
+  return `<style>
+:root {\n${vars}\n}
+body {
+  background: var(--color-background-primary, #1e1e1e);
+  color: var(--color-text-primary, #e8e8e8);
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+</style>`;
 }
