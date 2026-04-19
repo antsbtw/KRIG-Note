@@ -75,8 +75,6 @@ export function startMouseSelectionTracker(view: EditorView): () => void {
     // 延迟更长时间，确保 ProseMirror 完成 DOM selection → state.selection 同步
     setTimeout(() => {
       if (view.isDestroyed) return;
-      const { from, to } = view.state.selection;
-      console.log('[MouseTracker] mouseup → sel:', from, to);
       doUpdate(view);
     }, 50);
   };

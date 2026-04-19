@@ -48,7 +48,6 @@ export function ContextMenu({ view }: ContextMenuProps) {
 
     const handler = (e: MouseEvent) => {
       e.preventDefault();
-      // 从选区缓存读取内容预览（在选区变化时已实时提取 Markdown）
       const cache = getSelectionCache();
       const contentPreview = cache?.markdown || '';
       setMenu({ coords: { left: e.clientX, top: e.clientY }, contentPreview });
