@@ -3002,65 +3002,8 @@
   background: none !important;
 }
 
-/* ── Block 线框 decoration（node decoration 添加到 block DOM 上） ── */
-
-.thought-block-frame {
-  border-left: 3px solid #4a9eff;
-  border-right: 3px solid #4a9eff;
-  padding-left: 8px;
-  padding-right: 8px;
-  margin-left: -11px;
-  margin-right: -11px;
-  transition: border-color 0.15s;
-  cursor: pointer;
-  position: relative;
-}
-
-/* 单个 block — 四边完整框 */
-.thought-block-frame--only {
-  border-top: 3px solid #4a9eff;
-  border-bottom: 3px solid #4a9eff;
-  border-radius: 6px;
-  margin-top: 2px;
-  margin-bottom: 2px;
-}
-
-/* 多 block 首 — 上边 + 左右 */
-.thought-block-frame--first {
-  border-top: 3px solid #4a9eff;
-  border-radius: 6px 6px 0 0;
-  margin-top: 2px;
-}
-
-/* 多 block 中间 — 只有左右 */
-.thought-block-frame--middle {
-  border-radius: 0;
-}
-
-/* 多 block 尾 — 下边 + 左右 */
-.thought-block-frame--last {
-  border-bottom: 3px solid #4a9eff;
-  border-radius: 0 0 6px 6px;
-  margin-bottom: 2px;
-}
-
-/* 线框颜色跟随类型 */
-.thought-block-frame[data-thought-type="thought"]     { border-color: #4a9eff; }
-.thought-block-frame[data-thought-type="question"]    { border-color: #ff5252; }
-.thought-block-frame[data-thought-type="important"]   { border-color: #ffab40; }
-.thought-block-frame[data-thought-type="todo"]        { border-color: #4caf50; }
-.thought-block-frame[data-thought-type="analysis"]    { border-color: #ab47bc; }
-.thought-block-frame[data-thought-type="ai-response"] { border-color: #6366f1; }
-
-/* hover 背景 */
-.thought-block-frame:hover {
-  background: rgba(74, 158, 255, 0.04);
-}
-.thought-block-frame[data-thought-type="question"]:hover    { background: rgba(255, 82, 82, 0.04); }
-.thought-block-frame[data-thought-type="important"]:hover   { background: rgba(255, 171, 64, 0.04); }
-.thought-block-frame[data-thought-type="todo"]:hover        { background: rgba(76, 175, 80, 0.04); }
-.thought-block-frame[data-thought-type="analysis"]:hover    { background: rgba(171, 71, 188, 0.04); }
-.thought-block-frame[data-thought-type="ai-response"]:hover { background: rgba(99, 102, 241, 0.04); }
+/* Block 级 thought 标注现在使用通用框定系统（.block-frame），
+   不再需要独立的 .thought-block-frame 样式。 */
 
 /* ── 通用状态（inline + block 共用） ── */
 .thought-anchor {
@@ -3088,18 +3031,6 @@
   opacity: 0.5;
 }
 
-/* AI 状态 — block decoration */
-.thought-block-frame.thought-anchor--ai-pending {
-  border-style: dotted;
-  animation: thought-flash 0.8s ease-in-out infinite;
-}
-.thought-block-frame.thought-anchor--ai-error {
-  border-color: #ff5252 !important;
-}
-.thought-block-frame.thought-anchor--resolved {
-  border-style: dashed;
-  opacity: 0.5;
-}
 
 @keyframes thought-flash {
   50% { opacity: 0.4; }

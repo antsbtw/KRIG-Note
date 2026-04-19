@@ -1,6 +1,5 @@
 import { Plugin, PluginKey } from 'prosemirror-state';
 import type { EditorView } from 'prosemirror-view';
-import { Decoration, DecorationSet } from 'prosemirror-view';
 import { THOUGHT_ACTION } from '../../thought/thought-protocol';
 
 /**
@@ -29,15 +28,8 @@ export function thoughtPlugin(): Plugin {
   return new Plugin({
     key: thoughtPluginKey,
 
-    state: {
-      init(_, state) {
-        return buildBlockThoughtDecorations(state.doc, state.schema.marks.thought);
-      },
-      apply(tr, value, _oldState, newState) {
-        if (!tr.docChanged) return value;
-        return buildBlockThoughtDecorations(newState.doc, newState.schema.marks.thought);
-      },
-    },
+    // Block 级 thought 标注现在使用框定系统（block-frame plugin），
+    // 不再在 thought-plugin 中维护 decoration。
 
     view(editorView: EditorView) {
       const api = viewAPI();
@@ -97,10 +89,6 @@ export function thoughtPlugin(): Plugin {
     },
 
     props: {
-      decorations(state) {
-        return thoughtPluginKey.getState(state);
-      },
-
       handleClick(view: EditorView, _pos: number, event: MouseEvent) {
         const target = event.target as HTMLElement;
         const anchor = target.closest('[data-thought-id]') as HTMLElement | null;
@@ -238,89 +226,6 @@ function updateThoughtAnchorState(view: EditorView, thoughtId: string, aiState: 
       setTimeout(() => el.classList.remove('thought-anchor--active'), 1500);
     }
   }
-}
-
-/** 在一个 block 节点内查找 block 级 thought mark */
-function findBlockThoughtMark(
-  node: import('prosemirror-model').Node,
-  thoughtMarkType: import('prosemirror-model').MarkType,
-): { thoughtId: string; thoughtType: string } | null {
-  let result: { thoughtId: string; thoughtType: string } | null = null;
-  node.descendants((child) => {
-    if (result) return false;
-    for (const mark of child.marks) {
-      if (mark.type === thoughtMarkType && mark.attrs.anchorType === 'block') {
-        result = { thoughtId: mark.attrs.thoughtId, thoughtType: mark.attrs.thoughtType || 'thought' };
-        return false;
-      }
-    }
-  });
-  return result;
-}
-
-/**
- * 构建 block 级 thought 的 node decoration
- *
- * 扫描文档中所有 anchorType==='block' 的 thought mark，
- * 按 thoughtId 分组连续 block，给每个 block 添加线框样式 class。
- */
-function buildBlockThoughtDecorations(
-  doc: import('prosemirror-model').Node,
-  thoughtMarkType: import('prosemirror-model').MarkType | undefined,
-): DecorationSet {
-  if (!thoughtMarkType) return DecorationSet.empty;
-
-  // 收集每个 top-level block 上的 block 级 thought mark
-  const blockThoughts: { pos: number; size: number; thoughtId: string; thoughtType: string }[] = [];
-
-  doc.forEach((node, offset) => {
-    if (!node.isBlock) return;
-    // 检查该 block 内的文本节点是否带有 block 级 thought mark
-    const found = findBlockThoughtMark(node, thoughtMarkType);
-    if (found) {
-      blockThoughts.push({ pos: offset, size: node.nodeSize, thoughtId: found.thoughtId, thoughtType: found.thoughtType });
-    }
-  });
-
-  if (blockThoughts.length === 0) return DecorationSet.empty;
-
-  // 按 thoughtId 分组连续 block
-  const groups = new Map<string, typeof blockThoughts>();
-  for (const bt of blockThoughts) {
-    const list = groups.get(bt.thoughtId) || [];
-    list.push(bt);
-    groups.set(bt.thoughtId, list);
-  }
-
-  const decorations: Decoration[] = [];
-
-  for (const [thoughtId, blocks] of groups) {
-    const thoughtType = blocks[0].thoughtType;
-    const count = blocks.length;
-
-    blocks.forEach((bt, i) => {
-      let position: string;
-      if (count === 1) {
-        position = 'only';
-      } else if (i === 0) {
-        position = 'first';
-      } else if (i === count - 1) {
-        position = 'last';
-      } else {
-        position = 'middle';
-      }
-
-      decorations.push(
-        Decoration.node(bt.pos, bt.pos + bt.size, {
-          class: `thought-block-frame thought-block-frame--${position}`,
-          'data-thought-id': thoughtId,
-          'data-thought-type': thoughtType,
-        }),
-      );
-    });
-  }
-
-  return DecorationSet.create(doc, decorations);
 }
 
 /** 滚动到指定 thought 锚点并闪烁高亮 */
