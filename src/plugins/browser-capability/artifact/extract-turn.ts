@@ -432,44 +432,40 @@ export async function extractTurn(
     return null;
   }
 
-  // Find the assistant message at this index and its preceding human message
-  let assistantMsg = conversation.messages.find(
-    (m) => m.index === msgIndex && m.sender === 'assistant',
-  );
+  // DOM's resolveMsgIndex returns the position among assistant-only elements (0-based).
+  // e.g. msgIndex=0 → first assistant, msgIndex=1 → second assistant, etc.
+  // Conversation API uses sequential index across ALL messages (human + assistant).
+  // We must use assistant-only indexing to map correctly.
+  const assistantMessages = conversation.messages.filter((m) => m.sender === 'assistant');
+
+  let assistantMsg: ConversationMessage | undefined;
   let humanMsg: ConversationMessage | null = null;
 
-  if (!assistantMsg) {
-    // Maybe the index points to a human message — find the next assistant
-    const clickedHuman = conversation.messages.find(
-      (m) => m.index === msgIndex && m.sender === 'human',
-    );
-    if (!clickedHuman) {
-      browserCapabilityTraceWriter.writeDebugLog(pageId, 'extract-turn', {
-        msgIndex,
-        error: 'no message at index',
-        availableIndices: conversation.messages.map((m) => ({ index: m.index, sender: m.sender })),
-      });
-      return null;
-    }
-    humanMsg = clickedHuman;
-    const nextAssistant = conversation.messages.find(
-      (m) => m.index > msgIndex && m.sender === 'assistant',
-    );
-    if (!nextAssistant) {
-      browserCapabilityTraceWriter.writeDebugLog(pageId, 'extract-turn', {
-        msgIndex,
-        error: 'no assistant message after human',
-      });
-      return null;
-    }
-    assistantMsg = nextAssistant;
+  if (msgIndex >= 0 && msgIndex < assistantMessages.length) {
+    // Primary: treat msgIndex as assistant-only index (DOM ordering)
+    assistantMsg = assistantMessages[msgIndex];
   } else {
-    // Find preceding human message
-    const humanMsgs = conversation.messages.filter(
-      (m) => m.sender === 'human' && m.index < msgIndex,
+    // Fallback: try as conversation API index
+    assistantMsg = conversation.messages.find(
+      (m) => m.index === msgIndex && m.sender === 'assistant',
     );
-    humanMsg = humanMsgs.length > 0 ? humanMsgs[humanMsgs.length - 1] : null;
   }
+
+  if (!assistantMsg) {
+    browserCapabilityTraceWriter.writeDebugLog(pageId, 'extract-turn', {
+      msgIndex,
+      error: 'no assistant message found',
+      assistantCount: assistantMessages.length,
+      availableIndices: conversation.messages.map((m) => ({ index: m.index, sender: m.sender })),
+    });
+    return null;
+  }
+
+  // Find preceding human message
+  const humanMsgs = conversation.messages.filter(
+    (m) => m.sender === 'human' && m.index < assistantMsg.index,
+  );
+  humanMsg = humanMsgs.length > 0 ? humanMsgs[humanMsgs.length - 1] : null;
 
   const result: ExtractedTurn = {
     index: assistantMsg.index,
