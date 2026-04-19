@@ -5,6 +5,8 @@ import { deleteCurrentBlock, deleteSelection } from '../commands/editor-commands
 import { THOUGHT_ACTION } from '../../thought/thought-protocol';
 import { addThought } from '../commands/thought-commands';
 import { openAskAIPanel } from './AskAIPanel';
+import { selectionToMarkdown } from '../commands/selection-to-markdown';
+import { blockSelectionKey } from '../plugins/block-selection';
 
 /**
  * ContextMenu — 右键菜单
@@ -18,6 +20,8 @@ interface ContextMenuProps {
 
 interface MenuState {
   coords: { left: number; top: number };
+  /** 右键打开时预计算的内容预览（此时选区可能还未被折叠） */
+  contentPreview: string;
 }
 
 export function ContextMenu({ view }: ContextMenuProps) {
@@ -45,7 +49,28 @@ export function ContextMenu({ view }: ContextMenuProps) {
 
     const handler = (e: MouseEvent) => {
       e.preventDefault();
-      setMenu({ coords: { left: e.clientX, top: e.clientY } });
+      // 在右键时预计算内容预览（此时 PM 选区可能还未被折叠）
+      let contentPreview = '';
+      const state = view.state;
+      const blockSel = blockSelectionKey.getState(state);
+      if (blockSel?.active && blockSel.selectedPositions.length > 0) {
+        const sorted = [...blockSel.selectedPositions].sort((a, b) => a - b);
+        const first = sorted[0];
+        const lastPos = sorted[sorted.length - 1];
+        const lastNode = state.doc.nodeAt(lastPos);
+        const to = lastNode ? lastPos + lastNode.nodeSize : lastPos + 1;
+        contentPreview = state.doc.textBetween(first, to, '\n\n').slice(0, 500);
+      } else {
+        const { from, to } = state.selection;
+        if (from !== to) {
+          contentPreview = selectionToMarkdown(view).markdown;
+        } else {
+          const $from = state.selection.$from;
+          const depth = Math.min($from.depth, 1);
+          contentPreview = state.doc.textBetween($from.start(depth), $from.end(depth), '\n').slice(0, 500);
+        }
+      }
+      setMenu({ coords: { left: e.clientX, top: e.clientY }, contentPreview });
     };
 
     const close = () => setMenu(null);
@@ -204,9 +229,9 @@ export function ContextMenu({ view }: ContextMenuProps) {
     items.push({
       id: 'ask-ai', label: '问 AI', icon: '🤖',
       action: () => {
-        const coords = menu.coords;
+        const { coords, contentPreview } = menu;
         close();
-        openAskAIPanel(view, coords);
+        openAskAIPanel(view, coords, contentPreview);
       },
     });
   }

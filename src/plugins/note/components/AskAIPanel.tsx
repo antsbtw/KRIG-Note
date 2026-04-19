@@ -169,30 +169,37 @@ export function AskAIPanel({ view }: AskAIPanelProps) {
  * - 有选区 → Markdown
  * - 无选区 → 光标所在 block 文本
  */
-export function openAskAIPanel(view: EditorView, coords: { left: number; top: number }): void {
-  const state = view.state;
-  let contentPreview = '';
+export function openAskAIPanel(
+  view: EditorView,
+  coords: { left: number; top: number },
+  precomputedPreview?: string,
+): void {
+  let contentPreview = precomputedPreview || '';
 
-  // 多 block 选择
-  const blockSel = blockSelectionKey.getState(state);
-  if (blockSel?.active && blockSel.selectedPositions.length > 0) {
-    const sorted = [...blockSel.selectedPositions].sort((a, b) => a - b);
-    const first = sorted[0];
-    const lastPos = sorted[sorted.length - 1];
-    const lastNode = state.doc.nodeAt(lastPos);
-    const to = lastNode ? lastPos + lastNode.nodeSize : lastPos + 1;
-    contentPreview = state.doc.textBetween(first, to, '\n\n').slice(0, 500);
-  } else {
-    const { from, to } = state.selection;
-    if (from !== to) {
-      contentPreview = selectionToMarkdown(view).markdown;
+  if (!contentPreview) {
+    const state = view.state;
+
+    // 多 block 选择
+    const blockSel = blockSelectionKey.getState(state);
+    if (blockSel?.active && blockSel.selectedPositions.length > 0) {
+      const sorted = [...blockSel.selectedPositions].sort((a, b) => a - b);
+      const first = sorted[0];
+      const lastPos = sorted[sorted.length - 1];
+      const lastNode = state.doc.nodeAt(lastPos);
+      const to = lastNode ? lastPos + lastNode.nodeSize : lastPos + 1;
+      contentPreview = state.doc.textBetween(first, to, '\n\n').slice(0, 500);
     } else {
-      // 无选区 → 当前 block
-      const $from = state.selection.$from;
-      const depth = Math.min($from.depth, 1);
-      const blockStart = $from.start(depth);
-      const blockEnd = $from.end(depth);
-      contentPreview = state.doc.textBetween(blockStart, blockEnd, '\n').slice(0, 500);
+      const { from, to } = state.selection;
+      if (from !== to) {
+        contentPreview = selectionToMarkdown(view).markdown;
+      } else {
+        // 无选区 → 当前 block
+        const $from = state.selection.$from;
+        const depth = Math.min($from.depth, 1);
+        const blockStart = $from.start(depth);
+        const blockEnd = $from.end(depth);
+        contentPreview = state.doc.textBetween(blockStart, blockEnd, '\n').slice(0, 500);
+      }
     }
   }
 
