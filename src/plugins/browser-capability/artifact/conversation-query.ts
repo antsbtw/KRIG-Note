@@ -47,7 +47,8 @@ export type MessageArtifact = {
 export type ArtifactContent =
   | { type: 'widget_code'; code: string; mimeType: string }
   | { type: 'file_text'; text: string; path: string }
-  | { type: 'downloaded'; storageRef: string; mimeType?: string; byteLength?: number };
+  | { type: 'downloaded'; storageRef: string; mimeType?: string; byteLength?: number }
+  | { type: 'local_resource'; filePath: string; mimeType: string; name: string; uuid?: string };
 
 // ── Implementation ──
 
@@ -73,12 +74,61 @@ function detectMimeType(code: string): string {
   return 'text/html';
 }
 
+/**
+ * Extract local_resource entries from tool_result content.
+ * These represent files created by bash_tool in Claude's sandbox.
+ */
+function extractLocalResources(content: unknown[]): Array<{
+  filePath: string;
+  name: string;
+  mimeType: string;
+  uuid?: string;
+  toolUseId?: string;
+}> {
+  const resources: Array<{ filePath: string; name: string; mimeType: string; uuid?: string; toolUseId?: string }> = [];
+  for (const part of content) {
+    if (!part || typeof part !== 'object') continue;
+    const record = part as Record<string, unknown>;
+    if (record.type !== 'tool_result') continue;
+
+    const toolUseId = readString(record.tool_use_id) ?? undefined;
+    const inner = Array.isArray(record.content) ? record.content : [];
+    for (const item of inner) {
+      if (!item || typeof item !== 'object') continue;
+      const res = item as Record<string, unknown>;
+      if (res.type !== 'local_resource') continue;
+      const filePath = readString(res.file_path);
+      if (!filePath) continue;
+      resources.push({
+        filePath,
+        name: readString(res.name) ?? filePath.split('/').pop() ?? 'file',
+        mimeType: readString(res.mime_type) ?? 'application/octet-stream',
+        uuid: readString(res.uuid) ?? undefined,
+        toolUseId,
+      });
+    }
+  }
+  return resources;
+}
+
+function classifyLocalResourceKind(mimeType: string, filePath: string): ArtifactRecord['kind'] {
+  if (mimeType.startsWith('image/')) return 'image';
+  if (mimeType === 'text/html' || filePath.match(/\.html?$/i)) return 'widget';
+  if (mimeType.includes('svg')) return 'image';
+  if (mimeType.includes('json') || mimeType.includes('javascript') || mimeType.includes('typescript')) return 'code';
+  if (mimeType.includes('csv')) return 'table';
+  return 'file';
+}
+
 function extractArtifactsFromContent(
   content: unknown[],
   messageUuid: string,
   artifacts: ArtifactRecord[],
 ): MessageArtifact[] {
   const result: MessageArtifact[] = [];
+
+  // Collect local_resource entries from tool_result (bash_tool output)
+  const localResources = extractLocalResources(content);
 
   for (const part of content) {
     if (!part || typeof part !== 'object') continue;
@@ -96,11 +146,15 @@ function extractArtifactsFromContent(
     const isCreateFile = toolName === 'create_file';
     const isViewFile = toolName === 'view';
     const isPresentFiles = toolName === 'present_files';
-    if (!isShowWidget && !isCreateFile && !isViewFile && !isPresentFiles) continue;
+    const isBashTool = toolName === 'bash_tool';
 
+    // Skip tools that don't produce artifacts
+    if (!isShowWidget && !isCreateFile && !isViewFile && !isPresentFiles && !isBashTool) continue;
+
+    const pathSegment = readString(input.path)?.split('/').pop();
     const title = readString(input.title)
       ?? readString(input.name)
-      ?? (readString(input.path)?.split('/').pop() ?? null)
+      ?? pathSegment
       ?? toolUseId;
 
     // Match with ArtifactRecord from trace-writer
@@ -144,6 +198,91 @@ function extractArtifactsFromContent(
       else if (isPresentFiles) kind = 'file';
     }
 
+    // For bash_tool: skip if no local_resource associated with this tool
+    if (isBashTool && !artifactContent) {
+      // Don't push bash_tool itself as an artifact — its output files
+      // will be pushed via local_resource below
+      continue;
+    }
+
+    // For view: improve title
+    if (isViewFile && filePath) {
+      result.push({
+        artifactId: matched?.artifactId ?? `artifact:${toolUseId}`,
+        toolUseId,
+        toolName,
+        title: filePath.split('/').pop() ?? title,
+        kind: 'file',
+        content: artifactContent,
+      });
+      continue;
+    }
+
+    // For present_files: use local_resource from tool_result as content
+    if (isPresentFiles) {
+      const filepaths = Array.isArray(input.filepaths) ? input.filepaths : [];
+      const fileNames = filepaths
+        .map((fp: unknown) => typeof fp === 'string' ? fp.split('/').pop() : null)
+        .filter((n: unknown): n is string => typeof n === 'string');
+
+      // Find associated local_resource (from the tool_result of this present_files call)
+      const associatedResource = localResources.find((r) => r.toolUseId === toolUseId);
+      let presentContent: ArtifactContent | null = artifactContent;
+      if (!presentContent && associatedResource) {
+        const resMatched = artifacts.find((a) =>
+          a.title === associatedResource.name ||
+          a.title === associatedResource.filePath.split('/').pop(),
+        );
+        if (resMatched?.storageRef) {
+          presentContent = {
+            type: 'downloaded',
+            storageRef: resMatched.storageRef,
+            mimeType: resMatched.mimeType,
+            byteLength: resMatched.byteLength,
+          };
+        } else {
+          presentContent = {
+            type: 'local_resource',
+            filePath: associatedResource.filePath,
+            mimeType: associatedResource.mimeType,
+            name: associatedResource.name,
+            uuid: associatedResource.uuid,
+          };
+        }
+      }
+
+      // Create one artifact per local_resource file, or one for the whole present_files
+      const resourcesForThis = localResources.filter((r) => r.toolUseId === toolUseId);
+      if (resourcesForThis.length > 0) {
+        for (const res of resourcesForThis) {
+          const resMatched = artifacts.find((a) =>
+            a.title === res.name || a.title === res.filePath.split('/').pop(),
+          );
+          const resContent: ArtifactContent = resMatched?.storageRef
+            ? { type: 'downloaded', storageRef: resMatched.storageRef, mimeType: resMatched.mimeType, byteLength: resMatched.byteLength }
+            : { type: 'local_resource', filePath: res.filePath, mimeType: res.mimeType, name: res.name, uuid: res.uuid };
+          result.push({
+            artifactId: resMatched?.artifactId ?? `artifact:local:${res.name}`,
+            toolUseId,
+            toolName,
+            title: res.name,
+            kind: classifyLocalResourceKind(res.mimeType, res.filePath),
+            content: resContent,
+          });
+        }
+      } else {
+        result.push({
+          artifactId: matched?.artifactId ?? `artifact:${toolUseId}`,
+          toolUseId,
+          toolName,
+          title: fileNames.length > 0 ? fileNames.join(', ') : title,
+          kind: 'file',
+          content: presentContent,
+        });
+      }
+      continue;
+    }
+
     result.push({
       artifactId: matched?.artifactId ?? `artifact:${toolUseId}`,
       toolUseId,
@@ -151,6 +290,47 @@ function extractArtifactsFromContent(
       title,
       kind,
       content: artifactContent,
+    });
+  }
+
+  // Add local_resource entries that aren't already covered by tool_use artifacts
+  const coveredToolUseIds = new Set(result.map((a) => a.toolUseId));
+  for (const res of localResources) {
+    // Skip if this resource's tool_use is already represented
+    if (res.toolUseId && coveredToolUseIds.has(res.toolUseId)) continue;
+
+    // Check if already matched by download event
+    const matched = artifacts.find((a) =>
+      a.title === res.name ||
+      a.title === res.filePath.split('/').pop(),
+    );
+
+    let content: ArtifactContent | null = null;
+    if (matched?.storageRef) {
+      content = {
+        type: 'downloaded',
+        storageRef: matched.storageRef,
+        mimeType: matched.mimeType,
+        byteLength: matched.byteLength,
+      };
+    } else {
+      // File not yet downloaded — record as local_resource for proactive download
+      content = {
+        type: 'local_resource',
+        filePath: res.filePath,
+        mimeType: res.mimeType,
+        name: res.name,
+        uuid: res.uuid,
+      };
+    }
+
+    result.push({
+      artifactId: matched?.artifactId ?? `artifact:local:${res.name}`,
+      toolUseId: res.toolUseId ?? '',
+      toolName: 'bash_tool',
+      title: res.name,
+      kind: classifyLocalResourceKind(res.mimeType, res.filePath),
+      content,
     });
   }
 

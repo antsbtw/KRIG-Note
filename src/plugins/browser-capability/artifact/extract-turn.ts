@@ -228,6 +228,24 @@ async function artifactToMarkdown(artifact: MessageArtifact): Promise<string> {
   if (content.type === 'file_text') {
     const ext = content.path.split('.').pop()?.toLowerCase() ?? '';
 
+    // SVG files → save to media store, render as image block
+    if (ext === 'svg') {
+      try {
+        const put = await ensureMediaStore();
+        if (put) {
+          const svgCode = prepareSvgForDom(content.text);
+          const dataUrl = `data:image/svg+xml;base64,${Buffer.from(svgCode, 'utf-8').toString('base64')}`;
+          const filename = content.path.split('/').pop() || `${artifact.title}.svg`;
+          const result = await put(dataUrl, 'image/svg+xml', filename);
+          if (result.success && result.mediaUrl) {
+            return `![${artifact.title}](${result.mediaUrl})\n`;
+          }
+        }
+      } catch (err) {
+        console.warn('[extract-turn] svg file_text put failed', { title: artifact.title, error: err });
+      }
+    }
+
     // HTML files → save to media store, render as html-block
     if (ext === 'html' || ext === 'htm') {
       try {
@@ -282,7 +300,94 @@ async function artifactToMarkdown(artifact: MessageArtifact): Promise<string> {
     return `> 📎 [${artifact.title}](${content.storageRef})\n`;
   }
 
+  if (content.type === 'local_resource') {
+    // Proactively download from Claude sandbox via API
+    try {
+      const fileContent = await downloadLocalResource(content.filePath);
+      if (fileContent) {
+        const put = await ensureMediaStore();
+        const filename = content.filePath.split('/').pop() || `${artifact.title}`;
+        const isHtml = content.mimeType === 'text/html' || filename.match(/\.html?$/i);
+        const isSvg = content.mimeType === 'image/svg+xml' || filename.match(/\.svg$/i);
+
+        if (isSvg && put) {
+          const svgCode = prepareSvgForDom(fileContent);
+          const dataUrl = `data:image/svg+xml;base64,${Buffer.from(svgCode, 'utf-8').toString('base64')}`;
+          const result = await put(dataUrl, 'image/svg+xml', filename.endsWith('.svg') ? filename : `${filename}.svg`);
+          if (result.success && result.mediaUrl) {
+            return `![${artifact.title}](${result.mediaUrl})\n`;
+          }
+        } else if (isHtml && put) {
+          const dataUrl = `data:text/html;base64,${Buffer.from(fileContent, 'utf-8').toString('base64')}`;
+          const result = await put(dataUrl, 'text/html', filename.endsWith('.html') ? filename : `${filename}.html`);
+          if (result.success && result.mediaUrl) {
+            return `!html[${artifact.title}](${result.mediaUrl})\n`;
+          }
+        } else {
+          // Other file types: code block
+          const ext = filename.split('.').pop()?.toLowerCase() ?? '';
+          const lang = ext === 'py' ? 'python' : ext === 'js' ? 'javascript' : ext === 'ts' ? 'typescript' : ext || 'text';
+          return `\`\`\`${lang}\n${fileContent.trimEnd()}\n\`\`\`\n`;
+        }
+      }
+    } catch (err) {
+      console.warn('[extract-turn] local_resource download failed', { title: artifact.title, filePath: content.filePath, error: err });
+    }
+    return `> 📎 **${artifact.title}** — sandbox 文件（${content.filePath.split('/').pop()}）\n`;
+  }
+
   return '';
+}
+
+/**
+ * Download a file from Claude's sandbox via the wiggle API.
+ * Uses the page's webContents to inject a fetch with the user's session cookies.
+ */
+async function downloadLocalResource(filePath: string): Promise<string | null> {
+  try {
+    // Try each bound webContents for a Claude page
+    const { webContents: electronWebContents } = await import('electron');
+    for (const wc of electronWebContents.getAllWebContents()) {
+      const url = wc.getURL();
+      if (!url.includes('claude.ai/chat/')) continue;
+      const downloadScript = `
+        (async () => {
+          try {
+            // Get orgId from performance entries
+            const entries = performance.getEntriesByType('resource');
+            let orgId = null;
+            for (const entry of entries) {
+              const m = entry.name.match(/claude\\.ai\\/api\\/organizations\\/([0-9a-f-]{36})/);
+              if (m) { orgId = m[1]; break; }
+            }
+            if (!orgId) return null;
+
+            const convMatch = window.location.href.match(/\\/chat\\/([^/?#]+)/);
+            if (!convMatch) return null;
+            const convId = convMatch[1];
+
+            const apiUrl = '/api/organizations/' + orgId + '/conversations/' + convId + '/wiggle/download-file?path=' + encodeURIComponent('${filePath}');
+            const resp = await fetch(apiUrl, { credentials: 'include' });
+            if (!resp.ok) return null;
+            const text = await resp.text();
+            return text;
+          } catch (e) {
+            return null;
+          }
+        })()
+      `;
+
+      const result = await wc.executeJavaScript(downloadScript);
+      if (result && typeof result === 'string' && result.length > 0) {
+        console.log('[extract-turn] local_resource downloaded', { filePath, size: result.length });
+        return result;
+      }
+    }
+    return null;
+  } catch (err) {
+    console.warn('[extract-turn] downloadLocalResource failed', { filePath, error: err });
+    return null;
+  }
 }
 
 async function messageToMarkdown(msg: ConversationMessage): Promise<string> {
