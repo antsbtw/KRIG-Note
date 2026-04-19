@@ -146,7 +146,6 @@ async function addBlockThought(
 
   // 使用框定系统：颜色来自 thought 类型
   const frameColor = THOUGHT_TYPE_META[type].color;
-  console.log('[addBlockThought] frameColor:', frameColor, 'positions:', validPositions);
   addBlockFrameGroup(view, validPositions, frameColor, 'solid');
 
   await openAndNotify(api, record.id, 'block', anchorText, first, type, noteId);
