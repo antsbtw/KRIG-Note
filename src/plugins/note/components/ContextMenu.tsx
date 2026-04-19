@@ -8,8 +8,6 @@ import { askAI } from '../commands/ask-ai-command';
 import { AskAIPanel } from './AskAIPanel';
 import { selectionToMarkdown } from '../commands/selection-to-markdown';
 import { blockSelectionKey } from '../plugins/block-selection';
-import { THOUGHT_TYPE_META } from '../../../shared/types/thought-types';
-import type { ThoughtType } from '../../../shared/types/thought-types';
 import type { AIServiceId } from '../../../shared/types/ai-service-types';
 
 /**
@@ -28,7 +26,7 @@ interface MenuState {
 
 export function ContextMenu({ view }: ContextMenuProps) {
   const [menu, setMenu] = useState<MenuState | null>(null);
-  const [subMenu, setSubMenu] = useState<'thought' | 'ai' | null>(null);
+  const [subMenu, setSubMenu] = useState<'ai' | null>(null);
 
   useEffect(() => {
     if (!view) return;
@@ -183,16 +181,15 @@ export function ContextMenu({ view }: ContextMenuProps) {
   }
 
   // 标注 + 问 AI：有选区或光标在 block 中时可用
-  // 检测是否有可标注的内容（选区 或 光标所在 block）
   const hasContent = hasSelection || view.state.selection.$from.parent.content.size > 0;
   if (hasContent) {
-    // "添加标注" — 展开子菜单选类型
+    // "添加标注" — 一键执行，默认"思考"类型，后续在 ThoughtView 中调整
     items.push({
-      id: 'add-thought', label: '添加标注', icon: '💭', separator: true, hasArrow: true,
-      action: () => { setSubMenu(subMenu === 'thought' ? null : 'thought'); },
+      id: 'add-thought', label: '添加标注', icon: '💭', separator: true,
+      action: () => { addThought(view); close(); },
     });
 
-    // "问 AI" — 展开子菜单选服务
+    // "问 AI" — 弹出 AskAIPanel
     items.push({
       id: 'ask-ai', label: '问 AI', icon: '🤖', hasArrow: true,
       action: () => { setSubMenu(subMenu === 'ai' ? null : 'ai'); },
@@ -223,38 +220,6 @@ export function ContextMenu({ view }: ContextMenuProps) {
       ))}
 
       {/* 标注类型子菜单 */}
-      {subMenu === 'thought' && (
-        <div
-          style={{ ...styles.subMenu, left: '100%', top: (() => {
-            const idx = items.findIndex(i => i.id === 'add-thought');
-            return idx * 34 + 4;
-          })() }}
-          onMouseDown={(e) => e.stopPropagation()}
-        >
-          {(Object.keys(THOUGHT_TYPE_META) as ThoughtType[])
-            .filter(t => t !== 'ai-response')
-            .map((t) => {
-              const m = THOUGHT_TYPE_META[t];
-              return (
-                <div
-                  key={t}
-                  style={styles.item}
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    addThought(view, t);
-                    close();
-                  }}
-                  onMouseEnter={(e) => (e.currentTarget.style.background = '#3a3a3a')}
-                  onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                >
-                  <span style={styles.icon}>{m.icon}</span>
-                  <span>{m.label}</span>
-                </div>
-              );
-            })}
-        </div>
-      )}
-
       {/* AI 面板 */}
       {subMenu === 'ai' && (
         <div

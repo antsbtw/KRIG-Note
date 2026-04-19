@@ -9,8 +9,6 @@ import { setTextBlockLevel } from '../commands/set-text-block-level';
 import { deleteBlockAt, applyTextColor as applyTextColorCmd, applyHighlight as applyHighlightCmd, toggleTextIndent as toggleTextIndentCmd, setTextAlign as setTextAlignCmd } from '../commands/editor-commands';
 import type { AIServiceId } from '../../../shared/types/ai-service-types';
 import { addThought } from '../commands/thought-commands';
-import { THOUGHT_TYPE_META } from '../../../shared/types/thought-types';
-import type { ThoughtType } from '../../../shared/types/thought-types';
 
 /**
  * HandleMenu — 手柄点击后的操作菜单
@@ -30,7 +28,7 @@ interface MenuState {
   coords: { left: number; top: number };
 }
 
-type SubMenu = 'turnInto' | 'color' | 'format' | 'thought' | 'ai' | null;
+type SubMenu = 'turnInto' | 'color' | 'format' | 'ai' | null;
 
 // ── 颜色定义（复用 ColorPicker） ──
 
@@ -387,15 +385,29 @@ export function HandleMenu({ view }: HandleMenuProps) {
           <span>Copy</span>
         </div>
 
-        {/* Thought — 添加标注 */}
+        {/* Thought — 一键添加标注（默认"思考"类型） */}
         <div
           style={styles.item}
-          onMouseEnter={(e) => { e.currentTarget.style.background = '#3a3a3a'; setSubMenu('thought'); }}
+          onMouseDown={(e) => {
+            e.preventDefault();
+            // 选中当前 block 再 addThought
+            const node = view.state.doc.nodeAt(menu.pos);
+            if (node) {
+              try {
+                const tr = view.state.tr.setSelection(
+                  TextSelection.create(view.state.doc, menu.pos + 1, menu.pos + node.nodeSize - 1),
+                );
+                view.dispatch(tr);
+              } catch { /* ok */ }
+            }
+            addThought(view);
+            close();
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = '#3a3a3a'; setSubMenu(null); }}
           onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
         >
           <span style={styles.icon}>💭</span>
-          <span style={{ flex: 1 }}>Thought</span>
-          <span style={styles.arrow}>▸</span>
+          <span>Thought</span>
         </div>
 
         {/* Ask AI */}
@@ -528,54 +540,6 @@ export function HandleMenu({ view }: HandleMenuProps) {
               </>
             );
           })()}
-        </div>
-      )}
-
-      {/* Thought 子菜单 */}
-      {subMenu === 'thought' && (
-        <div
-          ref={subMenuRef}
-          className="handle-submenu"
-          style={{ ...getSubMenuStyle(), minWidth: '140px' }}
-          onMouseDown={(e) => e.stopPropagation()}
-          onMouseEnter={() => setSubMenu('thought')}
-        >
-          {(Object.keys(THOUGHT_TYPE_META) as ThoughtType[])
-            .filter(t => t !== 'ai-response')
-            .map((t) => {
-              const m = THOUGHT_TYPE_META[t];
-              return (
-                <div
-                  key={t}
-                  style={styles.item}
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    // 如果没有跨 block 选区，选中当前 handle 对应的 block
-                    const { from: sf, to: st } = view.state.selection;
-                    const isMultiBlock = sf !== st
-                      && view.state.doc.resolve(sf).parent !== view.state.doc.resolve(st).parent;
-                    if (!isMultiBlock) {
-                      const node = view.state.doc.nodeAt(menu.pos);
-                      if (node) {
-                        try {
-                          const tr = view.state.tr.setSelection(
-                            TextSelection.create(view.state.doc, menu.pos + 1, menu.pos + node.nodeSize - 1),
-                          );
-                          view.dispatch(tr);
-                        } catch { /* ok */ }
-                      }
-                    }
-                    addThought(view, t);
-                    close();
-                  }}
-                  onMouseEnter={(e) => (e.currentTarget.style.background = '#3a3a3a')}
-                  onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                >
-                  <span style={styles.icon}>{m.icon}</span>
-                  <span>{m.label}</span>
-                </div>
-              );
-            })}
         </div>
       )}
 
