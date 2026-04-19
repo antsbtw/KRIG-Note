@@ -1,5 +1,6 @@
 import type { BlockDef } from '../types';
 import { createRenderBlockView, createPlaceholder, type RenderBlockRenderer, type ToolbarGroup } from './render-block-base';
+import { claudeThemeInlineStyle } from './claude-theme';
 import type { Node as PMNode } from 'prosemirror-model';
 import type { EditorView } from 'prosemirror-view';
 
@@ -73,30 +74,6 @@ async function loadSvgContent(src: string): Promise<string | null> {
   }
 }
 
-/**
- * Claude SVG CSS 变量定义（暗色主题值）
- * 忠实还原 Claude 页面中 SVG 的视觉效果
- */
-const CLAUDE_CSS_VARS = `
-  --color-border-tertiary: #3a3a3a;
-  --color-border-secondary: #4a4a4a;
-  --color-border-primary: #5a5a5a;
-  --color-text-primary: #e8e8e8;
-  --color-text-secondary: #a3a3a3;
-  --color-text-tertiary: #737373;
-  --color-bg-primary: #1e1e1e;
-  --color-bg-secondary: #2a2a2a;
-  --color-bg-tertiary: #3a3a3a;
-  --color-background-primary: #1e1e1e;
-  --color-background-secondary: #2a2a2a;
-  --color-background-tertiary: #3a3a3a;
-  --text-color-primary: #e8e8e8;
-  --text-color-secondary: #a3a3a3;
-  --text-color-tertiary: #737373;
-  --bg-color: #1e1e1e;
-  --fg-color: #e8e8e8;
-`;
-
 /** SVG DOM 插入后注入样式 */
 function injectSvgStyles(container: HTMLElement): void {
   const svg = container.querySelector('svg');
@@ -109,7 +86,7 @@ function injectSvgStyles(container: HTMLElement): void {
   svg.style.borderRadius = '8px';
 
   // 注入 Claude CSS 变量到容器上，让 SVG 中的 var() 引用能正确解析
-  container.style.cssText += CLAUDE_CSS_VARS.replace(/\n/g, '');
+  container.style.cssText += claudeThemeInlineStyle();
 
   // 如果 SVG 没有内嵌 <style>，注入默认字体样式
   if (!svg.querySelector('style')) {
