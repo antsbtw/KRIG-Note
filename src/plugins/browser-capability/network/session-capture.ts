@@ -227,13 +227,6 @@ export function attachSessionNetworkCapture(session: Session, bus: NetworkEventB
       setRequestCache(details, record);
       bus.recordRequest(record);
       if (!app.isPackaged) {
-        console.log('[BrowserCapability][Network] request-start', {
-          pageId,
-          requestId: record.requestId,
-          method: record.method,
-          resourceType: record.resourceType,
-          url: record.url,
-        });
         if (shouldTraceNetwork(record)) {
           browserCapabilityTraceWriter.writeNetwork({
             kind: 'request-start',
@@ -258,13 +251,6 @@ export function attachSessionNetworkCapture(session: Session, bus: NetworkEventB
       const completed = mergeCompleted(prev, details);
       bus.recordResponseComplete(completed);
       if (!app.isPackaged) {
-        console.log('[BrowserCapability][Network] response-complete', {
-          pageId,
-          requestId: completed.requestId,
-          status: completed.status,
-          resourceType: completed.resourceType,
-          url: completed.url,
-        });
         if (shouldTraceNetwork(completed)) {
           browserCapabilityTraceWriter.writeNetwork({
             kind: 'response-complete',
