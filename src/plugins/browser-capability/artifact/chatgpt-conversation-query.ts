@@ -84,6 +84,49 @@ function fileIdFromPointer(ptr: string | undefined | null): string | null {
 }
 
 /**
+ * Strip ChatGPT's U+E200..U+E201 widget directives from text.
+ *
+ * Format: U+E200 <type> U+E202 <json> U+E201
+ * Known types:
+ *   - image_group: search image grid (query-based, not downloadable)
+ *
+ * For image_group: remove entirely (search result images can't be reproduced).
+ * For unknown types: remove the widget markers, keep as-is for debugging.
+ */
+function stripUnicodeWidgets(text: string): string {
+  if (!text) return text;
+  // Match: \uE200 <word> \uE202 <json-until-\uE201> \uE201
+  return text.replace(
+    /\uE200(\w+)\uE202([\s\S]*?)\uE201/g,
+    (_match, widgetType, jsonBody) => {
+      if (widgetType === 'image_group') {
+        // Search result images — remove entirely
+        return '';
+      }
+      // Math widgets (genui, genua, genub, etc.) — extract LaTeX content
+      if (widgetType.startsWith('genu')) {
+        try {
+          const obj = JSON.parse(jsonBody);
+          for (const key of Object.keys(obj)) {
+            const payload = obj[key];
+            if (payload && typeof payload === 'object') {
+              const latex = typeof payload.content === 'string' ? payload.content
+                : typeof payload.latex === 'string' ? payload.latex
+                : null;
+              if (latex && /math|latex/i.test(key)) {
+                return '\n\n$$' + latex.trim() + '$$\n\n';
+              }
+            }
+          }
+        } catch {}
+      }
+      // Unknown widget — remove entirely
+      return '';
+    },
+  );
+}
+
+/**
  * Unwrap ChatGPT's private "widget" directives (math_block_widget etc.)
  * into standard LaTeX notation.
  */
@@ -212,7 +255,7 @@ function extractMessageContent(raw: any): {
     }
   }
 
-  const text = unwrapWidgets(textParts.join('\n\n'));
+  const text = stripUnicodeWidgets(unwrapWidgets(textParts.join('\n\n')));
   const hidden = !!raw.metadata?.is_visually_hidden_from_conversation;
   const recipient: string | null = raw.recipient ?? null;
 

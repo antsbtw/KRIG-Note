@@ -104,6 +104,157 @@ function sniffMimeFromBase64(b64: string): string | null {
   return null;
 }
 
+// ── DOM image extraction ──
+
+/**
+ * Extract rendered images from the ChatGPT DOM for a specific turn.
+ *
+ * Matches the correct DOM container by comparing assistant message text
+ * prefix (first 30 chars) against each [data-message-author-role="assistant"]
+ * element's textContent. This avoids index mismatches caused by invisible
+ * assistant messages (thoughts, code, reasoning_recap) in the DOM.
+ *
+ * Downloads each image and persists to media store, returns media:// URLs.
+ */
+async function extractDomImages(textPrefix: string): Promise<string[]> {
+  if (!textPrefix) return [];
+  try {
+    const searchPrefix = textPrefix.replace(/\s+/g, ' ').trim().slice(0, 40);
+    console.log('[chatgpt-extract] extractDomImages searching for:', JSON.stringify(searchPrefix));
+
+    for (const wc of electronWebContents.getAllWebContents()) {
+      const url = wc.getURL();
+      if (!url.includes('chatgpt.com') && !url.includes('chat.openai.com')) continue;
+
+      const debugResult = await wc.executeJavaScript(`
+        (function() {
+          var prefix = ${JSON.stringify(searchPrefix)};
+          var containers = document.querySelectorAll('[data-message-author-role="assistant"]');
+          var debug = { containerCount: containers.length, matched: -1, imgCount: 0, imgs: [] };
+          var target = null;
+          for (var i = 0; i < containers.length; i++) {
+            var text = (containers[i].textContent || '').replace(/\\s+/g, ' ').trim();
+            if (text.indexOf(prefix) >= 0) {
+              target = containers[i];
+              debug.matched = i;
+              debug.matchedTextPreview = text.slice(0, 80);
+              break;
+            }
+          }
+          if (!target) {
+            // Show first few containers' text for debugging
+            debug.containerPreviews = [];
+            for (var k = 0; k < Math.min(5, containers.length); k++) {
+              debug.containerPreviews.push((containers[k].textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 60));
+            }
+            return debug;
+          }
+          var imgs = target.querySelectorAll('img');
+          debug.imgCount = imgs.length;
+          for (var j = 0; j < imgs.length; j++) {
+            var img = imgs[j];
+            var src = img.src || '';
+            var w = img.naturalWidth || 0;
+            var h = img.naturalHeight || 0;
+            debug.imgs.push({ src: src.slice(0, 100), w: w, h: h });
+            if ((w > 100 || h > 100) && src.startsWith('https://')) {
+              debug.imgs[debug.imgs.length - 1].selected = true;
+            }
+          }
+          return debug;
+        })()
+      `);
+
+      console.log('[chatgpt-extract] DOM probe result:', JSON.stringify(debugResult));
+
+      // Now do the actual extraction if we found images
+      if (!debugResult || debugResult.matched === -1 || debugResult.matched === undefined) return [];
+
+      const imgUrls: string[] = await wc.executeJavaScript(`
+        (function() {
+          var prefix = ${JSON.stringify(searchPrefix)};
+          var containers = document.querySelectorAll('[data-message-author-role="assistant"]');
+          var target = null;
+          for (var i = 0; i < containers.length; i++) {
+            var text = (containers[i].textContent || '').replace(/\\s+/g, ' ').trim();
+            if (text.indexOf(prefix) >= 0) { target = containers[i]; break; }
+          }
+          if (!target) return [];
+          var imgs = target.querySelectorAll('img');
+          var urls = [];
+          for (var j = 0; j < imgs.length; j++) {
+            var img = imgs[j];
+            var src = img.src || '';
+            var w = img.naturalWidth || 0;
+            var h = img.naturalHeight || 0;
+            if ((w > 100 || h > 100) && src.startsWith('https://')) {
+              urls.push(src);
+            }
+          }
+          return urls;
+        })()
+      `);
+
+      console.log('[chatgpt-extract] image URLs found:', imgUrls?.length ?? 0);
+
+      if (!imgUrls || imgUrls.length === 0) return [];
+
+      // Download images — use Electron's net module from main process to avoid CORS
+      const put = await ensureMediaStore();
+      const results: string[] = [];
+      for (const imgUrl of imgUrls) {
+        try {
+          // Use main process fetch (no CORS restrictions)
+          const { net } = await import('electron');
+          const dataUrl = await new Promise<string | null>((resolve) => {
+            const request = net.request(imgUrl);
+            const chunks: Buffer[] = [];
+            request.on('response', (response) => {
+              if (response.statusCode !== 200) {
+                console.warn('[chatgpt-extract] image download failed:', imgUrl.slice(0, 80), 'status:', response.statusCode);
+                resolve(null);
+                return;
+              }
+              const contentType = response.headers['content-type']?.[0] || response.headers['content-type'] || 'image/png';
+              response.on('data', (chunk: Buffer) => chunks.push(chunk));
+              response.on('end', () => {
+                const buffer = Buffer.concat(chunks);
+                const b64 = buffer.toString('base64');
+                resolve(`data:${contentType};base64,${b64}`);
+              });
+              response.on('error', () => resolve(null));
+            });
+            request.on('error', (err) => {
+              console.warn('[chatgpt-extract] image request error:', imgUrl.slice(0, 80), err.message);
+              resolve(null);
+            });
+            request.end();
+          });
+
+          if (dataUrl && put) {
+            const mimeMatch = dataUrl.match(/^data:([^;]+);/);
+            const mime = mimeMatch ? mimeMatch[1] : 'image/png';
+            const ext = mime.includes('jpeg') ? 'jpg' : mime.includes('png') ? 'png' : mime.includes('gif') ? 'gif' : 'webp';
+            const r = await put(dataUrl, mime, `chatgpt-image.${ext}`);
+            if (r.success && r.mediaUrl) {
+              console.log('[chatgpt-extract] image saved to media store:', r.mediaUrl);
+              results.push(r.mediaUrl);
+              continue;
+            }
+          }
+          if (dataUrl) results.push(dataUrl);
+        } catch (err) {
+          console.warn('[chatgpt-extract] image download error:', err);
+        }
+      }
+      return results;
+    }
+    return [];
+  } catch {
+    return [];
+  }
+}
+
 // ── Sandbox link processing ──
 
 /**
@@ -309,6 +460,18 @@ async function turnToMarkdown(turn: ChatGPTTurn, pageId: string, conversationId:
   for (const msg of turn.assistantMessages) {
     if (msg.text.trim()) {
       parts.push(msg.text.trim());
+    }
+  }
+
+  // Fetch DOM-rendered images (image_group search results, inline images, etc.)
+  // These are images visible on the ChatGPT page but not in the API data (no file_id).
+  // Strip markdown formatting to match DOM textContent.
+  const rawText = turn.assistantMessages[0]?.text || '';
+  const plainText = rawText.replace(/\*\*|__|[*_`#\[\]]/g, '').replace(/\n+/g, ' ').trim();
+  const domImages = await extractDomImages(plainText);
+  if (domImages.length > 0) {
+    for (const img of domImages) {
+      parts.push(`![](${img})`);
     }
   }
 
