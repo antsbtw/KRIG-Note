@@ -1033,62 +1033,50 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
               return domToMarkdown(all[all.length - 1]);
             })()`);
 
-            let finalMd = sseMarkdown || domMd || '';
-            if (sseMarkdown && domMd) {
-              const sseImgs = new Set((sseMarkdown.match(/!\[([^\]]*)\]\(([^)]+)\)/g) || []).map((m: string) => m.match(/\(([^)]+)\)/)?.[1]).filter(Boolean));
-              const extraImgs = (domMd.match(/!\[([^\]]*)\]\(([^)]+)\)/g) || []).filter((m: string) => { const u = m.match(/\(([^)]+)\)/)?.[1]; return u && !sseImgs.has(u); });
-              if (extraImgs.length > 0) finalMd += '\n\n' + extraImgs.join('\n\n');
-            }
-
-            // SSE 完成 → 刷新 conversation 数据后调用 extractTurn 获取完整内容
+            // Step 1: SSE 检测到 AI 回复结束
+            // Step 2: 找到最后一条 assistant 消息 index，调用右键提取
             setAiStatus('capturing');
             try {
-              // 主动 fetch conversation API 获取最新数据（含刚完成的 AI 回复）
-              await webview!.executeJavaScript(`
-                (async () => {
-                  try {
-                    const chatMatch = window.location.href.match(/\\/chat\\/([^/?#]+)/);
-                    if (!chatMatch) return;
-                    let orgId = null;
-                    const entries = performance.getEntriesByType('resource');
-                    for (const entry of entries) {
-                      const m = entry.name.match(/claude\\.ai\\/api\\/organizations\\/([0-9a-f-]{36})/);
-                      if (m) { orgId = m[1]; break; }
-                    }
-                    if (!orgId) {
-                      const m2 = document.cookie.match(/lastActiveOrg=([^;]+)/);
-                      if (m2) orgId = m2[1];
-                    }
-                    if (!orgId) return;
-                    const apiUrl = '/api/organizations/' + orgId + '/chat_conversations/' + chatMatch[1]
-                      + '?tree=True&rendering_mode=messages&render_all_tools=true';
-                    await fetch(apiUrl, { credentials: 'include' });
-                  } catch {}
-                })()
-              `);
-              // 等待 trace-writer 处理拦截到的 response
-              await new Promise(r => setTimeout(r, 3000));
-
-              // 找最后一条 assistant 消息的 DOM index
-              const lastAssistantIndex = await webview!.executeJavaScript(`(function() {
+              const lastAssistantIdx = await webview!.executeJavaScript(`(function() {
                 var selector = ${JSON.stringify(profile.selectors.assistantMessage)};
-                var selectors = selector.split(',').map(function(s) { return s.trim(); });
+                var parts = selector.split(',').map(function(s) { return s.trim(); });
                 var count = 0;
-                for (var i = 0; i < selectors.length; i++) count += document.querySelectorAll(selectors[i]).length;
+                for (var i = 0; i < parts.length; i++) count += document.querySelectorAll(parts[i]).length;
                 return count - 1;
               })()`);
-              if (lastAssistantIndex >= 0) {
-                const capResult = await viewAPI.browserCapabilityExtractTurn({ msgIndex: lastAssistantIndex });
-                if (capResult.success && capResult.markdown) {
-                  finalMd = capResult.markdown;
-                  console.log('[AI_INJECT_AND_SEND] extractTurn succeeded, md length:', finalMd.length);
+
+              if (lastAssistantIdx < 0) throw new Error('No assistant message found');
+
+              const ctx = {
+                webview: webview!, url: webview!.getURL?.() || '',
+                x: 0, y: 0, targetTag: null, targetHtml: '',
+              } as MenuContext;
+
+              // extractTurnAt 内部通过 sendToOtherSlot 发送 as:append-turn
+              // 拦截它，只取 AI 回答部分的 markdown
+              const origSlot = viewAPI.sendToOtherSlot;
+              let extractedMarkdown = '';
+              viewAPI.sendToOtherSlot = (msg: any) => {
+                if (msg.protocol === 'ai-sync' && msg.action === 'as:append-turn') {
+                  // Step 3: 只取 markdown（AI 回答），去掉 userMessage
+                  extractedMarkdown = msg.payload?.turn?.markdown || '';
                 }
-              }
+              };
+              await extractTurnAt(ctx, lastAssistantIdx);
+              viewAPI.sendToOtherSlot = origSlot;
+
+              // Step 4: 发回 main 进程 → 保存到 ThoughtStore
+              setAiStatus('idle');
+              viewAPI.aiSendResponse?.(params.responseChannel, {
+                success: !!extractedMarkdown.trim(),
+                markdown: extractedMarkdown || undefined,
+                error: extractedMarkdown.trim() ? undefined : 'extraction returned empty',
+              });
             } catch (exErr) {
-              console.warn('[AI_INJECT_AND_SEND] extractTurn failed, using SSE fallback:', exErr);
+              setAiStatus('idle');
+              console.warn('[AI_INJECT_AND_SEND] extractTurnAt failed:', exErr);
+              viewAPI.aiSendResponse?.(params.responseChannel, { success: false, error: String(exErr) });
             }
-            setAiStatus('idle');
-            viewAPI.aiSendResponse?.(params.responseChannel, { success: true, markdown: finalMd });
             return;
           }
         }
