@@ -122,9 +122,9 @@ export async function askAI(
 
   // 3. 标注选区
   if (blockPositions && blockPositions.length > 0) {
-    // 多 block 选择 → 使用框定系统
+    // 多 block 选择 → 使用框定系统，同时写入 thoughtId 用于锚定跳转
     const frameColor = THOUGHT_TYPE_META['ai-response'].color;
-    addBlockFrameGroup(view, blockPositions, frameColor, 'solid');
+    addBlockFrameGroup(view, blockPositions, frameColor, 'solid', record.id);
   } else {
     // inline 选择 → 使用 thought mark
     const mark = thoughtMarkType.create({

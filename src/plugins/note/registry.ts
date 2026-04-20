@@ -75,6 +75,7 @@ class BlockRegistry {
           frameColor: { default: null },     // 边框颜色，如 '#337EA9'
           frameStyle: { default: null },     // 'solid' | 'double'
           frameGroupId: { default: null },   // 多 block 分组 ID
+          frameThoughtId: { default: null }, // 关联的 Thought ID（用于 block thought 锚定跳转）
         };
       }
       nodes[block.name] = spec;

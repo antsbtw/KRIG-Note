@@ -50,6 +50,7 @@ export function addBlockFrameGroup(
   positions: number[],
   color: string,
   style: 'solid' | 'double' = 'solid',
+  thoughtId?: string,
 ): void {
   if (positions.length === 0) return;
 
@@ -64,6 +65,7 @@ export function addBlockFrameGroup(
       frameColor: color,
       frameStyle: style,
       frameGroupId: groupId,
+      ...(thoughtId ? { frameThoughtId: thoughtId } : {}),
     });
   }
 

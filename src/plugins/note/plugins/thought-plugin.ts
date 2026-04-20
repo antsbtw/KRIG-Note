@@ -89,12 +89,21 @@ export function thoughtPlugin(): Plugin {
     },
 
     props: {
-      handleClick(view: EditorView, _pos: number, event: MouseEvent) {
+      handleClick(view: EditorView, pos: number, event: MouseEvent) {
+        // 1. inline thought mark
         const target = event.target as HTMLElement;
         const anchor = target.closest('[data-thought-id]') as HTMLElement | null;
-        if (!anchor) return false;
+        let thoughtId = anchor?.getAttribute('data-thought-id') || null;
 
-        const thoughtId = anchor.getAttribute('data-thought-id');
+        // 2. block thought（frameThoughtId attr）
+        if (!thoughtId) {
+          const resolved = view.state.doc.resolve(pos);
+          for (let d = resolved.depth; d >= 0; d--) {
+            const fid = resolved.node(d).attrs.frameThoughtId;
+            if (fid) { thoughtId = fid; break; }
+          }
+        }
+
         if (!thoughtId) return false;
 
         const api = viewAPI();
@@ -109,12 +118,19 @@ export function thoughtPlugin(): Plugin {
         return false;
       },
 
-      handleDoubleClick(view: EditorView, _pos: number, event: MouseEvent) {
+      handleDoubleClick(view: EditorView, pos: number, event: MouseEvent) {
         const target = event.target as HTMLElement;
         const anchor = target.closest('[data-thought-id]') as HTMLElement | null;
-        if (!anchor) return false;
+        let thoughtId = anchor?.getAttribute('data-thought-id') || null;
 
-        const thoughtId = anchor.getAttribute('data-thought-id');
+        if (!thoughtId) {
+          const resolved = view.state.doc.resolve(pos);
+          for (let d = resolved.depth; d >= 0; d--) {
+            const fid = resolved.node(d).attrs.frameThoughtId;
+            if (fid) { thoughtId = fid; break; }
+          }
+        }
+
         if (!thoughtId) return false;
 
         // 双击 thought 锚点 → 打开 ThoughtView 并激活对应卡片
@@ -197,20 +213,34 @@ function updateThoughtType(view: EditorView, thoughtId: string, newType: string)
 
 /** 收集当前视口内可见的 thought anchor ID */
 function getVisibleThoughtIds(view: EditorView): string[] {
-  const anchors = view.dom.querySelectorAll('[data-thought-id]');
   const ids: string[] = [];
   const scrollParent = view.dom.closest('.ProseMirror-scroll') || view.dom.parentElement;
   if (!scrollParent) return ids;
-
   const rect = scrollParent.getBoundingClientRect();
+
+  // 1. inline thought marks
+  const anchors = view.dom.querySelectorAll('[data-thought-id]');
   anchors.forEach((el) => {
     const elRect = el.getBoundingClientRect();
-    // 元素与视口有交集即算可见
     if (elRect.bottom > rect.top && elRect.top < rect.bottom) {
       const id = el.getAttribute('data-thought-id');
       if (id && !ids.includes(id)) ids.push(id);
     }
   });
+
+  // 2. block thoughts（frameThoughtId attr）
+  view.state.doc.descendants((node, pos) => {
+    const fid = node.attrs.frameThoughtId;
+    if (!fid || ids.includes(fid)) return;
+    const dom = view.nodeDOM(pos) as HTMLElement | null;
+    if (dom) {
+      const elRect = dom.getBoundingClientRect();
+      if (elRect.bottom > rect.top && elRect.top < rect.bottom) {
+        ids.push(fid);
+      }
+    }
+  });
+
   return ids;
 }
 
@@ -230,6 +260,7 @@ function updateThoughtAnchorState(view: EditorView, thoughtId: string, aiState: 
 
 /** 滚动到指定 thought 锚点并闪烁高亮 */
 function scrollToThoughtAnchor(view: EditorView, thoughtId: string): void {
+  // 1. inline thought mark（data-thought-id DOM 属性）
   const el = view.dom.querySelector(`[data-thought-id="${thoughtId}"]`) as HTMLElement | null;
   if (el) {
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -238,8 +269,9 @@ function scrollToThoughtAnchor(view: EditorView, thoughtId: string): void {
     return;
   }
 
+  // 2. node-level thought（thoughtId attr）或 block thought（frameThoughtId attr）
   view.state.doc.descendants((node, pos) => {
-    if (node.attrs.thoughtId === thoughtId) {
+    if (node.attrs.thoughtId === thoughtId || node.attrs.frameThoughtId === thoughtId) {
       const dom = view.nodeDOM(pos) as HTMLElement | null;
       if (dom) {
         dom.scrollIntoView({ behavior: 'smooth', block: 'center' });

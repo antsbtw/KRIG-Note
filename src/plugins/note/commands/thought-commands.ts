@@ -157,9 +157,9 @@ async function addBlockThought(
   const record = await createRecord(api, noteId, 'block', anchorText, first, type);
   if (!record) return;
 
-  // 使用框定系统：颜色来自 thought 类型
+  // 使用框定系统：颜色来自 thought 类型，同时写入 thoughtId 用于锚定跳转
   const frameColor = THOUGHT_TYPE_META[type].color;
-  addBlockFrameGroup(view, validPositions, frameColor, 'solid');
+  addBlockFrameGroup(view, validPositions, frameColor, 'solid', record.id);
 
   await openAndNotify(api, record.id, 'block', anchorText, first, type, noteId);
 }
