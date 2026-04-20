@@ -342,13 +342,16 @@ export function getChatGPTConversationData(pageId: string): ChatGPTConversationD
     });
   }
 
-  // Step 2: Identify visible assistant messages (= DOM bubbles)
-  // These are the ones matched by [data-message-author-role="assistant"]
-  // that ChatGPT actually renders. Filter to content_type that produces visible output.
+  // Step 2: Identify visible messages (= DOM bubbles)
+  // Standard assistant messages: [data-message-author-role="assistant"]
+  // DALL·E image results: role=tool, ct=multimodal_text → rendered as .agent-turn
   const visibleAssistantIndices: number[] = [];
   for (let i = 0; i < parsed.length; i++) {
     const m = parsed[i];
     if (m.role === 'assistant' && VISIBLE_ASSISTANT_CONTENT_TYPES.has(m.contentType)) {
+      visibleAssistantIndices.push(i);
+    } else if (m.role === 'tool' && m.contentType === 'multimodal_text') {
+      // DALL·E image generation results
       visibleAssistantIndices.push(i);
     }
   }

@@ -341,7 +341,11 @@ async function probeChatGPTConversation(webContents: WebContents, force = false)
   if (!pageId || webContents.isDestroyed()) return;
 
   const url = safeGetURL(webContents);
-  if (!url.includes('chatgpt.com/c/') && !url.includes('chat.openai.com/c/')) return;
+  console.log('[BrowserCapability] probeChatGPT called:', { pageId, url: url.slice(0, 100), force });
+  if (!url.includes('chatgpt.com/c/') && !url.includes('chat.openai.com/c/')) {
+    console.warn('[BrowserCapability] probeChatGPT skipped: no /c/ in URL');
+    return;
+  }
 
   // 如果已经有 conversation.json 且非强制模式，跳过
   if (!force && browserCapabilityTraceWriter.hasExtractedFile(pageId, 'conversation.json')) return;
@@ -408,6 +412,12 @@ async function probeChatGPTConversation(webContents: WebContents, force = false)
       console.warn('[BrowserCapability] ChatGPT probe failed:', result?.error);
       return;
     }
+
+    console.log('[BrowserCapability] ChatGPT probe succeeded:', {
+      conversationId: result.conversationId,
+      convTextLen: result.convText?.length ?? 0,
+      textdocsLen: result.textdocsText?.length ?? 0,
+    });
 
     // 同步写入 conversation 数据 —— 确保后续 extractTurn 立即可读
     if (result.convText) {

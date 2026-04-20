@@ -349,9 +349,34 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
         });
       }
       var list = [];
-      for (var j = 0; j < parts.length; j++) {
+      // First pass: collect primary selector matches
+      var primaryNodes = document.querySelectorAll(parts[0]);
+      for (var k = 0; k < primaryNodes.length; k++) list.push(primaryNodes[k]);
+      // Second pass: add secondary selector matches only if they don't
+      // overlap with any primary match (ancestor/descendant relationship)
+      for (var j = 1; j < parts.length; j++) {
         var nodes = document.querySelectorAll(parts[j]);
-        for (var k = 0; k < nodes.length; k++) list.push(nodes[k]);
+        for (var k = 0; k < nodes.length; k++) {
+          var isDuplicate = false;
+          for (var p = 0; p < list.length; p++) {
+            if (list[p].contains(nodes[k]) || nodes[k].contains(list[p])) {
+              isDuplicate = true;
+              break;
+            }
+          }
+          if (!isDuplicate) {
+            // Insert in DOM order
+            var inserted = false;
+            for (var p = 0; p < list.length; p++) {
+              if (list[p].compareDocumentPosition(nodes[k]) & Node.DOCUMENT_POSITION_PRECEDING) {
+                list.splice(p, 0, nodes[k]);
+                inserted = true;
+                break;
+              }
+            }
+            if (!inserted) list.push(nodes[k]);
+          }
+        }
       }
       if (!hit) {
         var best = null;

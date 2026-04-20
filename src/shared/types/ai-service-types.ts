@@ -157,7 +157,7 @@ const CHATGPT_PROFILE: AIServiceProfile = {
     sendButton: 'button[data-testid="send-button"]',
     messageList: '[class*="react-scroll-to-bottom"]',
     userMessage: '[data-message-author-role="user"]',
-    assistantMessage: '[data-message-author-role="assistant"]',
+    assistantMessage: '[data-message-author-role="assistant"], .agent-turn',
     conversationTitle: 'title',
   },
   intercept: {

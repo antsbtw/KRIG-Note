@@ -48,43 +48,160 @@ async function fetchChatGPTFile(fileId: string): Promise<{ dataUrl: string; mime
       const result = await wc.executeJavaScript(`
         (async () => {
           try {
+            var fileId = ${JSON.stringify(fileId)};
+
             // Get token
-            const sessionResp = await fetch('/api/auth/session', { credentials: 'include' });
-            if (!sessionResp.ok) return null;
-            const session = await sessionResp.json();
-            const token = session.accessToken;
-            if (!token) return null;
+            var sessionResp = await fetch('/api/auth/session', { credentials: 'include' });
+            if (!sessionResp.ok) return { error: 'no-session', status: sessionResp.status };
+            var session = await sessionResp.json();
+            var token = session.accessToken;
+            if (!token) return { error: 'no-token' };
 
-            // Fetch file via download endpoint to get the actual URL
-            const dlResp = await fetch('/backend-api/files/${fileId}/download', {
+            // ChatGPT API requires these headers (discovered via community exporters)
+            var headers = {
+              'Authorization': 'Bearer ' + token,
+              'Oai-Device-Id': crypto.randomUUID(),
+              'Oai-Language': 'en-US',
+            };
+
+            // files/download → download_url → fetch actual bytes
+            var dlResp = await fetch('/backend-api/files/' + fileId + '/download', {
               credentials: 'include',
-              headers: { 'Authorization': 'Bearer ' + token },
+              headers: headers,
             });
-            if (!dlResp.ok) return null;
-            const dlData = await dlResp.json();
-            const downloadUrl = dlData.download_url;
-            if (!downloadUrl) return null;
+            if (!dlResp.ok) return { error: 'download-endpoint-failed', status: dlResp.status };
+            var dlData = await dlResp.json();
+            if (!dlData.download_url) return { error: 'no-download-url', data: JSON.stringify(dlData).slice(0, 200) };
 
-            // Fetch the actual file bytes
-            const fileResp = await fetch(downloadUrl);
-            if (!fileResp.ok) return null;
-            const blob = await fileResp.blob();
-            return new Promise((resolve) => {
-              const reader = new FileReader();
-              reader.onload = () => resolve({ dataUrl: reader.result, mimeType: blob.type });
-              reader.onerror = () => resolve(null);
+            var fileResp = await fetch(dlData.download_url);
+            if (!fileResp.ok) return { error: 'file-fetch-failed', status: fileResp.status };
+
+            var blob = await fileResp.blob();
+            return await new Promise(function(resolve) {
+              var reader = new FileReader();
+              reader.onload = function() { resolve({ dataUrl: reader.result, mimeType: blob.type }); };
+              reader.onerror = function() { resolve({ error: 'read-error' }); };
               reader.readAsDataURL(blob);
             });
           } catch (e) {
-            return null;
+            return { error: String(e) };
           }
         })()
       `);
 
-      if (result?.dataUrl) return result;
+      if (result?.dataUrl && typeof result.dataUrl === 'string' && result.dataUrl.startsWith('data:')) {
+        console.log('[chatgpt-extract] fetchChatGPTFile succeeded:', fileId, 'mime:', result.mimeType, 'size:', result.dataUrl.length);
+        return result;
+      }
+      console.warn('[chatgpt-extract] fetchChatGPTFile failed:', fileId, JSON.stringify(result));
     }
     return null;
-  } catch {
+  } catch (err) {
+    console.warn('[chatgpt-extract] fetchChatGPTFile error:', fileId, err);
+    return null;
+  }
+}
+
+/**
+ * Download a ChatGPT file and persist to media store.
+ *
+ * Two file_id formats exist:
+ * - file-XXXX (old, Code Interpreter) → /backend-api/files/{id}/download → download_url
+ * - file_00000000XXXX (new, DALL·E gpt-image-1) → signed estuary URL from DOM <img src>
+ *
+ * Returns media:// URL or null.
+ */
+async function downloadChatGPTFileToMedia(fileId: string): Promise<string | null> {
+  let dataUrl: string | null = null;
+  let mimeType = 'image/png';
+
+  // Old format (file-XXX): use files/download API
+  if (fileId.startsWith('file-')) {
+    const result = await fetchChatGPTFile(fileId);
+    if (result?.dataUrl) {
+      dataUrl = result.dataUrl;
+      mimeType = result.mimeType || 'image/png';
+    }
+  }
+
+  // New format (file_XXX) or API failed: resolve signed URL from page
+  if (!dataUrl) {
+    dataUrl = await fetchFileFromSignedUrl(fileId);
+  }
+
+  if (!dataUrl) return null;
+
+  // Fix MIME if octet-stream
+  if (mimeType === 'application/octet-stream') {
+    mimeType = sniffMimeFromBase64(dataUrl.split(',')[1]) || 'image/png';
+    dataUrl = dataUrl.replace(/^data:[^;]+;/, `data:${mimeType};`);
+  }
+
+  // Persist to media store
+  const put = await ensureMediaStore();
+  if (put) {
+    const ext = mimeType.includes('jpeg') ? 'jpg' : mimeType.includes('png') ? 'png'
+      : mimeType.includes('gif') ? 'gif' : 'webp';
+    const r = await put(dataUrl, mimeType, `chatgpt-${fileId.slice(-8)}.${ext}`);
+    if (r.success && r.mediaUrl) {
+      console.log('[chatgpt-extract] file saved to media:', fileId, r.mediaUrl);
+      return r.mediaUrl;
+    }
+  }
+  return dataUrl;
+}
+
+/**
+ * Download a file using its signed estuary URL from the ChatGPT page.
+ *
+ * DALL·E gpt-image-1 files use file_00000000... IDs that the files/download
+ * API rejects as "Invalid file_id". The only way to download them is via
+ * the estuary signed URL (with ts/sig params) that ChatGPT's frontend JS
+ * generates.
+ *
+ * Method:
+ * 1. executeJavaScript to resolve the signed URL from the page's <img> elements
+ * 2. session.fetch to download the bytes (uses Chrome network stack with session cookies)
+ *
+ * This is NOT a DOM fallback — it's the correct download path for new-format
+ * file IDs, matching how ChatGPT's own client loads these images.
+ */
+async function fetchFileFromSignedUrl(fileId: string): Promise<string | null> {
+  try {
+    for (const wc of electronWebContents.getAllWebContents()) {
+      const wcUrl = wc.getURL();
+      if (!wcUrl.includes('chatgpt.com') && !wcUrl.includes('chat.openai.com')) continue;
+
+      // Step 1: Get the signed URL from page (ChatGPT's JS already generated it)
+      const signedUrl: string | null = await wc.executeJavaScript(`
+        (function() {
+          var imgs = document.querySelectorAll('img');
+          for (var i = 0; i < imgs.length; i++) {
+            if ((imgs[i].src || '').indexOf(${JSON.stringify(fileId)}) >= 0 && imgs[i].naturalWidth > 50) {
+              return imgs[i].src;
+            }
+          }
+          return null;
+        })()
+      `);
+
+      if (!signedUrl) continue;
+      console.log('[chatgpt-extract] resolved signed URL for', fileId);
+
+      // Step 2: Download via session.fetch (Chrome network stack, auto-cookies)
+      const response = await wc.session.fetch(signedUrl);
+      if (!response.ok) {
+        console.warn('[chatgpt-extract] session.fetch failed:', fileId, response.status);
+        continue;
+      }
+
+      const buffer = Buffer.from(await response.arrayBuffer());
+      const contentType = response.headers.get('content-type') || 'application/octet-stream';
+      return `data:${contentType};base64,${buffer.toString('base64')}`;
+    }
+    return null;
+  } catch (err) {
+    console.warn('[chatgpt-extract] fetchFileFromSignedUrl error:', err);
     return null;
   }
 }
@@ -199,37 +316,19 @@ async function extractDomImages(textPrefix: string): Promise<string[]> {
 
       if (!imgUrls || imgUrls.length === 0) return [];
 
-      // Download images — use Electron's net module from main process to avoid CORS
+      // Download images via session.fetch (Chrome network stack, auto-cookies)
       const put = await ensureMediaStore();
       const results: string[] = [];
       for (const imgUrl of imgUrls) {
         try {
-          // Use main process fetch (no CORS restrictions)
-          const { net } = await import('electron');
-          const dataUrl = await new Promise<string | null>((resolve) => {
-            const request = net.request(imgUrl);
-            const chunks: Buffer[] = [];
-            request.on('response', (response) => {
-              if (response.statusCode !== 200) {
-                console.warn('[chatgpt-extract] image download failed:', imgUrl.slice(0, 80), 'status:', response.statusCode);
-                resolve(null);
-                return;
-              }
-              const contentType = response.headers['content-type']?.[0] || response.headers['content-type'] || 'image/png';
-              response.on('data', (chunk: Buffer) => chunks.push(chunk));
-              response.on('end', () => {
-                const buffer = Buffer.concat(chunks);
-                const b64 = buffer.toString('base64');
-                resolve(`data:${contentType};base64,${b64}`);
-              });
-              response.on('error', () => resolve(null));
-            });
-            request.on('error', (err) => {
-              console.warn('[chatgpt-extract] image request error:', imgUrl.slice(0, 80), err.message);
-              resolve(null);
-            });
-            request.end();
-          });
+          const response = await wc.session.fetch(imgUrl);
+          if (!response.ok) {
+            console.warn('[chatgpt-extract] image download failed:', imgUrl.slice(0, 80), response.status);
+            continue;
+          }
+          const buffer = Buffer.from(await response.arrayBuffer());
+          const contentType = response.headers.get('content-type') || 'application/octet-stream';
+          const dataUrl = `data:${contentType};base64,${buffer.toString('base64')}`;
 
           if (dataUrl && put) {
             const mimeMatch = dataUrl.match(/^data:([^;]+);/);
@@ -252,6 +351,79 @@ async function extractDomImages(textPrefix: string): Promise<string[]> {
     return [];
   } catch {
     return [];
+  }
+}
+
+/**
+ * Find an image in the DOM whose src contains the given file_id,
+ * download it via Electron net (to get the signed URL with ts/sig params),
+ * and persist to media store.
+ */
+async function extractDomImageBySrc(fileId: string): Promise<string | null> {
+  try {
+    for (const wc of electronWebContents.getAllWebContents()) {
+      const url = wc.getURL();
+      if (!url.includes('chatgpt.com') && !url.includes('chat.openai.com')) continue;
+
+      const imgSrc: string | null = await wc.executeJavaScript(`
+        (function() {
+          var imgs = document.querySelectorAll('img');
+          for (var i = 0; i < imgs.length; i++) {
+            var src = imgs[i].src || '';
+            if (src.indexOf(${JSON.stringify(fileId)}) >= 0 && imgs[i].naturalWidth > 100) {
+              return src;
+            }
+          }
+          return null;
+        })()
+      `);
+
+      if (!imgSrc) continue;
+
+      console.log('[chatgpt-extract] extractDomImageBySrc found:', fileId, imgSrc.slice(0, 100));
+
+      // Download via Electron net (signed URL, no CORS)
+      const { net } = await import('electron');
+      const dataUrl = await new Promise<string | null>((resolve) => {
+        const request = net.request(imgSrc);
+        const chunks: Buffer[] = [];
+        request.on('response', (response) => {
+          if (response.statusCode !== 200) { resolve(null); return; }
+          const contentType = response.headers['content-type']?.[0] || response.headers['content-type'] || 'image/png';
+          response.on('data', (chunk: Buffer) => chunks.push(chunk));
+          response.on('end', () => {
+            const buffer = Buffer.concat(chunks);
+            resolve(`data:${contentType};base64,${buffer.toString('base64')}`);
+          });
+          response.on('error', () => resolve(null));
+        });
+        request.on('error', () => resolve(null));
+        request.end();
+      });
+
+      if (dataUrl) {
+        const put = await ensureMediaStore();
+        if (put) {
+          const mimeMatch = dataUrl.match(/^data:([^;]+);/);
+          const mime = mimeMatch ? mimeMatch[1] : 'image/png';
+          // Sniff real MIME if octet-stream
+          const actualMime = (mime === 'application/octet-stream')
+            ? (sniffMimeFromBase64(dataUrl.split(',')[1]) || 'image/png')
+            : mime;
+          const ext = actualMime.includes('jpeg') ? 'jpg' : actualMime.includes('png') ? 'png' : actualMime.includes('gif') ? 'gif' : 'webp';
+          const correctedDataUrl = dataUrl.replace(/^data:[^;]+;/, `data:${actualMime};`);
+          const r = await put(correctedDataUrl, actualMime, `dalle-${fileId.slice(-8)}.${ext}`);
+          if (r.success && r.mediaUrl) {
+            console.log('[chatgpt-extract] DALL·E image saved:', r.mediaUrl);
+            return r.mediaUrl;
+          }
+        }
+        return dataUrl;
+      }
+    }
+    return null;
+  } catch {
+    return null;
   }
 }
 
@@ -475,17 +647,14 @@ async function turnToMarkdown(turn: ChatGPTTurn, pageId: string, conversationId:
     }
   }
 
-  // Fetch images for file refs (DALL·E / Code Interpreter via estuary)
-  if (turn.fileRefs.length > 0) {
+  // Fetch images for file refs (DALL·E / Code Interpreter)
+  // Strategy: files/download API (file- prefix) or DOM signed URL (file_ prefix)
+  if (turn.fileRefs.length > 0 && domImages.length === 0) {
     for (const fileId of turn.fileRefs) {
-      try {
-        const file = await fetchChatGPTFile(fileId);
-        if (file?.dataUrl) {
-          parts.push(`![${fileId}](${file.dataUrl})`);
-        } else {
-          parts.push(`> 📎 图片引用: ${fileId}（下载失败）`);
-        }
-      } catch {
+      const mediaUrl = await downloadChatGPTFileToMedia(fileId);
+      if (mediaUrl) {
+        parts.push(`![](${mediaUrl})`);
+      } else {
         parts.push(`> 📎 图片引用: ${fileId}（下载失败）`);
       }
     }
