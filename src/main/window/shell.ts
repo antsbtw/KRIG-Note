@@ -112,50 +112,16 @@ function createViewForWorkMode(workModeId: string): WebContentsView {
         partition: 'persist:web',
       });
       guestWebContents.on('did-start-loading', () => {
-        console.log('[GuestWebContents] did-start-loading', {
-          embedderId: view.webContents.id,
-          guestId: guestWebContents.id,
-          url: guestWebContents.getURL?.() || '',
-        });
       });
       guestWebContents.on('did-stop-loading', () => {
-        console.log('[GuestWebContents] did-stop-loading', {
-          embedderId: view.webContents.id,
-          guestId: guestWebContents.id,
-          url: guestWebContents.getURL?.() || '',
-        });
       });
       guestWebContents.on('did-fail-load', (_e, errorCode, errorDescription, validatedURL, isMainFrame) => {
-        console.log('[GuestWebContents] did-fail-load', {
-          embedderId: view.webContents.id,
-          guestId: guestWebContents.id,
-          errorCode,
-          errorDescription,
-          validatedURL,
-          isMainFrame,
-        });
       });
       guestWebContents.on('render-process-gone', (_e, details) => {
-        console.log('[GuestWebContents] render-process-gone', {
-          embedderId: view.webContents.id,
-          guestId: guestWebContents.id,
-          reason: details.reason,
-          exitCode: details.exitCode,
-        });
       });
       guestWebContents.on('unresponsive', () => {
-        console.log('[GuestWebContents] unresponsive', {
-          embedderId: view.webContents.id,
-          guestId: guestWebContents.id,
-          url: guestWebContents.getURL?.() || '',
-        });
       });
       guestWebContents.on('responsive', () => {
-        console.log('[GuestWebContents] responsive', {
-          embedderId: view.webContents.id,
-          guestId: guestWebContents.id,
-          url: guestWebContents.getURL?.() || '',
-        });
       });
 
       // 弹窗策略：target=_blank → 内部导航，OAuth → 允许子窗口

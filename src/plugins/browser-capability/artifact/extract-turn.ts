@@ -65,9 +65,6 @@ function clearExtractedArtifactCache(): void {
         cleared++;
       }
     }
-    if (cleared > 0) {
-      console.log(`[extract-turn] cleared ${cleared} cached SVG files before extraction`);
-    }
   } catch (err) {
     console.warn('[extract-turn] failed to clear artifact cache', err);
   }
@@ -76,16 +73,93 @@ function clearExtractedArtifactCache(): void {
 // ── SVG preprocessing ──
 
 /**
- * Prepare SVG for DOM rendering:
- * 1. Add xmlns if missing
- * 2. Remove event handlers (onclick 等)
- * 3. Replace CSS variables with Claude 暗色主题的具体颜色值
- * 4. Inject <style> for CSS classes (.ts/.th/.node/.c-*)
+ * 完整的 Claude SVG 暗色主题样式表。
+ * 颜色值从 Claude 页面下载的 SVG 的 computed inline styles 中提取。
+ * 选择器覆盖所有 SVG 图形元素类型（rect/ellipse/circle/path/polygon）。
+ */
+const CLAUDE_SVG_STYLESHEET = `
+  /* 基础字体 */
+  text { font-family: "Anthropic Sans", -apple-system, system-ui, sans-serif; fill: rgb(194,192,182); }
+  .ts { font-size: 12px; fill: rgb(194,192,182); }
+  .th { font-size: 14px; fill: rgb(211,209,199); font-weight: 500; }
+
+  /* 图形元素通用 */
+  .node rect, .node ellipse, .node circle, .node path, .node polygon { stroke-width: 0.5; }
+
+  /* c-gray */
+  .c-gray > rect, .c-gray > ellipse, .c-gray > circle, .c-gray > path, .c-gray > polygon { fill: rgb(68,68,65); stroke: rgb(180,178,169); }
+  .c-gray > text, .c-gray > text.th { fill: rgb(211,209,199); }
+  .c-gray > text.ts, .c-gray text.ts { fill: rgb(180,178,169); }
+
+  /* c-amber */
+  .c-amber > rect, .c-amber > ellipse, .c-amber > circle, .c-amber > path, .c-amber > polygon { fill: rgb(99,56,6); stroke: rgb(239,159,39); }
+  .c-amber > text.th, .c-amber text.th { fill: rgb(250,199,117); }
+  .c-amber > text.ts, .c-amber text.ts { fill: rgb(239,159,39); }
+
+  /* c-coral */
+  .c-coral > rect, .c-coral > ellipse, .c-coral > circle, .c-coral > path, .c-coral > polygon { fill: rgb(113,43,19); stroke: rgb(240,153,123); }
+  .c-coral > text.th, .c-coral text.th { fill: rgb(245,196,179); }
+  .c-coral > text.ts, .c-coral text.ts { fill: rgb(240,153,123); }
+
+  /* c-teal */
+  .c-teal > rect, .c-teal > ellipse, .c-teal > circle, .c-teal > path, .c-teal > polygon { fill: rgb(8,80,65); stroke: rgb(93,202,165); }
+  .c-teal > text.th, .c-teal text.th { fill: rgb(159,225,203); }
+  .c-teal > text.ts, .c-teal text.ts { fill: rgb(93,202,165); }
+
+  /* c-purple */
+  .c-purple > rect, .c-purple > ellipse, .c-purple > circle, .c-purple > path, .c-purple > polygon { fill: rgb(60,52,137); stroke: rgb(175,169,236); }
+  .c-purple > text.th, .c-purple text.th { fill: rgb(206,203,246); }
+  .c-purple > text.ts, .c-purple text.ts { fill: rgb(175,169,236); }
+
+  /* c-blue */
+  .c-blue > rect, .c-blue > ellipse, .c-blue > circle, .c-blue > path, .c-blue > polygon { fill: rgb(20,60,120); stroke: rgb(100,160,240); }
+  .c-blue > text.th, .c-blue text.th { fill: rgb(180,210,250); }
+  .c-blue > text.ts, .c-blue text.ts { fill: rgb(100,160,240); }
+
+  /* c-green */
+  .c-green > rect, .c-green > ellipse, .c-green > circle, .c-green > path, .c-green > polygon { fill: rgb(15,70,40); stroke: rgb(80,200,120); }
+  .c-green > text.th, .c-green text.th { fill: rgb(160,230,180); }
+  .c-green > text.ts, .c-green text.ts { fill: rgb(80,200,120); }
+
+  /* c-red */
+  .c-red > rect, .c-red > ellipse, .c-red > circle, .c-red > path, .c-red > polygon { fill: rgb(100,30,30); stroke: rgb(230,80,80); }
+  .c-red > text.th, .c-red text.th { fill: rgb(245,170,170); }
+  .c-red > text.ts, .c-red text.ts { fill: rgb(230,80,80); }
+
+  /* c-indigo */
+  .c-indigo > rect, .c-indigo > ellipse, .c-indigo > circle, .c-indigo > path, .c-indigo > polygon { fill: rgb(45,40,120); stroke: rgb(130,120,220); }
+  .c-indigo > text.th, .c-indigo text.th { fill: rgb(190,185,240); }
+  .c-indigo > text.ts, .c-indigo text.ts { fill: rgb(130,120,220); }
+`;
+
+const CLAUDE_CSS_VARS: Record<string, string> = {
+  'var(--color-border-tertiary)': 'rgba(222,220,209,0.15)',
+  'var(--color-border-secondary)': 'rgba(222,220,209,0.3)',
+  'var(--color-border-primary)': 'rgba(222,220,209,0.5)',
+  'var(--color-text-primary)': 'rgb(250,249,245)',
+  'var(--color-text-secondary)': 'rgb(194,192,182)',
+  'var(--color-text-tertiary)': 'rgb(148,146,137)',
+  'var(--color-bg-primary)': 'rgb(43,43,40)',
+  'var(--color-bg-secondary)': 'rgb(55,55,52)',
+  'var(--color-bg-tertiary)': 'rgb(68,68,65)',
+  'var(--color-background-primary)': 'rgb(43,43,40)',
+  'var(--color-background-secondary)': 'rgb(55,55,52)',
+  'var(--color-background-tertiary)': 'rgb(68,68,65)',
+  'var(--text-color-primary)': 'rgb(250,249,245)',
+  'var(--text-color-secondary)': 'rgb(194,192,182)',
+  'var(--text-color-tertiary)': 'rgb(148,146,137)',
+  'var(--bg-color)': 'rgb(43,43,40)',
+  'var(--fg-color)': 'rgb(250,249,245)',
+};
+
+/**
+ * Prepare SVG for rendering — 让 widget_code 源码自包含：
+ * 1. Add xmlns
+ * 2. Remove event handlers（onclick 含未转义引号会破坏 XML）
+ * 3. Replace CSS variables with concrete color values
+ * 4. Inject complete <style> block（覆盖所有 CSS 类和图形元素类型）
  *
- * Claude widget_code 中的 SVG 使用 CSS 类和 CSS 变量，但这些在脱离
- * Claude 页面后无法解析。下载的 SVG 之所以能正确显示，是因为浏览器
- * 导出时自动把 computed styles 内联到了每个元素上。
- * 这里在提取端做等价的处理，让 SVG 文件自包含。
+ * 目标：保存到 media store 的 SVG 不依赖外部 CSS，和从 Claude 下载的原件渲染效果一致。
  */
 function prepareSvgForDom(raw: string): string {
   let svg = raw;
@@ -95,7 +169,7 @@ function prepareSvgForDom(raw: string): string {
     svg = svg.replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg"');
   }
 
-  // 2. Remove onclick/onmouseover/etc event handler attributes.
+  // 2. Remove onclick/onmouseover/etc event handler attributes
   svg = svg.replace(/ on\w+=(?:"[^>]*>|'[^>]*>)/g, '>');
   svg = svg.split('\n').map((line) => {
     if (/ on\w+=/.test(line)) {
@@ -104,72 +178,19 @@ function prepareSvgForDom(raw: string): string {
     return line;
   }).join('\n');
 
-  // 3. Replace CSS variables with Claude dark-theme concrete values
-  //    (从 Claude 页面下载的 SVG 中提取的实际 computed 颜色值)
-  const cssVarMap: Record<string, string> = {
-    'var(--color-border-tertiary)': 'rgba(222, 220, 209, 0.15)',
-    'var(--color-border-secondary)': 'rgba(222, 220, 209, 0.3)',
-    'var(--color-border-primary)': 'rgba(222, 220, 209, 0.5)',
-    'var(--color-text-primary)': 'rgb(250, 249, 245)',
-    'var(--color-text-secondary)': 'rgb(194, 192, 182)',
-    'var(--color-text-tertiary)': 'rgb(148, 146, 137)',
-    'var(--color-bg-primary)': 'rgb(43, 43, 40)',
-    'var(--color-bg-secondary)': 'rgb(55, 55, 52)',
-    'var(--color-bg-tertiary)': 'rgb(68, 68, 65)',
-    'var(--color-background-primary)': 'rgb(43, 43, 40)',
-    'var(--color-background-secondary)': 'rgb(55, 55, 52)',
-    'var(--color-background-tertiary)': 'rgb(68, 68, 65)',
-    'var(--text-color-primary)': 'rgb(250, 249, 245)',
-    'var(--text-color-secondary)': 'rgb(194, 192, 182)',
-    'var(--text-color-tertiary)': 'rgb(148, 146, 137)',
-    'var(--bg-color)': 'rgb(43, 43, 40)',
-    'var(--fg-color)': 'rgb(250, 249, 245)',
-  };
-  for (const [cssVar, value] of Object.entries(cssVarMap)) {
+  // 3. Replace CSS variables with concrete values
+  for (const [cssVar, value] of Object.entries(CLAUDE_CSS_VARS)) {
     while (svg.includes(cssVar)) {
       svg = svg.replace(cssVar, value);
     }
   }
 
-  // 4. Inject <style> for Claude widget CSS classes (暗色主题)
-  //    颜色值从 Claude 页面下载的 SVG 的 inline styles 中提取
-  const svgOpenEnd = svg.indexOf('>', svg.indexOf('<svg'));
-  if (svgOpenEnd > 0) {
-    const injected = [
-      `<style>`,
-      `  text { font-family: "Anthropic Sans", -apple-system, system-ui, sans-serif; }`,
-      `  .ts { font-size: 12px; fill: rgb(194, 192, 182); }`,
-      `  .th { font-size: 14px; fill: rgb(211, 209, 199); font-weight: 500; }`,
-      `  .node rect { stroke-width: 0.5; }`,
-      `  .c-gray rect { fill: rgb(68, 68, 65); stroke: rgb(180, 178, 169); }`,
-      `  .c-gray text { fill: rgb(180, 178, 169); }`,
-      `  .c-amber rect { fill: rgb(99, 56, 6); stroke: rgb(239, 159, 39); }`,
-      `  .c-amber .th { fill: rgb(250, 199, 117); }`,
-      `  .c-amber .ts { fill: rgb(239, 159, 39); }`,
-      `  .c-coral rect { fill: rgb(113, 43, 19); stroke: rgb(240, 153, 123); }`,
-      `  .c-coral .th { fill: rgb(245, 196, 179); }`,
-      `  .c-coral .ts { fill: rgb(240, 153, 123); }`,
-      `  .c-teal rect { fill: rgb(8, 80, 65); stroke: rgb(93, 202, 165); }`,
-      `  .c-teal .th { fill: rgb(159, 225, 203); }`,
-      `  .c-teal .ts { fill: rgb(93, 202, 165); }`,
-      `  .c-purple rect { fill: rgb(60, 52, 137); stroke: rgb(175, 169, 236); }`,
-      `  .c-purple .th { fill: rgb(206, 203, 246); }`,
-      `  .c-purple .ts { fill: rgb(175, 169, 236); }`,
-      `  .c-blue rect { fill: rgb(20, 60, 120); stroke: rgb(100, 160, 240); }`,
-      `  .c-blue .th { fill: rgb(180, 210, 250); }`,
-      `  .c-blue .ts { fill: rgb(100, 160, 240); }`,
-      `  .c-green rect { fill: rgb(15, 70, 40); stroke: rgb(80, 200, 120); }`,
-      `  .c-green .th { fill: rgb(160, 230, 180); }`,
-      `  .c-green .ts { fill: rgb(80, 200, 120); }`,
-      `  .c-red rect { fill: rgb(100, 30, 30); stroke: rgb(230, 80, 80); }`,
-      `  .c-red .th { fill: rgb(245, 170, 170); }`,
-      `  .c-red .ts { fill: rgb(230, 80, 80); }`,
-      `  .c-indigo rect { fill: rgb(45, 40, 120); stroke: rgb(130, 120, 220); }`,
-      `  .c-indigo .th { fill: rgb(190, 185, 240); }`,
-      `  .c-indigo .ts { fill: rgb(130, 120, 220); }`,
-      `</style>`,
-    ].join('\n');
-    svg = svg.slice(0, svgOpenEnd + 1) + '\n' + injected + '\n' + svg.slice(svgOpenEnd + 1);
+  // 4. Inject <style> block（如果 SVG 中没有已有的 <style>）
+  if (!svg.includes('<style')) {
+    const svgOpenEnd = svg.indexOf('>', svg.indexOf('<svg'));
+    if (svgOpenEnd > 0) {
+      svg = svg.slice(0, svgOpenEnd + 1) + `\n<style>${CLAUDE_SVG_STYLESHEET}</style>\n` + svg.slice(svgOpenEnd + 1);
+    }
   }
 
   return svg;
@@ -193,7 +214,6 @@ async function artifactToMarkdown(artifact: MessageArtifact): Promise<string> {
           let svgCode = prepareSvgForDom(content.code);
           const dataUrl = `data:image/svg+xml;base64,${Buffer.from(svgCode, 'utf-8').toString('base64')}`;
           const result = await put(dataUrl, 'image/svg+xml', `${artifact.title}.svg`);
-          console.log('[extract-turn] media store put result', { title: artifact.title, success: result.success, mediaUrl: result.mediaUrl });
           if (result.success && result.mediaUrl) {
             return `![${artifact.title}](${result.mediaUrl})\n`;
           }
@@ -213,7 +233,6 @@ async function artifactToMarkdown(artifact: MessageArtifact): Promise<string> {
       if (put) {
         const dataUrl = `data:text/html;base64,${Buffer.from(content.code, 'utf-8').toString('base64')}`;
         const result = await put(dataUrl, 'text/html', `${artifact.title}.html`);
-        console.log('[extract-turn] html media store put result', { title: artifact.title, success: result.success, mediaUrl: result.mediaUrl });
         if (result.success && result.mediaUrl) {
           return `!html[${artifact.title}](${result.mediaUrl})\n`;
         }
@@ -254,7 +273,6 @@ async function artifactToMarkdown(artifact: MessageArtifact): Promise<string> {
           const dataUrl = `data:text/html;base64,${Buffer.from(content.text, 'utf-8').toString('base64')}`;
           const filename = content.path.split('/').pop() || `${artifact.title}.html`;
           const result = await put(dataUrl, 'text/html', filename);
-          console.log('[extract-turn] html file_text put result', { title: artifact.title, success: result.success, mediaUrl: result.mediaUrl });
           if (result.success && result.mediaUrl) {
             return `!html[${artifact.title}](${result.mediaUrl})\n`;
           }
@@ -379,7 +397,6 @@ async function downloadLocalResource(filePath: string): Promise<string | null> {
 
       const result = await wc.executeJavaScript(downloadScript);
       if (result && typeof result === 'string' && result.length > 0) {
-        console.log('[extract-turn] local_resource downloaded', { filePath, size: result.length });
         return result;
       }
     }
