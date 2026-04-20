@@ -4,6 +4,7 @@ import { THOUGHT_TYPE_META } from '../../../shared/types/thought-types';
 import { THOUGHT_ACTION } from '../../thought/thought-protocol';
 import { blockSelectionKey } from '../plugins/block-selection';
 import { addBlockFrameGroup } from './frame-commands';
+import { selectionToMarkdown } from './selection-to-markdown';
 
 /**
  * addThought — 在当前光标/选区位置创建 Thought 锚点
@@ -96,7 +97,10 @@ export async function addThought(
   } else if (!empty && isInlineSelection(state, from, to)) {
     // ── 路径 1: inline mark（段落内部分文字） ──
     anchorType = 'inline';
-    anchorText = state.doc.textBetween(from, to, ' ').slice(0, 100);
+    // selectionToMarkdown 能正确提取行内公式等非文本节点
+    const { markdown: selMd } = selectionToMarkdown(view);
+    const firstLine = selMd.trim().split('\n').find(l => l.trim())?.trim() || '';
+    anchorText = (firstLine || state.doc.textBetween(from, to, ' ')).slice(0, 100);
 
     const record = await createRecord(api, noteId, anchorType, anchorText, anchorPos, type);
     if (!record) return;
@@ -137,9 +141,18 @@ async function addBlockThought(
   const first = validPositions[0];
   const last = validPositions[validPositions.length - 1];
   const lastNode = state.doc.nodeAt(last);
-  const anchorText = state.doc.textBetween(
-    first + 1, last + (lastNode?.nodeSize ?? 1) - 1, ' ',
-  ).slice(0, 100);
+  // 优先用 selectionToMarkdown（含行内公式），选区不匹配时 fallback 到 textBetween
+  let anchorText: string;
+  const { from: selFrom, to: selTo } = view.state.selection;
+  if (selFrom !== selTo) {
+    const { markdown: selMd } = selectionToMarkdown(view);
+    const firstLine = selMd.trim().split('\n').find(l => l.trim())?.trim() || '';
+    anchorText = firstLine.slice(0, 100);
+  } else {
+    anchorText = state.doc.textBetween(
+      first + 1, last + (lastNode?.nodeSize ?? 1) - 1, ' ',
+    ).slice(0, 100);
+  }
 
   const record = await createRecord(api, noteId, 'block', anchorText, first, type);
   if (!record) return;
