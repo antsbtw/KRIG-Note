@@ -858,29 +858,17 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
               console.log('[AI_ASK_VISIBLE] Parsing markdown, length:', result.markdown.length);
               console.log('[AI_ASK_VISIBLE] Markdown preview:', result.markdown.slice(0, 200));
 
+              // 复用 AI_PARSE_MARKDOWN 的解析逻辑（与右键提取一致）
               const parser = new ResultParser();
               const blocks = parser.parse(result.markdown);
-              console.log('[AI_ASK_VISIBLE] Parsed blocks:', blocks.length, blocks.map((b: any) => b.type));
+              const atoms = createAtomsFromExtracted(blocks, '__skip_title__');
 
-              const atoms = createAtomsFromExtracted(blocks);
-              console.log('[AI_ASK_VISIBLE] Created atoms:', atoms.length, atoms.map((a: any) => `${a.type}(${a.id?.slice(0,8)})`));
-
-              // Remove the document root and noteTitle — Thought only needs content atoms
-              const contentAtoms = atoms.filter((a: any) => a.type !== 'document' && a.type !== 'noteTitle');
-              console.log('[AI_ASK_VISIBLE] Content atoms (after filter):', contentAtoms.length);
-
-              // Fix parentId: Thought's atomsToDoc expects top-level atoms without parentId,
-              // or with parentId pointing to a root document.
-              // Since we removed the document atom, clear parentId of top-level atoms.
               const docAtom = atoms.find((a: any) => a.type === 'document');
               const docId = docAtom?.id;
+              const contentAtoms = atoms.filter((a: any) => a.type !== 'document' && a.type !== 'noteTitle');
               for (const atom of contentAtoms) {
-                if (atom.parentId === docId) {
-                  atom.parentId = undefined;
-                }
+                if (atom.parentId === docId) atom.parentId = undefined;
               }
-
-              console.log('[AI_ASK_VISIBLE] First content atom:', JSON.stringify(contentAtoms[0])?.slice(0, 300));
 
               await thoughtStore.save(params.thoughtId, { doc_content: contentAtoms });
               console.log('[AI_ASK_VISIBLE] Saved', contentAtoms.length, 'atoms to ThoughtStore');
