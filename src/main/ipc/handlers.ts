@@ -855,14 +855,19 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
               // 1. 通过 extractTurn 获取完整 markdown（与右键提取一致）
               let markdown = result.markdown || '';
               try {
+                // 等待 conversation API 数据同步（SSE 完成后 API 数据可能有短暂延迟）
+                await new Promise(r => setTimeout(r, 2000));
                 const { getGuest } = await import('../../plugins/web-bridge/infrastructure/guest-registry');
                 const guest = getGuest(rightWC.id);
                 if (guest) {
                   const pageId = getPageIdForWebContents(guest);
                   if (pageId) {
                     const { extractTurn } = await import('../../plugins/browser-capability/artifact/extract-turn');
-                    // 提取最后一轮（msgIndex = -1 表示最后一条）
-                    const extracted = await extractTurn(pageId, -1);
+                    const { getConversationData } = await import('../../plugins/browser-capability/artifact/conversation-query');
+                    const conv = getConversationData(pageId);
+                    const assistantMsgs = conv?.messages.filter((m: any) => m.sender === 'assistant') || [];
+                    const lastIndex = assistantMsgs.length - 1;
+                    const extracted = lastIndex >= 0 ? await extractTurn(pageId, lastIndex) : null;
                     if (extracted?.markdown) {
                       markdown = extracted.markdown;
                       console.log('[AI_ASK_VISIBLE] extractTurn succeeded, md length:', markdown.length);
