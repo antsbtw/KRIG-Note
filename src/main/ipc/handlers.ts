@@ -849,18 +849,42 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
           ipcMain.removeListener(responseChannel, listener);
           console.log('[AI_ASK_VISIBLE] Step 4: Got response from renderer:', { success: result?.success, mdLen: result?.markdown?.length ?? 0, error: result?.error });
 
-          // Parse markdown → Atoms and save to ThoughtStore
-          if (result?.success && result?.markdown) {
+          // 用右键提取的函数获取完整 AI 回复（包括 SVG/图片/artifact）
+          if (result?.success) {
             try {
+              // 1. 通过 extractTurn 获取完整 markdown（与右键提取一致）
+              let markdown = result.markdown || '';
+              try {
+                const { getGuest } = await import('../../plugins/web-bridge/infrastructure/guest-registry');
+                const guest = getGuest(rightWC.id);
+                if (guest) {
+                  const pageId = getPageIdForWebContents(guest);
+                  if (pageId) {
+                    const { extractTurn } = await import('../../plugins/browser-capability/artifact/extract-turn');
+                    // 提取最后一轮（msgIndex = -1 表示最后一条）
+                    const extracted = await extractTurn(pageId, -1);
+                    if (extracted?.markdown) {
+                      markdown = extracted.markdown;
+                      console.log('[AI_ASK_VISIBLE] extractTurn succeeded, md length:', markdown.length);
+                    }
+                  }
+                }
+              } catch (extractErr) {
+                console.warn('[AI_ASK_VISIBLE] extractTurn failed, using SSE fallback:', extractErr);
+              }
+
+              if (!markdown.trim()) {
+                console.log('[AI_ASK_VISIBLE] No markdown after extraction');
+                resolve(result);
+                return;
+              }
+
+              // 2. 用 AI_PARSE_MARKDOWN 的解析逻辑保存到 ThoughtStore
               const { ResultParser } = await import('../../plugins/web-bridge/pipeline/result-parser');
               const { createAtomsFromExtracted } = await import('../../plugins/web-bridge/pipeline/content-to-atoms');
 
-              console.log('[AI_ASK_VISIBLE] Parsing markdown, length:', result.markdown.length);
-              console.log('[AI_ASK_VISIBLE] Markdown preview:', result.markdown.slice(0, 200));
-
-              // 复用 AI_PARSE_MARKDOWN 的解析逻辑（与右键提取一致）
               const parser = new ResultParser();
-              const blocks = parser.parse(result.markdown);
+              const blocks = parser.parse(markdown);
               const atoms = createAtomsFromExtracted(blocks, '__skip_title__');
 
               const docAtom = atoms.find((a: any) => a.type === 'document');
@@ -873,20 +897,20 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
               await thoughtStore.save(params.thoughtId, { doc_content: contentAtoms });
               console.log('[AI_ASK_VISIBLE] Saved', contentAtoms.length, 'atoms to ThoughtStore');
             } catch (parseErr) {
-              console.error('[AI_ASK_VISIBLE] Failed to parse/save AI response:', parseErr);
-              // Fallback: save raw markdown as single paragraph
-              await thoughtStore.save(params.thoughtId, {
-                doc_content: [{
-                  id: `atom-${Date.now()}`,
-                  type: 'paragraph',
-                  content: { children: [{ type: 'text', text: result.markdown }] },
-                  meta: { createdAt: Date.now(), updatedAt: Date.now(), dirty: false },
-                }],
-              });
-              console.log('[AI_ASK_VISIBLE] Fallback: saved raw markdown as single paragraph');
+              console.error('[AI_ASK_VISIBLE] Failed to extract/parse AI response:', parseErr);
+              if (result.markdown) {
+                await thoughtStore.save(params.thoughtId, {
+                  doc_content: [{
+                    id: `atom-${Date.now()}`,
+                    type: 'paragraph',
+                    content: { children: [{ type: 'text', text: result.markdown }] },
+                    meta: { createdAt: Date.now(), updatedAt: Date.now(), dirty: false },
+                  }],
+                });
+              }
             }
           } else {
-            console.log('[AI_ASK_VISIBLE] No markdown to parse:', { success: result?.success, hasMarkdown: !!result?.markdown });
+            console.log('[AI_ASK_VISIBLE] AI request failed:', result?.error);
           }
 
           resolve(result);
