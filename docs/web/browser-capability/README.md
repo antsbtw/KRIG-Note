@@ -22,6 +22,9 @@
 - [Claude-Artifact-类型全表.md](Claude-Artifact-类型全表.md)
   Claude 所有 artifact 类型的完整分类、处理状态、待办优先级。确保不遗漏任何类型。
 
+- [ChatGPT-Artifact-类型全表.md](ChatGPT-Artifact-类型全表.md)
+  ChatGPT 所有内容类型分析：对话树结构、18 种内容类型、与 Claude 对比、Browser Capability 集成方案。
+
 ## 当前状态（2026-04-19 更新）
 
 ### 基础设施层（Phase 0-5）— 已完成
