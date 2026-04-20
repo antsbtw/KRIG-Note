@@ -42,12 +42,21 @@
         author: { role: 'user' | 'assistant' | 'tool' | 'system'; name?: string };
         create_time: number;
         content: {
-          content_type: string;        // 'text' | 'code' | 'execution_output' | 'tether_browsing_display' | ...
-          parts: Array<string | {      // 文本 或 asset 引用
-            asset_pointer?: string;    // "sediment://file_xxx" (DALL·E)
-            content_type?: string;
-            metadata?: Record<string, unknown>;
-          }>;
+          content_type: string;        // 'text' | 'code' | 'execution_output' | 'tether_browsing_display' | 'multimodal_text' | ...
+          parts: Array<                // ⚠️ 类型复杂，不能简化为 string | object
+            | string                   // 纯文本 / Markdown（含 $...$, \(...\) 等 LaTeX）
+            | {                        // 图片 asset 引用
+                asset_pointer: string; // "sediment://file_xxx" (DALL·E) 或 "file-service://file_xxx"
+                content_type?: string;
+                metadata?: Record<string, unknown>;
+              }
+            | {                        // widget 指令（块级 LaTeX 等）
+                // Private Unicode marker 包裹的 JSON，如：
+                // genu{"math_block_widget_always_prefetch_v2":{"content":"e^{ix}=..."}}
+                // 需要解包后转为 $$...$$ 格式
+              }
+            | object                   // citation / 其他结构化对象
+          >;
         };
         metadata: {
           attachments?: Array<{        // 用户上传的文件
@@ -89,6 +98,61 @@
 
 - 返回原始文件字节（base64 编码）
 - Content-Type 为 `application/octet-stream`（需要从 magic bytes 推断真实 MIME）
+
+### 2.4 重要注意事项
+
+#### ⚠️ 分支对话处理
+
+ChatGPT 的 `mapping` 是**多分支树**——用户编辑消息会产生新分支。每个节点可能有多个 `children`。
+
+**策略**：只提取当前显示路径（从 `current_node` 沿 `parent` 回溯到 root），不提取历史分支。
+
+```
+实现方式：
+  1. 找到 current_node（mapping 中没有被任何其他节点作为 child 引用的叶子节点）
+  2. 从 current_node 沿 parent 链回溯到 root
+  3. 反转得到从 root 到 leaf 的线性路径
+  4. 该路径就是用户当前看到的对话
+```
+
+现有 `chatgpt-content-extractor.ts` 使用"沿最后一个 child 遍历"策略（近似等价）。
+
+#### ⚠️ LaTeX 多种形式
+
+ChatGPT 的 LaTeX 不只一种格式：
+
+| 形式 | 示例 | 说明 |
+|------|------|------|
+| 标准 inline | `\(e^{ix}\)` | 行内公式 |
+| 标准 block | `\[E=mc^2\]` | 块级公式 |
+| Markdown inline | `$e^{ix}$` | 部分对话使用 |
+| Markdown block | `$$E=mc^2$$` | 部分对话使用 |
+| Widget 指令 | Private Unicode + `genu{math_block_widget...}` | 块级公式的另一种形式 |
+
+解析器必须处理所有变体，不能只处理 widget 形式。
+
+#### ⚠️ Turn 合并复杂性
+
+实际的 turn 结构比 `user + tool + assistant = 1 turn` 复杂：
+
+```typescript
+// 实际 turn 模型
+type ChatGPTTurn = {
+  user: Message;                    // 用户消息
+  toolCalls: Array<{               // 可能多次 tool 调用
+    call: Message;                  // recipient='python'/'dalle' 等
+    result: Message;               // author.role='tool' 的结果
+  }>;
+  assistant: Message;              // 最终 assistant 回复
+  hidden: Message[];               // 被标记为 hidden 的中间节点
+};
+```
+
+注意：
+- 一个 assistant 回复可能触发多次 tool 调用（先搜索再执行代码）
+- tool_result 可能包含嵌套输出（Code Interpreter 产出的图片）
+- `is_visually_hidden_from_conversation === true` 的节点要跳过
+- streaming 分段的消息需要合并
 
 ---
 
@@ -234,30 +298,33 @@ conversation API → 直接 fetch（cookie 认证）
 
 ## 七、Browser Capability 集成方案
 
-### Phase 1：基础提取（复用现有提取器）
+### Phase 1：主动 fetch 提取（推荐）
 
-将 `chatgpt-content-extractor.ts` 的输出接入 Browser Capability 的 artifact 模型：
+和 Claude 使用相同的 `probeConversation` 模式：
 
-1. 启动 CDP 捕获（当前需手动点击按钮 → 改为自动）
-2. 页面加载完成后，从 CDP 缓存中提取 conversation JSON
-3. 转换为 `ConversationData` 格式（和 Claude 共用接口）
-4. 复用 `extractTurn` / `extractFullConversation` 流程
+1. 检测到 ChatGPT 对话页面（`chatgpt.com/c/{uuid}`）
+2. 注入脚本：`fetch('/api/auth/session')` → 获取 `accessToken`
+3. 用 Bearer token `fetch('/backend-api/conversation/{uuid}')` → 对话树
+4. 遍历 mapping 树（沿当前路径），转换为 `ConversationData` 格式
+5. 图片/文件：用 Bearer token `fetch estuary API` 获取二进制
+6. Canvas：`fetch('/backend-api/conversation/{uuid}/textdocs')`
+7. 复用 `extractTurn` / `extractFullConversation` 流程
 
-### Phase 2：自动化
+### Phase 2：CDP fallback
 
-- 检测到 ChatGPT 页面时自动启动 CDP
-- 页面导航时自动刷新 CDP 缓存
-- 消除手动操作步骤
+当注入 fetch 失败时（如 CSP 限制），退回 CDP 被动捕获模式。
 
 ### 关键适配点
 
 | 适配项 | 说明 |
 |--------|------|
-| 树形→线性转换 | ChatGPT mapping 树 → 线性消息数组 |
-| 文件获取 | sediment:// / file-service:// → 从 CDP 缓存中查找 estuary 响应 |
-| Canvas 整合 | textdocs API → 作为独立 artifact 类型 |
-| LaTeX 解包 | Private Unicode marker → 标准 `$$...$$` |
-| Turn 合并 | user + tool + assistant 消息合并为一个 turn |
+| 树形→线性转换 | mapping 树沿当前路径遍历 → 线性消息数组（跳过分支和隐藏节点） |
+| parts 解析 | 处理多种 part 类型：string / asset_pointer / widget / citation |
+| LaTeX 多形式 | `\(...\)` + `$...$` + widget 指令，全部处理 |
+| Turn 合并 | user → toolCalls[] → assistant 结构，一个 turn 可能包含多次 tool 调用 |
+| 文件获取 | sediment:// / file-service:// → estuary API（Bearer token） |
+| Canvas 整合 | textdocs API → 独立 artifact 类型 |
+| MIME 推断 | estuary 返回 octet-stream → base64 magic bytes 推断真实类型 |
 
 ---
 
