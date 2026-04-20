@@ -226,6 +226,7 @@ export class ConverterRegistry {
           color: frameColor,
           style: node.attrs.frameStyle || 'solid',
           groupId: node.attrs.frameGroupId || null,
+          thoughtId: node.attrs.frameThoughtId || null,
         };
       }
       result.push(atom);
@@ -298,13 +299,14 @@ export class ConverterRegistry {
     }
   }
 
-  /** 将 atom.frame 注入到 PMNodeJSON.attrs.frameColor/frameStyle/frameGroupId */
+  /** 将 atom.frame 注入到 PMNodeJSON.attrs */
   private injectFrame(json: PMNodeJSON, atom: Atom): void {
     if (atom.frame) {
       if (!json.attrs) json.attrs = {};
       json.attrs.frameColor = atom.frame.color;
       json.attrs.frameStyle = atom.frame.style;
       json.attrs.frameGroupId = atom.frame.groupId;
+      json.attrs.frameThoughtId = atom.frame.thoughtId || null;
     }
   }
 

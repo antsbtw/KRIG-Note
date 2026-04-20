@@ -1,7 +1,10 @@
 import type { EditorView } from 'prosemirror-view';
 import type { ThoughtType, AnchorType } from '../../../shared/types/thought-types';
+import { THOUGHT_TYPE_META } from '../../../shared/types/thought-types';
 import { THOUGHT_ACTION } from '../../thought/thought-protocol';
 import { blockSelectionKey } from '../plugins/block-selection';
+import { addBlockFrameGroup } from './frame-commands';
+import { selectionToMarkdown } from './selection-to-markdown';
 
 /**
  * addThought — 在当前光标/选区位置创建 Thought 锚点
@@ -26,6 +29,7 @@ const viewAPI = () => (window as any).viewAPI as {
 export async function addThought(
   view: EditorView,
   type: ThoughtType = 'thought',
+  savedBlockPositions?: number[],
 ): Promise<void> {
   const api = viewAPI();
   if (!api) return;
@@ -37,10 +41,12 @@ export async function addThought(
   const thoughtMarkType = state.schema.marks.thought;
   if (!thoughtMarkType) return;
 
-  // ── 路径 0: block-selection plugin 激活 → 多 block 标注 ──
+  // ── 路径 0: 多 block 标注（block-selection 或外部传入的 positions） ──
   const blockSel = blockSelectionKey.getState(state);
-  if (blockSel?.active && blockSel.selectedPositions.length > 0) {
-    await addBlockThought(view, api, noteId, type, thoughtMarkType, blockSel.selectedPositions);
+  const multiBlockPositions = savedBlockPositions
+    || (blockSel?.active && blockSel.selectedPositions.length > 0 ? blockSel.selectedPositions : null);
+  if (multiBlockPositions && multiBlockPositions.length > 0) {
+    await addBlockThought(view, api, noteId, type, thoughtMarkType, multiBlockPositions);
     return;
   }
 
@@ -91,7 +97,10 @@ export async function addThought(
   } else if (!empty && isInlineSelection(state, from, to)) {
     // ── 路径 1: inline mark（段落内部分文字） ──
     anchorType = 'inline';
-    anchorText = state.doc.textBetween(from, to, ' ').slice(0, 100);
+    // selectionToMarkdown 能正确提取行内公式等非文本节点
+    const { markdown: selMd } = selectionToMarkdown(view);
+    const firstLine = selMd.trim().split('\n').find(l => l.trim())?.trim() || '';
+    anchorText = (firstLine || state.doc.textBetween(from, to, ' ')).slice(0, 100);
 
     const record = await createRecord(api, noteId, anchorType, anchorText, anchorPos, type);
     if (!record) return;
@@ -109,7 +118,7 @@ export async function addThought(
   }
 }
 
-/** 路径 0 & 2 共用：给一组 block positions 添加 thought 标注 */
+/** 路径 0 & 2 共用：给一组 block positions 添加 thought 标注（使用框定系统） */
 async function addBlockThought(
   view: EditorView,
   api: NonNullable<ReturnType<typeof viewAPI>>,
@@ -121,31 +130,38 @@ async function addBlockThought(
   const state = view.state;
   const sorted = [...positions].sort((a, b) => a - b);
 
-  // 收集所有 block 的文本范围
-  const blocks: { pos: number; innerFrom: number; innerTo: number }[] = [];
+  // 收集 block 信息
+  const validPositions: number[] = [];
   for (const pos of sorted) {
     const node = state.doc.nodeAt(pos);
-    if (!node) continue;
-    blocks.push({ pos, innerFrom: pos + 1, innerTo: pos + node.nodeSize - 1 });
+    if (node) validPositions.push(pos);
   }
-  if (blocks.length === 0) return;
+  if (validPositions.length === 0) return;
 
-  const anchorText = state.doc.textBetween(
-    blocks[0].innerFrom, blocks[blocks.length - 1].innerTo, ' ',
-  ).slice(0, 100);
+  const first = validPositions[0];
+  const last = validPositions[validPositions.length - 1];
+  const lastNode = state.doc.nodeAt(last);
+  // 优先用 selectionToMarkdown（含行内公式），选区不匹配时 fallback 到 textBetween
+  let anchorText: string;
+  const { from: selFrom, to: selTo } = view.state.selection;
+  if (selFrom !== selTo) {
+    const { markdown: selMd } = selectionToMarkdown(view);
+    const firstLine = selMd.trim().split('\n').find(l => l.trim())?.trim() || '';
+    anchorText = firstLine.slice(0, 100);
+  } else {
+    anchorText = state.doc.textBetween(
+      first + 1, last + (lastNode?.nodeSize ?? 1) - 1, ' ',
+    ).slice(0, 100);
+  }
 
-  const record = await createRecord(api, noteId, 'block', anchorText, blocks[0].pos, type);
+  const record = await createRecord(api, noteId, 'block', anchorText, first, type);
   if (!record) return;
 
-  // 给每个 block 内部文本加 mark
-  const mark = thoughtMarkType.create({ thoughtId: record.id, thoughtType: type, anchorType: 'block' });
-  const tr = view.state.tr;
-  for (const blk of blocks) {
-    tr.addMark(blk.innerFrom, blk.innerTo, mark);
-  }
-  view.dispatch(tr);
+  // 使用框定系统：颜色来自 thought 类型，同时写入 thoughtId 用于锚定跳转
+  const frameColor = THOUGHT_TYPE_META[type].color;
+  addBlockFrameGroup(view, validPositions, frameColor, 'solid', record.id);
 
-  await openAndNotify(api, record.id, 'block', anchorText, blocks[0].pos, type, noteId);
+  await openAndNotify(api, record.id, 'block', anchorText, first, type, noteId);
 }
 
 /** 判断选区是否在单个 textBlock 内且不覆盖整段 */

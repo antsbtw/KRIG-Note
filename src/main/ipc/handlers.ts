@@ -849,44 +849,28 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
           ipcMain.removeListener(responseChannel, listener);
           console.log('[AI_ASK_VISIBLE] Step 4: Got response from renderer:', { success: result?.success, mdLen: result?.markdown?.length ?? 0, error: result?.error });
 
-          // Parse markdown → Atoms and save to ThoughtStore
+          // Renderer 侧已通过 extractTurnAt 获取完整 markdown（含 artifact/SVG/图片），
+          // 这里只需要解析并保存到 ThoughtStore
           if (result?.success && result?.markdown) {
             try {
               const { ResultParser } = await import('../../plugins/web-bridge/pipeline/result-parser');
               const { createAtomsFromExtracted } = await import('../../plugins/web-bridge/pipeline/content-to-atoms');
 
-              console.log('[AI_ASK_VISIBLE] Parsing markdown, length:', result.markdown.length);
-              console.log('[AI_ASK_VISIBLE] Markdown preview:', result.markdown.slice(0, 200));
-
               const parser = new ResultParser();
               const blocks = parser.parse(result.markdown);
-              console.log('[AI_ASK_VISIBLE] Parsed blocks:', blocks.length, blocks.map((b: any) => b.type));
+              const atoms = createAtomsFromExtracted(blocks, '__skip_title__');
 
-              const atoms = createAtomsFromExtracted(blocks);
-              console.log('[AI_ASK_VISIBLE] Created atoms:', atoms.length, atoms.map((a: any) => `${a.type}(${a.id?.slice(0,8)})`));
-
-              // Remove the document root and noteTitle — Thought only needs content atoms
-              const contentAtoms = atoms.filter((a: any) => a.type !== 'document' && a.type !== 'noteTitle');
-              console.log('[AI_ASK_VISIBLE] Content atoms (after filter):', contentAtoms.length);
-
-              // Fix parentId: Thought's atomsToDoc expects top-level atoms without parentId,
-              // or with parentId pointing to a root document.
-              // Since we removed the document atom, clear parentId of top-level atoms.
               const docAtom = atoms.find((a: any) => a.type === 'document');
               const docId = docAtom?.id;
+              const contentAtoms = atoms.filter((a: any) => a.type !== 'document' && a.type !== 'noteTitle');
               for (const atom of contentAtoms) {
-                if (atom.parentId === docId) {
-                  atom.parentId = undefined;
-                }
+                if (atom.parentId === docId) atom.parentId = undefined;
               }
-
-              console.log('[AI_ASK_VISIBLE] First content atom:', JSON.stringify(contentAtoms[0])?.slice(0, 300));
 
               await thoughtStore.save(params.thoughtId, { doc_content: contentAtoms });
               console.log('[AI_ASK_VISIBLE] Saved', contentAtoms.length, 'atoms to ThoughtStore');
             } catch (parseErr) {
-              console.error('[AI_ASK_VISIBLE] Failed to parse/save AI response:', parseErr);
-              // Fallback: save raw markdown as single paragraph
+              console.error('[AI_ASK_VISIBLE] Failed to parse AI response:', parseErr);
               await thoughtStore.save(params.thoughtId, {
                 doc_content: [{
                   id: `atom-${Date.now()}`,
@@ -895,10 +879,7 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
                   meta: { createdAt: Date.now(), updatedAt: Date.now(), dirty: false },
                 }],
               });
-              console.log('[AI_ASK_VISIBLE] Fallback: saved raw markdown as single paragraph');
             }
-          } else {
-            console.log('[AI_ASK_VISIBLE] No markdown to parse:', { success: result?.success, hasMarkdown: !!result?.markdown });
           }
 
           resolve(result);
@@ -1288,6 +1269,20 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
       const result = await extractFullConversation(pageId);
       if (!result) return { success: false, error: 'no conversation data' };
       return { success: true, ...result };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  // BROWSER_CAPABILITY_PROBE_CONVERSATION: 强制重新 fetch Claude conversation API
+  ipcMain.handle(IPC.BROWSER_CAPABILITY_PROBE_CONVERSATION, async (event) => {
+    try {
+      const { getGuest } = await import('../../plugins/web-bridge/infrastructure/guest-registry');
+      const guest = getGuest(event.sender.id);
+      if (!guest) return { success: false, error: 'no guest for sender' };
+      const { browserCapabilityServices } = await import('../../plugins/browser-capability/main-service');
+      await browserCapabilityServices.probeClaudeConversation(guest, true);
+      return { success: true };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : String(error) };
     }

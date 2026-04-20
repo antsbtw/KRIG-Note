@@ -86,6 +86,7 @@ declare const viewAPI: {
     }>;
     error?: string;
   }>;
+  browserCapabilityProbeConversation: () => Promise<{ success: boolean; error?: string }>;
   closeSlot: () => void;
 };
 
@@ -1033,15 +1034,78 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
               return domToMarkdown(all[all.length - 1]);
             })()`);
 
-            let finalMd = sseMarkdown || domMd || '';
-            if (sseMarkdown && domMd) {
-              const sseImgs = new Set((sseMarkdown.match(/!\[([^\]]*)\]\(([^)]+)\)/g) || []).map((m: string) => m.match(/\(([^)]+)\)/)?.[1]).filter(Boolean));
-              const extraImgs = (domMd.match(/!\[([^\]]*)\]\(([^)]+)\)/g) || []).filter((m: string) => { const u = m.match(/\(([^)]+)\)/)?.[1]; return u && !sseImgs.has(u); });
-              if (extraImgs.length > 0) finalMd += '\n\n' + extraImgs.join('\n\n');
-            }
+            // SSE 检测到 AI 回复结束 → 强制刷新 conversation.json → 提取 → 校验 artifact 完整性
+            setAiStatus('capturing');
+            try {
+              const lastAssistantIdx = await webview!.executeJavaScript(`(function() {
+                var selector = ${JSON.stringify(profile.selectors.assistantMessage)};
+                var parts = selector.split(',').map(function(s) { return s.trim(); });
+                var count = 0;
+                for (var i = 0; i < parts.length; i++) count += document.querySelectorAll(parts[i]).length;
+                return count - 1;
+              })()`);
+              if (lastAssistantIdx < 0) throw new Error('No assistant message found');
 
-            setAiStatus('idle');
-            viewAPI.aiSendResponse?.(params.responseChannel, { success: true, markdown: finalMd });
+              // 1. 强制重新 fetch conversation API，确保 conversation.json 包含最新回复
+              console.log('[AI_INJECT] Step: force probe conversation API');
+              await viewAPI.browserCapabilityProbeConversation();
+
+              // 2. 提取 + 校验 artifact 完整性，最多重试 3 次
+              let markdown = '';
+              const MAX_RETRIES = 3;
+              for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+                console.log('[AI_INJECT] Extraction attempt', attempt, 'msgIndex:', lastAssistantIdx);
+                const capResult = await viewAPI.browserCapabilityExtractTurn({ msgIndex: lastAssistantIdx });
+                console.log('[AI_INJECT] capResult:', capResult.success, 'mdLen:', capResult.markdown?.length ?? 0, 'artifactCount:', capResult.artifactCount ?? 0, 'error:', capResult.error);
+
+                if (capResult.success && capResult.markdown) {
+                  // 检查 artifact 完整性：是否有未提取到内容的占位符
+                  const hasPlaceholder = capResult.markdown.includes('artifact 内容不可用')
+                    || capResult.markdown.includes('This block is not supported');
+
+                  if (!hasPlaceholder || attempt >= MAX_RETRIES) {
+                    markdown = capResult.markdown;
+                    if (hasPlaceholder && attempt >= MAX_RETRIES) {
+                      console.warn('[AI_INJECT] Artifact content still incomplete after', MAX_RETRIES, 'retries, using partial result');
+                    }
+                    break;
+                  }
+                  // artifact 内容不完整 → 等待后重新 probe + 重试
+                  console.log('[AI_INJECT] Artifact content incomplete, retrying in 2s... (attempt', attempt + 1, ')');
+                  await new Promise(r => setTimeout(r, 2000));
+                  await viewAPI.browserCapabilityProbeConversation();
+                } else if (attempt >= MAX_RETRIES) {
+                  // 所有重试都失败 → fallback 到 API 文本提取
+                  console.log('[AI_INJECT] Capability extraction failed after retries, fallback to API');
+                  const curUrl = webview!.getURL?.() || '';
+                  const resolvedTurn = await resolveClaudeTurnFromApi(
+                    webview!, lastAssistantIdx, '',
+                  );
+                  if (resolvedTurn) {
+                    markdown = resolvedTurn.baseMarkdown;
+                    markdown = processClaudeArtifactsLive(markdown, curUrl);
+                  }
+                } else {
+                  // 提取失败但还有重试机会 → 等待后重试
+                  console.log('[AI_INJECT] Extraction failed, retrying in 2s... (attempt', attempt + 1, ')');
+                  await new Promise(r => setTimeout(r, 2000));
+                  await viewAPI.browserCapabilityProbeConversation();
+                }
+              }
+              console.log('[AI_INJECT] Final markdown length:', markdown.length);
+
+              // 发回 main 进程 → 保存到 ThoughtStore
+              setAiStatus('idle');
+              viewAPI.aiSendResponse?.(params.responseChannel, {
+                success: !!markdown.trim(),
+                markdown: markdown || undefined,
+                error: markdown.trim() ? undefined : 'extraction returned empty',
+              });
+            } catch (exErr) {
+              setAiStatus('idle');
+              console.warn('[AI_INJECT_AND_SEND] extraction failed:', exErr);
+              viewAPI.aiSendResponse?.(params.responseChannel, { success: false, error: String(exErr) });
+            }
             return;
           }
         }

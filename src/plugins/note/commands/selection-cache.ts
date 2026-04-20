@@ -21,6 +21,8 @@ export interface SelectionCacheData {
   images: string[];
   from: number;
   to: number;
+  /** block-selection 的 block positions（如有） */
+  blockPositions: number[];
   timestamp: number;
 }
 
@@ -41,14 +43,13 @@ function doUpdate(view: EditorView): void {
   // 优先检查 block-selection（ESC 块选择模式）
   const blockSel = blockSelectionKey.getState(state);
   if (blockSel?.active && blockSel.selectedPositions.length > 0) {
-    // 复用剪贴板路径获取完整 Slice，再序列化为 Markdown
     const result = selectionToMarkdown(view);
     const sorted = [...blockSel.selectedPositions].sort((a, b) => a - b);
     const first = sorted[0];
     const lastPos = sorted[sorted.length - 1];
     const lastNode = state.doc.nodeAt(lastPos);
     const to = lastNode ? lastPos + lastNode.nodeSize : lastPos + 1;
-    currentCache = { ...result, from: first, to, timestamp: Date.now() };
+    currentCache = { ...result, from: first, to, blockPositions: sorted, timestamp: Date.now() };
     return;
   }
 
@@ -56,7 +57,7 @@ function doUpdate(view: EditorView): void {
   const { from, to } = state.selection;
   if (from !== to) {
     const result = selectionToMarkdown(view);
-    currentCache = { ...result, from, to, timestamp: Date.now() };
+    currentCache = { ...result, from, to, blockPositions: [], timestamp: Date.now() };
   }
 }
 

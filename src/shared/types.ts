@@ -349,6 +349,7 @@ export const IPC = {
   BROWSER_CAPABILITY_DEBUG_LOG: 'browser-capability:debug-log', // renderer → main：写入 browser-capability 调试日志
   BROWSER_CAPABILITY_EXTRACT_TURN: 'browser-capability:extract-turn', // renderer → main：从 conversation 数据提取单条 turn（含 artifact 内容）
   BROWSER_CAPABILITY_EXTRACT_FULL: 'browser-capability:extract-full', // renderer → main：从 conversation 数据提取完整对话
+  BROWSER_CAPABILITY_PROBE_CONVERSATION: 'browser-capability:probe-conversation', // renderer → main：强制重新 fetch Claude conversation API 刷新 conversation.json
 
   // yt-dlp
   YTDLP_CHECK_STATUS: 'ytdlp:check-status',

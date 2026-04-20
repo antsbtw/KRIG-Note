@@ -1,9 +1,11 @@
 import type { EditorView } from 'prosemirror-view';
 import type { AnchorType } from '../../../shared/types/thought-types';
+import { THOUGHT_TYPE_META } from '../../../shared/types/thought-types';
 import type { AIServiceId } from '../../../shared/types/ai-service-types';
 import { THOUGHT_ACTION } from '../../thought/thought-protocol';
 import { selectionToMarkdown } from './selection-to-markdown';
 import { getSelectionCache } from './selection-cache';
+import { addBlockFrameGroup } from './frame-commands';
 
 /**
  * askAI — 选中文字后向 AI 提问，回复写入 Thought
@@ -52,6 +54,7 @@ export async function askAI(
   view: EditorView,
   serviceId: AIServiceId,
   instruction: string,
+  blockPositions?: number[],
 ): Promise<void> {
   const api = viewAPI();
   if (!api) return;
@@ -92,7 +95,9 @@ export async function askAI(
     : selectedMarkdown;
 
   const anchorType: AnchorType = 'inline';
-  const anchorText = state.doc.textBetween(from, Math.min(to, state.doc.content.size), ' ').slice(0, 100);
+  // 直接从 selectedMarkdown 提取第一行作为摘要（含行内公式等非文本节点）
+  const firstLine = selectedMarkdown.trim().split('\n').find(l => l.trim())?.trim() || '';
+  const anchorText = (firstLine || state.doc.textBetween(from, Math.min(to, state.doc.content.size), ' ')).slice(0, 100);
   const anchorPos = from;
 
   // 1. Create ThoughtRecord in DB (pending state)
@@ -115,20 +120,20 @@ export async function askAI(
     created_at: Date.now(),
   });
 
-  // 3. Add thought mark to selection
-  // 检测是否是整段选中（block 级别）
-  const $from = state.selection.$from;
-  const blockStart = $from.start($from.depth);
-  const blockEnd = $from.end($from.depth);
-  const isBlockSelection = from <= blockStart && to >= blockEnd;
-  const markAnchorType = isBlockSelection ? 'block' : 'inline';
-
-  const mark = thoughtMarkType.create({
-    thoughtId: record.id,
-    thoughtType: 'ai-response',
-    anchorType: markAnchorType,
-  });
-  view.dispatch(state.tr.addMark(from, to, mark));
+  // 3. 标注选区
+  if (blockPositions && blockPositions.length > 0) {
+    // 多 block 选择 → 使用框定系统，同时写入 thoughtId 用于锚定跳转
+    const frameColor = THOUGHT_TYPE_META['ai-response'].color;
+    addBlockFrameGroup(view, blockPositions, frameColor, 'solid', record.id);
+  } else {
+    // inline 选择 → 使用 thought mark
+    const mark = thoughtMarkType.create({
+      thoughtId: record.id,
+      thoughtType: 'ai-response',
+      anchorType: 'inline',
+    });
+    view.dispatch(view.state.tr.addMark(from, to, mark));
+  }
 
   // 4. Open Right Slot with AI WebView — user sees the AI page
   console.log('[askAI] Step 4: Opening AI WebView in Right Slot...');

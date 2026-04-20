@@ -22,6 +22,7 @@ interface AskAIPanelProps {
 interface PanelState {
   coords: { left: number; top: number };
   contentPreview: string;
+  blockPositions: number[];
 }
 
 export function AskAIPanel({ view }: AskAIPanelProps) {
@@ -41,6 +42,7 @@ export function AskAIPanel({ view }: AskAIPanelProps) {
       setPanel({
         coords: detail.coords,
         contentPreview: detail.contentPreview || '',
+        blockPositions: detail.blockPositions || [],
       });
       setInstruction('');
       setShowServiceMenu(false);
@@ -72,7 +74,7 @@ export function AskAIPanel({ view }: AskAIPanelProps) {
   const handleSend = useCallback(() => {
     if (!view || !panel) return;
     if (!instruction.trim() && !panel.contentPreview.trim()) return;
-    askAI(view, serviceId, instruction);
+    askAI(view, serviceId, instruction, panel.blockPositions.length > 0 ? panel.blockPositions : undefined);
     setPanel(null);
   }, [view, panel, instruction, serviceId]);
 
@@ -173,6 +175,7 @@ export function openAskAIPanel(
   view: EditorView,
   coords: { left: number; top: number },
   precomputedPreview?: string,
+  blockPositions?: number[],
 ): void {
   let contentPreview = precomputedPreview || '';
 
@@ -204,7 +207,7 @@ export function openAskAIPanel(
   }
 
   view.dom.dispatchEvent(new CustomEvent('open-ask-ai-panel', {
-    detail: { coords, contentPreview },
+    detail: { coords, contentPreview, blockPositions: blockPositions || [] },
   }));
 }
 
