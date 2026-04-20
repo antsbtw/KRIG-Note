@@ -95,7 +95,13 @@ export async function askAI(
     : selectedMarkdown;
 
   const anchorType: AnchorType = 'inline';
-  const anchorText = state.doc.textBetween(from, Math.min(to, state.doc.content.size), ' ').slice(0, 100);
+  // textBetween 无法提取 math 等非文本节点，结果可能过短。
+  // 不足 10 字符时用 selectedMarkdown 的第一行补充摘要。
+  let anchorText = state.doc.textBetween(from, Math.min(to, state.doc.content.size), ' ').slice(0, 100);
+  if (anchorText.trim().length < 10 && selectedMarkdown.trim()) {
+    const firstLine = selectedMarkdown.trim().split('\n').find(l => l.trim())?.trim() || '';
+    anchorText = firstLine.slice(0, 100);
+  }
   const anchorPos = from;
 
   // 1. Create ThoughtRecord in DB (pending state)

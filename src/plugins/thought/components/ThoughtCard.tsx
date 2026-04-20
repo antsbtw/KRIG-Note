@@ -1,8 +1,9 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import type { ThoughtRecord, ThoughtType } from '../../../shared/types/thought-types';
 import { THOUGHT_TYPE_META } from '../../../shared/types/thought-types';
 import { ThoughtEditor } from './ThoughtEditor';
 import { getAIServiceProfile } from '../../../shared/types/ai-service-types';
+import katex from 'katex';
 
 /**
  * ThoughtCard — 单个 Thought 的卡片组件
@@ -110,7 +111,10 @@ export function ThoughtCard({
             title="点击跳转到原文位置"
             style={{ borderLeftColor: meta.color }}
           >
-            <span className="thought-card__anchor-text">{thought.anchor_text}</span>
+            {thought.anchor_text.includes('$')
+              ? <span className="thought-card__anchor-text" dangerouslySetInnerHTML={{ __html: renderInlineMath(thought.anchor_text) }} />
+              : <span className="thought-card__anchor-text">{thought.anchor_text}</span>
+            }
             <span className="thought-card__anchor-jump">↗</span>
           </div>
 
@@ -196,6 +200,23 @@ function extractFullText(thought: ThoughtRecord): string {
     }
   }
   return parts.join('\n');
+}
+
+/**
+ * 将文本中的 $...$ 和 $$...$$ 渲染为 KaTeX HTML，其余部分保持纯文本。
+ * 返回安全的 HTML 字符串（KaTeX 的输出是安全的）。
+ */
+function renderInlineMath(text: string): string {
+  // 先处理 $$...$$，再处理 $...$
+  return text
+    .replace(/\$\$(.+?)\$\$/g, (_, latex) => {
+      try { return katex.renderToString(latex, { throwOnError: false, displayMode: false }); }
+      catch { return `$$${latex}$$`; }
+    })
+    .replace(/\$(.+?)\$/g, (_, latex) => {
+      try { return katex.renderToString(latex, { throwOnError: false, displayMode: false }); }
+      catch { return `$${latex}$`; }
+    });
 }
 
 function extractTitle(thought: ThoughtRecord): string {
