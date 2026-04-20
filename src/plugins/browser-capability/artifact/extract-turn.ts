@@ -65,9 +65,6 @@ function clearExtractedArtifactCache(): void {
         cleared++;
       }
     }
-    if (cleared > 0) {
-      console.log(`[extract-turn] cleared ${cleared} cached SVG files before extraction`);
-    }
   } catch (err) {
     console.warn('[extract-turn] failed to clear artifact cache', err);
   }
@@ -217,7 +214,6 @@ async function artifactToMarkdown(artifact: MessageArtifact): Promise<string> {
           let svgCode = prepareSvgForDom(content.code);
           const dataUrl = `data:image/svg+xml;base64,${Buffer.from(svgCode, 'utf-8').toString('base64')}`;
           const result = await put(dataUrl, 'image/svg+xml', `${artifact.title}.svg`);
-          console.log('[extract-turn] media store put result', { title: artifact.title, success: result.success, mediaUrl: result.mediaUrl });
           if (result.success && result.mediaUrl) {
             return `![${artifact.title}](${result.mediaUrl})\n`;
           }
@@ -237,7 +233,6 @@ async function artifactToMarkdown(artifact: MessageArtifact): Promise<string> {
       if (put) {
         const dataUrl = `data:text/html;base64,${Buffer.from(content.code, 'utf-8').toString('base64')}`;
         const result = await put(dataUrl, 'text/html', `${artifact.title}.html`);
-        console.log('[extract-turn] html media store put result', { title: artifact.title, success: result.success, mediaUrl: result.mediaUrl });
         if (result.success && result.mediaUrl) {
           return `!html[${artifact.title}](${result.mediaUrl})\n`;
         }
@@ -278,7 +273,6 @@ async function artifactToMarkdown(artifact: MessageArtifact): Promise<string> {
           const dataUrl = `data:text/html;base64,${Buffer.from(content.text, 'utf-8').toString('base64')}`;
           const filename = content.path.split('/').pop() || `${artifact.title}.html`;
           const result = await put(dataUrl, 'text/html', filename);
-          console.log('[extract-turn] html file_text put result', { title: artifact.title, success: result.success, mediaUrl: result.mediaUrl });
           if (result.success && result.mediaUrl) {
             return `!html[${artifact.title}](${result.mediaUrl})\n`;
           }
@@ -403,7 +397,6 @@ async function downloadLocalResource(filePath: string): Promise<string | null> {
 
       const result = await wc.executeJavaScript(downloadScript);
       if (result && typeof result === 'string' && result.length > 0) {
-        console.log('[extract-turn] local_resource downloaded', { filePath, size: result.length });
         return result;
       }
     }

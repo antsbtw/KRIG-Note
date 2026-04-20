@@ -60,7 +60,6 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
   ipcMain.handle(IPC.NOTE_PENDING_OPEN, () => {
     const id = pendingNoteId;
     pendingNoteId = null;
-    console.log('[IPC] NOTE_PENDING_OPEN:', id ?? '(none)');
     return id;
   });
 
@@ -188,20 +187,17 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
   ipcMain.on(IPC.VIEW_MESSAGE_SEND, (event, message: ViewMessage) => {
     const mainWindow = getMainWindow();
     if (!mainWindow) {
-      console.log('[IPC:ViewMessage] No main window');
       return;
     }
 
     // 协议匹配检查：只有注册了协议的 View 组合才允许通信
     const activeProtocol = getActiveProtocol();
     if (activeProtocol === null) {
-      console.log('[IPC:ViewMessage] No active protocol, message dropped:', message.action);
       return;
     }
 
     const { leftId, rightId } = getActiveViewWebContentsIds();
     const senderId = event.sender.id;
-    console.log(`[IPC:ViewMessage] protocol=${activeProtocol}, sender=${senderId}, left=${leftId}, right=${rightId}, action=${message.action}`);
 
     // 路由到"对面"的 View
     let targetId: number | null = null;
@@ -212,7 +208,6 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
     }
 
     if (targetId === null) {
-      console.log('[IPC:ViewMessage] Sender not in any slot, dropped');
       return;
     }
 
@@ -220,7 +215,6 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
     for (const child of mainWindow.contentView.children) {
       if ('webContents' in child && (child as any).webContents.id === targetId) {
         (child as any).webContents.send(IPC.VIEW_MESSAGE_RECEIVE, message);
-        console.log(`[IPC:ViewMessage] Forwarded to target=${targetId}`);
         break;
       }
     }

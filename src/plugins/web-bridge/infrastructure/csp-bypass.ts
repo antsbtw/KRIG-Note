@@ -9,7 +9,6 @@ import type { WebContents } from 'electron';
  */
 export function setupCSPBypass(guestWebContents: WebContents): void {
   const targetId = guestWebContents.id;
-  console.log(`[CSPBypass] Setup for webContentsId=${targetId}`);
 
   guestWebContents.session.webRequest.onHeadersReceived(
     { urls: ['*://*/*'] },
