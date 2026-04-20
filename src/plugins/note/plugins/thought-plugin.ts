@@ -1,6 +1,7 @@
 import { Plugin, PluginKey } from 'prosemirror-state';
 import type { EditorView } from 'prosemirror-view';
 import { THOUGHT_ACTION } from '../../thought/thought-protocol';
+import { THOUGHT_TYPE_META } from '../../../shared/types/thought-types';
 
 /**
  * thoughtPlugin — Note 侧的 Thought 交互插件
@@ -153,13 +154,14 @@ export function thoughtPlugin(): Plugin {
   });
 }
 
-/** 移除文档中指定 thoughtId 的 mark 和 node attr */
+/** 移除文档中指定 thoughtId 的 mark、node attr 和 block 框定 */
 function removeThoughtMark(view: EditorView, thoughtId: string): void {
   const { state } = view;
   const { tr } = state;
   const thoughtMarkType = state.schema.marks.thought;
   let changed = false;
 
+  // 1. inline thought mark
   if (thoughtMarkType) {
     state.doc.descendants((node, pos) => {
       node.marks.forEach((mark) => {
@@ -171,9 +173,24 @@ function removeThoughtMark(view: EditorView, thoughtId: string): void {
     });
   }
 
+  // 2. node-level thought attr
   state.doc.descendants((node, pos) => {
     if (node.attrs.thoughtId === thoughtId) {
       tr.setNodeMarkup(pos, undefined, { ...node.attrs, thoughtId: null });
+      changed = true;
+    }
+  });
+
+  // 3. block thought 框定（frameThoughtId）→ 清除框定 + thoughtId
+  state.doc.descendants((node, pos) => {
+    if (node.attrs.frameThoughtId === thoughtId) {
+      tr.setNodeMarkup(pos, undefined, {
+        ...node.attrs,
+        frameThoughtId: null,
+        frameColor: null,
+        frameStyle: null,
+        frameGroupId: null,
+      });
       changed = true;
     }
   });
@@ -183,18 +200,18 @@ function removeThoughtMark(view: EditorView, thoughtId: string): void {
   }
 }
 
-/** 更新 thought mark 的 thoughtType 属性（颜色跟随类型变化） */
+/** 更新 thought 标注的类型属性（颜色跟随类型变化） */
 function updateThoughtType(view: EditorView, thoughtId: string, newType: string): void {
   const { state } = view;
   const { tr } = state;
   const thoughtMarkType = state.schema.marks.thought;
   let changed = false;
 
+  // 1. inline thought mark
   if (thoughtMarkType) {
     state.doc.descendants((node, pos) => {
       node.marks.forEach((mark) => {
         if (mark.type === thoughtMarkType && mark.attrs.thoughtId === thoughtId) {
-          // 移除旧 mark，添加新 mark（ProseMirror 中更新 mark attrs 的标准方式）
           tr.removeMark(pos, pos + node.nodeSize, mark);
           tr.addMark(pos, pos + node.nodeSize, thoughtMarkType.create({
             thoughtId,
@@ -203,6 +220,17 @@ function updateThoughtType(view: EditorView, thoughtId: string, newType: string)
           changed = true;
         }
       });
+    });
+  }
+
+  // 2. block thought 框定颜色同步
+  const newColor = THOUGHT_TYPE_META[newType as keyof typeof THOUGHT_TYPE_META]?.color;
+  if (newColor) {
+    state.doc.descendants((node, pos) => {
+      if (node.attrs.frameThoughtId === thoughtId) {
+        tr.setNodeMarkup(pos, undefined, { ...node.attrs, frameColor: newColor });
+        changed = true;
+      }
     });
   }
 
