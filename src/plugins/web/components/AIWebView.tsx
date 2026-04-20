@@ -677,11 +677,10 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
       await viewAPI.ensureRightSlot('demo-a');
       const extractionId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-      // ChatGPT / Gemini need CDP to see the conversation API response.
-      // First-time only — reload with cache bypass so estuary image
-      // bytes get captured.
-      if ((profile.id === 'chatgpt' || profile.id === 'gemini') && !cdpStartedRef.current) {
-        const r = await viewAPI.wbCdpStart(['/backend-api/', 'rpcids=']);
+      // Gemini needs CDP to see the batchexecute response.
+      // ChatGPT only needs CDP as fallback (Browser Capability probe is primary).
+      if (profile.id === 'gemini' && !cdpStartedRef.current) {
+        const r = await viewAPI.wbCdpStart(['rpcids=']);
         cdpStartedRef.current = !!r?.success;
         if (cdpStartedRef.current) {
           (webview as any).reloadIgnoringCache?.() ?? webview.reload();
@@ -723,54 +722,68 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
           markdown = processClaudeArtifactsLive(markdown, url);
         }
       } else if (profile.id === 'chatgpt') {
-        const c = await extractChatGPTContent(webview, viewAPI as any);
-        // Coalesce one user prompt + following tool/assistant messages
-        // into a single turn (DALL·E / Code Interpreter put images on
-        // tool messages; pair them with the next assistant).
-        type Turn = { user: string; text: string; fileIds: string[] };
-        const turns: Turn[] = [];
-        let cur: Turn | null = null;
-        let pendingUser = '';
-        let orphanFiles: string[] = [];
-        for (const m of c.messages) {
-          if (m.role === 'user' && m.text.trim()) {
-            if (!cur && orphanFiles.length > 0 && pendingUser) {
-              turns.push({ user: pendingUser, text: '', fileIds: orphanFiles });
+        // Browser Capability extraction: probe → extract (no CDP needed)
+        await viewAPI.browserCapabilityProbeConversation();
+        const capResult = await viewAPI.browserCapabilityExtractTurn({ msgIndex });
+        if (capResult.success && capResult.markdown) {
+          userMessage = capResult.userMessage ?? '';
+          markdown = capResult.markdown;
+          console.log('[AIWebView Extract] ChatGPT capability-based extraction succeeded', {
+            msgIndex,
+            artifactCount: capResult.artifactCount,
+          });
+        } else {
+          // Fallback: CDP-based extraction (legacy)
+          console.log('[AIWebView Extract] ChatGPT capability failed, falling back to CDP', {
+            msgIndex,
+            capError: capResult.error,
+          });
+          const c = await extractChatGPTContent(webview, viewAPI as any);
+          type Turn = { user: string; text: string; fileIds: string[] };
+          const turns: Turn[] = [];
+          let cur: Turn | null = null;
+          let pendingUser = '';
+          let orphanFiles: string[] = [];
+          for (const m of c.messages) {
+            if (m.role === 'user' && m.text.trim()) {
+              if (!cur && orphanFiles.length > 0 && pendingUser) {
+                turns.push({ user: pendingUser, text: '', fileIds: orphanFiles });
+              }
+              pendingUser = m.text;
+              orphanFiles = [];
+              cur = null;
+            } else if (m.role === 'tool') {
+              for (const id of m.fileRefs) orphanFiles.push(id);
+            } else if (m.role === 'assistant') {
+              const hasText = m.text.trim().length > 0;
+              const hasFiles = m.fileRefs.length > 0 || orphanFiles.length > 0;
+              if (!hasText && !hasFiles) continue;
+              if (!cur) {
+                cur = { user: pendingUser, text: '', fileIds: [] };
+                turns.push(cur);
+                pendingUser = '';
+              }
+              if (hasText) cur.text = (cur.text ? cur.text + '\n\n' : '') + m.text;
+              for (const id of orphanFiles) cur.fileIds.push(id);
+              for (const id of m.fileRefs) cur.fileIds.push(id);
+              orphanFiles = [];
             }
-            pendingUser = m.text;
-            orphanFiles = [];
-            cur = null;
-          } else if (m.role === 'tool') {
-            for (const id of m.fileRefs) orphanFiles.push(id);
-          } else if (m.role === 'assistant') {
-            const hasText = m.text.trim().length > 0;
-            const hasFiles = m.fileRefs.length > 0 || orphanFiles.length > 0;
-            if (!hasText && !hasFiles) continue;
-            if (!cur) {
-              cur = { user: pendingUser, text: '', fileIds: [] };
-              turns.push(cur);
-              pendingUser = '';
+          }
+          if (!cur && orphanFiles.length > 0 && pendingUser) {
+            turns.push({ user: pendingUser, text: '', fileIds: orphanFiles });
+          }
+          const t = turns[msgIndex];
+          if (t) {
+            userMessage = t.user;
+            markdown = t.text || '_[无文字内容]_';
+            const imgLines: string[] = [];
+            for (const fid of t.fileIds) {
+              const f = c.files[fid];
+              if (f?.dataUrl) imgLines.push(`![${f.fileId}](${f.dataUrl})`);
             }
-            if (hasText) cur.text = (cur.text ? cur.text + '\n\n' : '') + m.text;
-            for (const id of orphanFiles) cur.fileIds.push(id);
-            for (const id of m.fileRefs) cur.fileIds.push(id);
-            orphanFiles = [];
-          }
-        }
-        if (!cur && orphanFiles.length > 0 && pendingUser) {
-          turns.push({ user: pendingUser, text: '', fileIds: orphanFiles });
-        }
-        const t = turns[msgIndex];
-        if (t) {
-          userMessage = t.user;
-          markdown = t.text || '_[无文字内容]_';
-          const imgLines: string[] = [];
-          for (const fid of t.fileIds) {
-            const f = c.files[fid];
-            if (f?.dataUrl) imgLines.push(`![${f.fileId}](${f.dataUrl})`);
-          }
-          if (imgLines.length > 0) {
-            markdown = markdown.trimEnd() + '\n\n' + imgLines.join('\n\n');
+            if (imgLines.length > 0) {
+              markdown = markdown.trimEnd() + '\n\n' + imgLines.join('\n\n');
+            }
           }
         }
       } else if (profile.id === 'gemini') {
@@ -1153,6 +1166,8 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
     setArtifactDownloadStatus('提取整页对话...');
     try {
       await viewAPI.ensureRightSlot('demo-a');
+      // Ensure conversation data is fresh before extraction
+      await viewAPI.browserCapabilityProbeConversation();
       const result = await viewAPI.browserCapabilityExtractFull();
       if (!result.success || !result.turns || result.turns.length === 0) {
         setArtifactDownloadStatus(result.error || '未能提取到对话内容');

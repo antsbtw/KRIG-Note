@@ -22,6 +22,15 @@
 - [Claude-Artifact-类型全表.md](Claude-Artifact-类型全表.md)
   Claude 所有 artifact 类型的完整分类、处理状态、待办优先级。确保不遗漏任何类型。
 
+- [ChatGPT-Artifact-类型全表.md](ChatGPT-Artifact-类型全表.md)
+  ChatGPT 所有内容类型分析：对话树结构、18 种内容类型、与 Claude 对比、Browser Capability 集成方案。
+
+- [Gemini-Artifact-类型全表.md](Gemini-Artifact-类型全表.md)
+  Gemini 所有内容类型分析：batchexecute 协议、位置数组 schema、11 种内容类型、三平台统一提取架构。
+
+- [多平台提取-开发测试计划.md](多平台提取-开发测试计划.md)
+  ChatGPT / Gemini 提取的分阶段开发计划、测试矩阵和风险评估。先分开验证，后抽象合并。
+
 ## 当前状态（2026-04-19 更新）
 
 ### 基础设施层（Phase 0-5）— 已完成
