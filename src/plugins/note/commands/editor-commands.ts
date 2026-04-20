@@ -139,8 +139,34 @@ export function removeLink(view: EditorView): boolean {
   const linkType = view.state.schema.marks.link;
   if (!linkType) return false;
   const { from, to } = view.state.selection;
-  view.dispatch(view.state.tr.removeMark(from, to, linkType));
-  return true;
+
+  if (from !== to) {
+    // 有选区：移除选区范围内的 link mark
+    view.dispatch(view.state.tr.removeMark(from, to, linkType));
+    return true;
+  }
+
+  // 光标模式：找到光标所在 link mark 的完整范围
+  const $pos = view.state.doc.resolve(from);
+  const parent = $pos.parent;
+  const parentStart = $pos.start();
+  let linkFrom = from;
+  let linkTo = from;
+
+  parent.forEach((node, offset) => {
+    const nodeStart = parentStart + offset;
+    const nodeEnd = nodeStart + node.nodeSize;
+    if (nodeStart <= from && from <= nodeEnd && linkType.isInSet(node.marks)) {
+      linkFrom = nodeStart;
+      linkTo = nodeEnd;
+    }
+  });
+
+  if (linkFrom < linkTo) {
+    view.dispatch(view.state.tr.removeMark(linkFrom, linkTo, linkType));
+    return true;
+  }
+  return false;
 }
 
 // ── Color ──

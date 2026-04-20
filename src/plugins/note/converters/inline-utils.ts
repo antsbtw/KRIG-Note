@@ -14,6 +14,7 @@ import type {
   CodeInline,
   LinkNode,
   NoteLinkNode,
+  FileLinkNode,
 } from '../../../shared/types/atom-types';
 import type { PMNodeJSON } from './converter-types';
 
@@ -48,6 +49,15 @@ function pmInlineNodeToElement(node: PMNode): InlineElement | null {
       noteId: node.attrs.noteId || '',
       title: node.attrs.title || '',
     } as NoteLinkNode;
+  }
+
+  // fileLink
+  if (node.type.name === 'fileLink') {
+    return {
+      type: 'file-link',
+      src: node.attrs.src || '',
+      filename: node.attrs.filename || '',
+    } as FileLinkNode;
   }
 
   // text node (with marks)
@@ -145,6 +155,9 @@ function elementToPMNodes(el: InlineElement): PMNodeJSON[] {
 
     case 'note-link':
       return [{ type: 'noteLink', attrs: { noteId: el.noteId, title: el.title } }];
+
+    case 'file-link':
+      return [{ type: 'fileLink', attrs: { src: el.src, filename: el.filename } }];
 
     case 'mention':
       return [{ type: 'text', text: `@${el.label}` }];

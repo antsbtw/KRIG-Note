@@ -785,8 +785,13 @@ export class ResultParser {
       }
 
       if (match[1] !== undefined) {
-        // Link: [text](url)
-        inlines.push({ type: 'link', text: match[1], href: match[2] });
+        // Link: [text](url) — media:// hrefs become file-link
+        const href = match[2];
+        if (href.startsWith('media://')) {
+          inlines.push({ type: 'file-link', text: match[1], href });
+        } else {
+          inlines.push({ type: 'link', text: match[1], href });
+        }
       } else if (match[3] !== undefined) {
         // Inline math: $...$
         inlines.push({ type: 'math-inline', text: match[3] });

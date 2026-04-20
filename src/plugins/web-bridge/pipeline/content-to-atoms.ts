@@ -77,6 +77,13 @@ function toInlineElements(inlines: ExtractedInline[] | undefined, fallbackText: 
     if (inline.type === 'code-inline') {
       return { type: 'code-inline' as const, code: inline.text };
     }
+    if (inline.type === 'file-link' && inline.href) {
+      return {
+        type: 'file-link' as const,
+        src: inline.href,
+        filename: inline.text,
+      };
+    }
     if (inline.type === 'bold') {
       return { type: 'text' as const, text: inline.text, marks: [{ type: 'bold' as const }] };
     }
@@ -100,6 +107,9 @@ function inlineElementsToTiptapContent(elements: InlineElement[]): Array<Record<
     }
     if (el.type === 'code-inline') {
       return { type: 'text', text: el.code, marks: [{ type: 'code' }] };
+    }
+    if (el.type === 'file-link') {
+      return { type: 'fileLink', attrs: { src: el.src, filename: el.filename } };
     }
     if (el.type === 'link') {
       return {

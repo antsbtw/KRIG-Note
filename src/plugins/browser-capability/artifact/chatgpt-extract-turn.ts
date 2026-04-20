@@ -195,10 +195,17 @@ async function processSandboxLinks(markdown: string, conversationId: string, mes
         lines[li] = `📎 **${text}**（ChatGPT 沙箱文件: ${filename}，下载失败）`;
       }
     } else {
-      // Inline sandbox links → replace with plain text mention
+      // Inline sandbox links → replace with media:// file link (or fallback to bold)
       lines[li] = line.replace(
         /\[([^\]]+)\]\(sandbox:\/mnt\/data\/([^)]+)\)/g,
-        (_match, text, _filename) => `**${text}**`,
+        (_match, text, filename) => {
+          const s = stored.get(filename);
+          if (s) {
+            // Emit inline file link that result-parser will recognize as fileLink node
+            return `[${filename}](${s.mediaUrl})`;
+          }
+          return `**${text}**`;
+        },
       );
     }
   }

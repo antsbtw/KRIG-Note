@@ -105,18 +105,72 @@ export function ContextMenu({ view }: ContextMenuProps) {
     },
   ];
 
-  // Thought 标注：检测光标处是否有 thought mark 或 node attr
+  // ── 格式检测：光标处发现的所有 mark → 提供移除选项 ──
+  {
+    const $pos = view.state.selection.$from;
+    const cursorMarks = $pos.marks();
+
+    // mark 类型 → 显示配置
+    const MARK_INFO: Record<string, { label: string; icon: string }> = {
+      bold:      { label: '移除粗体',   icon: 'B' },
+      italic:    { label: '移除斜体',   icon: 'I' },
+      underline: { label: '移除下划线', icon: 'U' },
+      strike:    { label: '移除删除线', icon: 'S' },
+      code:      { label: '移除行内代码', icon: '<>' },
+      link:      { label: '移除链接',   icon: '🔗' },
+      textStyle: { label: '移除文字颜色', icon: '🎨' },
+      highlight: { label: '移除高亮',   icon: '🖍' },
+    };
+
+    /** 找到光标处某个 mark 的完整覆盖范围 */
+    const findMarkRange = (markType: import('prosemirror-model').MarkType): { from: number; to: number } | null => {
+      const parent = $pos.parent;
+      const parentStart = $pos.start();
+      const cursorPos = $pos.pos;
+      let result: { from: number; to: number } | null = null;
+      parent.forEach((node, offset) => {
+        const nodeStart = parentStart + offset;
+        const nodeEnd = nodeStart + node.nodeSize;
+        if (nodeStart <= cursorPos && cursorPos <= nodeEnd && markType.isInSet(node.marks)) {
+          result = { from: nodeStart, to: nodeEnd };
+        }
+      });
+      return result;
+    };
+
+    let formatSeparatorAdded = false;
+
+    for (const mark of cursorMarks) {
+      const info = MARK_INFO[mark.type.name];
+      if (!info) continue; // thought 单独处理
+
+      items.push({
+        id: `remove-${mark.type.name}`,
+        label: info.label,
+        icon: info.icon,
+        separator: !formatSeparatorAdded,
+        action: () => {
+          const range = findMarkRange(mark.type);
+          if (range) {
+            view.dispatch(view.state.tr.removeMark(range.from, range.to, mark.type));
+          }
+          close();
+        },
+      });
+      formatSeparatorAdded = true;
+    }
+  }
+
+  // Thought 标注：检测光标处是否有 thought mark 或 node attr（单独处理，因为有额外的删除逻辑）
   const thoughtMarkType = view.state.schema.marks.thought;
   if (thoughtMarkType) {
     const $pos = view.state.selection.$from;
-    // 检查 inline/block mark
     const thoughtMark = $pos.marks().find((m) => m.type === thoughtMarkType);
     if (thoughtMark) {
       const thoughtId = thoughtMark.attrs.thoughtId;
       items.push({
         id: 'remove-thought', label: '删除标注', icon: '💭', separator: true,
         action: () => {
-          // 移除 mark
           const { tr, doc } = view.state;
           doc.descendants((node, pos) => {
             node.marks.forEach((mark) => {
@@ -126,7 +180,6 @@ export function ContextMenu({ view }: ContextMenuProps) {
             });
           });
           view.dispatch(tr);
-          // 通知 Thought 面板删除
           const api = (window as any).viewAPI;
           if (api?.sendToOtherSlot) {
             api.sendToOtherSlot({
@@ -135,7 +188,6 @@ export function ContextMenu({ view }: ContextMenuProps) {
               payload: { thoughtId },
             });
           }
-          // 删除 DB 记录
           if (api?.thoughtDelete) api.thoughtDelete(thoughtId);
           if (api?.getActiveNoteId && api?.thoughtUnrelate) {
             api.getActiveNoteId().then((noteId: string) => {

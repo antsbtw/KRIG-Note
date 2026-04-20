@@ -215,6 +215,15 @@ function inlinesToContent(schema: Schema, inlines: ExtractedInline[]): PMNode[] 
         }
         break;
 
+      case 'file-link':
+        if (inline.text && schema.nodes.fileLink) {
+          result.push(schema.nodes.fileLink.create({
+            src: inline.href ?? '',
+            filename: inline.text,
+          }));
+        }
+        break;
+
       case 'math-inline':
         // mathInline is a node (not a mark) in KRIG's schema
         if (inline.text && schema.nodes.mathInline) {

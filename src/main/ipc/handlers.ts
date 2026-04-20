@@ -649,6 +649,18 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
     return { canceled: false, filePath: result.filePath };
   });
 
+  // ── 文件打开对话框 ──
+  ipcMain.handle(IPC.FILE_OPEN_DIALOG, async () => {
+    const { dialog } = await import('electron');
+    const mainWindow = getMainWindow();
+    const result = await dialog.showOpenDialog(mainWindow as any, {
+      properties: ['openFile'],
+      filters: [{ name: 'All Files', extensions: ['*'] }],
+    });
+    if (result.canceled || !result.filePaths.length) return { canceled: true };
+    return { canceled: false, filePath: result.filePaths[0] };
+  });
+
   // ── Web Translate ──
 
   ipcMain.handle(IPC.WEB_TRANSLATE_FETCH_ELEMENT_JS, async () => {
@@ -707,6 +719,33 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
   ipcMain.handle(IPC.MEDIA_PUT_BASE64, async (_e, params: { input: string; mimeType?: string; filename?: string }) => {
     const { mediaSurrealStore } = await import('../media/media-surreal-store');
     return mediaSurrealStore.putBase64(params.input, params.mimeType, params.filename);
+  });
+
+  // MEDIA_PUT_FILE: copy a local file into the media store.
+  ipcMain.handle(IPC.MEDIA_PUT_FILE, async (_e, filePath: string) => {
+    const { readFile } = await import('fs/promises');
+    const path = await import('path');
+    const { mediaSurrealStore } = await import('../media/media-surreal-store');
+    try {
+      const data = await readFile(filePath);
+      const filename = path.basename(filePath);
+      const ext = path.extname(filePath).toLowerCase();
+      const MIME_MAP: Record<string, string> = {
+        '.pdf': 'application/pdf', '.doc': 'application/msword', '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        '.xls': 'application/vnd.ms-excel', '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        '.ppt': 'application/vnd.ms-powerpoint', '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        '.txt': 'text/plain', '.md': 'text/markdown', '.csv': 'text/csv', '.json': 'application/json',
+        '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.svg': 'image/svg+xml', '.webp': 'image/webp',
+        '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.mp4': 'video/mp4', '.webm': 'video/webm',
+        '.zip': 'application/zip', '.gz': 'application/gzip', '.tar': 'application/x-tar',
+        '.py': 'text/x-python', '.js': 'text/javascript', '.ts': 'text/typescript', '.html': 'text/html', '.css': 'text/css',
+      };
+      const mime = MIME_MAP[ext] || 'application/octet-stream';
+      const base64 = `data:${mime};base64,${data.toString('base64')}`;
+      return mediaSurrealStore.putBase64(base64, mime, filename);
+    } catch (err) {
+      return { success: false, error: String(err) };
+    }
   });
 
   // MEDIA_RESOLVE_PATH: turn `media://bucket/name.ext` into the real disk

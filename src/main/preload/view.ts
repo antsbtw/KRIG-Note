@@ -90,6 +90,10 @@ contextBridge.exposeInMainWorld('viewAPI', {
   // 文件保存对话框
   fileSaveDialog: (options: { defaultName: string; data: string; filters?: { name: string; extensions: string[] }[] }) =>
     ipcRenderer.invoke(IPC.FILE_SAVE_DIALOG, options),
+  fileOpenDialog: () =>
+    ipcRenderer.invoke(IPC.FILE_OPEN_DIALOG) as Promise<{ canceled: boolean; filePath?: string }>,
+  mediaPutFile: (filePath: string) =>
+    ipcRenderer.invoke(IPC.MEDIA_PUT_FILE, filePath) as Promise<{ success: boolean; mediaUrl?: string; mediaId?: string }>,
 
   // 状态监听
   onStateChanged: (callback: (state: unknown) => void) => {

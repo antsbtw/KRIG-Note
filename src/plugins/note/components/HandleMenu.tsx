@@ -9,6 +9,7 @@ import { deleteBlockAt, applyTextColor as applyTextColorCmd, applyHighlight as a
 import { addThought } from '../commands/thought-commands';
 import { addBlockFrame, updateBlockFrameColor, updateBlockFrameStyle, removeBlockFrame } from '../commands/frame-commands';
 import { FramePicker } from './FramePicker';
+import { getCurrentNoteId } from '../plugins/link-click';
 
 /**
  * HandleMenu — 手柄点击后的操作菜单
@@ -133,6 +134,29 @@ export function HandleMenu({ view }: HandleMenuProps) {
       const text = node.textContent;
       if (text) navigator.clipboard.writeText(text);
     }
+    close();
+  };
+
+  const copyBlockLink = () => {
+    const noteId = getCurrentNoteId();
+    const node = view.state.doc.nodeAt(menu.pos);
+    if (!noteId || !node) { close(); return; }
+    // 标题 block：用标题文本（短且稳定）
+    // 普通 block：用前 30 字符 + 顺序索引
+    const text = node.textContent.trim();
+    let anchor: string;
+    if (node.type.name === 'textBlock' && node.attrs.level) {
+      // 标题 — 直接用标题文本
+      anchor = encodeURIComponent(text.slice(0, 60));
+    } else {
+      // 普通 block — 用顺序索引 + 前缀文本
+      let idx = 0;
+      view.state.doc.forEach((_n, _o, i) => { if (_o === menu.pos) idx = i; });
+      const preview = text.slice(0, 30);
+      anchor = `${idx}:${encodeURIComponent(preview)}`;
+    }
+    const link = `krig://block/${noteId}/${anchor}`;
+    navigator.clipboard.writeText(link);
     close();
   };
 
@@ -393,6 +417,17 @@ export function HandleMenu({ view }: HandleMenuProps) {
         >
           <span style={styles.icon}>📋</span>
           <span>Copy</span>
+        </div>
+
+        {/* Copy Link */}
+        <div
+          style={styles.item}
+          onMouseDown={(e) => { e.preventDefault(); copyBlockLink(); }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = '#3a3a3a'; setSubMenu(null); }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+        >
+          <span style={styles.icon}>🔗</span>
+          <span>Copy Link</span>
         </div>
 
         {/* Thought — 一键添加标注（默认"思考"类型） */}

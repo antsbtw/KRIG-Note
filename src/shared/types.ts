@@ -217,8 +217,9 @@ export const IPC = {
   DB_READY: 'db:ready',
   IS_DB_READY: 'db:is-ready',
 
-  // 文件保存对话框
+  // 文件对话框
   FILE_SAVE_DIALOG: 'file:save-dialog',
+  FILE_OPEN_DIALOG: 'file:open-dialog',
 
   // 学习模块
   LEARNING_LOOKUP: 'learning:lookup',
@@ -232,6 +233,7 @@ export const IPC = {
   // 媒体操作
   MEDIA_DOWNLOAD: 'media:download',              // 下载远程媒体到本地
   MEDIA_PUT_BASE64: 'media:put-base64',          // 将 base64/data URL 存入 media store，返回 media://... URL
+  MEDIA_PUT_FILE: 'media:put-file',              // 将本地文件路径复制到 media store，返回 media://... URL
   MEDIA_RESOLVE_PATH: 'media:resolve-path',      // 将 media:// URL 解析为本地磁盘路径（给 shell.openPath 用）
   MEDIA_OPEN_EXTERNAL: 'media:open-external',    // 用系统浏览器打开 URL
   MEDIA_OPEN_PATH: 'media:open-path',            // 用系统默认程序打开本地文件（shell.openPath）

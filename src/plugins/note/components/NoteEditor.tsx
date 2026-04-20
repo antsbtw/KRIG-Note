@@ -13,7 +13,7 @@ import { noteTitleNodeView } from '../blocks/text-block';
 import { buildInputRules } from '../plugins/input-rules';
 import { containerKeyboardPlugin } from '../plugins/container-keyboard';
 import { slashCommandPlugin } from '../plugins/slash-command';
-import { linkClickPlugin, setCurrentNote } from '../plugins/link-click';
+import { linkClickPlugin, setCurrentNote, flushPendingAnchor } from '../plugins/link-click';
 import { tableKeymapPlugin } from '../blocks/table';
 import { columnResizing } from 'prosemirror-tables';
 import { SlashMenu } from './SlashMenu';
@@ -402,6 +402,10 @@ export function NoteEditor() {
       }
       currentNoteIdRef.current = noteId;
       setCurrentNote(noteId);
+
+      // 跨文档 block 链接：笔记加载完成后滚动到目标锚点
+      const v2 = viewRef.current;
+      if (v2) flushPendingAnchor(v2);
 
       // 从 doc 中提取 noteTitle 实际文本，同步到 toolbar 和文件名
       const v = viewRef.current;

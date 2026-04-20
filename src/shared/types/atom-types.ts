@@ -371,6 +371,7 @@ export type InlineElement =
   | CodeInline
   | LinkNode
   | NoteLinkNode
+  | FileLinkNode
   | MentionNode;
 
 export interface TextNode {
@@ -400,6 +401,12 @@ export interface NoteLinkNode {
   type: 'note-link';
   noteId: string;
   title: string;
+}
+
+export interface FileLinkNode {
+  type: 'file-link';
+  src: string;       // media://files/...
+  filename: string;  // 显示名
 }
 
 export interface MentionNode {

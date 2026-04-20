@@ -3228,3 +3228,53 @@
   white-space: pre-wrap;
   word-break: break-all;
 }
+
+/* ── fileLink inline node ── */
+.ProseMirror .file-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(138, 180, 248, 0.12);
+  color: #8ab4f8;
+  cursor: pointer;
+  font-size: 0.9em;
+  vertical-align: baseline;
+  user-select: none;
+}
+.ProseMirror .file-link:hover {
+  background: rgba(138, 180, 248, 0.22);
+  text-decoration: none;
+}
+.ProseMirror .file-link-icon {
+  font-size: 0.85em;
+}
+.ProseMirror .file-link-name {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── noteLink inline node ── */
+.ProseMirror .note-link {
+  display: inline;
+  color: #8ab4f8;
+  cursor: pointer;
+}
+.ProseMirror .note-link:hover {
+  text-decoration: underline;
+}
+.ProseMirror .note-link--missing {
+  color: #f28b82;
+}
+
+/* ── block link 滚动高亮 ── */
+.ProseMirror .block-link-highlight {
+  animation: blockLinkFlash 2s ease-out;
+}
+@keyframes blockLinkFlash {
+  0%   { background: rgba(138, 180, 248, 0.3); }
+  100% { background: transparent; }
+}

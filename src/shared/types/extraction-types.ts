@@ -9,9 +9,9 @@
  */
 
 export interface ExtractedInline {
-  type: 'text' | 'link' | 'math-inline' | 'code-inline' | 'bold' | 'italic';
+  type: 'text' | 'link' | 'math-inline' | 'code-inline' | 'bold' | 'italic' | 'file-link';
   text: string;
-  href?: string;
+  href?: string;  // for 'link' and 'file-link' (media:// URL)
 }
 
 export interface ExtractedListItem {

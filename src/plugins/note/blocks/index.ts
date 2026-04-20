@@ -33,6 +33,7 @@ import { htmlBlockBlock } from './html-block';
 // ── Inline ──
 import { hardBreakBlock } from './hard-break';
 import { mathInlineBlock } from './math-inline';
+import { fileLinkBlock } from './file-link';
 
 // ── 特殊 ──
 import { horizontalRuleBlock } from './horizontal-rule';
@@ -85,6 +86,7 @@ export function registerAllBlocks(): void {
   // ── Inline ──
   blockRegistry.register(hardBreakBlock);
   blockRegistry.register(mathInlineBlock);
+  blockRegistry.register(fileLinkBlock);
 
   // ── 特殊 ──
   blockRegistry.register(horizontalRuleBlock);
