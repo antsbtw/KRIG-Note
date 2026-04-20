@@ -1040,10 +1040,35 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
               if (extraImgs.length > 0) finalMd += '\n\n' + extraImgs.join('\n\n');
             }
 
-            // SSE 完成 → 直接调用 browserCapabilityExtractTurn 获取完整内容
+            // SSE 完成 → 刷新 conversation 数据后调用 extractTurn 获取完整内容
             setAiStatus('capturing');
             try {
-              await new Promise(r => setTimeout(r, 2000)); // 等待 conversation 数据同步
+              // 主动 fetch conversation API 获取最新数据（含刚完成的 AI 回复）
+              await webview!.executeJavaScript(`
+                (async () => {
+                  try {
+                    const chatMatch = window.location.href.match(/\\/chat\\/([^/?#]+)/);
+                    if (!chatMatch) return;
+                    let orgId = null;
+                    const entries = performance.getEntriesByType('resource');
+                    for (const entry of entries) {
+                      const m = entry.name.match(/claude\\.ai\\/api\\/organizations\\/([0-9a-f-]{36})/);
+                      if (m) { orgId = m[1]; break; }
+                    }
+                    if (!orgId) {
+                      const m2 = document.cookie.match(/lastActiveOrg=([^;]+)/);
+                      if (m2) orgId = m2[1];
+                    }
+                    if (!orgId) return;
+                    const apiUrl = '/api/organizations/' + orgId + '/chat_conversations/' + chatMatch[1]
+                      + '?tree=True&rendering_mode=messages&render_all_tools=true';
+                    await fetch(apiUrl, { credentials: 'include' });
+                  } catch {}
+                })()
+              `);
+              // 等待 trace-writer 处理拦截到的 response
+              await new Promise(r => setTimeout(r, 3000));
+
               // 找最后一条 assistant 消息的 DOM index
               const lastAssistantIndex = await webview!.executeJavaScript(`(function() {
                 var selector = ${JSON.stringify(profile.selectors.assistantMessage)};
@@ -1055,7 +1080,7 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
               if (lastAssistantIndex >= 0) {
                 const capResult = await viewAPI.browserCapabilityExtractTurn({ msgIndex: lastAssistantIndex });
                 if (capResult.success && capResult.markdown) {
-                  finalMd = capResult.markdown; // 只用 AI 回答部分，不用 userMessage
+                  finalMd = capResult.markdown;
                   console.log('[AI_INJECT_AND_SEND] extractTurn succeeded, md length:', finalMd.length);
                 }
               }
