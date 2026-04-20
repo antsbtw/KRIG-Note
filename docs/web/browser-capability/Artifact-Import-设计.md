@@ -273,29 +273,31 @@ type TurnData = {
 ### 6.1 实施顺序
 
 ```
-Phase A：数据验证（已完成）
+Phase A：数据验证 ✅ 已完成
   - browser-capability 识别 artifact → artifacts.json 落盘
   - 人工验证识别准确性（9/9 artifact 全部识别到）
 
-Phase D：旧链路清理（先做）
-  - 移除 DOM 模拟下载代码（card-path / iframe-path）
-  - 移除 processClaudeArtifactsFull 的占位符替换逻辑
-  - 简化 AIWebView 中 Claude 特化的 CDP/artifact 下载代码
-  - 保留 resolveMsgIndex() 和 markdown 生成/导入后半段
-  - 清理完后 extractTurnAt() 变成一个干净的壳，等 Phase B 注入新逻辑
+Phase D：旧链路清理 ✅ 已完成
+  - 移除 processClaudeArtifactsFull（340行 DOM 模拟下载逻辑）
+  - 移除 AIWebView 中 iframe/card artifact 下载代码和死函数
+  - processClaudeArtifactsLive 保留用于 fallback
 
-Phase B：单条提取（新链路）
-  - 右键菜单 → 从 browser-capability 获取 artifact 数据
-  - 用 widget_code/file_text 直接生成 markdown
-  - 走现有 as:append-turn 进 Note
+Phase B：单条提取 ✅ 已完成已测试
+  - 右键菜单 → browserCapabilityExtractTurn → Note
+  - conversation-query.ts 提取结构化对话数据
+  - extract-turn.ts 生成 markdown（SVG/HTML/代码块）
+  - DOM assistant-only 索引正确映射到 conversation 消息
 
-Phase C：整页提取（新功能）
-  - 新增"整页提取"入口
-  - 完全基于 browser-capability conversation 数据
-  - 新增 as:import-conversation 进 Note
+Phase C：整页提取 ✅ 已完成已测试
+  - "提取整页对话" 按钮 → extractFullConversation → Note
+  - as:import-conversation 逐 turn 插入（callout + toggle）
+
+Phase B+: bash_tool local_resource ✅ 已完成
+  - 从 tool_result 识别 local_resource
+  - present_files 关联 local_resource 文件
+  - Claude wiggle API 主动下载 sandbox 文件
+  - 按类型分流：SVG → image block，HTML → html-block，其他 → 代码块
 ```
-
-**为什么 D 放在 B 之前**：旧的 DOM 模拟下载代码（card-path、iframe-path、CDP artifact 拦截）会干扰新链路的开发和调试。先清理掉，新功能在干净的代码基础上实现，不需要处理新旧两条路径的共存和 fallback 逻辑。
 
 ### 6.2 哪些代码不变
 

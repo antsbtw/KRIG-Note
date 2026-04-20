@@ -233,9 +233,11 @@ bash_tool / present_files 执行后，sandbox 中生成的文件引用。
 | `mime_type` | MIME 类型 |
 | `uuid` | 文件 UUID |
 
-**当前处理状态**：❌ 未提取
+**当前处理状态**：✅ 已完成（2026-04-19）
 
-**改进建议**：提取 `local_resource` 信息，作为待下载 artifact 记录
+- `conversation-query.ts` 的 `extractLocalResources()` 从 `tool_result` 中提取
+- `present_files` 自动关联其 `tool_result` 中的 `local_resource`
+- `extract-turn.ts` 的 `downloadLocalResource()` 通过 Claude wiggle API 主动下载文件内容
 
 ---
 
@@ -248,12 +250,12 @@ bash_tool / present_files 执行后，sandbox 中生成的文件引用。
 | 3 | create_file (.html) | tool_use.file_text | ✅ API 自包含 | ✅ 已完成已测试 | html-block (iframe) |
 | 4 | create_file (.py/.js/.ts) | tool_use.file_text | ✅ API 自包含 | ✅ 已完成未测试 | 代码块 |
 | 5 | create_file (.md/.txt) | tool_use.file_text | ✅ API 自包含 | ✅ 已完成未测试 | 纯文本 |
-| 6 | create_file (.svg) | tool_use.file_text | ✅ API 自包含 | ❌ 未处理 | 应走 SVG image block |
+| 6 | create_file (.svg) | tool_use.file_text | ✅ API 自包含 | ✅ 已完成 | SVG image block |
 | 7 | AI 生成图片 | content.image | ✅ URL 可下载 | ✅ 已处理 | image block |
 | 8 | 用户上传文件 | message.files | ✅ URL 可下载 | ✅ 已处理 | 附件引用 |
-| 9 | view (文件引用) | tool_use.path | ❌ 只有路径 | ⚠️ 提示不友好 | 应改为文件引用标记 |
-| 10 | present_files | tool_use.filepaths | ❌ 只有路径列表 | ⚠️ 标题为 toolUseId | 应改为文件名列表 |
-| 11 | bash_tool 产出 (local_resource) | tool_result | ❌ 需要下载 | ❌ 未识别 | Phase 1: 待下载提示 |
+| 9 | view (文件引用) | tool_use.path | ❌ 只有路径 | ✅ 已改进 | 显示文件名 |
+| 10 | present_files | tool_use.filepaths | ❌→✅ 关联 local_resource | ✅ 已完成 | 文件名列表 + 主动下载 |
+| 11 | bash_tool 产出 (local_resource) | tool_result | ✅ Claude API 下载 | ✅ 已完成 | 按类型分流（SVG/HTML/代码块） |
 | 12 | downloaded 文件 (.html) | download 事件 | ✅ 本地文件 | ✅ 已完成 | html-block |
 | 13 | downloaded 文件 (.svg) | download 事件 | ✅ 本地文件 | ✅ 已完成 | image block |
 | 14 | downloaded 文件 (其他) | download 事件 | ✅ 本地文件 | ✅ 已完成 | 附件引用 |
@@ -265,21 +267,23 @@ bash_tool / present_files 执行后，sandbox 中生成的文件引用。
 
 ## 五、待办优先级
 
-### P0（影响核心功能）
+### 已完成（2026-04-19 更新）
 
-- [ ] **#11 bash_tool local_resource 识别**：从 tool_result 中提取 local_resource，记录文件路径和 MIME 类型。至少做到"知道有哪些文件待下载"
-- [ ] **#6 create_file .svg 处理**：file_text 内容是 SVG 时，应走 SVG image block 路径而非代码块
+- [x] **#11 bash_tool local_resource 识别**：从 tool_result 提取 + present_files 关联 + Claude API 主动下载
+- [x] **#6 create_file .svg 处理**：file_text 内容是 SVG 时走 SVG image block 路径
+- [x] **#9 view 提示改进**：标题改为文件名
+- [x] **#10 present_files 标题改进**：从 filepaths/local_resource 提取文件名
+- [x] **#11 Phase 1-3**：识别 + 关联下载 + 主动下载全部完成
 
-### P1（改善体验）
+### P1（待测试验证）
 
-- [ ] **#9 view 提示改进**：`> 📄 查看了文件: SKILL.md` 而非 "内容不可用"
-- [ ] **#10 present_files 标题改进**：从 filepaths 提取文件名，而非显示 toolUseId
-- [ ] **#11 Phase 2**：bash_tool 产出物关联已下载文件（download 事件已捕获的同名文件）
+- [ ] **#4/#5 create_file 其他类型**：验证 .py/.js/.ts/.json/.csv 等文件类型的代码块输出
+- [ ] **#7 AI 生成图片**：验证 Imagen 等图片 artifact 的导入
 
 ### P2（增强功能）
 
-- [ ] **#11 Phase 3**：主动下载 bash_tool 产出物（通过 Claude download API 或 L4 Interaction）
-- [ ] **#4/#5 create_file 其他类型测试**：验证 .py/.js/.ts/.json/.csv 等文件类型
+- [ ] **Phase E SVG Block**：独立 svg-block 替代 image block 的 SVG 分支
+- [ ] **ChatGPT/Gemini adapter**：非 Claude 页面的 artifact 识别
 
 ---
 
