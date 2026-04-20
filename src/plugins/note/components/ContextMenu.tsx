@@ -256,9 +256,9 @@ export function ContextMenu({ view }: ContextMenuProps) {
     items.push({
       id: 'ask-ai', label: '问 AI', icon: '🤖',
       action: () => {
-        const { coords, contentPreview } = menu;
+        const { coords, contentPreview, blockPositions } = menu;
         close();
-        openAskAIPanel(view, coords, contentPreview);
+        openAskAIPanel(view, coords, contentPreview, blockPositions);
       },
     });
   }
