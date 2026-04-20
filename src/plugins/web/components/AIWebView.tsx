@@ -1034,7 +1034,7 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
             })()`);
 
             // Step 1: SSE 检测到 AI 回复结束
-            // Step 2: 找到最后一条 assistant 消息 index，调用右键提取
+            // Step 2: 找最后一条 assistant 消息 index
             setAiStatus('capturing');
             try {
               const lastAssistantIdx = await webview!.executeJavaScript(`(function() {
@@ -1047,34 +1047,20 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
 
               if (lastAssistantIdx < 0) throw new Error('No assistant message found');
 
-              const ctx = {
-                webview: webview!, url: webview!.getURL?.() || '',
-                x: 0, y: 0, targetTag: null, targetHtml: '',
-              } as MenuContext;
+              // Step 3: 直接调用 browserCapabilityExtractTurn（纯数据提取，无 UI 副作用）
+              const capResult = await viewAPI.browserCapabilityExtractTurn({ msgIndex: lastAssistantIdx });
+              const extractedMd = capResult.success ? (capResult.markdown || '') : '';
 
-              // extractTurnAt 内部通过 sendToOtherSlot 发送 as:append-turn
-              // 拦截它，只取 AI 回答部分的 markdown
-              const origSlot = viewAPI.sendToOtherSlot;
-              let extractedMarkdown = '';
-              viewAPI.sendToOtherSlot = (msg: any) => {
-                if (msg.protocol === 'ai-sync' && msg.action === 'as:append-turn') {
-                  // Step 3: 只取 markdown（AI 回答），去掉 userMessage
-                  extractedMarkdown = msg.payload?.turn?.markdown || '';
-                }
-              };
-              await extractTurnAt(ctx, lastAssistantIdx);
-              viewAPI.sendToOtherSlot = origSlot;
-
-              // Step 4: 发回 main 进程 → 保存到 ThoughtStore
+              // Step 4: 发回 main 进程 → 保存到 ThoughtStore（只用 AI 回答，不用 userMessage）
               setAiStatus('idle');
               viewAPI.aiSendResponse?.(params.responseChannel, {
-                success: !!extractedMarkdown.trim(),
-                markdown: extractedMarkdown || undefined,
-                error: extractedMarkdown.trim() ? undefined : 'extraction returned empty',
+                success: !!extractedMd.trim(),
+                markdown: extractedMd || undefined,
+                error: extractedMd.trim() ? undefined : (capResult.error || 'extraction returned empty'),
               });
             } catch (exErr) {
               setAiStatus('idle');
-              console.warn('[AI_INJECT_AND_SEND] extractTurnAt failed:', exErr);
+              console.warn('[AI_INJECT_AND_SEND] browserCapabilityExtractTurn failed:', exErr);
               viewAPI.aiSendResponse?.(params.responseChannel, { success: false, error: String(exErr) });
             }
             return;
