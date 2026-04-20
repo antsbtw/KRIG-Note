@@ -1040,6 +1040,40 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
               if (extraImgs.length > 0) finalMd += '\n\n' + extraImgs.join('\n\n');
             }
 
+            // SSE 完成 → 用右键提取函数获取完整内容（含 artifact/SVG/图片）
+            setAiStatus('capturing');
+            try {
+              await new Promise(r => setTimeout(r, 2000)); // 等待 conversation 数据同步
+              const ctx = { webview: webview!, url: webview!.getURL?.() || '', x: 0, y: 0, targetTag: null, targetHtml: '' } as MenuContext;
+              const profile2 = detectAIServiceByUrl(ctx.url);
+              if (profile2) {
+                // 找最后一条 assistant 消息的 index
+                const lastAssistantIndex = await webview!.executeJavaScript(`(function() {
+                  var selector = ${JSON.stringify(profile.selectors.assistantMessage)};
+                  var selectors = selector.split(',').map(function(s) { return s.trim(); });
+                  var count = 0;
+                  for (var i = 0; i < selectors.length; i++) count += document.querySelectorAll(selectors[i]).length;
+                  return count - 1;
+                })()`);
+                if (lastAssistantIndex >= 0) {
+                  // 临时保存 extractTurnAt 结果的 handler
+                  const origSlot = viewAPI.sendToOtherSlot;
+                  let extractedMd = '';
+                  viewAPI.sendToOtherSlot = (msg: any) => {
+                    if (msg.protocol === 'ai-sync' && msg.action === 'as:append-turn') {
+                      extractedMd = msg.payload?.turn?.markdown || '';
+                    }
+                  };
+                  await extractTurnAt(ctx, lastAssistantIndex);
+                  viewAPI.sendToOtherSlot = origSlot;
+                  if (extractedMd.trim()) {
+                    finalMd = extractedMd;
+                  }
+                }
+              }
+            } catch (exErr) {
+              console.warn('[AI_INJECT_AND_SEND] extractTurnAt fallback failed:', exErr);
+            }
             setAiStatus('idle');
             viewAPI.aiSendResponse?.(params.responseChannel, { success: true, markdown: finalMd });
             return;

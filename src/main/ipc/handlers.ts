@@ -849,47 +849,15 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
           ipcMain.removeListener(responseChannel, listener);
           console.log('[AI_ASK_VISIBLE] Step 4: Got response from renderer:', { success: result?.success, mdLen: result?.markdown?.length ?? 0, error: result?.error });
 
-          // 用右键提取的函数获取完整 AI 回复（包括 SVG/图片/artifact）
-          if (result?.success) {
+          // Renderer 侧已通过 extractTurnAt 获取完整 markdown（含 artifact/SVG/图片），
+          // 这里只需要解析并保存到 ThoughtStore
+          if (result?.success && result?.markdown) {
             try {
-              // 1. 通过 extractTurn 获取完整 markdown（与右键提取一致）
-              let markdown = result.markdown || '';
-              try {
-                // 等待 conversation API 数据同步（SSE 完成后 API 数据可能有短暂延迟）
-                await new Promise(r => setTimeout(r, 2000));
-                const { getGuest } = await import('../../plugins/web-bridge/infrastructure/guest-registry');
-                const guest = getGuest(rightWC.id);
-                if (guest) {
-                  const pageId = getPageIdForWebContents(guest);
-                  if (pageId) {
-                    const { extractTurn } = await import('../../plugins/browser-capability/artifact/extract-turn');
-                    const { getConversationData } = await import('../../plugins/browser-capability/artifact/conversation-query');
-                    const conv = getConversationData(pageId);
-                    const assistantMsgs = conv?.messages.filter((m: any) => m.sender === 'assistant') || [];
-                    const lastIndex = assistantMsgs.length - 1;
-                    const extracted = lastIndex >= 0 ? await extractTurn(pageId, lastIndex) : null;
-                    if (extracted?.markdown) {
-                      markdown = extracted.markdown;
-                      console.log('[AI_ASK_VISIBLE] extractTurn succeeded, md length:', markdown.length);
-                    }
-                  }
-                }
-              } catch (extractErr) {
-                console.warn('[AI_ASK_VISIBLE] extractTurn failed, using SSE fallback:', extractErr);
-              }
-
-              if (!markdown.trim()) {
-                console.log('[AI_ASK_VISIBLE] No markdown after extraction');
-                resolve(result);
-                return;
-              }
-
-              // 2. 用 AI_PARSE_MARKDOWN 的解析逻辑保存到 ThoughtStore
               const { ResultParser } = await import('../../plugins/web-bridge/pipeline/result-parser');
               const { createAtomsFromExtracted } = await import('../../plugins/web-bridge/pipeline/content-to-atoms');
 
               const parser = new ResultParser();
-              const blocks = parser.parse(markdown);
+              const blocks = parser.parse(result.markdown);
               const atoms = createAtomsFromExtracted(blocks, '__skip_title__');
 
               const docAtom = atoms.find((a: any) => a.type === 'document');
@@ -902,20 +870,16 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
               await thoughtStore.save(params.thoughtId, { doc_content: contentAtoms });
               console.log('[AI_ASK_VISIBLE] Saved', contentAtoms.length, 'atoms to ThoughtStore');
             } catch (parseErr) {
-              console.error('[AI_ASK_VISIBLE] Failed to extract/parse AI response:', parseErr);
-              if (result.markdown) {
-                await thoughtStore.save(params.thoughtId, {
-                  doc_content: [{
-                    id: `atom-${Date.now()}`,
-                    type: 'paragraph',
-                    content: { children: [{ type: 'text', text: result.markdown }] },
-                    meta: { createdAt: Date.now(), updatedAt: Date.now(), dirty: false },
-                  }],
-                });
-              }
+              console.error('[AI_ASK_VISIBLE] Failed to parse AI response:', parseErr);
+              await thoughtStore.save(params.thoughtId, {
+                doc_content: [{
+                  id: `atom-${Date.now()}`,
+                  type: 'paragraph',
+                  content: { children: [{ type: 'text', text: result.markdown }] },
+                  meta: { createdAt: Date.now(), updatedAt: Date.now(), dirty: false },
+                }],
+              });
             }
-          } else {
-            console.log('[AI_ASK_VISIBLE] AI request failed:', result?.error);
           }
 
           resolve(result);
