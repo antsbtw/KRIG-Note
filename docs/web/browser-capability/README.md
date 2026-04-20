@@ -28,6 +28,9 @@
 - [Gemini-Artifact-类型全表.md](Gemini-Artifact-类型全表.md)
   Gemini 所有内容类型分析：batchexecute 协议、位置数组 schema、11 种内容类型、三平台统一提取架构。
 
+- [多平台提取-开发测试计划.md](多平台提取-开发测试计划.md)
+  ChatGPT / Gemini 提取的分阶段开发计划、测试矩阵和风险评估。先分开验证，后抽象合并。
+
 ## 当前状态（2026-04-19 更新）
 
 ### 基础设施层（Phase 0-5）— 已完成
