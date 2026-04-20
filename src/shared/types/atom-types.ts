@@ -27,7 +27,7 @@ export interface Atom {
   from?: FromReference;
 
   // Block 框定（通用视觉能力，跨所有 block 类型）
-  frame?: { color: string; style: string; groupId: string | null };
+  frame?: { color: string; style: string; groupId: string | null; thoughtId?: string | null };
 
   meta: AtomMeta;
 }
