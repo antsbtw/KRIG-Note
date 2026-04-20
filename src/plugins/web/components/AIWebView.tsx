@@ -1033,8 +1033,10 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
               return domToMarkdown(all[all.length - 1]);
             })()`);
 
-            // Step 1: SSE 检测到 AI 回复结束
-            // Step 2: 找最后一条 assistant 消息 index
+            // SSE 检测到 AI 回复结束 → 复用右键提取的完整路径提取内容
+            // 与 extractTurnAt 中 Claude 提取逻辑完全一致，只有两点不同：
+            // 1. 不发 as:append-turn 到 Note（改为发回 main 保存到 Thought）
+            // 2. 只用 AI 回答（markdown），去掉问题（userMessage）
             setAiStatus('capturing');
             try {
               const lastAssistantIdx = await webview!.executeJavaScript(`(function() {
@@ -1044,23 +1046,35 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
                 for (var i = 0; i < parts.length; i++) count += document.querySelectorAll(parts[i]).length;
                 return count - 1;
               })()`);
-
               if (lastAssistantIdx < 0) throw new Error('No assistant message found');
 
-              // Step 3: 直接调用 browserCapabilityExtractTurn（纯数据提取，无 UI 副作用）
+              // — 以下与 extractTurnAt 中 Claude 路径完全一致 —
+              let markdown = '';
               const capResult = await viewAPI.browserCapabilityExtractTurn({ msgIndex: lastAssistantIdx });
-              const extractedMd = capResult.success ? (capResult.markdown || '') : '';
+              if (capResult.success && capResult.markdown) {
+                markdown = capResult.markdown;
+              } else {
+                // Fallback: API extraction
+                const curUrl = webview!.getURL?.() || '';
+                const resolvedTurn = await resolveClaudeTurnFromApi(
+                  webview!, lastAssistantIdx, '',
+                );
+                if (resolvedTurn) {
+                  markdown = resolvedTurn.baseMarkdown;
+                  markdown = processClaudeArtifactsLive(markdown, curUrl);
+                }
+              }
 
-              // Step 4: 发回 main 进程 → 保存到 ThoughtStore（只用 AI 回答，不用 userMessage）
+              // 发回 main 进程 → 保存到 ThoughtStore
               setAiStatus('idle');
               viewAPI.aiSendResponse?.(params.responseChannel, {
-                success: !!extractedMd.trim(),
-                markdown: extractedMd || undefined,
-                error: extractedMd.trim() ? undefined : (capResult.error || 'extraction returned empty'),
+                success: !!markdown.trim(),
+                markdown: markdown || undefined,
+                error: markdown.trim() ? undefined : 'extraction returned empty',
               });
             } catch (exErr) {
               setAiStatus('idle');
-              console.warn('[AI_INJECT_AND_SEND] browserCapabilityExtractTurn failed:', exErr);
+              console.warn('[AI_INJECT_AND_SEND] extraction failed:', exErr);
               viewAPI.aiSendResponse?.(params.responseChannel, { success: false, error: String(exErr) });
             }
             return;
