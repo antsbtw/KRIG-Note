@@ -19,7 +19,9 @@
 | Artifact 概念 | Canvas（`/textdocs` 端点）+ 工具输出 | `tool_use[].widget_code` / `file_text` |
 | 流式响应 | SSE，但最终用 conversation API 获取权威数据 | SSE + conversation API |
 
-**关键限制**：ChatGPT 的 Service Worker 拦截了所有 `/backend-api/` 请求，页面级 `fetch` 无法获取数据（返回 401）。必须通过 CDP 被动捕获 Service Worker 代理的响应。
+**认证方式**：ChatGPT 的 `/backend-api/` 使用 Bearer token 认证。token 可通过页面级 `fetch('/api/auth/session')` 获取 `accessToken`，然后带 `Authorization: Bearer <token>` 请求 `/backend-api/`。这意味着和 Claude 一样，可以通过注入脚本主动 fetch，**不一定需要 CDP**。
+
+> 注：之前认为"Service Worker 拦截导致 401"是因为未带 Authorization header。`/api/auth/session` 依赖 cookie 认证（页面上下文天然具备），返回的 `accessToken` 用于后续 `/backend-api/` 请求。
 
 ---
 
@@ -185,17 +187,23 @@ conversation API → 直接 fetch（cookie 认证）
 
 ### ChatGPT 提取策略（待实现）
 
+**推荐方案：注入脚本主动 fetch（和 Claude 类似）**
+
 ```
-conversation API → CDP 被动捕获（Service Worker 认证）
-  → 文本/代码/LaTeX 直接在 parts[] 中
-  → 图片/文件 → estuary API 获取（需要 CDP 缓存中的响应）
-  → Canvas → /textdocs API（也需要 CDP 捕获）
+1. 注入脚本 fetch('/api/auth/session') → 获取 accessToken
+2. 用 Bearer token fetch('/backend-api/conversation/{uuid}') → 对话数据
+3. 文本/代码/LaTeX 直接在 parts[] 中
+4. 图片/文件 → fetch estuary API（同样带 Bearer token）
+5. Canvas → fetch '/backend-api/conversation/{uuid}/textdocs'
 ```
 
-**关键区别**：ChatGPT 不能像 Claude 那样注入脚本主动 fetch——Service Worker 会拦截。必须：
-1. 先启动 CDP
-2. 刷新页面（触发 Service Worker 重新请求所有 API）
-3. 从 CDP 缓存中提取响应
+**备选方案：CDP 被动捕获**（用于 fetch 不可用时的 fallback）
+
+```
+1. 启动 CDP → 刷新页面 → 从 CDP 缓存中提取响应
+```
+
+**与 Claude 的差异**：Claude 用 cookie 认证可以直接 fetch；ChatGPT 需要先获取 Bearer token 再 fetch。但核心思路一致——在页面上下文中注入脚本主动获取数据。
 
 ---
 
