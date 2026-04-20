@@ -514,7 +514,6 @@ app.whenReady().then(() => {
       console.log('[BrowserCapability][Trace] run-ready', meta);
     }
     void browserCapabilityServices.core.subscribeLifecycle((event) => {
-      console.log('[BrowserCapability]', event.kind, event);
       browserCapabilityTraceWriter.writeLifecycle(event);
     });
   }
