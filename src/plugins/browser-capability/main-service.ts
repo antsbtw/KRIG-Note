@@ -248,16 +248,18 @@ function clearAnchorRefreshTimers(webContentsId: number): void {
 /**
  * 当检测到 Claude 对话页面时，主动 fetch conversation API 以获取完整对话数据。
  * 解决：用户已在对话页面时 SPA 不会重新请求 API，导致 conversation.json 缺失的问题。
+ *
+ * @param force 强制重新 fetch，即使 conversation.json 已存在（用于 SSE 结束后刷新数据）
  */
-async function probeClaudeConversation(webContents: WebContents): Promise<void> {
+async function probeClaudeConversation(webContents: WebContents, force = false): Promise<void> {
   const pageId = getPageIdForWebContents(webContents);
   if (!pageId || webContents.isDestroyed()) return;
 
   const url = safeGetURL(webContents);
   if (!url.includes('claude.ai/chat/')) return;
 
-  // 如果已经有 conversation.json，跳过
-  if (browserCapabilityTraceWriter.hasExtractedFile(pageId, 'conversation.json')) return;
+  // 如果已经有 conversation.json 且非强制模式，跳过
+  if (!force && browserCapabilityTraceWriter.hasExtractedFile(pageId, 'conversation.json')) return;
 
   try {
     const result = await webContents.executeJavaScript(`
@@ -369,6 +371,7 @@ export const browserCapabilityServices = {
   core: coreService,
   state: stateService,
   network: networkService,
+  probeClaudeConversation,
 };
 
 export function bindWebContentsPage(webContents: WebContents, input: BindPageInput): string {

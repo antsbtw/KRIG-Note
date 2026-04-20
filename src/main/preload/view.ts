@@ -318,6 +318,9 @@ contextBridge.exposeInMainWorld('viewAPI', {
   browserCapabilityExtractFull: () =>
     ipcRenderer.invoke(IPC.BROWSER_CAPABILITY_EXTRACT_FULL),
 
+  browserCapabilityProbeConversation: () =>
+    ipcRenderer.invoke(IPC.BROWSER_CAPABILITY_PROBE_CONVERSATION),
+
   aiExtractDebug: (params: { markdown: string; serviceId: string }) =>
     ipcRenderer.invoke(IPC.AI_EXTRACT_DEBUG, params),
 

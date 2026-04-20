@@ -1274,6 +1274,20 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
     }
   });
 
+  // BROWSER_CAPABILITY_PROBE_CONVERSATION: 强制重新 fetch Claude conversation API
+  ipcMain.handle(IPC.BROWSER_CAPABILITY_PROBE_CONVERSATION, async (event) => {
+    try {
+      const { getGuest } = await import('../../plugins/web-bridge/infrastructure/guest-registry');
+      const guest = getGuest(event.sender.id);
+      if (!guest) return { success: false, error: 'no guest for sender' };
+      const { browserCapabilityServices } = await import('../../plugins/browser-capability/main-service');
+      await browserCapabilityServices.probeClaudeConversation(guest, true);
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
   // WB_READ_CLIPBOARD_IMAGE: Read clipboard as PNG data URL.
   // Claude "Copy to clipboard" on an Artifact writes the rendered image, not source.
   ipcMain.handle(IPC.WB_READ_CLIPBOARD_IMAGE, async () => {
