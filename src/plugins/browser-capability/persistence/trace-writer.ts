@@ -283,10 +283,35 @@ export class BrowserCapabilityTraceWriter {
     return data as Record<string, unknown>;
   }
 
+  getConversationKind(pageId: string): string | null {
+    const pageMeta = this.pages.get(pageId);
+    if (!pageMeta) return null;
+    const payload = this.tryReadJsonFile(path.join(pageMeta.extractedDir, 'conversation.json'));
+    if (!payload || typeof payload !== 'object') return null;
+    const record = payload as Record<string, unknown>;
+    return typeof record.kind === 'string' ? record.kind : null;
+  }
+
   hasExtractedFile(pageId: string, filename: string): boolean {
     const pageMeta = this.pages.get(pageId);
     if (!pageMeta) return false;
     return fs.existsSync(path.join(pageMeta.extractedDir, filename));
+  }
+
+  readExtractedJson(pageId: string, filename: string): unknown | null {
+    const pageMeta = this.pages.get(pageId);
+    if (!pageMeta) return null;
+    return this.tryReadJsonFile(path.join(pageMeta.extractedDir, filename));
+  }
+
+  /**
+   * Synchronously write an extracted JSON file so that it is immediately
+   * available for subsequent reads (no async queue delay).
+   */
+  writeExtractedJsonSync(pageId: string, filename: string, payload: unknown): void {
+    if (!this.initialized) this.init();
+    const pageMeta = this.ensurePage(pageId);
+    fs.writeFileSync(path.join(pageMeta.extractedDir, filename), JSON.stringify(payload, null, 2), 'utf8');
   }
 
   writeDebugLog(pageId: string, category: string, payload: unknown): void {
@@ -766,6 +791,38 @@ export class BrowserCapabilityTraceWriter {
         mimeType: input.mimeType,
         data: parsed,
       });
+    }
+
+    // ChatGPT conversation API: /backend-api/conversation/{uuid}
+    if (input.url.includes('chatgpt.com/backend-api/conversation/') || input.url.includes('chat.openai.com/backend-api/conversation/')) {
+      // Exclude sub-paths like /textdocs, /stream_status
+      const convUuidMatch = input.url.match(/\/backend-api\/conversation\/([a-f0-9-]{36})/);
+      if (convUuidMatch) {
+        const tail = input.url.split(convUuidMatch[1])[1] || '';
+        const isBareConversation = tail === '' || tail.startsWith('?');
+        if (isBareConversation) {
+          this.writeExtractedJson(pageId, 'conversation.json', {
+            kind: 'chatgpt-conversation',
+            pageId,
+            url: input.url,
+            capturedAt,
+            requestId: input.requestId,
+            status: input.status,
+            mimeType: input.mimeType,
+            data: parsed,
+          });
+        }
+        // Also store textdocs if it's a /textdocs sub-path
+        if (tail.startsWith('/textdocs')) {
+          this.writeExtractedJson(pageId, 'chatgpt-textdocs.json', {
+            kind: 'chatgpt-textdocs',
+            pageId,
+            url: input.url,
+            capturedAt,
+            data: parsed,
+          });
+        }
+      }
     }
 
     if (input.url.includes('claude.ai/api/') && /\/artifacts\/[^/]+\/versions/.test(input.url)) {

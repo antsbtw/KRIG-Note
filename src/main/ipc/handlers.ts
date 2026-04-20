@@ -1240,7 +1240,7 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
     }
   });
 
-  // BROWSER_CAPABILITY_EXTRACT_TURN: extract a single turn from conversation data
+  // BROWSER_CAPABILITY_EXTRACT_TURN: extract a single turn from conversation data (Claude / ChatGPT)
   ipcMain.handle(IPC.BROWSER_CAPABILITY_EXTRACT_TURN, async (event, params: { msgIndex: number }) => {
     try {
       const { getGuest } = await import('../../plugins/web-bridge/infrastructure/guest-registry');
@@ -1248,16 +1248,27 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
       if (!guest) return { success: false, error: 'no guest for sender' };
       const pageId = getPageIdForWebContents(guest);
       if (!pageId) return { success: false, error: 'guest page not bound' };
-      const { extractTurn } = await import('../../plugins/browser-capability/artifact/extract-turn');
-      const result = await extractTurn(pageId, params.msgIndex);
-      if (!result) return { success: false, error: 'no conversation data or message not found' };
-      return { success: true, ...result };
+
+      const { browserCapabilityTraceWriter } = await import('../../plugins/browser-capability/persistence');
+      const kind = browserCapabilityTraceWriter.getConversationKind(pageId);
+
+      if (kind === 'chatgpt-conversation') {
+        const { extractChatGPTTurn } = await import('../../plugins/browser-capability/artifact/chatgpt-extract-turn');
+        const result = await extractChatGPTTurn(pageId, params.msgIndex);
+        if (!result) return { success: false, error: 'no chatgpt conversation data or turn not found' };
+        return { success: true, ...result };
+      } else {
+        const { extractTurn } = await import('../../plugins/browser-capability/artifact/extract-turn');
+        const result = await extractTurn(pageId, params.msgIndex);
+        if (!result) return { success: false, error: 'no conversation data or message not found' };
+        return { success: true, ...result };
+      }
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
   });
 
-  // BROWSER_CAPABILITY_EXTRACT_FULL: extract full conversation
+  // BROWSER_CAPABILITY_EXTRACT_FULL: extract full conversation (Claude / ChatGPT)
   ipcMain.handle(IPC.BROWSER_CAPABILITY_EXTRACT_FULL, async (event) => {
     try {
       const { getGuest } = await import('../../plugins/web-bridge/infrastructure/guest-registry');
@@ -1265,23 +1276,39 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
       if (!guest) return { success: false, error: 'no guest for sender' };
       const pageId = getPageIdForWebContents(guest);
       if (!pageId) return { success: false, error: 'guest page not bound' };
-      const { extractFullConversation } = await import('../../plugins/browser-capability/artifact/extract-turn');
-      const result = await extractFullConversation(pageId);
-      if (!result) return { success: false, error: 'no conversation data' };
-      return { success: true, ...result };
+
+      const { browserCapabilityTraceWriter } = await import('../../plugins/browser-capability/persistence');
+      const kind = browserCapabilityTraceWriter.getConversationKind(pageId);
+
+      if (kind === 'chatgpt-conversation') {
+        const { extractChatGPTFullConversation } = await import('../../plugins/browser-capability/artifact/chatgpt-extract-turn');
+        const result = await extractChatGPTFullConversation(pageId);
+        if (!result) return { success: false, error: 'no chatgpt conversation data' };
+        return { success: true, ...result };
+      } else {
+        const { extractFullConversation } = await import('../../plugins/browser-capability/artifact/extract-turn');
+        const result = await extractFullConversation(pageId);
+        if (!result) return { success: false, error: 'no conversation data' };
+        return { success: true, ...result };
+      }
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
   });
 
-  // BROWSER_CAPABILITY_PROBE_CONVERSATION: 强制重新 fetch Claude conversation API
+  // BROWSER_CAPABILITY_PROBE_CONVERSATION: 强制重新 fetch conversation API（Claude / ChatGPT 自动路由）
   ipcMain.handle(IPC.BROWSER_CAPABILITY_PROBE_CONVERSATION, async (event) => {
     try {
       const { getGuest } = await import('../../plugins/web-bridge/infrastructure/guest-registry');
       const guest = getGuest(event.sender.id);
       if (!guest) return { success: false, error: 'no guest for sender' };
       const { browserCapabilityServices } = await import('../../plugins/browser-capability/main-service');
-      await browserCapabilityServices.probeClaudeConversation(guest, true);
+      const guestUrl = guest.getURL?.() || '';
+      if (guestUrl.includes('chatgpt.com') || guestUrl.includes('chat.openai.com')) {
+        await browserCapabilityServices.probeChatGPTConversation(guest, true);
+      } else {
+        await browserCapabilityServices.probeClaudeConversation(guest, true);
+      }
       return { success: true };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : String(error) };

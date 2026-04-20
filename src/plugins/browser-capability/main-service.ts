@@ -326,6 +326,128 @@ async function probeClaudeConversation(webContents: WebContents, force = false):
   }
 }
 
+/**
+ * ChatGPT 页面 probe：注入脚本获取 Bearer token + fetch conversation API。
+ *
+ * 流程：
+ *   1. fetch('/api/auth/session') → accessToken
+ *   2. 用 Bearer token fetch('/backend-api/conversation/{uuid}')
+ *   3. 结果通过 writeResponseBody 写入 trace-writer → conversation.json
+ *
+ * 同时获取 textdocs（Canvas）数据。
+ */
+async function probeChatGPTConversation(webContents: WebContents, force = false): Promise<void> {
+  const pageId = getPageIdForWebContents(webContents);
+  if (!pageId || webContents.isDestroyed()) return;
+
+  const url = safeGetURL(webContents);
+  if (!url.includes('chatgpt.com/c/') && !url.includes('chat.openai.com/c/')) return;
+
+  // 如果已经有 conversation.json 且非强制模式，跳过
+  if (!force && browserCapabilityTraceWriter.hasExtractedFile(pageId, 'conversation.json')) return;
+
+  try {
+    const result = await webContents.executeJavaScript(`
+      (async () => {
+        try {
+          // 1. 从 URL 提取 conversation UUID
+          const urlMatch = window.location.href.match(/\\/c\\/([a-f0-9-]{36})/);
+          if (!urlMatch) return { error: 'no-conversation-id' };
+          const conversationId = urlMatch[1];
+
+          // 2. 获取 Bearer token
+          let accessToken = null;
+          try {
+            const sessionResp = await fetch('/api/auth/session', { credentials: 'include' });
+            if (sessionResp.ok) {
+              const session = await sessionResp.json();
+              accessToken = session.accessToken || null;
+            }
+          } catch (e) {
+            // session fetch 失败，尝试无 token 模式
+          }
+
+          if (!accessToken) return { error: 'no-access-token' };
+
+          // 3. 用 token fetch conversation API
+          const convResp = await fetch('/backend-api/conversation/' + conversationId, {
+            method: 'GET',
+            credentials: 'include',
+            headers: { 'Authorization': 'Bearer ' + accessToken },
+          });
+          if (!convResp.ok) return { error: 'conversation-fetch-failed', status: convResp.status };
+          const convText = await convResp.text();
+
+          // 4. 同时尝试获取 textdocs（Canvas 内容）
+          let textdocsText = null;
+          try {
+            const tdResp = await fetch('/backend-api/conversation/' + conversationId + '/textdocs', {
+              method: 'GET',
+              credentials: 'include',
+              headers: { 'Authorization': 'Bearer ' + accessToken },
+            });
+            if (tdResp.ok) textdocsText = await tdResp.text();
+          } catch (e) {
+            // textdocs 不存在是正常的
+          }
+
+          return {
+            conversationId,
+            convText,
+            convStatus: convResp.status,
+            textdocsText,
+            accessToken,
+          };
+        } catch (e) {
+          return { error: String(e) };
+        }
+      })()
+    `);
+
+    if (!result || result.error) {
+      console.warn('[BrowserCapability] ChatGPT probe failed:', result?.error);
+      return;
+    }
+
+    // 同步写入 conversation 数据 —— 确保后续 extractTurn 立即可读
+    if (result.convText) {
+      try {
+        const parsed = JSON.parse(result.convText);
+        const capturedAt = new Date().toISOString();
+        browserCapabilityTraceWriter.writeExtractedJsonSync(pageId, 'conversation.json', {
+          kind: 'chatgpt-conversation',
+          pageId,
+          url: `https://chatgpt.com/backend-api/conversation/${result.conversationId}`,
+          capturedAt,
+          status: result.convStatus,
+          mimeType: 'application/json',
+          data: parsed,
+        });
+      } catch (err) {
+        console.warn('[BrowserCapability] ChatGPT conversation JSON parse failed:', err);
+      }
+    }
+
+    // 同步写入 textdocs 数据
+    if (result.textdocsText) {
+      try {
+        const parsed = JSON.parse(result.textdocsText);
+        browserCapabilityTraceWriter.writeExtractedJsonSync(pageId, 'chatgpt-textdocs.json', {
+          kind: 'chatgpt-textdocs',
+          pageId,
+          url: `https://chatgpt.com/backend-api/conversation/${result.conversationId}/textdocs`,
+          capturedAt: new Date().toISOString(),
+          data: parsed,
+        });
+      } catch {
+        // textdocs parse failure is non-fatal
+      }
+    }
+  } catch (err) {
+    console.warn('[BrowserCapability] ChatGPT probe injection failed:', err);
+  }
+}
+
 function scheduleAnchorRefresh(webContents: WebContents): void {
   clearAnchorRefreshTimers(webContents.id);
   const delays = [250, 1500, 4000];
@@ -356,10 +478,15 @@ function scheduleAnchorRefresh(webContents: WebContents): void {
   }
   anchorRefreshTimers.set(webContents.id, timers);
 
-  // Claude 对话页面：在页面稳定后主动拉取 conversation 数据
+  // 对话页��：在页面稳定后主动拉取 conversation 数据
   const probeTimer = setTimeout(() => {
     if (webContents.isDestroyed()) return;
-    void probeClaudeConversation(webContents);
+    const pageUrl = safeGetURL(webContents);
+    if (pageUrl.includes('chatgpt.com') || pageUrl.includes('chat.openai.com')) {
+      void probeChatGPTConversation(webContents);
+    } else {
+      void probeClaudeConversation(webContents);
+    }
   }, 2000);
   timers.push(probeTimer);
 }
@@ -372,6 +499,7 @@ export const browserCapabilityServices = {
   state: stateService,
   network: networkService,
   probeClaudeConversation,
+  probeChatGPTConversation,
 };
 
 export function bindWebContentsPage(webContents: WebContents, input: BindPageInput): string {
