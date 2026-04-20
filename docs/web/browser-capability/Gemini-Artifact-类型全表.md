@@ -15,8 +15,8 @@
 | API 协议 | Google batchexecute（多帧流） | REST JSON | REST JSON |
 | API 端点 | `/_/BardChatUi/data/batchexecute?rpcids=hNvQHb` | `/api/organizations/{orgId}/chat_conversations/{convId}` | `/backend-api/conversation/{uuid}` |
 | 响应格式 | 纯位置数组（无字段名） | 具名字段 JSON | 具名字段 JSON |
-| 认证方式 | HTTP-only cookies（`__Secure-*`，JS 不可读） | Cookie 认证 | Bearer token（需先获取 accessToken） |
-| 提取方式 | **CDP 被动捕获**（cookie 在 renderer 中不可见） | **注入脚本 fetch** | **注入脚本 fetch**（Bearer token） |
+| 认证方式 | HTTP-only cookies（`__Secure-*`，JS 不可读但 fetch 自动携带） | Cookie 认证 | Bearer token（需先获取 accessToken） |
+| 提取方式 | **注入脚本 fetch**（同源请求自动携带 HttpOnly cookie） | **注入脚本 fetch** | **注入脚本 fetch**（Bearer token） |
 | Markdown 完整性 | ✅ API 直接返回完整渲染后 Markdown | 需要从 tool_use 重组 | 需要从 parts 解析 |
 | 图片获取 | main 进程 `net.fetch`（CORS 阻止 renderer 访问） | media store 本地文件 | estuary API（Bearer token） |
 
@@ -24,8 +24,10 @@
 
 **Gemini 的独特挑战**：
 1. 响应格式是纯位置数组（`[i][3][0][0][1][0]`），没有字段名，schema 非常脆弱
-2. 认证是 HTTP-only cookie，renderer 进程中的 JS 无法读取，必须通过 CDP
+2. batchexecute 请求格式复杂（需要正确构造 POST body + 请求头）
 3. Imagen 图片 URL 有 CORS 限制，只能在 main 进程中 `net.fetch`
+
+> **认证澄清**：虽然 `__Secure-*` cookie 是 `HttpOnly`（JS 不可读取值），但同源 `fetch` 请求会**自动携带**这些 cookie。因此可以通过注入脚本 fetch，不需要 CDP。参考：[dsdanielpark/Gemini-API](https://github.com/dsdanielpark/Gemini-API) 项目验证了 cookie 认证的可行性。
 
 ---
 
@@ -172,38 +174,43 @@ main 进程：
 
 ## 五、提取策略
 
-### 当前策略（CDP 被动捕获）
+### 推荐策略：注入脚本主动 fetch（和 Claude/ChatGPT 统一）
 
 ```
-1. 用户打开 Gemini 对话页面
-2. 点击"📡 CDP 抓包"按钮启动 CDP
-3. 刷新页面（Cmd+R）→ 触发 batchexecute 请求
-4. CDP 捕获 hNvQHb 响应
-5. gemini-content-extractor 解析：
-   - parseBatchExecute() → 解析多帧流
-   - pickRpcInner('hNvQHb') → 提取对话数据
-   - normalizeTurn() → 转换为标准 turn 格式
-   - collectGroundings() → 收集搜索引用
-   - fetchImageAsDataUrl() → main 进程下载 Imagen 图片
-6. 返回 GeminiContent 对象
+1. 检测到 Gemini 对话页面（gemini.google.com/app/*）
+2. 注入脚本 fetch batchexecute API（同源请求，HttpOnly cookie 自动携带）
+3. 解析多帧流响应 → 提取 hNvQHb 数据
+4. 转换为 ConversationData 格式
+5. 图片：通过 IPC 调用 main 进程 net.fetch（绕过 CORS）
 ```
 
-### 为什么 Gemini 不能用注入 fetch
+```javascript
+// 在 gemini.google.com 页面中注入
+const response = await fetch('/_/BardChatUi/data/batchexecute?rpcids=hNvQHb', {
+  method: 'POST',
+  credentials: 'include',  // 自动携带 __Secure-* HttpOnly cookie
+  headers: {
+    'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+    'X-Same-Domain': '1',
+  },
+  body: constructBatchExecuteBody(conversationId),
+});
+```
 
-和 Claude（cookie 认证，JS 可读）、ChatGPT（Bearer token，可从 session 获取）不同：
+### 备选策略：CDP 被动捕获
 
-- Gemini 的认证 cookie 是 `__Secure-*` + `HttpOnly`，renderer 进程的 JS 完全不可见
-- `batchexecute` 端点需要这些 cookie，但注入的脚本无法携带
-- 只有 CDP（运行在 main 进程，可以看到所有 cookie 和网络流量）能捕获
+当注入 fetch 失败时（如 CSP 限制或 batchexecute 请求格式变化），退回 CDP 模式：
 
-**因此 Gemini 必须用 CDP，不像 Claude/ChatGPT 可以用注入 fetch。**
+```
+1. 启动 CDP → 刷新页面 → 捕获 hNvQHb 响应 → 解析
+```
 
 ### Browser Capability 集成方案
 
 | 阶段 | 方案 | 说明 |
 |------|------|------|
-| Phase 1 | 复用现有 CDP 提取器 | 将 `gemini-content-extractor.ts` 输出转换为 `ConversationData` |
-| Phase 2 | 自动 CDP | 检测到 Gemini 页面时自动启动 CDP + 捕获 hNvQHb |
+| Phase 1 | 注入脚本 fetch | 和 Claude/ChatGPT 统一架构，实现 `probeGeminiConversation` |
+| Phase 2 | CDP fallback | 注入 fetch 失败时退回 CDP 被动捕获 |
 | Phase 3 | Pro 功能支持 | Canvas / Deep Research / Code Execution schema 探测 |
 
 ### 关键适配点
@@ -255,13 +262,13 @@ main 进程：
 ## 八、与三平台提取架构的统一视角
 
 ```
-Claude:    probeConversation() → fetch(cookie) → conversation JSON → ConversationData
-ChatGPT:   probeConversation() → fetch(Bearer token) → mapping tree → ConversationData
-Gemini:    CDP capture → hNvQHb response → positional arrays → ConversationData
-                                                                    ↓
-                                                         统一 extractTurn / extractFullConversation
-                                                                    ↓
-                                                              markdown → Note
+Claude:    probeConversation() → fetch(cookie)           → conversation JSON   → ConversationData
+ChatGPT:   probeConversation() → fetch(Bearer token)     → mapping tree        → ConversationData
+Gemini:    probeConversation() → fetch(HttpOnly auto)    → batchexecute stream → ConversationData
+                                                                                      ↓
+                                                                           统一 extractTurn / extractFullConversation
+                                                                                      ↓
+                                                                                markdown → Note
 ```
 
-三平台最终都转换为 `ConversationData` 格式，复用同一套 `extractTurn` / `extractFullConversation` → Note 导入管线。差异只在数据获取层（认证 + 协议 + 解析），不在导入层。
+**三平台统一架构**：全部使用注入脚本 `fetch` 获取对话数据，差异只在认证方式和响应解析，不在导入层。CDP 仅作为 fallback。
