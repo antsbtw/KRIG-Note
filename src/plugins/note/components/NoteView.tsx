@@ -25,7 +25,7 @@ declare const viewAPI: {
   onNoteTitleChanged: (callback: (data: { noteId: string; title: string }) => void) => () => void;
   sendToOtherSlot: (message: any) => void;
   onMessage: (callback: (message: any) => void) => () => void;
-  getMySlotSide: () => Promise<'left' | 'right' | null>;
+  getMyRole: () => Promise<'primary' | 'companion' | null>;
 };
 
 export function NoteView() {
@@ -133,13 +133,13 @@ export function NoteView() {
   // ── 锚定同步：eBook↔Note ──
   // 规则：左主右从 — 只有位于 left slot 的 View 发射 anchor-sync，
   // right slot 仅被动跟随。避免编辑对齐时的反射抖动。
-  const slotSideRef = useRef<'left' | 'right' | null>(null);
+  const slotSideRef = useRef<'primary' | 'companion' | null>(null);
 
   useEffect(() => {
     let scrollTimer: ReturnType<typeof setTimeout> | null = null;
     let suppressUntil = 0; // 被动滚动后抑制自己发射的时间戳
 
-    viewAPI.getMySlotSide().then((side) => { slotSideRef.current = side; });
+    viewAPI.getMyRole().then((side) => { slotSideRef.current = side; });
 
     // 1) 接收 anchor-sync → 滚动到对应 fromPage（两侧都接收）
     const unsubMessage = viewAPI.onMessage((message: any) => {
@@ -164,9 +164,9 @@ export function NoteView() {
       }
     });
 
-    // 2) 滚动时发送 anchor-sync（仅 left slot，且不在被动滚动抑制窗内）
+    // 2) 滚动时发送 anchor-sync（仅 primary View，且不在被动滚动抑制窗内）
     const handleScroll = () => {
-      if (slotSideRef.current !== 'left') return;
+      if (slotSideRef.current !== 'primary') return;
       if (Date.now() < suppressUntil) return;
       if (scrollTimer) clearTimeout(scrollTimer);
       scrollTimer = setTimeout(() => {

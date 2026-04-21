@@ -439,10 +439,14 @@ export class ResultParser {
     lines: string[],
     lineIdx: number,
   ): { block: ExtractedBlock; nextIndex: number } {
-    // Extract language from opening fence: ```python, ```mermaid, etc.
+    // Extract language and optional title from opening fence:
+    // ```python  or  ```javascript title="React Counter"
     const fenceLine = lines[lineIdx].trim();
     const langMatch = fenceLine.match(/^`{3,}(\w+)/);
     const language = langMatch ? langMatch[1] : undefined;
+    // title="..." attribute on the fence line
+    const titleMatch = fenceLine.match(/title="([^"]+)"/);
+    const codeTitle = titleMatch ? titleMatch[1] : undefined;
 
     const codeLines: string[] = [];
     let j = lineIdx + 1;
@@ -452,7 +456,7 @@ export class ResultParser {
     }
     if (j < lines.length) j++; // skip closing ```
     return {
-      block: { type: 'code', tag: 'pre', text: codeLines.join('\n'), headingLevel: 0, language },
+      block: { type: 'code', tag: 'pre', text: codeLines.join('\n'), headingLevel: 0, language, codeTitle },
       nextIndex: j,
     };
   }

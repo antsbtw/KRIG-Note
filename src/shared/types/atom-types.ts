@@ -215,7 +215,9 @@ export interface ColumnListContent {
 export interface CodeBlockContent {
   code: string;
   language: string;
+  title?: string;      // 可选标题（如 ChatGPT Canvas 标题）
 }
+
 
 export interface MathBlockContent {
   latex: string;

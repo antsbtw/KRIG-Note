@@ -489,7 +489,16 @@
   outline: none;
 }
 
-/* Mermaid 预览 */
+/* 通用预览区（插件用） */
+.code-block__preview {
+  display: flex;
+  flex-direction: column;
+  min-height: 60px;
+  border-top: 1px solid #333;
+  background: #1a1a1a;
+}
+
+/* Mermaid 预览（向后兼容） */
 .code-block__mermaid {
   display: flex;
   align-items: center;
@@ -508,6 +517,72 @@
 /* 预览模式 */
 .code-block--preview-only { border-radius: 6px; }
 .code-block--preview-only .code-block__mermaid { border-top: none; border-radius: 6px; }
+
+/* ── JS Preview 浮窗 ── */
+.js-preview-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9998;
+  background: rgba(0, 0, 0, 0);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s;
+}
+.js-preview-backdrop--visible {
+  background: rgba(0, 0, 0, 0.55);
+}
+.js-preview-modal {
+  width: min(720px, 85vw);
+  max-height: 80vh;
+  background: #252525;
+  border-radius: 12px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transform: scale(0.95) translateY(8px);
+  opacity: 0;
+  transition: transform 0.2s ease-out, opacity 0.2s ease-out;
+}
+.js-preview-backdrop--visible .js-preview-modal {
+  transform: scale(1) translateY(0);
+  opacity: 1;
+}
+.js-preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-bottom: 1px solid #333;
+  flex-shrink: 0;
+}
+.js-preview-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #ccc;
+}
+.js-preview-close {
+  background: none;
+  border: none;
+  color: #888;
+  font-size: 16px;
+  cursor: pointer;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.js-preview-close:hover { background: #333; color: #e8eaed; }
+.js-preview-iframe {
+  width: 100%;
+  min-height: 80px;
+  border: none;
+  border-radius: 0 0 12px 12px;
+  background: #f5f5f5;
+}
 
 /* 全屏编辑器 */
 .code-block__fullscreen-overlay {
@@ -3277,4 +3352,64 @@
 @keyframes blockLinkFlash {
   0%   { background: rgba(138, 180, 248, 0.3); }
   100% { background: transparent; }
+}
+
+/* ── codeBlock 标题栏（Canvas 等场景） ── */
+.code-block__title {
+  font-size: 12px;
+  color: #e8eaed;
+  font-weight: 500;
+  margin-right: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 300px;
+  user-select: none;
+}
+/* Canvas 操作按钮组 */
+.code-block__canvas-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.code-block__canvas-btn {
+  background: transparent;
+  border: none;
+  color: #999;
+  font-size: 12px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.code-block__canvas-btn:hover {
+  color: #e8eaed;
+  background: rgba(255, 255, 255, 0.08);
+}
+.code-block__canvas-btn--primary {
+  background: rgba(255, 255, 255, 0.1);
+  color: #e8eaed;
+  border-radius: 12px;
+  padding: 3px 12px;
+}
+.code-block__canvas-btn--primary:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+.code-block__canvas-btn--active {
+  background: rgba(138, 180, 248, 0.2);
+  color: #8ab4f8;
+}
+
+.code-block__type-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: rgba(138, 180, 248, 0.15);
+  color: #8ab4f8;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.3px;
+  margin-right: 8px;
+  user-select: none;
+  flex-shrink: 0;
 }

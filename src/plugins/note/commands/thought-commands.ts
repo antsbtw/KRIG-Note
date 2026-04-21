@@ -22,7 +22,7 @@ const viewAPI = () => (window as any).viewAPI as {
   thoughtCreate: (t: any) => Promise<any>;
   thoughtRelate: (noteId: string, thoughtId: string, edge: any) => Promise<void>;
   sendToOtherSlot: (msg: any) => void;
-  ensureRightSlot: (workModeId: string) => Promise<void>;
+  requestCompanion: (workModeId: string) => Promise<void>;
   getActiveNoteId: () => Promise<string | null>;
 } | undefined;
 
@@ -219,7 +219,7 @@ async function openAndNotify(
   type: ThoughtType,
   noteId: string,
 ): Promise<void> {
-  await api.ensureRightSlot('thought');
+  await api.requestCompanion('thought');
 
   // ThoughtView 启动时会主动通过 getActiveNoteId + thoughtListByNote 拉取数据，
   // 所以即使下面的消息因为 renderer 未加载完而丢失，数据也不会丢。

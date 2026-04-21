@@ -21,7 +21,7 @@ import '../web.css';
 declare const viewAPI: {
   sendToOtherSlot: (message: { protocol: string; action: string; payload: unknown }) => void;
   onMessage: (callback: (message: { protocol: string; action: string; payload: unknown }) => void) => () => void;
-  ensureRightSlot: (workModeId: string) => Promise<void>;
+  requestCompanion: (workModeId: string) => Promise<void>;
   noteCreate: (title?: string) => Promise<{ id: string; title: string } | null>;
   noteOpenInEditor: (id: string) => Promise<void>;
   noteLoad: (id: string) => Promise<{ id: string; title: string; doc_content: unknown[] } | null>;
@@ -699,7 +699,7 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
         preview: (ctx as MenuContext & { preview?: string }).preview || '',
       });
       setIsExtractionLocked(true);
-      await viewAPI.ensureRightSlot('demo-a');
+      await viewAPI.requestCompanion('demo-a');
       const extractionId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
       // Gemini needs CDP to see the batchexecute response.
@@ -1190,7 +1190,7 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
     setArtifactDownloadBusy(true);
     setArtifactDownloadStatus('提取整页对话...');
     try {
-      await viewAPI.ensureRightSlot('demo-a');
+      await viewAPI.requestCompanion('demo-a');
       // Ensure conversation data is fresh before extraction
       await viewAPI.browserCapabilityProbeConversation();
       const result = await viewAPI.browserCapabilityExtractFull();

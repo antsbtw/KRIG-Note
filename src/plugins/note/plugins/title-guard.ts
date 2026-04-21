@@ -3,9 +3,11 @@
  *
  * 1. appendTransaction: doc 第一个子节点不是 noteTitle 时自动补回
  * 2. handlePaste: 在 noteTitle 内粘贴时，强制纯文本插入（不拆分 block）
+ * 3. appendTransaction: 光标在 pos 0（noteTitle 之前）时，移到 noteTitle 内部
  */
 
 import { Plugin } from 'prosemirror-state';
+import { TextSelection } from 'prosemirror-state';
 
 export function titleGuardPlugin(): Plugin {
   return new Plugin({
@@ -38,20 +40,29 @@ export function titleGuardPlugin(): Plugin {
     appendTransaction(_transactions, _oldState, newState) {
       const firstChild = newState.doc.firstChild;
 
-      // 第一个子节点已经是 noteTitle，无需修复
+      // 第一个子节点不是 noteTitle → 补回
       if (
-        firstChild &&
-        firstChild.type.name === 'textBlock' &&
-        firstChild.attrs.isTitle
+        !firstChild ||
+        firstChild.type.name !== 'textBlock' ||
+        !firstChild.attrs.isTitle
       ) {
-        return null;
+        const titleNode = newState.schema.nodes.textBlock.create({ isTitle: true });
+        const tr = newState.tr.insert(0, titleNode);
+        tr.setMeta('addToHistory', false);
+        return tr;
       }
 
-      // 需要修复：在 doc 开头插入一个空的 noteTitle
-      const titleNode = newState.schema.nodes.textBlock.create({ isTitle: true });
-      const tr = newState.tr.insert(0, titleNode);
-      tr.setMeta('addToHistory', false);
-      return tr;
+      // 光标在 noteTitle 之前（pos 0）→ 移入 noteTitle 内部
+      const sel = newState.selection;
+      if (sel.from === 0 && sel.to === 0) {
+        try {
+          const tr = newState.tr.setSelection(TextSelection.create(newState.doc, 1));
+          tr.setMeta('addToHistory', false);
+          return tr;
+        } catch { /* ignore */ }
+      }
+
+      return null;
     },
   });
 }
