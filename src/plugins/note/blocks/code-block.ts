@@ -152,7 +152,7 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
   langBtn.classList.add('code-block__lang-btn');
   langBtn.textContent = getLangLabel(node.attrs.language) + ' ∨';
 
-  updateTitleBar();
+  // updateTitleBar() 延后到 canvasActions / btnCopy / btnCanvasPreview 初始化后调用
   toolbar.appendChild(titleEl);
   toolbar.appendChild(typeBadge);
   toolbar.appendChild(langBtn);
@@ -326,6 +326,9 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
   // 普通 codeBlock 的复制按钮（无 title 时显示）
   const btnCopy = createBtn(ICON_COPY, '复制代码');
   toolbar.appendChild(btnCopy);
+
+  // canvasActions / btnCopy / btnCanvasPreview 全部就绪，初始化标题栏显隐
+  updateTitleBar();
 
   // ── Mermaid 扩展按钮（动态添加/移除） ──
   let mermaidBtnsInserted = false;
