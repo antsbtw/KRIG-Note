@@ -33,6 +33,54 @@ async function ensureMediaStore(): Promise<typeof mediaPutBase64> {
   return mediaPutBase64;
 }
 
+// ── Bearer token management ──
+
+/**
+ * Get or refresh ChatGPT Bearer token via the page context.
+ *
+ * Token is cached in window.__krig_chatgpt_token with a 4-minute TTL.
+ * On 401, caller should call this with forceRefresh=true to get a new token.
+ */
+async function getChatGPTToken(wc: Electron.WebContents, forceRefresh = false): Promise<string | null> {
+  try {
+    const token: string | null = await wc.executeJavaScript(`
+      (async () => {
+        try {
+          var cache = window.__krig_chatgpt_token;
+          var forceRefresh = ${forceRefresh};
+          if (!forceRefresh && cache && cache.token && (Date.now() - cache.ts < 4 * 60 * 1000)) {
+            return cache.token;
+          }
+          var resp = await fetch('/api/auth/session', { credentials: 'include' });
+          if (!resp.ok) return null;
+          var session = await resp.json();
+          var token = session.accessToken;
+          if (token) {
+            window.__krig_chatgpt_token = { token: token, ts: Date.now() };
+          }
+          return token || null;
+        } catch (e) {
+          return null;
+        }
+      })()
+    `);
+    return token;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Find a ChatGPT webContents to execute API calls in.
+ */
+function findChatGPTWebContents(): Electron.WebContents | null {
+  for (const wc of electronWebContents.getAllWebContents()) {
+    const url = wc.getURL();
+    if (url.includes('chatgpt.com') || url.includes('chat.openai.com')) return wc;
+  }
+  return null;
+}
+
 // ── Image fetching ──
 
 /**
@@ -42,38 +90,36 @@ async function ensureMediaStore(): Promise<typeof mediaPutBase64> {
  * This works for both old (file-XXX) and new (file_00000000XXX) file ID formats.
  * Returns JSON with download_url → fetch actual bytes.
  *
- * Requires Bearer token obtained from /api/auth/session (page context fetch).
+ * On 401, automatically refreshes the Bearer token and retries once.
  */
 async function fetchChatGPTFile(fileId: string, conversationId: string): Promise<{ dataUrl: string; mimeType: string } | null> {
-  try {
-    for (const wc of electronWebContents.getAllWebContents()) {
-      const url = wc.getURL();
-      if (!url.includes('chatgpt.com') && !url.includes('chat.openai.com')) continue;
+  const wc = findChatGPTWebContents();
+  if (!wc) return null;
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const token = await getChatGPTToken(wc, attempt > 0);
+      if (!token) {
+        console.warn('[chatgpt-extract] fetchChatGPTFile: no token');
+        return null;
+      }
 
       const result = await wc.executeJavaScript(`
         (async () => {
           try {
-            var fileId = ${JSON.stringify(fileId)};
-            var convId = ${JSON.stringify(conversationId)};
-
-            // Get token
-            var sessionResp = await fetch('/api/auth/session', { credentials: 'include' });
-            if (!sessionResp.ok) return { error: 'no-session', status: sessionResp.status };
-            var session = await sessionResp.json();
-            var token = session.accessToken;
-            if (!token) return { error: 'no-token' };
-
+            var token = ${JSON.stringify(token)};
             var headers = {
               'Authorization': 'Bearer ' + token,
               'Oai-Device-Id': crypto.randomUUID(),
               'Oai-Language': 'en-US',
             };
 
-            // /backend-api/files/download/{file_id}?conversation_id={conv_id}
             var dlResp = await fetch(
-              '/backend-api/files/download/' + fileId + '?conversation_id=' + encodeURIComponent(convId),
+              '/backend-api/files/download/' + ${JSON.stringify(fileId)}
+                + '?conversation_id=' + encodeURIComponent(${JSON.stringify(conversationId)}),
               { credentials: 'include', headers: headers },
             );
+            if (dlResp.status === 401 || dlResp.status === 403) return { error: 'auth-failed', status: dlResp.status };
             if (!dlResp.ok) return { error: 'download-endpoint-failed', status: dlResp.status };
             var dlData = await dlResp.json();
             if (!dlData.download_url) return { error: 'no-download-url', data: JSON.stringify(dlData).slice(0, 200) };
@@ -98,13 +144,21 @@ async function fetchChatGPTFile(fileId: string, conversationId: string): Promise
         console.log('[chatgpt-extract] fetchChatGPTFile succeeded:', fileId, 'mime:', result.mimeType, 'size:', result.dataUrl.length);
         return result;
       }
+
+      // 401/403 → retry with refreshed token
+      if (result?.error === 'auth-failed' && attempt === 0) {
+        console.log('[chatgpt-extract] token expired, refreshing...');
+        continue;
+      }
+
       console.warn('[chatgpt-extract] fetchChatGPTFile failed:', fileId, JSON.stringify(result));
+      return null;
+    } catch (err) {
+      console.warn('[chatgpt-extract] fetchChatGPTFile error:', fileId, err);
+      return null;
     }
-    return null;
-  } catch (err) {
-    console.warn('[chatgpt-extract] fetchChatGPTFile error:', fileId, err);
-    return null;
   }
+  return null;
 }
 
 /**
@@ -273,29 +327,25 @@ async function processSandboxLinks(markdown: string, conversationId: string, mes
  * API: GET /backend-api/conversation/{conv_id}/interpreter/download
  *        ?message_id={msg_id}&sandbox_path=/mnt/data/{filename}
  *
- * - message_id is the assistant message that references the sandbox file
- * - Bearer token required
- * - Returns the file bytes directly (not JSON)
+ * On 401, automatically refreshes the Bearer token and retries once.
  */
 async function downloadSandboxFile(
   filename: string,
   conversationId: string,
   messageId: string,
 ): Promise<string | null> {
-  try {
-    for (const wc of electronWebContents.getAllWebContents()) {
-      const url = wc.getURL();
-      if (!url.includes('chatgpt.com') && !url.includes('chat.openai.com')) continue;
+  const wc = findChatGPTWebContents();
+  if (!wc) return null;
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const token = await getChatGPTToken(wc, attempt > 0);
+      if (!token) return null;
 
       const result = await wc.executeJavaScript(`
         (async () => {
           try {
-            var sessionResp = await fetch('/api/auth/session', { credentials: 'include' });
-            if (!sessionResp.ok) return { error: 'no-session' };
-            var session = await sessionResp.json();
-            var token = session.accessToken;
-            if (!token) return { error: 'no-token' };
-
+            var token = ${JSON.stringify(token)};
             var apiUrl = '/backend-api/conversation/'
               + ${JSON.stringify(conversationId)}
               + '/interpreter/download?message_id='
@@ -307,9 +357,9 @@ async function downloadSandboxFile(
               credentials: 'include',
               headers: { 'Authorization': 'Bearer ' + token },
             });
+            if (resp.status === 401 || resp.status === 403) return { error: 'auth-failed', status: resp.status };
             if (!resp.ok) return { error: 'fetch-failed', status: resp.status };
 
-            // API returns JSON with download_url → need a second fetch
             var ct = resp.headers.get('content-type') || '';
             var actualBlob;
             if (ct.includes('json')) {
@@ -340,14 +390,21 @@ async function downloadSandboxFile(
       if (result?.dataUrl && typeof result.dataUrl === 'string' && result.dataUrl.startsWith('data:')) {
         return result.dataUrl;
       }
+
+      if (result?.error === 'auth-failed' && attempt === 0) {
+        console.log('[chatgpt-extract] sandbox token expired, refreshing...');
+        continue;
+      }
+
       if (result?.error) {
         console.warn('[chatgpt-extract] sandbox download failed:', filename, JSON.stringify(result));
       }
+      return null;
+    } catch {
+      return null;
     }
-    return null;
-  } catch {
-    return null;
   }
+  return null;
 }
 
 // ── Image URL download ──
