@@ -266,6 +266,8 @@ conversation API → 直接 fetch（cookie 认证）
 
 **与 Claude 的对齐**：两者共享 `contentParts` 架构——text 和 artifact 交错排列，渲染时按序处理。ChatGPT 用 Bearer token 认证（注入 fetch 获取），Claude 用 cookie 认证（直接 fetch）。
 
+> **⛔ 禁止使用 DOM/CDP**：所有数据通过 API 获取，不扫描 HTML 元素，不使用 CDP 调试协议。已验证纯 API 路径更快更稳定。
+
 ---
 
 ## 六、处理状态

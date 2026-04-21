@@ -16,7 +16,7 @@
 | API 端点 | `/_/BardChatUi/data/batchexecute?rpcids=hNvQHb` | `/api/organizations/{orgId}/chat_conversations/{convId}` | `/backend-api/conversation/{uuid}` |
 | 响应格式 | 纯位置数组（无字段名） | 具名字段 JSON | 具名字段 JSON |
 | 认证方式 | HTTP-only cookies（`__Secure-*`，JS 不可读但 fetch 自动携带） | Cookie 认证 | Bearer token（需先获取 accessToken） |
-| 提取方式 | **注入脚本 fetch**（同源请求自动携带 HttpOnly cookie） | **注入脚本 fetch** | **注入脚本 fetch**（Bearer token） |
+| 提取方式 | **注入脚本 fetch**（同源请求自动携带 HttpOnly cookie，零 DOM/CDP） | **注入脚本 fetch**（零 DOM/CDP） | **注入脚本 fetch**（Bearer token，零 DOM/CDP） |
 | Markdown 完整性 | ✅ API 直接返回完整渲染后 Markdown | 需要从 tool_use 重组 | 需要从 parts 解析 |
 | 图片获取 | main 进程 `net.fetch`（CORS 阻止 renderer 访问） | media store 本地文件 | estuary API（Bearer token） |
 
@@ -174,14 +174,17 @@ main 进程：
 
 ## 五、提取策略
 
-### 推荐策略：注入脚本主动 fetch（和 Claude/ChatGPT 统一）
+### 唯一策略：注入脚本主动 fetch（和 Claude/ChatGPT 统一，禁止 DOM/CDP）
+
+**原则**：与 Claude/ChatGPT 对齐，所有数据通过 API 获取，零 DOM 操作，不使用 CDP。
 
 ```
 1. 检测到 Gemini 对话页面（gemini.google.com/app/*）
 2. 注入脚本 fetch batchexecute API（同源请求，HttpOnly cookie 自动携带）
 3. 解析多帧流响应 → 提取 hNvQHb 数据
-4. 转换为 ConversationData 格式
-5. 图片：通过 IPC 调用 main 进程 net.fetch（绕过 CORS）
+4. 转换为 GeminiTurn[] + contentParts（对齐 ChatGPT 的 contentParts 架构）
+5. Imagen 图片：通过 IPC 调用 main 进程 net.fetch（绕过 CORS，非 DOM 操作）
+6. 所有数据持久化到 media store
 ```
 
 ```javascript
@@ -197,20 +200,18 @@ const response = await fetch('/_/BardChatUi/data/batchexecute?rpcids=hNvQHb', {
 });
 ```
 
-### 备选策略：CDP 被动捕获
-
-当注入 fetch 失败时（如 CSP 限制或 batchexecute 请求格式变化），退回 CDP 模式：
-
-```
-1. 启动 CDP → 刷新页面 → 捕获 hNvQHb 响应 → 解析
-```
+> **⛔ 禁止使用 DOM/CDP 的原因**：
+> - CDP 需要刷新页面 → 用户体验差、速度慢
+> - DOM 选择器依赖前端 HTML 结构 → 脆弱、频繁失效
+> - Claude/ChatGPT 已验证纯 API 路径更快更稳定
+> - 三平台统一架构，降低维护成本
 
 ### Browser Capability 集成方案
 
 | 阶段 | 方案 | 说明 |
 |------|------|------|
-| Phase 1 | 注入脚本 fetch | 和 Claude/ChatGPT 统一架构，实现 `probeGeminiConversation` |
-| Phase 2 | CDP fallback | 注入 fetch 失败时退回 CDP 被动捕获 |
+| Phase 1 | 注入脚本 fetch + 数据解析 | `probeGeminiConversation` + `gemini-conversation-query.ts` |
+| Phase 2 | 完整提取集成 | `gemini-extract-turn.ts` + IPC 路由 + toolbar 按钮 |
 | Phase 3 | Pro 功能支持 | Canvas / Deep Research / Code Execution schema 探测 |
 
 ### 关键适配点
@@ -218,11 +219,12 @@ const response = await fetch('/_/BardChatUi/data/batchexecute?rpcids=hNvQHb', {
 | 适配项 | 说明 |
 |--------|------|
 | 顺序反转 | hNvQHb 返回 newest-first，需要反转为 oldest-first |
-| Markdown 直用 | 不需要重组，直接作为 turn 的 markdown 字段 |
-| 图片内联 | Imagen URL → main 进程 fetch → base64 data URL → 嵌入 Markdown |
+| Markdown 直用 | API 直接返回完整 Markdown，不需要 contentParts 交错重组 |
+| 图片下载 | Imagen URL → main 进程 `net.fetch`（CORS 限制） → base64 → media store |
 | Grounding 附加 | 搜索引用格式化后附加到对应 turn 的 Markdown 末尾 |
 | Thinking 分离 | thinking chain 单独存储，不混入主 Markdown |
 | schema 监控 | 位置数组路径可能变化，需要定期验证 |
+| 不使用 DOM/CDP | 所有数据从 batchexecute API 获取，图片通过 main 进程 IPC 下载 |
 
 ---
 
@@ -262,13 +264,16 @@ const response = await fetch('/_/BardChatUi/data/batchexecute?rpcids=hNvQHb', {
 ## 八、与三平台提取架构的统一视角
 
 ```
-Claude:    probeConversation() → fetch(cookie)           → conversation JSON   → ConversationData
-ChatGPT:   probeConversation() → fetch(Bearer token)     → mapping tree        → ConversationData
-Gemini:    probeConversation() → fetch(HttpOnly auto)    → batchexecute stream → ConversationData
-                                                                                      ↓
-                                                                           统一 extractTurn / extractFullConversation
-                                                                                      ↓
-                                                                                markdown → Note
+Claude:    probeConversation() → 注入 fetch(cookie)       → conversation JSON   → contentParts → markdown → Note
+ChatGPT:   probeConversation() → 注入 fetch(Bearer token) → mapping tree        → contentParts → markdown → Note
+Gemini:    probeConversation() → 注入 fetch(HttpOnly auto) → batchexecute stream → markdown 直用 → Note
+                                                                                         ↑
+                                                                                  Imagen 图片：main 进程 net.fetch（CORS）
 ```
 
-**三平台统一架构**：全部使用注入脚本 `fetch` 获取对话数据，差异只在认证方式和响应解析，不在导入层。CDP 仅作为 fallback。
+**三平台统一原则**：
+- 全部使用注入脚本 `fetch` 获取对话数据
+- **禁止 DOM 操作**（不扫描 HTML 元素、不点击 UI 控件）
+- **禁止 CDP**（不启动调试协议、不刷新页面、不拦截网络请求）
+- 差异仅在认证方式和响应解析，不在数据获取路径
+- 图片下载通过 API 或 main 进程 IPC（绕过 CORS），不通过 DOM `<img>` 元素
