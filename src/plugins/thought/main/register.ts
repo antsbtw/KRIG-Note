@@ -1,4 +1,5 @@
 import { workModeRegistry } from '../../../main/workmode/registry';
+import type { registerThoughtIpcHandlers as _ThoughtIpc } from './ipc-handlers';
 
 /**
  * Thought Plugin — 框架注册
@@ -7,6 +8,7 @@ import { workModeRegistry } from '../../../main/workmode/registry';
  */
 
 export function register(): void {
+  // TODO Phase 2: registerThoughtIpcHandlers();
   workModeRegistry.register({
     id: 'thought',
     viewType: 'thought',

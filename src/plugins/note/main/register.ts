@@ -3,15 +3,18 @@ import { navSideRegistry } from '../../../main/navside/registry';
 import { protocolRegistry } from '../../../main/protocol/registry';
 import { menuRegistry } from '../../../main/menu/registry';
 import type { PluginContext } from '../../../shared/plugin-types';
+import type { registerNoteIpcHandlers as _NoteIpc } from './ipc-handlers';
 
 /**
  * Note Plugin — 框架注册
  *
  * 注册 NoteView 的 WorkMode、NavSide、Protocol、Menu。
+ * IPC Handlers 见 ipc-handlers.ts（Phase 2 完成后启用）。
  * 由 app.ts 在启动时调用，插件不直接操作框架内部。
  */
 
 export function register(ctx: PluginContext): void {
+  // TODO Phase 2: registerNoteIpcHandlers(ctx.getMainWindow);
   // ── WorkMode ──
   workModeRegistry.register({
     id: 'demo-a',

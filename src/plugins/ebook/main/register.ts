@@ -3,14 +3,17 @@ import { navSideRegistry } from '../../../main/navside/registry';
 import { protocolRegistry } from '../../../main/protocol/registry';
 import { menuRegistry } from '../../../main/menu/registry';
 import type { PluginContext } from '../../../shared/plugin-types';
+import type { registerEBookIpcHandlers as _EBookIpc } from './ipc-handlers';
 
 /**
  * eBook Plugin — 框架注册
  *
  * 注册 EBookView 的 WorkMode、NavSide、Protocol、Menu。
+ * IPC Handlers 见 ipc-handlers.ts（Phase 2 完成后启用）。
  */
 
 export function register(ctx: PluginContext): void {
+  // TODO Phase 2: registerEBookIpcHandlers(ctx.getMainWindow);
   // ── WorkMode ──
   workModeRegistry.register({
     id: 'demo-b',
