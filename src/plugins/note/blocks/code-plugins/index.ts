@@ -16,7 +16,9 @@ import { registerCodePlugin } from './registry';
 import { mermaidPlugin } from './mermaid-plugin';
 import { htmlPlugin } from './html-plugin';
 import { markdownPlugin } from './markdown-plugin';
+import { jsPlugin } from './js-plugin';
 
 registerCodePlugin(mermaidPlugin);
 registerCodePlugin(htmlPlugin);
 registerCodePlugin(markdownPlugin);
+registerCodePlugin(jsPlugin);
