@@ -621,6 +621,11 @@ export function registerWebIpcHandlers(ctx: PluginContext): void {
         const result = await extractChatGPTTurn(pageId, params.msgIndex);
         if (!result) return { success: false, error: 'no chatgpt conversation data or turn not found' };
         return { success: true, ...result };
+      } else if (kind === 'gemini-conversation') {
+        const { extractGeminiTurn } = await import('../../browser-capability/artifact/gemini-extract-turn');
+        const result = await extractGeminiTurn(pageId, params.msgIndex);
+        if (!result) return { success: false, error: 'no gemini conversation data or turn not found' };
+        return { success: true, ...result };
       } else {
         const { extractTurn } = await import('../../browser-capability/artifact/extract-turn');
         const result = await extractTurn(pageId, params.msgIndex);
@@ -649,6 +654,11 @@ export function registerWebIpcHandlers(ctx: PluginContext): void {
         const result = await extractChatGPTFullConversation(pageId);
         if (!result) return { success: false, error: 'no chatgpt conversation data' };
         return { success: true, ...result };
+      } else if (kind === 'gemini-conversation') {
+        const { extractGeminiFullConversation } = await import('../../browser-capability/artifact/gemini-extract-turn');
+        const result = await extractGeminiFullConversation(pageId);
+        if (!result) return { success: false, error: 'no gemini conversation data' };
+        return { success: true, ...result };
       } else {
         const { extractFullConversation } = await import('../../browser-capability/artifact/extract-turn');
         const result = await extractFullConversation(pageId);
@@ -670,6 +680,8 @@ export function registerWebIpcHandlers(ctx: PluginContext): void {
       const guestUrl = guest.getURL?.() || '';
       if (guestUrl.includes('chatgpt.com') || guestUrl.includes('chat.openai.com')) {
         await browserCapabilityServices.probeChatGPTConversation(guest, true);
+      } else if (guestUrl.includes('gemini.google.com')) {
+        await browserCapabilityServices.probeGeminiConversation(guest, true);
       } else {
         await browserCapabilityServices.probeClaudeConversation(guest, true);
       }

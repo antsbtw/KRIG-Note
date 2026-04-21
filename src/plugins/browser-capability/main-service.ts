@@ -458,6 +458,127 @@ async function probeChatGPTConversation(webContents: WebContents, force = false)
   }
 }
 
+/**
+ * Probe Gemini conversation — inject fetch interceptor to capture hNvQHb response.
+ *
+ * Strategy: monkey-patch window.fetch to intercept the batchexecute response
+ * that Gemini's frontend sends when loading a conversation. The interceptor
+ * stores the response body in window.__krig_gemini_conv. If the page has
+ * already loaded (data already fetched), we trigger a re-fetch by calling
+ * the batchexecute API ourselves with parameters extracted from the page.
+ *
+ * Zero DOM/CDP — only uses inject fetch in page context.
+ */
+async function probeGeminiConversation(webContents: WebContents, force = false): Promise<void> {
+  const pageId = getPageIdForWebContents(webContents);
+  if (!pageId || webContents.isDestroyed()) return;
+
+  const url = safeGetURL(webContents);
+  console.log('[BrowserCapability] probeGemini called:', { pageId, url: url.slice(0, 100), force });
+  if (!url.includes('gemini.google.com/app/')) {
+    console.warn('[BrowserCapability] probeGemini skipped: not a Gemini conversation URL');
+    return;
+  }
+
+  if (!force && browserCapabilityTraceWriter.hasExtractedFile(pageId, 'conversation.json')) return;
+
+  try {
+    // Inject fetch interceptor + attempt to read or re-fetch conversation data
+    const result = await webContents.executeJavaScript(`
+      (async () => {
+        try {
+          // 1. Install fetch interceptor (idempotent)
+          if (!window.__krig_gemini_fetch_hooked) {
+            window.__krig_gemini_fetch_hooked = true;
+            var _origFetch = window.fetch;
+            window.fetch = function() {
+              var reqUrl = typeof arguments[0] === 'string' ? arguments[0]
+                : (arguments[0] && arguments[0].url) || '';
+              var p = _origFetch.apply(this, arguments);
+              if (reqUrl.indexOf('rpcids=') >= 0 && reqUrl.indexOf('hNvQHb') >= 0) {
+                p.then(function(resp) {
+                  var clone = resp.clone();
+                  clone.text().then(function(body) {
+                    window.__krig_gemini_conv = { body: body, ts: Date.now(), url: reqUrl };
+                  });
+                });
+              }
+              return p;
+            };
+          }
+
+          // 2. If interceptor already captured data, return it
+          if (window.__krig_gemini_conv && window.__krig_gemini_conv.body) {
+            return { source: 'intercepted', body: window.__krig_gemini_conv.body };
+          }
+
+          // 3. Try to fetch conversation data ourselves
+          // Extract conversation hash from URL
+          var convMatch = window.location.href.match(/\\/app\\/([a-f0-9]+)/);
+          if (!convMatch) return { error: 'no-conversation-id' };
+          var convHash = convMatch[1];
+
+          // Construct batchexecute request
+          // The f.req format for hNvQHb conversation load:
+          // [[[\"hNvQHb\",\"[\\\"convHash\\\",null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,1]\",null,\"generic\"]]]
+          var innerPayload = JSON.stringify([convHash,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,1]);
+          var freqPayload = JSON.stringify([[['hNvQHb', innerPayload, null, 'generic']]]);
+          var body = 'f.req=' + encodeURIComponent(freqPayload);
+
+          var resp = await fetch('/_/BardChatUi/data/batchexecute?rpcids=hNvQHb&source-path=' + encodeURIComponent('/app/' + convHash), {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+              'X-Same-Domain': '1',
+            },
+            body: body,
+          });
+
+          if (!resp.ok) return { error: 'fetch-failed', status: resp.status };
+          var respBody = await resp.text();
+
+          // Cache for future reads
+          window.__krig_gemini_conv = { body: respBody, ts: Date.now(), url: resp.url };
+
+          return { source: 'fetched', body: respBody };
+        } catch (e) {
+          return { error: String(e) };
+        }
+      })()
+    `);
+
+    if (!result || result.error) {
+      console.warn('[BrowserCapability] Gemini probe failed:', result?.error);
+      return;
+    }
+
+    if (!result.body || typeof result.body !== 'string') {
+      console.warn('[BrowserCapability] Gemini probe: no body');
+      return;
+    }
+
+    console.log('[BrowserCapability] Gemini probe succeeded:', {
+      source: result.source,
+      bodyLen: result.body.length,
+    });
+
+    // Write raw batchexecute response to trace
+    browserCapabilityTraceWriter.writeExtractedJsonSync(pageId, 'conversation.json', {
+      kind: 'gemini-conversation',
+      pageId,
+      url: url,
+      capturedAt: new Date().toISOString(),
+      status: 200,
+      mimeType: 'text/plain',
+      body: result.body,
+    });
+
+  } catch (err) {
+    console.warn('[BrowserCapability] Gemini probe injection failed:', err);
+  }
+}
+
 function scheduleAnchorRefresh(webContents: WebContents): void {
   clearAnchorRefreshTimers(webContents.id);
   const delays = [250, 1500, 4000];
@@ -494,6 +615,8 @@ function scheduleAnchorRefresh(webContents: WebContents): void {
     const pageUrl = safeGetURL(webContents);
     if (pageUrl.includes('chatgpt.com') || pageUrl.includes('chat.openai.com')) {
       void probeChatGPTConversation(webContents);
+    } else if (pageUrl.includes('gemini.google.com')) {
+      void probeGeminiConversation(webContents);
     } else {
       void probeClaudeConversation(webContents);
     }
@@ -510,6 +633,7 @@ export const browserCapabilityServices = {
   network: networkService,
   probeClaudeConversation,
   probeChatGPTConversation,
+  probeGeminiConversation,
 };
 
 export function bindWebContentsPage(webContents: WebContents, input: BindPageInput): string {
