@@ -1,4 +1,5 @@
-import type { CodeLanguagePlugin, CodePluginContext, ToolbarButtonDef } from './types';
+import type { CodeLanguagePlugin, CodePluginContext } from './types';
+import { openMermaidFullscreen } from './mermaid-fullscreen';
 // showMermaidPanel/hideMermaidPanel 由 code-block.ts 管理（需要 insertFn 回调）
 
 /**
@@ -132,5 +133,9 @@ export const mermaidPlugin: CodeLanguagePlugin = {
 
   deactivate(ctx: CodePluginContext) {
     ctx.previewElement.style.display = 'none';
+  },
+
+  openFullscreen(ctx: CodePluginContext) {
+    openMermaidFullscreen(ctx);
   },
 };
