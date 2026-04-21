@@ -6,7 +6,6 @@ import { SlotToggle } from '../../../shared/components/SlotToggle';
 import { WebViewContextMenu, type ContextMenuItem, type MenuContext } from '../context-menu';
 import { extractClaudeConversation } from '../../web-bridge/capabilities/claude-api-extractor';
 import { extractContent as extractChatGPTContent } from '../../web-bridge/capabilities/chatgpt-content-extractor';
-import { extractContent as extractGeminiContent } from '../../web-bridge/capabilities/gemini-content-extractor';
 import {
   getAIServiceProfile,
   getAIServiceList,
@@ -702,20 +701,7 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
       await viewAPI.requestCompanion('demo-a');
       const extractionId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-      // Gemini needs CDP to see the batchexecute response.
-      // ChatGPT only needs CDP as fallback (Browser Capability probe is primary).
-      if (profile.id === 'gemini' && !cdpStartedRef.current) {
-        const r = await viewAPI.wbCdpStart(['rpcids=']);
-        cdpStartedRef.current = !!r?.success;
-        if (cdpStartedRef.current) {
-          (webview as any).reloadIgnoringCache?.() ?? webview.reload();
-          await new Promise<void>(resolve => {
-            const onStop = () => { webview.removeEventListener('did-stop-loading', onStop); resolve(); };
-            webview.addEventListener('did-stop-loading', onStop);
-          });
-          await new Promise(r => setTimeout(r, 1500));
-        }
-      }
+      // All platforms use Browser Capability probe (inject fetch) — no CDP needed.
 
       let userMessage = '';
       let markdown = '';
@@ -812,18 +798,21 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
           }
         }
       } else if (profile.id === 'gemini') {
-        const c = await extractGeminiContent(webview, viewAPI as any);
-        const t = c.turns[msgIndex];
-        if (t) {
-          userMessage = t.userText;
-          markdown = t.markdown;
-          const imgLines: string[] = [];
-          for (const img of t.images) {
-            if (img.dataUrl) imgLines.push(`![](${img.dataUrl})`);
-          }
-          if (imgLines.length > 0) {
-            markdown = markdown.trimEnd() + '\n\n' + imgLines.join('\n\n');
-          }
+        // Browser Capability extraction: probe → extract (no CDP needed)
+        await viewAPI.browserCapabilityProbeConversation();
+        const capResult = await viewAPI.browserCapabilityExtractTurn({ msgIndex });
+        if (capResult.success && capResult.markdown) {
+          userMessage = capResult.userMessage ?? '';
+          markdown = capResult.markdown;
+          console.log('[AIWebView Extract] Gemini capability-based extraction succeeded', {
+            msgIndex,
+            artifactCount: capResult.artifactCount,
+          });
+        } else {
+          console.warn('[AIWebView Extract] Gemini extraction failed', {
+            msgIndex,
+            error: capResult.error,
+          });
         }
       }
 

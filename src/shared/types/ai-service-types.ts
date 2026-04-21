@@ -191,7 +191,7 @@ const GEMINI_PROFILE: AIServiceProfile = {
     sendButton: 'button.send-button',
     messageList: 'infinite-scroller',
     userMessage: '.user-query-container',
-    assistantMessage: '.model-response-container',
+    assistantMessage: '.response-container',
     conversationTitle: '.conversation-title',
   },
   intercept: {

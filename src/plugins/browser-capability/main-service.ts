@@ -483,49 +483,95 @@ async function probeGeminiConversation(webContents: WebContents, force = false):
   if (!force && browserCapabilityTraceWriter.hasExtractedFile(pageId, 'conversation.json')) return;
 
   try {
-    // Inject fetch interceptor + attempt to read or re-fetch conversation data
+    // Step 1: Install fetch interceptor (captures hNvQHb responses from page's own requests)
+    // Must be done early so subsequent navigations within the SPA are captured.
+    await webContents.executeJavaScript(`
+      (function() {
+        if (window.__krig_gemini_fetch_hooked) return;
+        window.__krig_gemini_fetch_hooked = true;
+        var _origFetch = window.fetch;
+        window.fetch = function() {
+          var reqUrl = typeof arguments[0] === 'string' ? arguments[0]
+            : (arguments[0] && arguments[0].url) || '';
+          var p = _origFetch.apply(this, arguments);
+          if (reqUrl.indexOf('rpcids=') >= 0 && reqUrl.indexOf('hNvQHb') >= 0) {
+            p.then(function(resp) {
+              var clone = resp.clone();
+              clone.text().then(function(body) {
+                window.__krig_gemini_conv = { body: body, ts: Date.now(), url: reqUrl };
+              });
+            });
+          }
+          return p;
+        };
+      })()
+    `);
+
+    // Step 2: Try to read conversation data
     const result = await webContents.executeJavaScript(`
       (async () => {
         try {
-          // 1. Install fetch interceptor (idempotent)
-          if (!window.__krig_gemini_fetch_hooked) {
-            window.__krig_gemini_fetch_hooked = true;
-            var _origFetch = window.fetch;
-            window.fetch = function() {
-              var reqUrl = typeof arguments[0] === 'string' ? arguments[0]
-                : (arguments[0] && arguments[0].url) || '';
-              var p = _origFetch.apply(this, arguments);
-              if (reqUrl.indexOf('rpcids=') >= 0 && reqUrl.indexOf('hNvQHb') >= 0) {
-                p.then(function(resp) {
-                  var clone = resp.clone();
-                  clone.text().then(function(body) {
-                    window.__krig_gemini_conv = { body: body, ts: Date.now(), url: reqUrl };
-                  });
-                });
-              }
-              return p;
-            };
-          }
-
-          // 2. If interceptor already captured data, return it
+          // Check if interceptor already captured data
           if (window.__krig_gemini_conv && window.__krig_gemini_conv.body) {
             return { source: 'intercepted', body: window.__krig_gemini_conv.body };
           }
 
-          // 3. Try to fetch conversation data ourselves
-          // Extract conversation hash from URL
+          // Not captured yet — construct batchexecute request ourselves
           var convMatch = window.location.href.match(/\\/app\\/([a-f0-9]+)/);
           if (!convMatch) return { error: 'no-conversation-id' };
           var convHash = convMatch[1];
 
-          // Construct batchexecute request
-          // The f.req format for hNvQHb conversation load:
-          // [[[\"hNvQHb\",\"[\\\"convHash\\\",null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,1]\",null,\"generic\"]]]
-          var innerPayload = JSON.stringify([convHash,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,1]);
-          var freqPayload = JSON.stringify([[['hNvQHb', innerPayload, null, 'generic']]]);
-          var body = 'f.req=' + encodeURIComponent(freqPayload);
+          // Extract required parameters from page
+          // SNlM0e = XSRF token (required, rejection without it is HTTP 400)
+          // bl = build label (optional but improves reliability)
+          var at = '';  // XSRF token
+          var bl = '';  // build label
+          try {
+            var scripts = document.querySelectorAll('script');
+            for (var i = 0; i < scripts.length; i++) {
+              var t = scripts[i].textContent || '';
+              if (!at) {
+                var am = t.match(/SNlM0e\\":\\s*\\"([^"]+)\\"/);
+                if (!am) am = t.match(/SNlM0e":\\s*"([^"]+)"/);
+                if (!am) am = t.match(/\\"SNlM0e\\":\\"([^"]+)\\"/);
+                if (am) at = am[1];
+              }
+              if (!bl) {
+                var bm = t.match(/\\"bl\\"\\s*:\\s*\\"([^"]+)\\"/);
+                if (!bm) bm = t.match(/"bl"\\s*:\\s*"([^"]+)"/);
+                if (bm) bl = bm[1];
+              }
+              if (at && bl) break;
+            }
+          } catch(e) {}
 
-          var resp = await fetch('/_/BardChatUi/data/batchexecute?rpcids=hNvQHb&source-path=' + encodeURIComponent('/app/' + convHash), {
+          // Fallback: try WIZ_global_data
+          if (!at && window.WIZ_global_data) {
+            at = window.WIZ_global_data.SNlM0e || '';
+          }
+
+          if (!at) return { error: 'no-xsrf-token' };
+
+          // Extract WIZ_global_data parameters
+          var wd = window.WIZ_global_data || {};
+          var cfb2h = wd.cfb2h || bl || '';  // build label
+          var fsid = wd.FdrFJe || '';         // session ID
+
+          // Construct f.req: conversation ID needs "c_" prefix
+          var innerPayload = JSON.stringify(['c_' + convHash, 10, null, 1, [1], [4], null, 1]);
+          var freqPayload = JSON.stringify([[['hNvQHb', innerPayload, null, 'generic']]]);
+          var body = 'f.req=' + encodeURIComponent(freqPayload)
+            + '&at=' + encodeURIComponent(at);
+
+          var url = '/_/BardChatUi/data/batchexecute?rpcids=hNvQHb'
+            + '&source-path=' + encodeURIComponent('/app/' + convHash)
+            + '&bl=' + encodeURIComponent(cfb2h)
+            + '&f.sid=' + encodeURIComponent(fsid)
+            + '&hl=en'
+            + '&_reqid=' + Math.floor(Math.random() * 9000000 + 1000000)
+            + '&rt=c';
+
+          var resp = await fetch(url, {
             method: 'POST',
             credentials: 'include',
             headers: {
@@ -535,12 +581,19 @@ async function probeGeminiConversation(webContents: WebContents, force = false):
             body: body,
           });
 
-          if (!resp.ok) return { error: 'fetch-failed', status: resp.status };
+          if (!resp.ok) {
+            var errText = '';
+            try { errText = (await resp.text()).slice(0, 200); } catch(e) {}
+            return { error: 'fetch-failed', status: resp.status, detail: errText };
+          }
           var respBody = await resp.text();
 
-          // Cache for future reads
-          window.__krig_gemini_conv = { body: respBody, ts: Date.now(), url: resp.url };
+          // Verify response has meaningful content
+          if (respBody.length < 500) {
+            return { error: 'response-too-small', bodyLen: respBody.length, preview: respBody.slice(0, 300), at: at.slice(0, 20) + '...' };
+          }
 
+          window.__krig_gemini_conv = { body: respBody, ts: Date.now(), url: resp.url };
           return { source: 'fetched', body: respBody };
         } catch (e) {
           return { error: String(e) };
@@ -549,12 +602,12 @@ async function probeGeminiConversation(webContents: WebContents, force = false):
     `);
 
     if (!result || result.error) {
-      console.warn('[BrowserCapability] Gemini probe failed:', result?.error);
+      console.warn('[BrowserCapability] Gemini probe failed:', JSON.stringify(result));
       return;
     }
 
     if (!result.body || typeof result.body !== 'string') {
-      console.warn('[BrowserCapability] Gemini probe: no body');
+      console.warn('[BrowserCapability] Gemini probe: no body in result:', JSON.stringify(result).slice(0, 300));
       return;
     }
 
