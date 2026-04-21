@@ -558,21 +558,47 @@ async function turnToMarkdown(turn: ChatGPTTurn, pageId: string, conversationId:
     }
   }
 
-  // Check if this turn contains {{IMAGE_GROUP}} placeholders
-  // These are image_group widgets that need carousel extraction
+  // Check if this turn contains {{IMAGE_GROUP_N}} placeholders
   const rawText = turn.assistantMessages[0]?.text || '';
   const plainText = rawText.replace(/\*\*|__|[*_`#\[\]]/g, '').replace(/\n+/g, ' ').trim();
-  const hasImageGroup = parts.some(p => p.includes('{{IMAGE_GROUP}}'));
-  let imageGroupMediaUrls: string[] = [];
+  const imageGroupCount = (parts.join('\n').match(/\{\{IMAGE_GROUP_\d+\}\}/g) || []).length;
+  let imageGroups: string[][] = [];
 
-  if (hasImageGroup) {
-    imageGroupMediaUrls = await extractImageGroupImages(plainText);
-    console.log('[chatgpt-extract] image_group extracted:', imageGroupMediaUrls.length, 'images');
+  if (imageGroupCount > 0) {
+    // Parse expected image counts per group from the original widget JSON
+    const groupSizes: number[] = [];
+    const widgetRegex = /\uE200image_group\uE202([\s\S]*?)\uE201/g;
+    let wm: RegExpExecArray | null;
+    while ((wm = widgetRegex.exec(rawText)) !== null) {
+      try {
+        const obj = JSON.parse(wm[1]);
+        const queries = obj.query || [];
+        const numPer = obj.num_per_query || 1;
+        groupSizes.push(queries.length * numPer);
+      } catch {
+        groupSizes.push(4); // fallback
+      }
+    }
+
+    // Collect all image URLs via carousel
+    const allUrls = await extractImageGroupImages(plainText);
+    console.log('[chatgpt-extract] image_group total:', allUrls.length, 'expected groups:', groupSizes);
+
+    // Split URLs into groups by expected sizes
+    let offset = 0;
+    for (const size of groupSizes) {
+      imageGroups.push(allUrls.slice(offset, offset + size));
+      offset += size;
+    }
+    // Any remaining images go to the last group
+    if (offset < allUrls.length && imageGroups.length > 0) {
+      imageGroups[imageGroups.length - 1].push(...allUrls.slice(offset));
+    }
   }
 
   // Fetch images for file refs (DALL·E / Code Interpreter)
   // Strategy: files/download API (file- prefix) or DOM signed URL (file_ prefix)
-  if (turn.fileRefs.length > 0 && imageGroupMediaUrls.length === 0) {
+  if (turn.fileRefs.length > 0 && imageGroups.flat().length === 0) {
     for (const fileId of turn.fileRefs) {
       const mediaUrl = await downloadChatGPTFileToMedia(fileId);
       if (mediaUrl) {
@@ -598,13 +624,16 @@ async function turnToMarkdown(turn: ChatGPTTurn, pageId: string, conversationId:
   let markdown = parts.join('\n\n');
   markdown = await processSandboxLinks(markdown, conversationId, messageId);
 
-  // Replace {{IMAGE_GROUP}} placeholder with extracted images
-  if (imageGroupMediaUrls.length > 0) {
-    const imageMarkdown = imageGroupMediaUrls.map(url => `![](${url})`).join('\n\n');
-    markdown = markdown.replace('{{IMAGE_GROUP}}', imageMarkdown);
+  // Replace {{IMAGE_GROUP_N}} placeholders with extracted images at correct positions
+  for (let gi = 0; gi < imageGroups.length; gi++) {
+    const group = imageGroups[gi];
+    if (group.length > 0) {
+      const imageMarkdown = group.map(url => `![](${url})`).join('\n\n');
+      markdown = markdown.replace(`{{IMAGE_GROUP_${gi}}}`, imageMarkdown);
+    }
   }
   // Remove any remaining unreplaced placeholders
-  markdown = markdown.replace(/\{\{IMAGE_GROUP\}\}/g, '');
+  markdown = markdown.replace(/\{\{IMAGE_GROUP_\d+\}\}/g, '');
 
   return markdown;
 }

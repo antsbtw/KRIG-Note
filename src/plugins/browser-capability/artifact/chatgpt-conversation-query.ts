@@ -95,13 +95,14 @@ function fileIdFromPointer(ptr: string | undefined | null): string | null {
  */
 function stripUnicodeWidgets(text: string): string {
   if (!text) return text;
+  let imageGroupIndex = 0;
   // Match: \uE200 <word> \uE202 <json-until-\uE201> \uE201
   return text.replace(
     /\uE200(\w+)\uE202([\s\S]*?)\uE201/g,
     (_match, widgetType, jsonBody) => {
       if (widgetType === 'image_group') {
-        // Leave a placeholder — extract-turn will replace with actual images
-        return '\n\n{{IMAGE_GROUP}}\n\n';
+        // Each image_group gets a numbered placeholder for correct positioning
+        return `\n\n{{IMAGE_GROUP_${imageGroupIndex++}}}\n\n`;
       }
       // Math widgets (genui, genua, genub, etc.) — extract LaTeX content
       if (widgetType.startsWith('genu')) {
