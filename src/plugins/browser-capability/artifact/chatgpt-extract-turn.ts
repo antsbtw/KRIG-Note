@@ -224,20 +224,18 @@ function sniffMimeFromBase64(b64: string): string | null {
 // ── Image group extraction ──
 
 /**
- * Extract all images from a ChatGPT image_group (carousel/gallery).
+ * Extract all images from ChatGPT image_group widgets (carousel/gallery).
  *
- * image_group is a search-image widget that shows a carousel. Only ~3 images
- * are rendered in the initial view; the rest load when the carousel opens.
+ * Returns a flat array of all image URLs across all groups.
+ * Each image_group is handled independently:
+ *   1. Find thumbnail groups via DOM ancestor analysis (5th-level ancestor)
+ *   2. Click each group's first thumbnail to open its carousel
+ *   3. Collect unique URLs from that carousel
+ *   4. Close carousel, proceed to next group
  *
- * Strategy (all via executeJavaScript injection):
- *   1. Find the image_group container by matching assistant message text
- *   2. Click the first image to open the carousel/lightbox
- *   3. Wait for all images to load
- *   4. Collect all unique image URLs from the lightbox
- *   5. Close the lightbox
- *   6. Download via session.fetch + persist to media store
+ * All operations via executeJavaScript injection + session.fetch download.
  */
-async function extractImageGroupImages(textPrefix: string): Promise<string[]> {
+async function extractImageGroupImages(textPrefix: string): Promise<string[][]> {
   if (!textPrefix) return [];
   try {
     const searchPrefix = textPrefix.replace(/\s+/g, ' ').trim().slice(0, 40);
@@ -247,12 +245,12 @@ async function extractImageGroupImages(textPrefix: string): Promise<string[]> {
       const url = wc.getURL();
       if (!url.includes('chatgpt.com') && !url.includes('chat.openai.com')) continue;
 
-      // Step 1-5: Inject script to open carousel, collect URLs, close carousel
-      const imgUrls: string[] = await wc.executeJavaScript(`
+      // Inject script: find groups, open each carousel, collect URLs per group
+      const imgUrls: string[][] = await wc.executeJavaScript(`
         (async function() {
           var prefix = ${JSON.stringify(searchPrefix)};
 
-          // Find the assistant container matching this turn's text
+          // Find the assistant container
           var containers = document.querySelectorAll('[data-message-author-role="assistant"]');
           var target = null;
           for (var i = 0; i < containers.length; i++) {
@@ -261,88 +259,115 @@ async function extractImageGroupImages(textPrefix: string): Promise<string[]> {
           }
           if (!target) return [];
 
-          // Collect thumbnail URLs first (already visible)
-          var thumbUrls = [];
+          // Find all content thumbnails
+          var allThumbs = [];
           var thumbImgs = target.querySelectorAll('img');
           for (var j = 0; j < thumbImgs.length; j++) {
-            var src = thumbImgs[j].src || '';
-            if ((thumbImgs[j].naturalWidth > 80 || thumbImgs[j].naturalHeight > 80) && src.startsWith('https://')) {
-              thumbUrls.push(src);
+            if (thumbImgs[j].naturalWidth > 80 && thumbImgs[j].src.startsWith('https://images.openai.com/')) {
+              allThumbs.push(thumbImgs[j]);
             }
           }
+          if (allThumbs.length === 0) return [];
 
-          // Click the first image to open carousel
-          var clickTarget = null;
-          for (var j = 0; j < thumbImgs.length; j++) {
-            if (thumbImgs[j].naturalWidth > 80) { clickTarget = thumbImgs[j]; break; }
-          }
-          if (!clickTarget) return thumbUrls;
+          // Group thumbnails by 5th-level ancestor (image_group container)
+          var groupMap = new Map();
+          allThumbs.forEach(function(img) {
+            var el = img;
+            for (var d = 0; d < 5; d++) { if (el.parentElement) el = el.parentElement; }
+            if (!groupMap.has(el)) groupMap.set(el, []);
+            groupMap.get(el).push(img);
+          });
 
-          clickTarget.click();
+          // For each group: click first thumb → collect carousel URLs → close
+          var allGroups = [];
+          var groupEntries = Array.from(groupMap.values());
+          var globalSeen = new Set();
 
-          // Wait for carousel to open and images to load
-          await new Promise(function(r) { setTimeout(r, 1500); });
+          for (var gi = 0; gi < groupEntries.length; gi++) {
+            var groupThumbs = groupEntries[gi];
+            var firstThumb = groupThumbs[0];
 
-          // Collect all images from the full page (carousel renders outside the turn container)
-          var allUrls = new Set();
-          var allImgs = document.querySelectorAll('img');
-          for (var k = 0; k < allImgs.length; k++) {
-            var imgSrc = allImgs[k].src || '';
-            var w = allImgs[k].naturalWidth || 0;
-            var h = allImgs[k].naturalHeight || 0;
-            if ((w > 80 || h > 80) && imgSrc.startsWith('https://images.openai.com/')) {
-              allUrls.add(imgSrc);
-            }
-          }
+            // Record URLs before opening carousel
+            var beforeUrls = new Set();
+            document.querySelectorAll('img').forEach(function(img) {
+              if (img.naturalWidth > 80 && img.src.startsWith('https://images.openai.com/')) {
+                beforeUrls.add(img.src);
+              }
+            });
 
-          // Close the carousel — press Escape or click the close button
-          try {
+            // Click to open this group's carousel
+            firstThumb.click();
+            await new Promise(function(r) { setTimeout(r, 1500); });
+
+            // Collect all images now visible (includes carousel images)
+            var carouselUrls = new Set();
+            document.querySelectorAll('img').forEach(function(img) {
+              if (img.naturalWidth > 80 && img.src.startsWith('https://images.openai.com/')) {
+                carouselUrls.add(img.src);
+              }
+            });
+
+            // This group's images = new URLs from carousel + this group's thumbnails
+            var groupThumbUrls = new Set(groupThumbs.map(function(t) { return t.src; }));
+            var groupUrls = [];
+            carouselUrls.forEach(function(url) {
+              if ((!beforeUrls.has(url) || groupThumbUrls.has(url)) && !globalSeen.has(url)) {
+                globalSeen.add(url);
+                groupUrls.push(url);
+              }
+            });
+
+            allGroups.push(groupUrls);
+
+            // Close carousel
             document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-            await new Promise(function(r) { setTimeout(r, 300); });
-            // If still open, try clicking close button
-            var closeBtn = document.querySelector('[aria-label="Close"], [class*="close"], button[class*="dismiss"]');
-            if (closeBtn) closeBtn.click();
-          } catch(e) {}
+            await new Promise(function(r) { setTimeout(r, 500); });
+          }
 
-          return Array.from(allUrls);
+          return allGroups;
         })()
       `);
 
-      console.log('[chatgpt-extract] image URLs found:', imgUrls?.length ?? 0);
+      const groups = imgUrls || [];
+      console.log('[chatgpt-extract] image groups found:', groups.length, groups.map((g: string[]) => g.length));
 
-      if (!imgUrls || imgUrls.length === 0) return [];
+      if (groups.length === 0) return [];
 
-      // Download images via session.fetch (Chrome network stack, auto-cookies)
+      // Download images per group via session.fetch
       const put = await ensureMediaStore();
-      const results: string[] = [];
-      for (const imgUrl of imgUrls) {
-        try {
-          const response = await wc.session.fetch(imgUrl);
-          if (!response.ok) {
-            console.warn('[chatgpt-extract] image download failed:', imgUrl.slice(0, 80), response.status);
-            continue;
-          }
-          const buffer = Buffer.from(await response.arrayBuffer());
-          const contentType = response.headers.get('content-type') || 'application/octet-stream';
-          const dataUrl = `data:${contentType};base64,${buffer.toString('base64')}`;
-
-          if (dataUrl && put) {
-            const mimeMatch = dataUrl.match(/^data:([^;]+);/);
-            const mime = mimeMatch ? mimeMatch[1] : 'image/png';
-            const ext = mime.includes('jpeg') ? 'jpg' : mime.includes('png') ? 'png' : mime.includes('gif') ? 'gif' : 'webp';
-            const r = await put(dataUrl, mime, `chatgpt-image.${ext}`);
-            if (r.success && r.mediaUrl) {
-              console.log('[chatgpt-extract] image saved to media store:', r.mediaUrl);
-              results.push(r.mediaUrl);
+      const resultGroups: string[][] = [];
+      for (const group of groups) {
+        const groupResults: string[] = [];
+        for (const imgUrl of group) {
+          try {
+            const response = await wc.session.fetch(imgUrl);
+            if (!response.ok) {
+              console.warn('[chatgpt-extract] image download failed:', imgUrl.slice(0, 80), response.status);
               continue;
             }
+            const buffer = Buffer.from(await response.arrayBuffer());
+            const contentType = response.headers.get('content-type') || 'application/octet-stream';
+            const dataUrl = `data:${contentType};base64,${buffer.toString('base64')}`;
+
+            if (put) {
+              const mimeMatch = dataUrl.match(/^data:([^;]+);/);
+              const mime = mimeMatch ? mimeMatch[1] : 'image/png';
+              const ext = mime.includes('jpeg') ? 'jpg' : mime.includes('png') ? 'png' : mime.includes('gif') ? 'gif' : 'webp';
+              const r = await put(dataUrl, mime, `chatgpt-image.${ext}`);
+              if (r.success && r.mediaUrl) {
+                groupResults.push(r.mediaUrl);
+                continue;
+              }
+            }
+            groupResults.push(dataUrl);
+          } catch (err) {
+            console.warn('[chatgpt-extract] image download error:', err);
           }
-          if (dataUrl) results.push(dataUrl);
-        } catch (err) {
-          console.warn('[chatgpt-extract] image download error:', err);
         }
+        resultGroups.push(groupResults);
       }
-      return results;
+      console.log('[chatgpt-extract] downloaded groups:', resultGroups.map(g => g.length));
+      return resultGroups;
     }
     return [];
   } catch {
@@ -565,23 +590,9 @@ async function turnToMarkdown(turn: ChatGPTTurn, pageId: string, conversationId:
   let imageGroups: string[][] = [];
 
   if (imageGroupCount > 0) {
-    // Use pre-parsed group sizes from conversation-query
-    const groupSizes = turn.assistantMessages[0]?.imageGroupSizes || [];
-
-    // Collect all image URLs via carousel
-    const allUrls = await extractImageGroupImages(plainText);
-    console.log('[chatgpt-extract] image_group total:', allUrls.length, 'expected groups:', groupSizes);
-
-    // Split URLs into groups by expected sizes
-    let offset = 0;
-    for (const size of groupSizes) {
-      imageGroups.push(allUrls.slice(offset, offset + size));
-      offset += size;
-    }
-    // Any remaining images go to the last group
-    if (offset < allUrls.length && imageGroups.length > 0) {
-      imageGroups[imageGroups.length - 1].push(...allUrls.slice(offset));
-    }
+    // Extract images per group (each group opened independently via carousel)
+    imageGroups = await extractImageGroupImages(plainText);
+    console.log('[chatgpt-extract] image_group results:', imageGroups.map(g => g.length));
   }
 
   // Fetch images for file refs (DALL·E / Code Interpreter)
