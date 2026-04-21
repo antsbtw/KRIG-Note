@@ -458,6 +458,180 @@ async function probeChatGPTConversation(webContents: WebContents, force = false)
   }
 }
 
+/**
+ * Probe Gemini conversation — inject fetch interceptor to capture hNvQHb response.
+ *
+ * Strategy: monkey-patch window.fetch to intercept the batchexecute response
+ * that Gemini's frontend sends when loading a conversation. The interceptor
+ * stores the response body in window.__krig_gemini_conv. If the page has
+ * already loaded (data already fetched), we trigger a re-fetch by calling
+ * the batchexecute API ourselves with parameters extracted from the page.
+ *
+ * Zero DOM/CDP — only uses inject fetch in page context.
+ */
+async function probeGeminiConversation(webContents: WebContents, force = false): Promise<void> {
+  const pageId = getPageIdForWebContents(webContents);
+  if (!pageId || webContents.isDestroyed()) return;
+
+  const url = safeGetURL(webContents);
+  console.log('[BrowserCapability] probeGemini called:', { pageId, url: url.slice(0, 100), force });
+  if (!url.includes('gemini.google.com/app/')) {
+    console.warn('[BrowserCapability] probeGemini skipped: not a Gemini conversation URL');
+    return;
+  }
+
+  if (!force && browserCapabilityTraceWriter.hasExtractedFile(pageId, 'conversation.json')) return;
+
+  try {
+    // Step 1: Install fetch interceptor (captures hNvQHb responses from page's own requests)
+    // Must be done early so subsequent navigations within the SPA are captured.
+    await webContents.executeJavaScript(`
+      (function() {
+        if (window.__krig_gemini_fetch_hooked) return;
+        window.__krig_gemini_fetch_hooked = true;
+        var _origFetch = window.fetch;
+        window.fetch = function() {
+          var reqUrl = typeof arguments[0] === 'string' ? arguments[0]
+            : (arguments[0] && arguments[0].url) || '';
+          var p = _origFetch.apply(this, arguments);
+          if (reqUrl.indexOf('rpcids=') >= 0 && reqUrl.indexOf('hNvQHb') >= 0) {
+            p.then(function(resp) {
+              var clone = resp.clone();
+              clone.text().then(function(body) {
+                window.__krig_gemini_conv = { body: body, ts: Date.now(), url: reqUrl };
+              });
+            });
+          }
+          return p;
+        };
+      })()
+    `);
+
+    // Step 2: Try to read conversation data
+    const result = await webContents.executeJavaScript(`
+      (async () => {
+        try {
+          // Check if interceptor already captured data
+          if (window.__krig_gemini_conv && window.__krig_gemini_conv.body) {
+            return { source: 'intercepted', body: window.__krig_gemini_conv.body };
+          }
+
+          // Not captured yet — construct batchexecute request ourselves
+          var convMatch = window.location.href.match(/\\/app\\/([a-f0-9]+)/);
+          if (!convMatch) return { error: 'no-conversation-id' };
+          var convHash = convMatch[1];
+
+          // Extract required parameters from page
+          // SNlM0e = XSRF token (required, rejection without it is HTTP 400)
+          // bl = build label (optional but improves reliability)
+          var at = '';  // XSRF token
+          var bl = '';  // build label
+          try {
+            var scripts = document.querySelectorAll('script');
+            for (var i = 0; i < scripts.length; i++) {
+              var t = scripts[i].textContent || '';
+              if (!at) {
+                var am = t.match(/SNlM0e\\":\\s*\\"([^"]+)\\"/);
+                if (!am) am = t.match(/SNlM0e":\\s*"([^"]+)"/);
+                if (!am) am = t.match(/\\"SNlM0e\\":\\"([^"]+)\\"/);
+                if (am) at = am[1];
+              }
+              if (!bl) {
+                var bm = t.match(/\\"bl\\"\\s*:\\s*\\"([^"]+)\\"/);
+                if (!bm) bm = t.match(/"bl"\\s*:\\s*"([^"]+)"/);
+                if (bm) bl = bm[1];
+              }
+              if (at && bl) break;
+            }
+          } catch(e) {}
+
+          // Fallback: try WIZ_global_data
+          if (!at && window.WIZ_global_data) {
+            at = window.WIZ_global_data.SNlM0e || '';
+          }
+
+          if (!at) return { error: 'no-xsrf-token' };
+
+          // Extract WIZ_global_data parameters
+          var wd = window.WIZ_global_data || {};
+          var cfb2h = wd.cfb2h || bl || '';  // build label
+          var fsid = wd.FdrFJe || '';         // session ID
+
+          // Construct f.req: conversation ID needs "c_" prefix
+          var innerPayload = JSON.stringify(['c_' + convHash, 10, null, 1, [1], [4], null, 1]);
+          var freqPayload = JSON.stringify([[['hNvQHb', innerPayload, null, 'generic']]]);
+          var body = 'f.req=' + encodeURIComponent(freqPayload)
+            + '&at=' + encodeURIComponent(at);
+
+          var url = '/_/BardChatUi/data/batchexecute?rpcids=hNvQHb'
+            + '&source-path=' + encodeURIComponent('/app/' + convHash)
+            + '&bl=' + encodeURIComponent(cfb2h)
+            + '&f.sid=' + encodeURIComponent(fsid)
+            + '&hl=en'
+            + '&_reqid=' + Math.floor(Math.random() * 9000000 + 1000000)
+            + '&rt=c';
+
+          var resp = await fetch(url, {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+              'X-Same-Domain': '1',
+            },
+            body: body,
+          });
+
+          if (!resp.ok) {
+            var errText = '';
+            try { errText = (await resp.text()).slice(0, 200); } catch(e) {}
+            return { error: 'fetch-failed', status: resp.status, detail: errText };
+          }
+          var respBody = await resp.text();
+
+          // Verify response has meaningful content
+          if (respBody.length < 500) {
+            return { error: 'response-too-small', bodyLen: respBody.length, preview: respBody.slice(0, 300), at: at.slice(0, 20) + '...' };
+          }
+
+          window.__krig_gemini_conv = { body: respBody, ts: Date.now(), url: resp.url };
+          return { source: 'fetched', body: respBody };
+        } catch (e) {
+          return { error: String(e) };
+        }
+      })()
+    `);
+
+    if (!result || result.error) {
+      console.warn('[BrowserCapability] Gemini probe failed:', JSON.stringify(result));
+      return;
+    }
+
+    if (!result.body || typeof result.body !== 'string') {
+      console.warn('[BrowserCapability] Gemini probe: no body in result:', JSON.stringify(result).slice(0, 300));
+      return;
+    }
+
+    console.log('[BrowserCapability] Gemini probe succeeded:', {
+      source: result.source,
+      bodyLen: result.body.length,
+    });
+
+    // Write raw batchexecute response to trace
+    browserCapabilityTraceWriter.writeExtractedJsonSync(pageId, 'conversation.json', {
+      kind: 'gemini-conversation',
+      pageId,
+      url: url,
+      capturedAt: new Date().toISOString(),
+      status: 200,
+      mimeType: 'text/plain',
+      body: result.body,
+    });
+
+  } catch (err) {
+    console.warn('[BrowserCapability] Gemini probe injection failed:', err);
+  }
+}
+
 function scheduleAnchorRefresh(webContents: WebContents): void {
   clearAnchorRefreshTimers(webContents.id);
   const delays = [250, 1500, 4000];
@@ -494,6 +668,8 @@ function scheduleAnchorRefresh(webContents: WebContents): void {
     const pageUrl = safeGetURL(webContents);
     if (pageUrl.includes('chatgpt.com') || pageUrl.includes('chat.openai.com')) {
       void probeChatGPTConversation(webContents);
+    } else if (pageUrl.includes('gemini.google.com')) {
+      void probeGeminiConversation(webContents);
     } else {
       void probeClaudeConversation(webContents);
     }
@@ -510,6 +686,7 @@ export const browserCapabilityServices = {
   network: networkService,
   probeClaudeConversation,
   probeChatGPTConversation,
+  probeGeminiConversation,
 };
 
 export function bindWebContentsPage(webContents: WebContents, input: BindPageInput): string {
