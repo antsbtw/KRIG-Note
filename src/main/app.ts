@@ -39,7 +39,7 @@ function registerPlugins(): void {
   // L5 插件各自注册 WorkMode / NavSide / Protocol / Menu
   registerNotePlugin(ctx);
   registerEBookPlugin(ctx);
-  registerWebPlugin();
+  registerWebPlugin(ctx);
   registerThoughtPlugin();
 }
 

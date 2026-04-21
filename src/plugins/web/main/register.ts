@@ -5,14 +5,18 @@ import { menuRegistry } from '../../../main/menu/registry';
 import { setupExtractionInterceptor } from './extraction-handler';
 import { setupCSPBypass } from '../../web-bridge/infrastructure/csp-bypass';
 import { registerGuest } from '../../web-bridge/infrastructure/guest-registry';
+import { registerWebIpcHandlers } from './ipc-handlers';
+import type { PluginContext } from '../../../shared/plugin-types';
 
 /**
  * Web Plugin — 框架注册
  *
- * 注册 WebView 的 WorkMode（含 extraction/translate/ai 变体）、NavSide、Protocol、Menu。
+ * 注册 WebView 的 WorkMode（含 extraction/translate/ai 变体）、NavSide、Protocol、Menu、IPC Handlers。
  */
 
-export function register(): void {
+export function register(ctx: PluginContext): void {
+  // ── IPC Handlers ──
+  registerWebIpcHandlers(ctx.getMainWindow);
   // ── WorkMode: 基础 Web ──
   workModeRegistry.register({
     id: 'demo-c',
