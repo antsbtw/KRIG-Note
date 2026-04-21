@@ -36,10 +36,15 @@ async function ensureMediaStore(): Promise<typeof mediaPutBase64> {
 // ── Image fetching ──
 
 /**
- * Fetch a file from ChatGPT's estuary API using Bearer token.
- * Returns base64 data URL or null.
+ * Fetch a ChatGPT file via the files/download API.
+ *
+ * Correct endpoint: /backend-api/files/download/{file_id}?conversation_id={conv_id}
+ * This works for both old (file-XXX) and new (file_00000000XXX) file ID formats.
+ * Returns JSON with download_url → fetch actual bytes.
+ *
+ * Requires Bearer token obtained from /api/auth/session (page context fetch).
  */
-async function fetchChatGPTFile(fileId: string): Promise<{ dataUrl: string; mimeType: string } | null> {
+async function fetchChatGPTFile(fileId: string, conversationId: string): Promise<{ dataUrl: string; mimeType: string } | null> {
   try {
     for (const wc of electronWebContents.getAllWebContents()) {
       const url = wc.getURL();
@@ -49,6 +54,7 @@ async function fetchChatGPTFile(fileId: string): Promise<{ dataUrl: string; mime
         (async () => {
           try {
             var fileId = ${JSON.stringify(fileId)};
+            var convId = ${JSON.stringify(conversationId)};
 
             // Get token
             var sessionResp = await fetch('/api/auth/session', { credentials: 'include' });
@@ -57,18 +63,17 @@ async function fetchChatGPTFile(fileId: string): Promise<{ dataUrl: string; mime
             var token = session.accessToken;
             if (!token) return { error: 'no-token' };
 
-            // ChatGPT API requires these headers (discovered via community exporters)
             var headers = {
               'Authorization': 'Bearer ' + token,
               'Oai-Device-Id': crypto.randomUUID(),
               'Oai-Language': 'en-US',
             };
 
-            // files/download → download_url → fetch actual bytes
-            var dlResp = await fetch('/backend-api/files/' + fileId + '/download', {
-              credentials: 'include',
-              headers: headers,
-            });
+            // /backend-api/files/download/{file_id}?conversation_id={conv_id}
+            var dlResp = await fetch(
+              '/backend-api/files/download/' + fileId + '?conversation_id=' + encodeURIComponent(convId),
+              { credentials: 'include', headers: headers },
+            );
             if (!dlResp.ok) return { error: 'download-endpoint-failed', status: dlResp.status };
             var dlData = await dlResp.json();
             if (!dlData.download_url) return { error: 'no-download-url', data: JSON.stringify(dlData).slice(0, 200) };
@@ -105,31 +110,17 @@ async function fetchChatGPTFile(fileId: string): Promise<{ dataUrl: string; mime
 /**
  * Download a ChatGPT file and persist to media store.
  *
- * Two file_id formats exist:
- * - file-XXXX (old, Code Interpreter) → /backend-api/files/{id}/download → download_url
- * - file_00000000XXXX (new, DALL·E gpt-image-1) → signed estuary URL from DOM <img src>
+ * Uses /backend-api/files/download/{file_id}?conversation_id={conv_id}
+ * which works for both old (file-XXX) and new (file_00000000XXX) formats.
  *
  * Returns media:// URL or null.
  */
-async function downloadChatGPTFileToMedia(fileId: string): Promise<string | null> {
-  let dataUrl: string | null = null;
-  let mimeType = 'image/png';
+async function downloadChatGPTFileToMedia(fileId: string, conversationId: string): Promise<string | null> {
+  const result = await fetchChatGPTFile(fileId, conversationId);
+  if (!result?.dataUrl) return null;
 
-  // Old format (file-XXX): use files/download API
-  if (fileId.startsWith('file-')) {
-    const result = await fetchChatGPTFile(fileId);
-    if (result?.dataUrl) {
-      dataUrl = result.dataUrl;
-      mimeType = result.mimeType || 'image/png';
-    }
-  }
-
-  // New format (file_XXX) or API failed: resolve signed URL from page
-  if (!dataUrl) {
-    dataUrl = await fetchFileFromSignedUrl(fileId);
-  }
-
-  if (!dataUrl) return null;
+  let dataUrl = result.dataUrl;
+  let mimeType = result.mimeType || 'image/png';
 
   // Fix MIME if octet-stream
   if (mimeType === 'application/octet-stream') {
@@ -149,61 +140,6 @@ async function downloadChatGPTFileToMedia(fileId: string): Promise<string | null
     }
   }
   return dataUrl;
-}
-
-/**
- * Download a file using its signed estuary URL from the ChatGPT page.
- *
- * DALL·E gpt-image-1 files use file_00000000... IDs that the files/download
- * API rejects as "Invalid file_id". The only way to download them is via
- * the estuary signed URL (with ts/sig params) that ChatGPT's frontend JS
- * generates.
- *
- * Method:
- * 1. executeJavaScript to resolve the signed URL from the page's <img> elements
- * 2. session.fetch to download the bytes (uses Chrome network stack with session cookies)
- *
- * This is NOT a DOM fallback — it's the correct download path for new-format
- * file IDs, matching how ChatGPT's own client loads these images.
- */
-async function fetchFileFromSignedUrl(fileId: string): Promise<string | null> {
-  try {
-    for (const wc of electronWebContents.getAllWebContents()) {
-      const wcUrl = wc.getURL();
-      if (!wcUrl.includes('chatgpt.com') && !wcUrl.includes('chat.openai.com')) continue;
-
-      // Step 1: Get the signed URL from page (ChatGPT's JS already generated it)
-      const signedUrl: string | null = await wc.executeJavaScript(`
-        (function() {
-          var imgs = document.querySelectorAll('img');
-          for (var i = 0; i < imgs.length; i++) {
-            if ((imgs[i].src || '').indexOf(${JSON.stringify(fileId)}) >= 0 && imgs[i].naturalWidth > 50) {
-              return imgs[i].src;
-            }
-          }
-          return null;
-        })()
-      `);
-
-      if (!signedUrl) continue;
-      console.log('[chatgpt-extract] resolved signed URL for', fileId);
-
-      // Step 2: Download via session.fetch (Chrome network stack, auto-cookies)
-      const response = await wc.session.fetch(signedUrl);
-      if (!response.ok) {
-        console.warn('[chatgpt-extract] session.fetch failed:', fileId, response.status);
-        continue;
-      }
-
-      const buffer = Buffer.from(await response.arrayBuffer());
-      const contentType = response.headers.get('content-type') || 'application/octet-stream';
-      return `data:${contentType};base64,${buffer.toString('base64')}`;
-    }
-    return null;
-  } catch (err) {
-    console.warn('[chatgpt-extract] fetchFileFromSignedUrl error:', err);
-    return null;
-  }
 }
 
 /**
@@ -498,7 +434,7 @@ async function turnToMarkdown(turn: ChatGPTTurn, _pageId: string, conversationId
       if (md) parts.push(md);
     } else if (part.type === 'file') {
       renderedFileIds.add(part.fileId);
-      const mediaUrl = await downloadChatGPTFileToMedia(part.fileId);
+      const mediaUrl = await downloadChatGPTFileToMedia(part.fileId, conversationId);
       if (mediaUrl) {
         parts.push(`![](${mediaUrl})`);
       } else {
@@ -522,7 +458,7 @@ async function turnToMarkdown(turn: ChatGPTTurn, _pageId: string, conversationId
   // Fetch remaining file refs not already rendered via contentParts
   for (const fileId of turn.fileRefs) {
     if (renderedFileIds.has(fileId)) continue;
-    const mediaUrl = await downloadChatGPTFileToMedia(fileId);
+    const mediaUrl = await downloadChatGPTFileToMedia(fileId, conversationId);
     if (mediaUrl) {
       parts.push(`![](${mediaUrl})`);
     } else {
