@@ -10,6 +10,8 @@ import { showMermaidPanel, hideMermaidPanel } from '../help-panel/mermaid';
 import { saveBlobFile, saveTextFile, SVG_FILTERS } from '../utils/save-file';
 import { getCodePlugin } from './code-plugins';
 import type { CodeLanguagePlugin } from './code-plugins';
+import { renderMermaidDiagram, getMermaidModule, buildMermaidConfig, MERMAID_THEMES, MERMAID_TEMPLATES } from './code-plugins/mermaid-plugin';
+import type { MermaidTheme } from './code-plugins/mermaid-plugin';
 
 /**
  * codeBlock — 代码块（RenderBlock）
@@ -22,48 +24,6 @@ import type { CodeLanguagePlugin } from './code-plugins';
  * - 全屏查看（拖拽平移 + 滚轮缩放）
  * - MutationObserver 监听内容变化 → debounce 渲染
  */
-
-// ── Mermaid 初始化 ──
-
-let mermaidInitialized = false;
-let mermaidModule: any = null;
-
-function buildMermaidConfig(theme: string = 'dark') {
-  return {
-    startOnLoad: false,
-    theme,
-    darkMode: theme === 'dark',
-    securityLevel: 'loose',
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-    fontSize: 16,
-    flowchart: {
-      useMaxWidth: true,
-      htmlLabels: true,
-      curve: 'monotoneY',
-      diagramPadding: 16,
-      nodeSpacing: 50,
-      rankSpacing: 60,
-      padding: 15,
-      wrappingWidth: 400,
-      defaultRenderer: 'elk',
-    },
-  };
-}
-
-async function ensureMermaidInit() {
-  if (mermaidInitialized) return;
-  mermaidInitialized = true;
-  mermaidModule = (await import('mermaid')).default;
-
-  try {
-    const elkLayouts = (await import('@mermaid-js/layout-elk')).default;
-    mermaidModule.registerLayoutLoaders(elkLayouts);
-  } catch (e) {
-    console.warn('[Mermaid] ELK layout not available, using dagre:', e);
-  }
-
-  mermaidModule.initialize(buildMermaidConfig('dark'));
-}
 
 // ── 语言列表 ──
 
@@ -89,21 +49,7 @@ const ICON_FULLSCREEN = '<svg width="14" height="14" viewBox="0 0 24 24" fill="n
 const ICON_FIT = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>';
 const ICON_CLIPBOARD = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg>';
 
-// ── Mermaid 主题 ──
-const MERMAID_THEMES = ['dark', 'default', 'forest', 'neutral', 'base'] as const;
-type MermaidTheme = typeof MERMAID_THEMES[number];
-
-// ── Mermaid 图表模板 ──
-const MERMAID_TEMPLATES: { label: string; code: string }[] = [
-  { label: 'Flowchart', code: 'graph TD\n  A[开始] --> B{条件}\n  B -->|是| C[操作]\n  B -->|否| D[跳过]\n  C --> E[结束]\n  D --> E' },
-  { label: 'Sequence', code: 'sequenceDiagram\n  participant A as 用户\n  participant B as 服务器\n  A->>B: 请求\n  B-->>A: 响应' },
-  { label: 'Class', code: 'classDiagram\n  class Animal {\n    +String name\n    +move()\n  }\n  class Dog {\n    +bark()\n  }\n  Animal <|-- Dog' },
-  { label: 'State', code: 'stateDiagram-v2\n  [*] --> Idle\n  Idle --> Processing : start\n  Processing --> Done : finish\n  Done --> [*]' },
-  { label: 'ER', code: 'erDiagram\n  USER ||--o{ ORDER : places\n  ORDER ||--|{ ITEM : contains\n  USER {\n    int id\n    string name\n  }' },
-  { label: 'Gantt', code: 'gantt\n  title 项目计划\n  dateFormat YYYY-MM-DD\n  section 阶段一\n  任务A :a1, 2024-01-01, 7d\n  任务B :after a1, 5d\n  section 阶段二\n  任务C :2024-01-15, 10d' },
-  { label: 'Pie', code: 'pie title 分布\n  "A" : 40\n  "B" : 30\n  "C" : 20\n  "D" : 10' },
-  { label: 'Mindmap', code: 'mindmap\n  root((主题))\n    分支A\n      叶子1\n      叶子2\n    分支B\n      叶子3' },
-];
+// Mermaid 主题 + 模板 → 已迁移到 code-plugins/mermaid-plugin.ts
 
 // ── CodeMirror 暗色主题 ──
 
@@ -129,7 +75,7 @@ const cmDarkHighlight = HighlightStyle.define([
   { tag: tags.punctuation, color: '#808080' },
 ]);
 
-let mermaidIdCounter = 0;
+// mermaidIdCounter → 已迁移到 mermaid-plugin.ts
 type ViewMode = 'split' | 'preview';
 
 // ── NodeView ──
@@ -669,14 +615,14 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
         statusBar.className = 'code-block__fs-status';
         return;
       }
-      await ensureMermaidInit();
+      const mm = await getMermaidModule();
 
       // 应用主题
-      mermaidModule.initialize(buildMermaidConfig(currentTheme));
+      mm.initialize(buildMermaidConfig(currentTheme));
 
       const renderId = `fs-mermaid-${++fsIdCounter}`;
       try {
-        const { svg } = await mermaidModule.render(renderId, trimmed);
+        const { svg } = await mm.render(renderId, trimmed);
         previewWrapper.innerHTML = svg;
         statusBar.textContent = '✓ 渲染成功';
         statusBar.className = 'code-block__fs-status code-block__fs-status--ok';
@@ -878,7 +824,7 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
     const close = () => {
       // 恢复 mermaid 配置为 dark（inline 预览用 dark）
       if (currentTheme !== 'dark') {
-        mermaidModule?.initialize?.(buildMermaidConfig('dark'));
+        getMermaidModule().then(mm => mm?.initialize?.(buildMermaidConfig('dark')));
       }
       const newContent = getEditorContent();
       const pos = typeof getPos === 'function' ? getPos() : undefined;
@@ -914,28 +860,10 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
     setTimeout(() => cmEditor.focus(), 50);
   }
 
-  // ── Mermaid 渲染 ──
+  // ── Mermaid 渲染（委托给 mermaid-plugin） ──
   async function renderMermaid(source: string) {
     if (node.attrs.language !== 'mermaid') { preview.style.display = 'none'; return; }
-
-    const trimmed = source.replace(/[\u200B\u200C\u200D\uFEFF]/g, '').trim();
-    if (!trimmed) {
-      preview.style.display = 'flex';
-      preview.innerHTML = '<div class="code-block__mermaid-empty">输入 Mermaid 语法查看预览</div>';
-      return;
-    }
-
-    await ensureMermaidInit();
-    const renderId = `mermaid-${++mermaidIdCounter}`;
-    try {
-      const { svg } = await mermaidModule.render(renderId, trimmed);
-      preview.style.display = 'flex';
-      preview.innerHTML = svg;
-    } catch {
-      preview.style.display = 'flex';
-      preview.innerHTML = '<div class="code-block__mermaid-error">Mermaid 语法错误</div>';
-      document.getElementById('d' + renderId)?.remove();
-    }
+    await renderMermaidDiagram(source, preview);
   }
 
   function scheduleRender() {
