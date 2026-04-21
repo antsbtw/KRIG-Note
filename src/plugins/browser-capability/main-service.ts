@@ -265,36 +265,35 @@ async function probeClaudeConversation(webContents: WebContents, force = false):
     const result = await webContents.executeJavaScript(`
       (async () => {
         try {
-          const url = window.location.href;
-          const chatMatch = url.match(/\\/chat\\/([^/?#]+)/);
+          var chatMatch = window.location.href.match(/\\/chat\\/([^/?#]+)/);
           if (!chatMatch) return null;
-          const conversationId = chatMatch[1];
+          var conversationId = chatMatch[1];
 
-          // 从已有 API 请求中推断 org ID
-          const orgMatch = document.cookie.match(/lastActiveOrg=([^;]+)/)
-            || document.querySelector('meta[name="organization-id"]')?.content;
-          let orgId = null;
+          // Extract orgId — zero DOM, use performance API + cookie only
+          var orgId = null;
 
-          // 从页面中的 API URL 推断
-          const scripts = document.querySelectorAll('script[src*="claude.ai"]');
-          // 更可靠的方式：从 fetch 拦截或已有请求中获取
-          // 直接尝试从 URL 路径中获取
-          const apiLinks = document.querySelectorAll('a[href*="/api/organizations/"]');
-          if (apiLinks.length > 0) {
-            const m = apiLinks[0].href.match(/\\/organizations\\/([^/]+)/);
-            if (m) orgId = m[1];
+          // 1. Cache: reuse previously found orgId
+          if (window.__krig_claude_orgId) {
+            orgId = window.__krig_claude_orgId;
           }
 
-          // 如果从 DOM 找不到，尝试从 performance entries 中找
+          // 2. Performance entries: extract from API request URLs (most reliable)
           if (!orgId) {
-            const entries = performance.getEntriesByType('resource');
-            for (const entry of entries) {
-              const m = entry.name.match(/claude\\.ai\\/api\\/organizations\\/([0-9a-f-]{36})/);
+            var entries = performance.getEntriesByType('resource');
+            for (var i = 0; i < entries.length; i++) {
+              var m = entries[i].name.match(/claude\\.ai\\/api\\/organizations\\/([0-9a-f-]{36})/);
               if (m) { orgId = m[1]; break; }
             }
           }
 
+          // 3. Cookie fallback
+          if (!orgId) {
+            var cm = document.cookie.match(/lastActiveOrg=([0-9a-f-]{36})/);
+            if (cm) orgId = cm[1];
+          }
+
           if (!orgId) return null;
+          window.__krig_claude_orgId = orgId;
 
           const apiUrl = '/api/organizations/' + orgId + '/chat_conversations/' + conversationId
             + '?tree=True&rendering_mode=messages&render_all_tools=true';
@@ -521,41 +520,15 @@ async function probeGeminiConversation(webContents: WebContents, force = false):
           if (!convMatch) return { error: 'no-conversation-id' };
           var convHash = convMatch[1];
 
-          // Extract required parameters from page
-          // SNlM0e = XSRF token (required, rejection without it is HTTP 400)
-          // bl = build label (optional but improves reliability)
-          var at = '';  // XSRF token
-          var bl = '';  // build label
-          try {
-            var scripts = document.querySelectorAll('script');
-            for (var i = 0; i < scripts.length; i++) {
-              var t = scripts[i].textContent || '';
-              if (!at) {
-                var am = t.match(/SNlM0e\\":\\s*\\"([^"]+)\\"/);
-                if (!am) am = t.match(/SNlM0e":\\s*"([^"]+)"/);
-                if (!am) am = t.match(/\\"SNlM0e\\":\\"([^"]+)\\"/);
-                if (am) at = am[1];
-              }
-              if (!bl) {
-                var bm = t.match(/\\"bl\\"\\s*:\\s*\\"([^"]+)\\"/);
-                if (!bm) bm = t.match(/"bl"\\s*:\\s*"([^"]+)"/);
-                if (bm) bl = bm[1];
-              }
-              if (at && bl) break;
-            }
-          } catch(e) {}
-
-          // Fallback: try WIZ_global_data
-          if (!at && window.WIZ_global_data) {
-            at = window.WIZ_global_data.SNlM0e || '';
-          }
+          // Extract parameters from WIZ_global_data (zero DOM)
+          var wd = window.WIZ_global_data || {};
+          var at = wd.SNlM0e || '';   // XSRF token
+          var bl = '';                 // build label (extracted below)
 
           if (!at) return { error: 'no-xsrf-token' };
 
-          // Extract WIZ_global_data parameters
-          var wd = window.WIZ_global_data || {};
-          var cfb2h = wd.cfb2h || bl || '';  // build label
-          var fsid = wd.FdrFJe || '';         // session ID
+          var cfb2h = wd.cfb2h || '';   // build label
+          var fsid = wd.FdrFJe || '';  // session ID
 
           // Construct f.req: conversation ID needs "c_" prefix
           var innerPayload = JSON.stringify(['c_' + convHash, 10, null, 1, [1], [4], null, 1]);

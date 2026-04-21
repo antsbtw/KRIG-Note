@@ -371,23 +371,30 @@ async function downloadLocalResource(filePath: string): Promise<string | null> {
       const downloadScript = `
         (async () => {
           try {
-            // Get orgId from performance entries
-            const entries = performance.getEntriesByType('resource');
-            let orgId = null;
-            for (const entry of entries) {
-              const m = entry.name.match(/claude\\.ai\\/api\\/organizations\\/([0-9a-f-]{36})/);
-              if (m) { orgId = m[1]; break; }
+            // Get orgId — cache + performance API (zero DOM)
+            var orgId = window.__krig_claude_orgId || null;
+            if (!orgId) {
+              var entries = performance.getEntriesByType('resource');
+              for (var i = 0; i < entries.length; i++) {
+                var m = entries[i].name.match(/claude\\.ai\\/api\\/organizations\\/([0-9a-f-]{36})/);
+                if (m) { orgId = m[1]; break; }
+              }
+              if (!orgId) {
+                var cm = document.cookie.match(/lastActiveOrg=([0-9a-f-]{36})/);
+                if (cm) orgId = cm[1];
+              }
+              if (orgId) window.__krig_claude_orgId = orgId;
             }
             if (!orgId) return null;
 
-            const convMatch = window.location.href.match(/\\/chat\\/([^/?#]+)/);
+            var convMatch = window.location.href.match(/\\/chat\\/([^/?#]+)/);
             if (!convMatch) return null;
-            const convId = convMatch[1];
+            var convId = convMatch[1];
 
-            const apiUrl = '/api/organizations/' + orgId + '/conversations/' + convId + '/wiggle/download-file?path=' + encodeURIComponent('${filePath}');
-            const resp = await fetch(apiUrl, { credentials: 'include' });
+            var apiUrl = '/api/organizations/' + orgId + '/conversations/' + convId + '/wiggle/download-file?path=' + encodeURIComponent('${filePath}');
+            var resp = await fetch(apiUrl, { credentials: 'include' });
             if (!resp.ok) return null;
-            const text = await resp.text();
+            var text = await resp.text();
             return text;
           } catch (e) {
             return null;
