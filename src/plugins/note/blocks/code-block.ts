@@ -12,6 +12,7 @@ import { getCodePlugin } from './code-plugins';
 import type { CodeLanguagePlugin } from './code-plugins';
 import { renderMermaidDiagram, getMermaidModule, buildMermaidConfig } from './code-plugins/mermaid-plugin';
 import { openMermaidFullscreen } from './code-plugins/mermaid-fullscreen';
+// 语法高亮：待使用 ProseMirror Decoration 方案重新实现
 
 /**
  * codeBlock — 代码块（RenderBlock）
@@ -36,6 +37,18 @@ export const CODE_LANGUAGES = [
 function getLangLabel(language: string | null): string {
   if (!language) return 'Plain Text';
   return language;
+}
+
+function getTypeBadgeLabel(language: string): string {
+  const MAP: Record<string, string> = {
+    javascript: 'JavaScript', typescript: 'TypeScript', jsx: 'JSX', python: 'Python',
+    html: 'HTML', css: 'CSS', java: 'Java', go: 'Go', rust: 'Rust',
+    cpp: 'C++', c: 'C', ruby: 'Ruby', php: 'PHP', swift: 'Swift', kotlin: 'Kotlin',
+    sql: 'SQL', bash: 'Bash', shell: 'Shell', json: 'JSON', yaml: 'YAML',
+    markdown: 'Document', md: 'Document', mermaid: 'Diagram',
+    latex: 'LaTeX', xml: 'XML', toml: 'TOML', svg: 'SVG',
+  };
+  return MAP[language] || language.charAt(0).toUpperCase() + language.slice(1) || 'Code';
 }
 
 // ── SVG Icons ──
@@ -109,18 +122,33 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
   // 左侧：标题（可选，Canvas 等场景）
   const titleEl = document.createElement('span');
   titleEl.classList.add('code-block__title');
-  if (node.attrs.title) {
-    titleEl.textContent = `📄 ${node.attrs.title}`;
-    titleEl.style.display = '';
-  } else {
-    titleEl.style.display = 'none';
-  }
-  toolbar.appendChild(titleEl);
 
-  // 左侧：语言选择按钮
+  // 类型标签（标题存在时显示，如 "JSX" "Document"）
+  const typeBadge = document.createElement('span');
+  typeBadge.classList.add('code-block__type-badge');
+
+  function updateTitleBar() {
+    if (node.attrs.title) {
+      titleEl.textContent = `📄 ${node.attrs.title}`;
+      titleEl.style.display = '';
+      const lang = node.attrs.language || '';
+      typeBadge.textContent = getTypeBadgeLabel(lang);
+      typeBadge.style.display = '';
+      langBtn.style.display = 'none';  // 有标题时隐藏语言下拉（badge 已显示类型）
+    } else {
+      titleEl.style.display = 'none';
+      typeBadge.style.display = 'none';
+      langBtn.style.display = '';      // 无标题时显示语言下拉
+    }
+  }
+  // 左侧：语言选择按钮（在 updateTitleBar 之前声明，因为 updateTitleBar 控制其显隐）
   const langBtn = document.createElement('button');
   langBtn.classList.add('code-block__lang-btn');
   langBtn.textContent = getLangLabel(node.attrs.language) + ' ∨';
+
+  updateTitleBar();
+  toolbar.appendChild(titleEl);
+  toolbar.appendChild(typeBadge);
   toolbar.appendChild(langBtn);
 
   // 语言下拉（挂在 dom 上，absolute 定位）
@@ -235,6 +263,7 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
   code.classList.add('code-block__code');
   if (node.attrs.language) code.classList.add(`language-${node.attrs.language}`);
   pre.appendChild(code);
+
   dom.appendChild(pre);
 
   // ── 预览区（插件可用时显示） ──
@@ -426,18 +455,12 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
         // Mermaid CSS 兼容
         preview.classList.toggle('code-block__mermaid', node.attrs.language === 'mermaid');
       }
-      // 同步标题
-      if (node.attrs.title) {
-        titleEl.textContent = `📄 ${node.attrs.title}`;
-        titleEl.style.display = '';
-      } else {
-        titleEl.style.display = 'none';
-      }
+      // 同步标题 + 类型标签
+      updateTitleBar();
       langBtn.textContent = getLangLabel(node.attrs.language) + ' ∨';
       code.className = node.attrs.language ? `code-block__code language-${node.attrs.language}` : 'code-block__code';
       buildDropdown();
       updateToolbarVisibility();
-
       if (node.attrs.language === 'mermaid') {
         if (langChanged) { updateViewMode(viewMode); renderMermaid(node.textContent); openMermaidPanel(); }
         else scheduleRender();
