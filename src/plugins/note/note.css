@@ -489,7 +489,16 @@
   outline: none;
 }
 
-/* Mermaid 预览 */
+/* 通用预览区（插件用） */
+.code-block__preview {
+  display: flex;
+  flex-direction: column;
+  min-height: 60px;
+  border-top: 1px solid #333;
+  background: #1a1a1a;
+}
+
+/* Mermaid 预览（向后兼容） */
 .code-block__mermaid {
   display: flex;
   align-items: center;

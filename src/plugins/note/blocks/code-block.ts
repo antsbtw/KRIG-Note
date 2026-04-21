@@ -291,9 +291,11 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
   pre.appendChild(code);
   dom.appendChild(pre);
 
-  // ── Mermaid 预览区 ──
+  // ── 预览区（插件可用时显示） ──
   const preview = document.createElement('div');
-  preview.classList.add('code-block__mermaid');
+  preview.classList.add('code-block__preview');
+  // Mermaid 向后兼容：保留原 CSS 类
+  if (node.attrs.language === 'mermaid') preview.classList.add('code-block__mermaid');
   preview.setAttribute('contenteditable', 'false');
   preview.style.display = 'none';
   dom.appendChild(preview);
@@ -941,9 +943,37 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
     renderTimer = setTimeout(() => renderMermaid(code.textContent || ''), 500);
   }
 
+  // 构建插件上下文（供插件调用）
+  function buildPluginContext() {
+    return {
+      node,
+      view,
+      getPos,
+      codeElement: code,
+      previewElement: preview,
+      dom,
+      getCode: () => code.textContent || '',
+      updateAttrs: (attrs: Record<string, unknown>) => {
+        const pos = typeof getPos === 'function' ? getPos() : undefined;
+        if (pos == null) return;
+        let tr = view.state.tr;
+        for (const [key, value] of Object.entries(attrs)) {
+          tr = tr.setNodeAttribute(pos, key, value);
+        }
+        view.dispatch(tr);
+      },
+    };
+  }
+
   // MutationObserver 监听代码变化
   const observer = new MutationObserver(() => {
-    if (node.attrs.language === 'mermaid') scheduleRender();
+    if (node.attrs.language === 'mermaid') {
+      scheduleRender();
+    } else if (currentPlugin?.hasPreview && currentPlugin.schedulePreview) {
+      currentPlugin.schedulePreview(code.textContent || '', preview, buildPluginContext());
+    } else if (currentPlugin?.hasPreview && currentPlugin.renderPreview) {
+      currentPlugin.renderPreview(code.textContent || '', preview, buildPluginContext());
+    }
   });
   observer.observe(code, { childList: true, characterData: true, subtree: true });
 
@@ -952,6 +982,11 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
   if (node.attrs.language === 'mermaid') {
     updateViewMode(viewMode);
     setTimeout(() => renderMermaid(code.textContent || ''), 50);
+  } else if (currentPlugin?.hasPreview) {
+    preview.style.display = 'flex';
+    setTimeout(() => {
+      currentPlugin?.activate?.(buildPluginContext());
+    }, 50);
   } else {
     preview.style.display = 'none';
   }
@@ -968,7 +1003,14 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
       node = updatedNode;
       // 语言变更时切换插件
       if (langChanged) {
+        const oldPlugin = currentPlugin;
         currentPlugin = getCodePlugin(node.attrs.language || '');
+        // 停用旧插件
+        if (oldPlugin && oldPlugin !== currentPlugin) {
+          oldPlugin.deactivate?.(buildPluginContext());
+        }
+        // Mermaid CSS 兼容
+        preview.classList.toggle('code-block__mermaid', node.attrs.language === 'mermaid');
       }
       // 同步标题
       if (node.attrs.title) {
@@ -985,6 +1027,16 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
       if (node.attrs.language === 'mermaid') {
         if (langChanged) { updateViewMode(viewMode); renderMermaid(node.textContent); openMermaidPanel(); }
         else scheduleRender();
+      } else if (currentPlugin?.hasPreview) {
+        // 非 Mermaid 的 Preview 插件
+        preview.style.display = 'flex';
+        if (langChanged) {
+          currentPlugin.activate?.(buildPluginContext());
+        } else if (currentPlugin.schedulePreview) {
+          currentPlugin.schedulePreview(node.textContent, preview, buildPluginContext());
+        } else if (currentPlugin.renderPreview) {
+          currentPlugin.renderPreview(node.textContent, preview, buildPluginContext());
+        }
       } else {
         preview.style.display = 'none';
       }
