@@ -620,7 +620,21 @@ async function turnToMarkdown(turn: ChatGPTTurn, pageId: string, conversationId:
   const textdocs = getChatGPTTextdocs(pageId);
   if (textdocs.length > 0) {
     for (const td of textdocs) {
-      if (td.content.trim()) {
+      if (!td.content.trim()) continue;
+      const tdType = td.textdocType || '';
+      if (tdType.startsWith('code/') || tdType === 'code') {
+        // Code canvas → fenced code block with language
+        const lang = tdType.replace('code/', '') || '';
+        // Map canvas language names to markdown lang identifiers
+        const langMap: Record<string, string> = {
+          react: 'jsx', javascript: 'javascript', python: 'python',
+          typescript: 'typescript', html: 'html', css: 'css',
+          java: 'java', go: 'go', rust: 'rust', cpp: 'cpp', c: 'c',
+        };
+        const mdLang = langMap[lang] || lang || '';
+        parts.push(`\n---\n\n**📄 Canvas: ${td.title}**\n\n\`\`\`${mdLang}\n${td.content.trim()}\n\`\`\``);
+      } else {
+        // Document canvas → markdown text
         parts.push(`\n---\n\n**📄 Canvas: ${td.title}**\n\n${td.content.trim()}`);
       }
     }
