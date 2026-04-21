@@ -35,12 +35,17 @@ contextBridge.exposeInMainWorld('viewAPI', {
     return () => ipcRenderer.removeListener(IPC.VIEW_MESSAGE_RECEIVE, listener);
   },
 
-  // Slot 操作
-  openRightSlot: (workModeId: string) => ipcRenderer.invoke(IPC.SLOT_OPEN_RIGHT, workModeId),
-  ensureRightSlot: (workModeId: string) => ipcRenderer.invoke(IPC.SLOT_ENSURE_RIGHT, workModeId),
-  closeRightSlot: () => ipcRenderer.invoke(IPC.SLOT_CLOSE_RIGHT),
-  closeSlot: () => ipcRenderer.invoke(IPC.SLOT_CLOSE),
-  getMySlotSide: () => ipcRenderer.invoke(IPC.SLOT_GET_SIDE),
+  // 编排意图（View 只表达需求，框架决策布局）
+  requestCompanion: (workModeId: string) => ipcRenderer.invoke(IPC.SLOT_ENSURE_RIGHT, workModeId),
+  openCompanion: (workModeId: string) => ipcRenderer.invoke(IPC.SLOT_OPEN_RIGHT, workModeId),
+  closeCompanion: () => ipcRenderer.invoke(IPC.SLOT_CLOSE_RIGHT),
+  closeSelf: () => ipcRenderer.invoke(IPC.SLOT_CLOSE),
+  getMyRole: async (): Promise<'primary' | 'companion' | null> => {
+    const side = await ipcRenderer.invoke(IPC.SLOT_GET_SIDE);
+    if (side === 'left') return 'primary';
+    if (side === 'right') return 'companion';
+    return null;
+  },
 
   // DB 状态
   isDBReady: () => ipcRenderer.invoke(IPC.IS_DB_READY),

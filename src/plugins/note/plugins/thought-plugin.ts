@@ -16,7 +16,7 @@ import { THOUGHT_TYPE_META } from '../../../shared/types/thought-types';
 const viewAPI = () => (window as any).viewAPI as {
   sendToOtherSlot: (msg: any) => void;
   onMessage: (cb: (msg: any) => void) => () => void;
-  ensureRightSlot: (workModeId: string) => Promise<void>;
+  requestCompanion: (workModeId: string) => Promise<void>;
 } | undefined;
 
 export const thoughtPluginKey = new PluginKey('thought');
@@ -137,7 +137,7 @@ export function thoughtPlugin(): Plugin {
         // 双击 thought 锚点 → 打开 ThoughtView 并激活对应卡片
         const api = viewAPI();
         if (api) {
-          api.ensureRightSlot('thought');
+          api.requestCompanion('thought');
           // 延迟发送 ACTIVATE，等 ThoughtView 加载
           setTimeout(() => {
             api.sendToOtherSlot({

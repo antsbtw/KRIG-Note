@@ -9,8 +9,8 @@ import type { ViewMessage } from '../../shared/types';
 declare const viewAPI: {
   sendToOtherSlot: (message: ViewMessage) => void;
   onMessage: (callback: (message: ViewMessage) => void) => () => void;
-  openRightSlot: (workModeId: string) => Promise<void>;
-  closeRightSlot: () => Promise<void>;
+  openCompanion: (workModeId: string) => Promise<void>;
+  closeCompanion: () => Promise<void>;
   onStateChanged: (callback: (state: unknown) => void) => () => void;
 };
 

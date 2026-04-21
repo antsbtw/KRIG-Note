@@ -109,7 +109,7 @@ export function WebToolbar({
       <div className="web-toolbar__section web-toolbar__section--actions">
         <button
           className="web-toolbar__btn"
-          onClick={() => (window as any).viewAPI?.ensureRightSlot('web-translate')}
+          onClick={() => (window as any).viewAPI?.requestCompanion('web-translate')}
           title="翻译浏览"
           aria-label="翻译浏览"
         >

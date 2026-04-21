@@ -9,4 +9,10 @@
 export interface PluginContext {
   /** 获取主窗口（用于 dialog 等场景） */
   getMainWindow: () => import('electron').BaseWindow | null;
+
+  /** 打开 companion View（框架决策布局） */
+  openCompanion: (workModeId: string) => any;
+
+  /** 确保 companion View 存在（已打开则不动） */
+  ensureCompanion: (workModeId: string) => any;
 }

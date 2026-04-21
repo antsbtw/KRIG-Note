@@ -16,7 +16,7 @@ import type { PluginContext } from '../../../shared/plugin-types';
 
 export function register(ctx: PluginContext): void {
   // ── IPC Handlers ──
-  registerWebIpcHandlers(ctx.getMainWindow);
+  registerWebIpcHandlers(ctx);
   // ── WorkMode: 基础 Web ──
   workModeRegistry.register({
     id: 'demo-c',

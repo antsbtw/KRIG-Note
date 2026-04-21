@@ -34,7 +34,18 @@ import { register as registerThoughtPlugin } from '../plugins/thought/main/regis
 // ── 插件注册 ──
 
 function registerPlugins(): void {
-  const ctx = { getMainWindow };
+  // 延迟导入 shell 函数，避免循环依赖
+  const ctx = {
+    getMainWindow,
+    openCompanion: (workModeId: string) => {
+      const { openRightSlot } = require('./window/shell');
+      return openRightSlot(workModeId);
+    },
+    ensureCompanion: (workModeId: string) => {
+      const { openRightSlot } = require('./window/shell');
+      return openRightSlot(workModeId); // ensureRightSlot 内部逻辑相同
+    },
+  };
 
   // L5 插件各自注册 WorkMode / NavSide / Protocol / Menu
   registerNotePlugin(ctx);

@@ -92,16 +92,16 @@ export function EBookView() {
   // 左主右从：仅当本 View 位于 left slot 时发射 anchor-sync。
 
   const anchorSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const slotSideRef = useRef<'left' | 'right' | null>(null);
+  const slotSideRef = useRef<'primary' | 'companion' | null>(null);
 
   useEffect(() => {
-    (viewAPI as any).getMySlotSide?.().then((side: 'left' | 'right' | null) => {
+    (viewAPI as any).getMyRole?.().then((side: 'primary' | 'companion' | null) => {
       slotSideRef.current = side;
     });
   }, []);
 
   const sendAnchorSync = useCallback((page: number) => {
-    if (slotSideRef.current !== 'left') return;
+    if (slotSideRef.current !== 'primary') return;
     if (anchorSyncTimerRef.current) clearTimeout(anchorSyncTimerRef.current);
     anchorSyncTimerRef.current = setTimeout(() => {
       (viewAPI as any).sendToOtherSlot({

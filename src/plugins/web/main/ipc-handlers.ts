@@ -2,12 +2,12 @@ import { ipcMain, BaseWindow, BrowserWindow, dialog, shell, net, session } from 
 import { IPC } from '../../../shared/types';
 import { workspaceManager } from '../../../main/workspace/manager';
 import {
-  openRightSlot,
   getSlotBySenderId,
   getActiveViewWebContentsIds,
   getActiveProtocol,
   hasRightSlot,
 } from '../../../main/window/shell';
+import type { PluginContext } from '../../../shared/plugin-types';
 import { noteStore } from '../../../main/storage/note-store';
 import { thoughtStore } from '../../../main/storage/thought-store';
 import { activityStore } from '../../../main/storage/activity-store';
@@ -46,7 +46,8 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-export function registerWebIpcHandlers(getMainWindow: () => BaseWindow | null): void {
+export function registerWebIpcHandlers(ctx: PluginContext): void {
+  const getMainWindow = ctx.getMainWindow;
   // ── 广播辅助 ──
   function broadcastVocabChanged(): void {
     const win = getMainWindow();
@@ -164,10 +165,10 @@ export function registerWebIpcHandlers(getMainWindow: () => BaseWindow | null): 
       if (!mainWindow) return { success: false, error: 'No main window' };
 
       // 1. Open Right Slot with AI WebView (ai-web variant)
-      const rightView = openRightSlot('ai-web');
+      const rightView = ctx.openCompanion('ai-web');
       console.log('[AI_ASK_VISIBLE] Step 1: openRightSlot result:', rightView ? 'OK' : 'null (toggle?)');
       if (!rightView) {
-        const retryView = openRightSlot('ai-web');
+        const retryView = ctx.openCompanion('ai-web');
         console.log('[AI_ASK_VISIBLE] Step 1 retry:', retryView ? 'OK' : 'FAILED');
         if (!retryView) return { success: false, error: 'Failed to open Right Slot' };
       }
@@ -1169,7 +1170,7 @@ export function registerWebIpcHandlers(getMainWindow: () => BaseWindow | null): 
     console.log('[Extraction] EXTRACTION_OPEN handler triggered');
 
     // 1. 打开 ExtractionView 到 Right Slot（加载 Platform Web UI）
-    openRightSlot('extraction');
+    ctx.openCompanion('extraction');
 
     // 2. 并行上传当前 PDF 到 Platform
     const ebookData = getEBookData();
@@ -1231,7 +1232,7 @@ export function registerWebIpcHandlers(getMainWindow: () => BaseWindow | null): 
       // 有新笔记时，跳转到最新导入的笔记
       if (result.noteId) {
         setPendingNoteId(result.noteId);
-        openRightSlot('demo-a');
+        ctx.openCompanion('demo-a');
       }
 
       return { success: true, ...result };

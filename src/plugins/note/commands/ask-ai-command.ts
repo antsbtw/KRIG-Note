@@ -28,8 +28,8 @@ const viewAPI = () => (window as any).viewAPI as {
   thoughtSave: (id: string, updates: any) => Promise<void>;
   thoughtRelate: (noteId: string, thoughtId: string, edge: any) => Promise<void>;
   sendToOtherSlot: (msg: any) => void;
-  ensureRightSlot: (workModeId: string) => Promise<void>;
-  openRightSlot: (workModeId: string) => Promise<void>;
+  requestCompanion: (workModeId: string) => Promise<void>;
+  openCompanion: (workModeId: string) => Promise<void>;
   getActiveNoteId: () => Promise<string | null>;
   aiAskVisible: (params: {
     serviceId: string;
@@ -137,7 +137,7 @@ export async function askAI(
 
   // 4. Open Right Slot with AI WebView — user sees the AI page
   console.log('[askAI] Step 4: Opening AI WebView in Right Slot...');
-  await api.openRightSlot('ai-web');
+  await api.openCompanion('ai-web');
 
   // 5. Send to AI via visible WebView (main process orchestrates)
   console.log('[askAI] Step 5: Sending to AI via aiAskVisible...', { serviceId, promptLength: fullPrompt.length, imageCount: images.length });
@@ -153,7 +153,7 @@ export async function askAI(
 
   // 6. AI response captured — switch to ThoughtView
   // Switch Right Slot to ThoughtView
-  await api.openRightSlot('thought');
+  await api.openCompanion('thought');
 
   // 等待 ThoughtView renderer 加载就绪（轮询检测，替代硬编码 setTimeout）
   await waitForSlotReady(api, 3000);

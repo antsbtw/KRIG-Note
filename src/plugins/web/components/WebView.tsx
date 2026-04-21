@@ -17,7 +17,7 @@ declare const viewAPI: {
   webHistoryAdd: (url: string, title: string, favicon?: string) => Promise<unknown>;
   sendToOtherSlot: (message: { protocol: string; action: string; payload: unknown }) => void;
   onMessage: (callback: (message: { protocol: string; action: string; payload: unknown }) => void) => () => void;
-  ensureRightSlot: (workModeId: string) => Promise<void>;
+  requestCompanion: (workModeId: string) => Promise<void>;
   translateText: (text: string, targetLang?: string) => Promise<{ text: string } | null>;
 };
 
