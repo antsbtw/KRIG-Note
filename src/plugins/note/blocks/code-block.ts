@@ -155,6 +155,17 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
     return btn;
   }
 
+  // 左侧：标题（可选，Canvas 等场景）
+  const titleEl = document.createElement('span');
+  titleEl.classList.add('code-block__title');
+  if (node.attrs.title) {
+    titleEl.textContent = `📄 ${node.attrs.title}`;
+    titleEl.style.display = '';
+  } else {
+    titleEl.style.display = 'none';
+  }
+  toolbar.appendChild(titleEl);
+
   // 左侧：语言选择按钮
   const langBtn = document.createElement('button');
   langBtn.classList.add('code-block__lang-btn');
@@ -950,6 +961,13 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
       if (updatedNode.type.name !== 'codeBlock') return false;
       const langChanged = updatedNode.attrs.language !== node.attrs.language;
       node = updatedNode;
+      // 同步标题
+      if (node.attrs.title) {
+        titleEl.textContent = `📄 ${node.attrs.title}`;
+        titleEl.style.display = '';
+      } else {
+        titleEl.style.display = 'none';
+      }
       langBtn.textContent = getLangLabel(node.attrs.language) + ' ∨';
       code.className = node.attrs.language ? `code-block__code language-${node.attrs.language}` : 'code-block__code';
       buildDropdown();
@@ -983,11 +1001,14 @@ export const codeBlockBlock: BlockDef = {
     code: true,
     defining: true,
     marks: '',
-    attrs: { language: { default: '' } },
+    attrs: {
+      language: { default: '' },
+      title: { default: '' },
+    },
     parseDOM: [{ tag: 'pre', preserveWhitespace: 'full' as const, getAttrs(dom: HTMLElement) {
-      return { language: dom.getAttribute('data-language') || '' };
+      return { language: dom.getAttribute('data-language') || '', title: dom.getAttribute('data-title') || '' };
     }}],
-    toDOM(node) { return ['pre', { 'data-language': node.attrs.language }, ['code', 0]]; },
+    toDOM(node) { return ['pre', { 'data-language': node.attrs.language, 'data-title': node.attrs.title || undefined }, ['code', 0]]; },
   },
   nodeView: codeBlockNodeView,
   plugin: codeBlockKeyboardPlugin,

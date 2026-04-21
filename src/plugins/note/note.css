@@ -3278,3 +3278,16 @@
   0%   { background: rgba(138, 180, 248, 0.3); }
   100% { background: transparent; }
 }
+
+/* ── codeBlock 标题栏（Canvas 等场景） ── */
+.code-block__title {
+  font-size: 12px;
+  color: #e8eaed;
+  font-weight: 500;
+  margin-right: 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 300px;
+  user-select: none;
+}

@@ -34,6 +34,7 @@ export const codeBlockConverter: AtomConverter = {
     return createAtom('codeBlock', {
       code: node.textContent,
       language: node.attrs.language || '',
+      title: node.attrs.title || undefined,
     } as CodeBlockContent, parentId);
   },
 
@@ -41,7 +42,7 @@ export const codeBlockConverter: AtomConverter = {
     const c = atom.content as CodeBlockContent;
     return {
       type: 'codeBlock',
-      attrs: { language: c.language },
+      attrs: { language: c.language, title: c.title || '' },
       content: c.code ? [{ type: 'text', text: c.code }] : [],
     };
   },

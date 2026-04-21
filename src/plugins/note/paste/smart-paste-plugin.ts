@@ -158,6 +158,16 @@ export function smartPastePlugin(): Plugin {
         const cd = event.clipboardData;
         if (!cd) return false;
 
+        // ── codeBlock 内粘贴 → 纯文本插入，保留换行 ──
+        const $from = view.state.selection.$from;
+        if ($from.parent.type.spec.code) {
+          const text = cd.getData('text/plain');
+          if (text) {
+            view.dispatch(view.state.tr.insertText(text).scrollIntoView());
+          }
+          return true;
+        }
+
         // ── 内部通道优先：text/html 里有 KRIG JSON 注释就走无损还原路径 ──
         // 跨应用粘贴的 HTML 里没有这个 marker，自然落到下面的外部管道。
         // Shift 强制纯文本粘贴时跳过，遵从用户显式意图。

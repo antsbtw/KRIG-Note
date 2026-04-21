@@ -101,4 +101,8 @@ export function registerAllBlocks(): void {
     id: 'mermaid', blockName: 'codeBlock', label: 'Mermaid Diagram', icon: '◇',
     group: 'code', keywords: ['mermaid', 'diagram', 'flow', '流程图'], order: 1, attrs: { language: 'mermaid' },
   });
+  blockRegistry.registerSlashItem({
+    id: 'canvas', blockName: 'codeBlock', label: 'Canvas', icon: '📄',
+    group: 'code', keywords: ['canvas', 'chatgpt', '画布'], order: 2, attrs: { language: 'javascript', title: 'Untitled Canvas' },
+  });
 }

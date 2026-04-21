@@ -49,4 +49,5 @@ export interface ExtractedBlock {
   language?: string;
   calloutType?: string;
   calloutEmoji?: string;
+  codeTitle?: string;       // 带标题的代码块（Canvas 等场景）
 }

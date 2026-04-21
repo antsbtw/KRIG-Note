@@ -355,6 +355,7 @@ export function createAtomsFromExtracted(blocks: ExtractedBlock[], pageTitle?: s
       atoms.push(createAtom('codeBlock', {
         code: block.text,
         language: block.language || '',
+        title: block.codeTitle || undefined,
       }, rootAtom.id));
 
     } else if (block.type === 'table' && block.tableRows?.length) {

@@ -2,8 +2,8 @@
 
 > 类型：功能增强  
 > 创建日期：2026-04-21  
-> 状态：待开发  
-> 建议分支：`feature/canvas-block`  
+> 状态：已实现  
+> 分支：`feature/noteview-enhancement`  
 > 前置：Stage 1 ChatGPT 提取验证
 
 ---
@@ -79,53 +79,46 @@ Canvas Block 应该借鉴这个模式，但针对 ChatGPT Canvas 的特点做调
 
 ## 四、技术方案
 
-### 4.1 Atom 类型
+### 4.1 方案变更：复用 codeBlock
+
+经过讨论，Canvas Block 不再作为独立 block 类型实现，而是**扩展现有 codeBlock**，新增 `title` 属性：
 
 ```typescript
-export interface CanvasBlockContent {
-  title: string;           // Canvas 标题
-  canvasType: string;      // 'code/react' | 'code/python' | 'document' | ...
-  language?: string;       // 代码语言（从 canvasType 解析）
-  content: string;         // 完整内容
-  source?: 'chatgpt';     // 来源标识
+// CodeBlockContent 新增 title 字段
+export interface CodeBlockContent {
+  code: string;
+  language: string;
+  title?: string;      // 可选标题（如 ChatGPT Canvas 标题）
 }
 ```
 
+- `title` 不为空 → 显示标题栏（📄 Title + 语言标签）
+- `title` 为空 → 现有 codeBlock 行为完全不变
+- 所有 codeBlock 的编辑能力（CodeMirror、语法高亮、Copy、语言切换）天然继承
+
 ### 4.2 Markdown 语法
 
-扩展现有的 `!attach` / `!file` 模式，新增 Canvas 块级语法：
+复用 fenced code block + `title="..."` 属性：
 
 ```markdown
-!canvas[React Counter Component](code/react)
-```jsx
-import { useState } from "react";
-...
-```
-!end-canvas
-```
-
-或者更简单的方式——复用 fenced code block + metadata：
-
-```markdown
-```jsx canvas="React Counter Component"
+```javascript title="React Counter Component"
 import { useState } from "react";
 ...
 ```
 ```
+
+result-parser 解析 `title="..."` 后传递给 codeBlock atom。
 
 ### 4.3 ProseMirror Node
 
+现有 codeBlock 的 attrs 新增 `title`：
+
 ```typescript
-canvasBlock: {
-  group: 'block',
-  content: 'text*',
+codeBlock: {
   attrs: {
-    title: { default: '' },
-    canvasType: { default: '' },
     language: { default: '' },
-    collapsed: { default: false },
+    title: { default: '' },     // ← 新增
   },
-  // ...
 }
 ```
 
@@ -133,14 +126,15 @@ canvasBlock: {
 
 | 模块 | 改动 |
 |------|------|
-| `src/shared/types/atom-types.ts` | 新增 `CanvasBlockContent` |
-| `src/plugins/note/blocks/` | 新增 `canvas-block.ts` — NodeView |
-| `src/plugins/note/blocks/index.ts` | 注册 canvasBlock |
-| `src/plugins/note/converters/` | Atom <-> PMNode 转换 |
-| `src/plugins/web-bridge/pipeline/result-parser.ts` | 识别 Canvas 语法 |
-| `src/plugins/web-bridge/pipeline/content-to-atoms.ts` | 创建 canvasBlock atom |
-| `chatgpt-extract-turn.ts` | Canvas 输出改用新语法 |
-| `src/plugins/note/note.css` | Canvas block 样式 |
+| `src/shared/types/atom-types.ts` | `CodeBlockContent` 新增 `title?: string` |
+| `src/shared/types/extraction-types.ts` | `ExtractedBlock` 新增 `codeTitle?: string` |
+| `src/plugins/note/blocks/code-block.ts` | nodeSpec attrs 加 `title`，NodeView 加标题栏渲染 |
+| `src/plugins/note/blocks/index.ts` | Slash 命令 `/canvas` |
+| `src/plugins/note/converters/render-block-converters.ts` | codeBlockConverter round-trip `title` |
+| `src/plugins/web-bridge/pipeline/result-parser.ts` | `collectCodeBlock` 解析 `title="..."` |
+| `src/plugins/web-bridge/pipeline/content-to-atoms.ts` | 传递 `codeTitle` → `title` |
+| `src/plugins/browser-capability/artifact/chatgpt-extract-turn.ts` | Canvas 输出 ``` + `title="..."` |
+| `src/plugins/note/note.css` | `.code-block__title` 样式 |
 
 ## 五、验收标准
 
