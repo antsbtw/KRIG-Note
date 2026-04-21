@@ -24,11 +24,12 @@ export type ChatGPTConversationData = {
   turns: ChatGPTTurn[];
 };
 
-/** A content part in a turn — text, file reference, or Canvas, in original order. */
+/** A content part in a turn — text, file reference, Canvas, or image group, in original order. */
 export type ChatGPTContentPart =
   | { type: 'text'; text: string; messageId: string }
   | { type: 'file'; fileId: string }
-  | { type: 'canvas'; canvas: ChatGPTCanvasData };
+  | { type: 'canvas'; canvas: ChatGPTCanvasData }
+  | { type: 'image_group'; urls: string[] };
 
 export type ChatGPTCanvasData = {
   name: string;
@@ -259,6 +260,11 @@ function parseCodeBlocks(md: string): Array<{ language: string; code: string }> 
   return blocks;
 }
 
+/** Image group data extracted from metadata.content_references. */
+export type ChatGPTImageGroup = {
+  urls: string[];
+};
+
 /**
  * Extract text and file refs from a single ChatGPT message.
  */
@@ -268,6 +274,7 @@ function extractMessageContent(raw: any): {
   recipient: string | null;
   hidden: boolean;
   imageGroupSizes: number[];
+  imageGroups: ChatGPTImageGroup[];
 } {
   const parts = raw.content?.parts || [];
   const textParts: string[] = [];
@@ -324,7 +331,21 @@ function extractMessageContent(raw: any): {
   const hidden = !!raw.metadata?.is_visually_hidden_from_conversation;
   const recipient: string | null = raw.recipient ?? null;
 
-  return { text, fileRefs: Array.from(new Set(fileRefs)), recipient, hidden, imageGroupSizes };
+  // Extract image_group URLs from metadata.content_references (data-driven, no DOM)
+  const imageGroups: ChatGPTImageGroup[] = [];
+  const contentRefs = raw.metadata?.content_references;
+  if (Array.isArray(contentRefs)) {
+    for (const ref of contentRefs) {
+      if (ref?.type === 'image_group' && Array.isArray(ref.images)) {
+        const urls = ref.images
+          .map((img: any) => img?.image_result?.content_url)
+          .filter((u: unknown): u is string => typeof u === 'string' && u.length > 0);
+        if (urls.length > 0) imageGroups.push({ urls });
+      }
+    }
+  }
+
+  return { text, fileRefs: Array.from(new Set(fileRefs)), recipient, hidden, imageGroupSizes, imageGroups };
 }
 
 // ── Main API ──
@@ -368,6 +389,7 @@ export function getChatGPTConversationData(pageId: string): ChatGPTConversationD
     id: string;
     createdAt: number | null;
     imageGroupSizes: number[];
+    imageGroups: ChatGPTImageGroup[];
     endTurn: boolean | null;
   };
 
@@ -375,7 +397,7 @@ export function getChatGPTConversationData(pageId: string): ChatGPTConversationD
   for (const msg of orderedMessages) {
     const role = msg.author?.role || 'unknown';
     const contentType = msg.content?.content_type || 'text';
-    const { text, fileRefs, recipient, hidden, imageGroupSizes } = extractMessageContent(msg);
+    const { text, fileRefs, recipient, hidden, imageGroupSizes, imageGroups } = extractMessageContent(msg);
     if (hidden) continue;
     parsed.push({
       role,
@@ -387,6 +409,7 @@ export function getChatGPTConversationData(pageId: string): ChatGPTConversationD
       id: msg.id || '',
       createdAt: msg.create_time ?? null,
       imageGroupSizes,
+      imageGroups,
       endTurn: msg.end_turn ?? null,
     });
   }
@@ -447,7 +470,19 @@ export function getChatGPTConversationData(pageId: string): ChatGPTConversationD
           if (!allFileRefs.includes(id)) allFileRefs.push(id);
         }
         if (m.text.trim()) {
-          contentParts.push({ type: 'text', text: m.text, messageId: m.id });
+          // Split text at {{IMAGE_GROUP_N}} placeholders and interleave with image_group parts
+          if (m.imageGroups.length > 0 && m.text.includes('{{IMAGE_GROUP_')) {
+            const segments = m.text.split(/\{\{IMAGE_GROUP_\d+\}\}/);
+            for (let si = 0; si < segments.length; si++) {
+              const seg = segments[si].trim();
+              if (seg) contentParts.push({ type: 'text', text: seg, messageId: m.id });
+              if (si < m.imageGroups.length) {
+                contentParts.push({ type: 'image_group', urls: m.imageGroups[si].urls });
+              }
+            }
+          } else {
+            contentParts.push({ type: 'text', text: m.text, messageId: m.id });
+          }
         }
         assistantMessages.push({
           id: m.id,
