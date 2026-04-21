@@ -14,11 +14,9 @@ export { defaultCodePlugin } from './default-plugin';
 // ── 注册语言插件 ──
 import { registerCodePlugin } from './registry';
 import { mermaidPlugin } from './mermaid-plugin';
+import { htmlPlugin } from './html-plugin';
+import { markdownPlugin } from './markdown-plugin';
 
 registerCodePlugin(mermaidPlugin);
-
-// 未来：
-// import { htmlPlugin } from './html-plugin';
-// registerCodePlugin(htmlPlugin);
-// import { markdownPlugin } from './markdown-plugin';
-// registerCodePlugin(markdownPlugin);
+registerCodePlugin(htmlPlugin);
+registerCodePlugin(markdownPlugin);
