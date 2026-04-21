@@ -100,8 +100,8 @@ function stripUnicodeWidgets(text: string): string {
     /\uE200(\w+)\uE202([\s\S]*?)\uE201/g,
     (_match, widgetType, jsonBody) => {
       if (widgetType === 'image_group') {
-        // Search result images — remove entirely
-        return '';
+        // Leave a placeholder — extract-turn will replace with actual images
+        return '\n\n{{IMAGE_GROUP}}\n\n';
       }
       // Math widgets (genui, genua, genub, etc.) — extract LaTeX content
       if (widgetType.startsWith('genu')) {

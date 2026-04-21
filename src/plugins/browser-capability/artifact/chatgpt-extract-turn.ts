@@ -221,75 +221,38 @@ function sniffMimeFromBase64(b64: string): string | null {
   return null;
 }
 
-// ── DOM image extraction ──
+// ── Image group extraction ──
 
 /**
- * Extract rendered images from the ChatGPT DOM for a specific turn.
+ * Extract all images from a ChatGPT image_group (carousel/gallery).
  *
- * Matches the correct DOM container by comparing assistant message text
- * prefix (first 30 chars) against each [data-message-author-role="assistant"]
- * element's textContent. This avoids index mismatches caused by invisible
- * assistant messages (thoughts, code, reasoning_recap) in the DOM.
+ * image_group is a search-image widget that shows a carousel. Only ~3 images
+ * are rendered in the initial view; the rest load when the carousel opens.
  *
- * Downloads each image and persists to media store, returns media:// URLs.
+ * Strategy (all via executeJavaScript injection):
+ *   1. Find the image_group container by matching assistant message text
+ *   2. Click the first image to open the carousel/lightbox
+ *   3. Wait for all images to load
+ *   4. Collect all unique image URLs from the lightbox
+ *   5. Close the lightbox
+ *   6. Download via session.fetch + persist to media store
  */
-async function extractDomImages(textPrefix: string): Promise<string[]> {
+async function extractImageGroupImages(textPrefix: string): Promise<string[]> {
   if (!textPrefix) return [];
   try {
     const searchPrefix = textPrefix.replace(/\s+/g, ' ').trim().slice(0, 40);
-    console.log('[chatgpt-extract] extractDomImages searching for:', JSON.stringify(searchPrefix));
+    console.log('[chatgpt-extract] extractImageGroupImages searching for:', JSON.stringify(searchPrefix));
 
     for (const wc of electronWebContents.getAllWebContents()) {
       const url = wc.getURL();
       if (!url.includes('chatgpt.com') && !url.includes('chat.openai.com')) continue;
 
-      const debugResult = await wc.executeJavaScript(`
-        (function() {
-          var prefix = ${JSON.stringify(searchPrefix)};
-          var containers = document.querySelectorAll('[data-message-author-role="assistant"]');
-          var debug = { containerCount: containers.length, matched: -1, imgCount: 0, imgs: [] };
-          var target = null;
-          for (var i = 0; i < containers.length; i++) {
-            var text = (containers[i].textContent || '').replace(/\\s+/g, ' ').trim();
-            if (text.indexOf(prefix) >= 0) {
-              target = containers[i];
-              debug.matched = i;
-              debug.matchedTextPreview = text.slice(0, 80);
-              break;
-            }
-          }
-          if (!target) {
-            // Show first few containers' text for debugging
-            debug.containerPreviews = [];
-            for (var k = 0; k < Math.min(5, containers.length); k++) {
-              debug.containerPreviews.push((containers[k].textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 60));
-            }
-            return debug;
-          }
-          var imgs = target.querySelectorAll('img');
-          debug.imgCount = imgs.length;
-          for (var j = 0; j < imgs.length; j++) {
-            var img = imgs[j];
-            var src = img.src || '';
-            var w = img.naturalWidth || 0;
-            var h = img.naturalHeight || 0;
-            debug.imgs.push({ src: src.slice(0, 100), w: w, h: h });
-            if ((w > 100 || h > 100) && src.startsWith('https://')) {
-              debug.imgs[debug.imgs.length - 1].selected = true;
-            }
-          }
-          return debug;
-        })()
-      `);
-
-      console.log('[chatgpt-extract] DOM probe result:', JSON.stringify(debugResult));
-
-      // Now do the actual extraction if we found images
-      if (!debugResult || debugResult.matched === -1 || debugResult.matched === undefined) return [];
-
+      // Step 1-5: Inject script to open carousel, collect URLs, close carousel
       const imgUrls: string[] = await wc.executeJavaScript(`
-        (function() {
+        (async function() {
           var prefix = ${JSON.stringify(searchPrefix)};
+
+          // Find the assistant container matching this turn's text
           var containers = document.querySelectorAll('[data-message-author-role="assistant"]');
           var target = null;
           for (var i = 0; i < containers.length; i++) {
@@ -297,18 +260,51 @@ async function extractDomImages(textPrefix: string): Promise<string[]> {
             if (text.indexOf(prefix) >= 0) { target = containers[i]; break; }
           }
           if (!target) return [];
-          var imgs = target.querySelectorAll('img');
-          var urls = [];
-          for (var j = 0; j < imgs.length; j++) {
-            var img = imgs[j];
-            var src = img.src || '';
-            var w = img.naturalWidth || 0;
-            var h = img.naturalHeight || 0;
-            if ((w > 100 || h > 100) && src.startsWith('https://')) {
-              urls.push(src);
+
+          // Collect thumbnail URLs first (already visible)
+          var thumbUrls = [];
+          var thumbImgs = target.querySelectorAll('img');
+          for (var j = 0; j < thumbImgs.length; j++) {
+            var src = thumbImgs[j].src || '';
+            if ((thumbImgs[j].naturalWidth > 80 || thumbImgs[j].naturalHeight > 80) && src.startsWith('https://')) {
+              thumbUrls.push(src);
             }
           }
-          return urls;
+
+          // Click the first image to open carousel
+          var clickTarget = null;
+          for (var j = 0; j < thumbImgs.length; j++) {
+            if (thumbImgs[j].naturalWidth > 80) { clickTarget = thumbImgs[j]; break; }
+          }
+          if (!clickTarget) return thumbUrls;
+
+          clickTarget.click();
+
+          // Wait for carousel to open and images to load
+          await new Promise(function(r) { setTimeout(r, 1500); });
+
+          // Collect all images from the full page (carousel renders outside the turn container)
+          var allUrls = new Set();
+          var allImgs = document.querySelectorAll('img');
+          for (var k = 0; k < allImgs.length; k++) {
+            var imgSrc = allImgs[k].src || '';
+            var w = allImgs[k].naturalWidth || 0;
+            var h = allImgs[k].naturalHeight || 0;
+            if ((w > 80 || h > 80) && imgSrc.startsWith('https://images.openai.com/')) {
+              allUrls.add(imgSrc);
+            }
+          }
+
+          // Close the carousel — press Escape or click the close button
+          try {
+            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+            await new Promise(function(r) { setTimeout(r, 300); });
+            // If still open, try clicking close button
+            var closeBtn = document.querySelector('[aria-label="Close"], [class*="close"], button[class*="dismiss"]');
+            if (closeBtn) closeBtn.click();
+          } catch(e) {}
+
+          return Array.from(allUrls);
         })()
       `);
 
@@ -562,21 +558,21 @@ async function turnToMarkdown(turn: ChatGPTTurn, pageId: string, conversationId:
     }
   }
 
-  // Fetch DOM-rendered images (image_group search results, inline images, etc.)
-  // These are images visible on the ChatGPT page but not in the API data (no file_id).
-  // Strip markdown formatting to match DOM textContent.
+  // Check if this turn contains {{IMAGE_GROUP}} placeholders
+  // These are image_group widgets that need carousel extraction
   const rawText = turn.assistantMessages[0]?.text || '';
   const plainText = rawText.replace(/\*\*|__|[*_`#\[\]]/g, '').replace(/\n+/g, ' ').trim();
-  const domImages = await extractDomImages(plainText);
-  if (domImages.length > 0) {
-    for (const img of domImages) {
-      parts.push(`![](${img})`);
-    }
+  const hasImageGroup = parts.some(p => p.includes('{{IMAGE_GROUP}}'));
+  let imageGroupMediaUrls: string[] = [];
+
+  if (hasImageGroup) {
+    imageGroupMediaUrls = await extractImageGroupImages(plainText);
+    console.log('[chatgpt-extract] image_group extracted:', imageGroupMediaUrls.length, 'images');
   }
 
   // Fetch images for file refs (DALL·E / Code Interpreter)
   // Strategy: files/download API (file- prefix) or DOM signed URL (file_ prefix)
-  if (turn.fileRefs.length > 0 && domImages.length === 0) {
+  if (turn.fileRefs.length > 0 && imageGroupMediaUrls.length === 0) {
     for (const fileId of turn.fileRefs) {
       const mediaUrl = await downloadChatGPTFileToMedia(fileId);
       if (mediaUrl) {
@@ -598,10 +594,17 @@ async function turnToMarkdown(turn: ChatGPTTurn, pageId: string, conversationId:
   }
 
   // Process sandbox:// links (Code Interpreter files)
-  // Use the first assistant message's ID as the message_id for the download API
   const messageId = turn.assistantMessages[0]?.id || '';
   let markdown = parts.join('\n\n');
   markdown = await processSandboxLinks(markdown, conversationId, messageId);
+
+  // Replace {{IMAGE_GROUP}} placeholder with extracted images
+  if (imageGroupMediaUrls.length > 0) {
+    const imageMarkdown = imageGroupMediaUrls.map(url => `![](${url})`).join('\n\n');
+    markdown = markdown.replace('{{IMAGE_GROUP}}', imageMarkdown);
+  }
+  // Remove any remaining unreplaced placeholders
+  markdown = markdown.replace(/\{\{IMAGE_GROUP\}\}/g, '');
 
   return markdown;
 }
