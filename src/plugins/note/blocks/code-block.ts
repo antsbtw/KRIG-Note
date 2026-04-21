@@ -134,11 +134,17 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
       const lang = node.attrs.language || '';
       typeBadge.textContent = getTypeBadgeLabel(lang);
       typeBadge.style.display = '';
-      langBtn.style.display = 'none';  // 有标题时隐藏语言下拉（badge 已显示类型）
+      langBtn.style.display = 'none';       // 有标题时隐藏语言下拉
+      canvasActions.style.display = 'flex';  // 显示 Canvas 按钮组
+      btnCopy.style.display = 'none';        // 隐藏普通复制按钮
+      // Preview 按钮只在插件有 preview 能力时显示
+      btnCanvasPreview.style.display = currentPlugin?.hasPreview ? '' : 'none';
     } else {
       titleEl.style.display = 'none';
       typeBadge.style.display = 'none';
-      langBtn.style.display = '';      // 无标题时显示语言下拉
+      langBtn.style.display = '';            // 无标题时显示语言下拉
+      canvasActions.style.display = 'none';  // 隐藏 Canvas 按钮组
+      btnCopy.style.display = '';            // 显示普通复制按钮
     }
   }
   // 左侧：语言选择按钮（在 updateTitleBar 之前声明，因为 updateTitleBar 控制其显隐）
@@ -222,11 +228,102 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
   };
   document.addEventListener('mousedown', closeDropdown);
 
-  // 右侧：复制按钮（始终在最右）
+  // 右侧
   const spacer = document.createElement('div');
   spacer.style.flex = '1';
   toolbar.appendChild(spacer);
 
+  // ── Canvas 操作按钮组（有 title 时显示） ──
+  const canvasActions = document.createElement('div');
+  canvasActions.classList.add('code-block__canvas-actions');
+  canvasActions.style.display = 'none';
+
+  const btnCanvasCopy = document.createElement('button');
+  btnCanvasCopy.classList.add('code-block__canvas-btn');
+  btnCanvasCopy.textContent = 'Copy';
+  btnCanvasCopy.title = '复制代码';
+
+  const btnCanvasEdit = document.createElement('button');
+  btnCanvasEdit.classList.add('code-block__canvas-btn');
+  btnCanvasEdit.textContent = 'Edit';
+  btnCanvasEdit.title = '编辑';
+
+  const btnCanvasDownload = document.createElement('button');
+  btnCanvasDownload.classList.add('code-block__canvas-btn');
+  btnCanvasDownload.textContent = 'Download';
+  btnCanvasDownload.title = '下载文件';
+
+  const btnCanvasPreview = document.createElement('button');
+  btnCanvasPreview.classList.add('code-block__canvas-btn', 'code-block__canvas-btn--primary');
+  btnCanvasPreview.textContent = 'Preview';
+  btnCanvasPreview.title = '预览';
+
+  canvasActions.appendChild(btnCanvasCopy);
+  canvasActions.appendChild(btnCanvasEdit);
+  canvasActions.appendChild(btnCanvasDownload);
+  canvasActions.appendChild(btnCanvasPreview);
+  toolbar.appendChild(canvasActions);
+
+  // Copy
+  btnCanvasCopy.addEventListener('mousedown', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    navigator.clipboard.writeText(code.textContent || '').then(() => {
+      btnCanvasCopy.textContent = '✓ Copied';
+      setTimeout(() => { btnCanvasCopy.textContent = 'Copy'; }, 1500);
+    });
+  });
+
+  // Edit — 调用插件全屏编辑器，或直接聚焦代码区
+  btnCanvasEdit.addEventListener('mousedown', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    if (currentPlugin?.openFullscreen) {
+      currentPlugin.openFullscreen(buildPluginContext());
+    } else {
+      // 无全屏编辑器的语言：聚焦到代码区
+      code.focus();
+    }
+  });
+
+  // Download — 下载为文件
+  btnCanvasDownload.addEventListener('mousedown', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    const lang = node.attrs.language || 'txt';
+    const title = node.attrs.title || 'code';
+    const EXT_MAP: Record<string, string> = { javascript: 'js', typescript: 'ts', python: 'py', jsx: 'jsx', html: 'html', css: 'css', markdown: 'md', json: 'json', yaml: 'yml', rust: 'rs', go: 'go', java: 'java', cpp: 'cpp', c: 'c', ruby: 'rb', php: 'php', swift: 'swift', kotlin: 'kt', sql: 'sql', bash: 'sh', shell: 'sh', xml: 'xml', svg: 'svg', mermaid: 'mmd' };
+    const ext = EXT_MAP[lang] || lang || 'txt';
+    const filename = `${title.replace(/[/\\?%*:|"<>]/g, '-')}.${ext}`;
+    const blob = new Blob([code.textContent || ''], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  });
+
+  // Preview — toggle 预览区
+  let canvasPreviewOpen = false;
+  btnCanvasPreview.addEventListener('mousedown', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    canvasPreviewOpen = !canvasPreviewOpen;
+    if (canvasPreviewOpen) {
+      preview.style.display = 'flex';
+      btnCanvasPreview.classList.add('code-block__canvas-btn--active');
+      if (currentPlugin?.activate) {
+        currentPlugin.activate(buildPluginContext());
+      } else if (currentPlugin?.renderPreview) {
+        currentPlugin.renderPreview(code.textContent || '', preview, buildPluginContext());
+      }
+    } else {
+      preview.style.display = 'none';
+      btnCanvasPreview.classList.remove('code-block__canvas-btn--active');
+      if (currentPlugin?.deactivate) {
+        currentPlugin.deactivate(buildPluginContext());
+      }
+    }
+  });
+
+  // 普通 codeBlock 的复制按钮（无 title 时显示）
   const btnCopy = createBtn(ICON_COPY, '复制代码');
   toolbar.appendChild(btnCopy);
 
@@ -412,10 +509,20 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
   const observer = new MutationObserver(() => {
     if (node.attrs.language === 'mermaid') {
       scheduleRender();
-    } else if (currentPlugin?.hasPreview && currentPlugin.schedulePreview) {
-      currentPlugin.schedulePreview(code.textContent || '', preview, buildPluginContext());
-    } else if (currentPlugin?.hasPreview && currentPlugin.renderPreview) {
-      currentPlugin.renderPreview(code.textContent || '', preview, buildPluginContext());
+    } else if (canvasPreviewOpen && currentPlugin?.hasPreview) {
+      // Canvas Preview 打开时实时更新
+      if (currentPlugin.schedulePreview) {
+        currentPlugin.schedulePreview(code.textContent || '', preview, buildPluginContext());
+      } else if (currentPlugin.renderPreview) {
+        currentPlugin.renderPreview(code.textContent || '', preview, buildPluginContext());
+      }
+    } else if (!node.attrs.title && currentPlugin?.hasPreview) {
+      // 非 Canvas 的普通 codeBlock 自动预览
+      if (currentPlugin.schedulePreview) {
+        currentPlugin.schedulePreview(code.textContent || '', preview, buildPluginContext());
+      } else if (currentPlugin.renderPreview) {
+        currentPlugin.renderPreview(code.textContent || '', preview, buildPluginContext());
+      }
     }
   });
   observer.observe(code, { childList: true, characterData: true, subtree: true });
@@ -425,7 +532,8 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
   if (node.attrs.language === 'mermaid') {
     updateViewMode(viewMode);
     setTimeout(() => renderMermaid(code.textContent || ''), 50);
-  } else if (currentPlugin?.hasPreview) {
+  } else if (currentPlugin?.hasPreview && !node.attrs.title) {
+    // 非 Canvas 的普通 codeBlock 自动显示预览
     preview.style.display = 'flex';
     setTimeout(() => {
       currentPlugin?.activate?.(buildPluginContext());
