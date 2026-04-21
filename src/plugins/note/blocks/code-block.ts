@@ -8,6 +8,8 @@ import { tags } from '@lezer/highlight';
 import { mermaidLanguage } from './mermaid-lang';
 import { showMermaidPanel, hideMermaidPanel } from '../help-panel/mermaid';
 import { saveBlobFile, saveTextFile, SVG_FILTERS } from '../utils/save-file';
+import { getCodePlugin } from './code-plugins';
+import type { CodeLanguagePlugin } from './code-plugins';
 
 /**
  * codeBlock — 代码块（RenderBlock）
@@ -136,6 +138,9 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
   let renderTimer: ReturnType<typeof setTimeout> | null = null;
   const LS_VIEW_KEY = 'krig-mermaid-view-mode';
   let viewMode: ViewMode = (localStorage.getItem(LS_VIEW_KEY) as ViewMode) || 'split';
+
+  // 查询当前语言的插件
+  let currentPlugin: CodeLanguagePlugin | null = getCodePlugin(node.attrs.language || '');
 
   const dom = document.createElement('div');
   dom.classList.add('code-block');
@@ -961,6 +966,10 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
       if (updatedNode.type.name !== 'codeBlock') return false;
       const langChanged = updatedNode.attrs.language !== node.attrs.language;
       node = updatedNode;
+      // 语言变更时切换插件
+      if (langChanged) {
+        currentPlugin = getCodePlugin(node.attrs.language || '');
+      }
       // 同步标题
       if (node.attrs.title) {
         titleEl.textContent = `📄 ${node.attrs.title}`;
