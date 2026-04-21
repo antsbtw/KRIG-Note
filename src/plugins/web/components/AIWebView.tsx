@@ -1284,7 +1284,7 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
 
         <div style={{ flex: 1 }} />
 
-        {currentService === 'claude' && (
+        {(currentService === 'claude' || currentService === 'chatgpt') && (
           <button
             style={{
               background: artifactDownloadBusy ? '#2d4a7a' : '#1f3b64',

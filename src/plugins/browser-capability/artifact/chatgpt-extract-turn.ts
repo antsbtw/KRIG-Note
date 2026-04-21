@@ -12,8 +12,8 @@
 import { webContents as electronWebContents } from 'electron';
 import {
   getChatGPTConversationData,
-  getChatGPTTextdocs,
   type ChatGPTTurn,
+  type ChatGPTCanvasData,
 } from './chatgpt-conversation-query';
 import { browserCapabilityTraceWriter } from '../persistence';
 import type { ExtractedTurn, ExtractedConversation } from './extract-turn';
@@ -576,37 +576,80 @@ async function downloadSandboxFile(
   }
 }
 
+// ── Canvas → Markdown ──
+
+const CANVAS_LANG_MAP: Record<string, string> = {
+  react: 'jsx', javascript: 'javascript', python: 'python',
+  typescript: 'typescript', html: 'html', css: 'css',
+  java: 'java', go: 'go', rust: 'rust', cpp: 'cpp', c: 'c',
+};
+
+function canvasToMarkdown(canvas: ChatGPTCanvasData): string {
+  if (!canvas.content.trim()) return '';
+  const titleAttr = canvas.name ? ` title="${canvas.name}"` : '';
+  const tdType = canvas.canvasType || '';
+  if (tdType.startsWith('code/') || tdType === 'code') {
+    const lang = tdType.replace('code/', '') || '';
+    const mdLang = CANVAS_LANG_MAP[lang] || lang || '';
+    return `\`\`\`${mdLang}${titleAttr}\n${canvas.content.trim()}\n\`\`\``;
+  }
+  // Document canvas → markdown code fence with title
+  return `\`\`\`markdown${titleAttr}\n${canvas.content.trim()}\n\`\`\``;
+}
+
 // ── Turn → Markdown conversion ──
 
 /**
- * Convert a ChatGPT turn to markdown, including images.
+ * Convert a ChatGPT turn to markdown, preserving original content order.
+ *
+ * Iterates turn.contentParts (text, canvas, file) in the order they appear
+ * in the conversation mapping tree, so Canvas blocks, images, and text
+ * maintain their correct positions.
  */
-async function turnToMarkdown(turn: ChatGPTTurn, pageId: string, conversationId: string): Promise<string> {
+async function turnToMarkdown(turn: ChatGPTTurn, _pageId: string, conversationId: string): Promise<string> {
   const parts: string[] = [];
 
-  // Combine assistant message text
-  for (const msg of turn.assistantMessages) {
-    if (msg.text.trim()) {
-      parts.push(msg.text.trim());
+  // Track which fileRefs have already been rendered via contentParts
+  const renderedFileIds = new Set<string>();
+
+  for (const part of turn.contentParts) {
+    if (part.type === 'text') {
+      // Process sandbox links immediately with the correct messageId
+      let text = part.text.trim();
+      if (text.includes('sandbox:/mnt/data/')) {
+        text = await processSandboxLinks(text, conversationId, part.messageId);
+      }
+      parts.push(text);
+    } else if (part.type === 'canvas') {
+      const md = canvasToMarkdown(part.canvas);
+      if (md) parts.push(md);
+    } else if (part.type === 'file') {
+      renderedFileIds.add(part.fileId);
+      const mediaUrl = await downloadChatGPTFileToMedia(part.fileId);
+      if (mediaUrl) {
+        parts.push(`![](${mediaUrl})`);
+      } else {
+        parts.push(`> 📎 图片引用: ${part.fileId}（下载失败）`);
+      }
     }
   }
 
-  // Check if this turn contains {{IMAGE_GROUP_N}} placeholders
+  // Handle image_group placeholders in text parts
   const rawText = turn.assistantMessages[0]?.text || '';
   const plainText = rawText.replace(/\*\*|__|[*_`#\[\]]/g, '').replace(/\n+/g, ' ').trim();
   const imageGroupCount = (parts.join('\n').match(/\{\{IMAGE_GROUP_\d+\}\}/g) || []).length;
   let imageGroups: string[][] = [];
 
   if (imageGroupCount > 0) {
-    // Extract images per group (each group opened independently via carousel)
     imageGroups = await extractImageGroupImages(plainText);
     console.log('[chatgpt-extract] image_group results:', imageGroups.map(g => g.length));
   }
 
-  // Fetch images for file refs (DALL·E / Code Interpreter)
-  // Strategy: files/download API (file- prefix) or DOM signed URL (file_ prefix)
-  if (turn.fileRefs.length > 0 && imageGroups.flat().length === 0) {
+  // Fetch remaining file refs not already rendered via contentParts
+  // (e.g. inline asset_pointers in assistant text)
+  if (imageGroups.flat().length === 0) {
     for (const fileId of turn.fileRefs) {
+      if (renderedFileIds.has(fileId)) continue;
       const mediaUrl = await downloadChatGPTFileToMedia(fileId);
       if (mediaUrl) {
         parts.push(`![](${mediaUrl})`);
@@ -616,33 +659,7 @@ async function turnToMarkdown(turn: ChatGPTTurn, pageId: string, conversationId:
     }
   }
 
-  // Append Canvas (textdocs) content as titled code blocks
-  const textdocs = getChatGPTTextdocs(pageId);
-  if (textdocs.length > 0) {
-    for (const td of textdocs) {
-      if (!td.content.trim()) continue;
-      const tdType = td.textdocType || '';
-      const titleAttr = td.title ? ` title="${td.title}"` : '';
-      if (tdType.startsWith('code/') || tdType === 'code') {
-        const lang = tdType.replace('code/', '') || '';
-        const langMap: Record<string, string> = {
-          react: 'jsx', javascript: 'javascript', python: 'python',
-          typescript: 'typescript', html: 'html', css: 'css',
-          java: 'java', go: 'go', rust: 'rust', cpp: 'cpp', c: 'c',
-        };
-        const mdLang = langMap[lang] || lang || '';
-        parts.push(`\n\`\`\`${mdLang}${titleAttr}\n${td.content.trim()}\n\`\`\``);
-      } else {
-        // Document canvas → markdown code fence with title
-        parts.push(`\n\`\`\`markdown${titleAttr}\n${td.content.trim()}\n\`\`\``);
-      }
-    }
-  }
-
-  // Process sandbox:// links (Code Interpreter files)
-  const messageId = turn.assistantMessages[0]?.id || '';
   let markdown = parts.join('\n\n');
-  markdown = await processSandboxLinks(markdown, conversationId, messageId);
 
   // Replace {{IMAGE_GROUP_N}} placeholders with extracted images at correct positions
   for (let gi = 0; gi < imageGroups.length; gi++) {
@@ -673,12 +690,25 @@ export async function extractChatGPTTurn(
     return null;
   }
 
-  const turn = conversation.turns[msgIndex];
+  // Map DOM msgIndex (visible assistant element index) to turn.
+  // Each turn may contain multiple visible assistant DOM elements;
+  // domAssistantIndexStart..+domAssistantCount covers which DOM indices it owns.
+  let turn: ChatGPTTurn | undefined = conversation.turns[msgIndex]; // fast path: indices align
+  if (!turn || msgIndex < turn.domAssistantIndexStart
+    || msgIndex >= turn.domAssistantIndexStart + turn.domAssistantCount) {
+    turn = conversation.turns.find(t =>
+      msgIndex >= t.domAssistantIndexStart
+      && msgIndex < t.domAssistantIndexStart + t.domAssistantCount,
+    );
+  }
   if (!turn) {
     browserCapabilityTraceWriter.writeDebugLog(pageId, 'chatgpt-extract-turn', {
       msgIndex,
       error: 'turn not found',
       totalTurns: conversation.turns.length,
+      turnDomRanges: conversation.turns.map(t => ({
+        index: t.index, start: t.domAssistantIndexStart, count: t.domAssistantCount,
+      })),
     });
     return null;
   }

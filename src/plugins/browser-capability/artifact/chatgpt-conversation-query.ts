@@ -24,12 +24,34 @@ export type ChatGPTConversationData = {
   turns: ChatGPTTurn[];
 };
 
+/** A content part in a turn — text, file reference, or Canvas, in original order. */
+export type ChatGPTContentPart =
+  | { type: 'text'; text: string; messageId: string }
+  | { type: 'file'; fileId: string }
+  | { type: 'canvas'; canvas: ChatGPTCanvasData };
+
+export type ChatGPTCanvasData = {
+  name: string;
+  canvasType: string;   // 'code/react', 'code/python', 'document', etc.
+  content: string;
+};
+
 export type ChatGPTTurn = {
   index: number;
   userMessage: string;
+  /** Content parts in original interleaving order (text, canvas, files). */
+  contentParts: ChatGPTContentPart[];
   assistantMessages: ChatGPTAssistantMessage[];
   /** All file IDs referenced in this turn (DALL·E, Code Interpreter, attachments). */
   fileRefs: string[];
+  /**
+   * Index of this turn's first visible assistant DOM element among all
+   * `[data-message-author-role="assistant"]` / `.agent-turn` elements.
+   * Used to map right-click DOM msgIndex → turn index.
+   */
+  domAssistantIndexStart: number;
+  /** Number of visible assistant DOM elements in this turn. */
+  domAssistantCount: number;
 };
 
 export type ChatGPTAssistantMessage = {
@@ -204,6 +226,28 @@ function unwrapWidgets(text: string): string {
   return out.join('');
 }
 
+/**
+ * Parse Canvas data from a canmore.create_textdoc / canmore.update_textdoc message.
+ * The message's content.text is JSON: { name, type, content }.
+ */
+function parseCanvasFromMessage(orderedMessages: any[], msgId: string): ChatGPTCanvasData | null {
+  const raw = orderedMessages.find((m: any) => m.id === msgId);
+  if (!raw) return null;
+  const text = raw.content?.text;
+  if (!text || typeof text !== 'string') return null;
+  try {
+    const obj = JSON.parse(text);
+    if (!obj.content || typeof obj.content !== 'string') return null;
+    return {
+      name: obj.name || '',
+      canvasType: obj.type || 'document',
+      content: obj.content,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /** Parse fenced code blocks from Markdown. */
 function parseCodeBlocks(md: string): Array<{ language: string; code: string }> {
   const blocks: Array<{ language: string; code: string }> = [];
@@ -286,29 +330,9 @@ function extractMessageContent(raw: any): {
 // ── Main API ──
 
 /**
- * ChatGPT DOM uses `[data-message-author-role="assistant"]` to mark each
- * visible assistant "bubble". These map 1:1 to assistant messages that are
- * NOT hidden and have `content_type` in a visible set (primarily 'text').
- *
- * The DOM's msgIndex counts these visible assistant bubbles from 0.
- * We must produce turns that align with this indexing so that right-click
- * extraction picks the correct content.
- *
- * Strategy: each visible assistant message = one turn. We look backward to
- * find the preceding user message, and forward/backward to collect file refs
- * from adjacent tool messages.
- */
-
-/**
- * content_type values that ChatGPT renders as DOM elements with
- * `[data-message-author-role="assistant"]`.
- *
- * NOT included:
- *   - 'thoughts': rendered as "Thought for Xs" collapsible block, but does
- *     NOT carry the data-message-author-role="assistant" attribute in DOM.
- *   - 'model_editable_context': internal memory, not rendered.
- *   - 'reasoning_recap': not rendered as a standalone bubble.
- *   - 'code': code sent to interpreter, not rendered as assistant bubble.
+ * Visible assistant content_type values — these produce user-facing text
+ * in ChatGPT's UI. Other types (thoughts, reasoning_recap, code sent to
+ * interpreter, model_editable_context) are internal and skipped.
  */
 const VISIBLE_ASSISTANT_CONTENT_TYPES = new Set([
   'text',
@@ -344,6 +368,7 @@ export function getChatGPTConversationData(pageId: string): ChatGPTConversationD
     id: string;
     createdAt: number | null;
     imageGroupSizes: number[];
+    endTurn: boolean | null;
   };
 
   const parsed: ParsedMsg[] = [];
@@ -362,77 +387,108 @@ export function getChatGPTConversationData(pageId: string): ChatGPTConversationD
       id: msg.id || '',
       createdAt: msg.create_time ?? null,
       imageGroupSizes,
+      endTurn: msg.end_turn ?? null,
     });
   }
 
-  // Step 2: Identify visible messages (= DOM bubbles)
-  // Standard assistant messages: [data-message-author-role="assistant"]
-  // DALL·E image results: role=tool, ct=multimodal_text → rendered as .agent-turn
-  const visibleAssistantIndices: number[] = [];
+  // Step 2: Group messages into turns.
+  //
+  // ChatGPT's conversation tree can have multiple assistant messages per
+  // user question (e.g. text → Code Interpreter → text → Code Interpreter → text).
+  // These form a single "turn" in the UI. The `end_turn=true` field on the
+  // final assistant message marks where one complete response ends.
+  //
+  // Strategy: split on user messages. All non-user messages between two
+  // user messages (or after the last user message) belong to one turn.
+  // Within each turn, scan all messages to build contentParts in order.
+
+  // Find indices of user messages
+  const userIndices: number[] = [];
   for (let i = 0; i < parsed.length; i++) {
-    const m = parsed[i];
-    if (m.role === 'assistant' && VISIBLE_ASSISTANT_CONTENT_TYPES.has(m.contentType)) {
-      visibleAssistantIndices.push(i);
-    } else if (m.role === 'tool' && m.contentType === 'multimodal_text') {
-      // DALL·E image generation results
-      visibleAssistantIndices.push(i);
-    }
+    if (parsed[i].role === 'user') userIndices.push(i);
   }
 
-  // Step 3: Build turns — one per visible assistant message
   const turns: ChatGPTTurn[] = [];
-  for (let turnIdx = 0; turnIdx < visibleAssistantIndices.length; turnIdx++) {
-    const assistantIdx = visibleAssistantIndices[turnIdx];
-    const assistantMsg = parsed[assistantIdx];
+  let domAssistantCursor = 0; // running count of DOM-visible assistant elements
+  for (let ui = 0; ui < userIndices.length; ui++) {
+    const userIdx = userIndices[ui];
+    const userMsg = parsed[userIdx];
 
-    // Find preceding user message (skip system/tool/other assistant)
-    let userMessage = '';
-    for (let j = assistantIdx - 1; j >= 0; j--) {
-      if (parsed[j].role === 'user' && parsed[j].text.trim()) {
-        userMessage = parsed[j].text;
-        break;
+    // Range of messages belonging to this turn's response:
+    // from after the user message to just before the next user message (or end)
+    const rangeStart = userIdx + 1;
+    const rangeEnd = ui < userIndices.length - 1 ? userIndices[ui + 1] : parsed.length;
+
+    // Skip turns with no response messages
+    if (rangeStart >= rangeEnd) continue;
+
+    // Build contentParts in original order and count DOM-visible elements
+    const contentParts: ChatGPTContentPart[] = [];
+    const allFileRefs: string[] = [];
+    const assistantMessages: ChatGPTAssistantMessage[] = [];
+    let domVisibleCount = 0;
+
+    for (let j = rangeStart; j < rangeEnd; j++) {
+      const m = parsed[j];
+
+      // Canvas: canmore.create_textdoc / canmore.update_textdoc
+      if (m.role === 'assistant' && m.recipient?.startsWith('canmore.') && m.contentType === 'code') {
+        const canvas = parseCanvasFromMessage(orderedMessages, m.id);
+        if (canvas) {
+          contentParts.push({ type: 'canvas', canvas });
+        }
+        continue;
       }
-    }
 
-    // Collect file refs from this assistant + adjacent tool messages
-    const allFileRefs: string[] = [...assistantMsg.fileRefs];
-
-    // Look at tool messages between this assistant and the previous visible assistant
-    const prevAssistantIdx = turnIdx > 0 ? visibleAssistantIndices[turnIdx - 1] : -1;
-    for (let j = prevAssistantIdx + 1; j < assistantIdx; j++) {
-      if (parsed[j].role === 'tool') {
-        for (const id of parsed[j].fileRefs) {
+      // Visible assistant text — also counts as a DOM element
+      if (m.role === 'assistant' && VISIBLE_ASSISTANT_CONTENT_TYPES.has(m.contentType)) {
+        domVisibleCount++;
+        for (const id of m.fileRefs) {
           if (!allFileRefs.includes(id)) allFileRefs.push(id);
         }
+        if (m.text.trim()) {
+          contentParts.push({ type: 'text', text: m.text, messageId: m.id });
+        }
+        assistantMessages.push({
+          id: m.id,
+          text: m.text,
+          codeBlocks: parseCodeBlocks(m.text),
+          fileRefs: m.fileRefs,
+          recipient: m.recipient,
+          createdAt: m.createdAt,
+          imageGroupSizes: m.imageGroupSizes,
+        });
+        continue;
       }
+
+      // Tool messages: DALL·E multimodal_text counts as DOM element (.agent-turn)
+      if (m.role === 'tool') {
+        if (m.contentType === 'multimodal_text') domVisibleCount++;
+        for (const id of m.fileRefs) {
+          if (!allFileRefs.includes(id)) {
+            allFileRefs.push(id);
+            contentParts.push({ type: 'file', fileId: id });
+          }
+        }
+        continue;
+      }
+
+      // Other (model_editable_context, thoughts, reasoning_recap, code to interpreter): skip
     }
 
-    // Also check tool messages immediately after this assistant (before next visible assistant)
-    const nextAssistantIdx = turnIdx < visibleAssistantIndices.length - 1
-      ? visibleAssistantIndices[turnIdx + 1]
-      : parsed.length;
-    for (let j = assistantIdx + 1; j < nextAssistantIdx; j++) {
-      if (parsed[j].role === 'tool') {
-        for (const id of parsed[j].fileRefs) {
-          if (!allFileRefs.includes(id)) allFileRefs.push(id);
-        }
-      }
-    }
+    // Skip turns that produced no visible content
+    if (contentParts.length === 0 && assistantMessages.length === 0) continue;
 
     turns.push({
-      index: turnIdx,
-      userMessage,
-      assistantMessages: [{
-        id: assistantMsg.id,
-        text: assistantMsg.text,
-        codeBlocks: parseCodeBlocks(assistantMsg.text),
-        fileRefs: assistantMsg.fileRefs,
-        recipient: assistantMsg.recipient,
-        createdAt: assistantMsg.createdAt,
-        imageGroupSizes: assistantMsg.imageGroupSizes,
-      }],
+      index: turns.length,
+      userMessage: userMsg.text,
+      contentParts,
+      assistantMessages,
       fileRefs: allFileRefs,
+      domAssistantIndexStart: domAssistantCursor,
+      domAssistantCount: domVisibleCount,
     });
+    domAssistantCursor += domVisibleCount;
   }
 
   return { conversationId, title, model, turns };
