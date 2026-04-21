@@ -338,6 +338,7 @@ async function extractImageGroupImages(textPrefix: string): Promise<string[][]> 
       const resultGroups: string[][] = [];
       for (const group of groups) {
         const groupResults: string[] = [];
+        const groupSeen = new Set<string>();
         for (const imgUrl of group) {
           try {
             const response = await wc.session.fetch(imgUrl);
@@ -355,11 +356,18 @@ async function extractImageGroupImages(textPrefix: string): Promise<string[][]> 
               const ext = mime.includes('jpeg') ? 'jpg' : mime.includes('png') ? 'png' : mime.includes('gif') ? 'gif' : 'webp';
               const r = await put(dataUrl, mime, `chatgpt-image.${ext}`);
               if (r.success && r.mediaUrl) {
-                groupResults.push(r.mediaUrl);
+                // Dedup by mediaUrl (same content hash → same mediaUrl)
+                if (!groupSeen.has(r.mediaUrl)) {
+                  groupSeen.add(r.mediaUrl);
+                  groupResults.push(r.mediaUrl);
+                }
                 continue;
               }
             }
-            groupResults.push(dataUrl);
+            if (!groupSeen.has(dataUrl)) {
+              groupSeen.add(dataUrl);
+              groupResults.push(dataUrl);
+            }
           } catch (err) {
             console.warn('[chatgpt-extract] image download error:', err);
           }
