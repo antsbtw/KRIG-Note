@@ -100,13 +100,7 @@ function pickRpcInner(frames: any[], rpcId: string): any | null {
   return null;
 }
 
-/**
- * Collect Imagen image URLs from turn[3][0][0][12][7][0][0][0].
- *
- * Gemini generates multiple candidate images per request but only
- * displays the first one. We take only the first valid URL to match
- * the page's display.
- */
+/** Collect Imagen image URLs from turn[3][0][0][12][7][0][0][0]. */
 function collectImageUrls(turnAssistant: any): string[] {
   const group = getPath(turnAssistant, [0, 0, 12, 7, 0, 0, 0]);
   if (!Array.isArray(group)) return [];
@@ -115,8 +109,7 @@ function collectImageUrls(turnAssistant: any): string[] {
     const u = getPath(slot, [3]);
     if (typeof u === 'string' && u.startsWith('https://lh3.')) urls.push(u);
   }
-  // Gemini shows only the first candidate; deduplicate to match page display
-  return urls.length > 1 ? [urls[0]] : urls;
+  return urls;
 }
 
 /** Collect web-search groundings from turn[3][12][0][0][14][12]. */
