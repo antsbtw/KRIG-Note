@@ -518,6 +518,72 @@
 .code-block--preview-only { border-radius: 6px; }
 .code-block--preview-only .code-block__mermaid { border-top: none; border-radius: 6px; }
 
+/* ── JS Preview 浮窗 ── */
+.js-preview-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9998;
+  background: rgba(0, 0, 0, 0);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s;
+}
+.js-preview-backdrop--visible {
+  background: rgba(0, 0, 0, 0.55);
+}
+.js-preview-modal {
+  width: min(720px, 85vw);
+  max-height: 80vh;
+  background: #252525;
+  border-radius: 12px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transform: scale(0.95) translateY(8px);
+  opacity: 0;
+  transition: transform 0.2s ease-out, opacity 0.2s ease-out;
+}
+.js-preview-backdrop--visible .js-preview-modal {
+  transform: scale(1) translateY(0);
+  opacity: 1;
+}
+.js-preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-bottom: 1px solid #333;
+  flex-shrink: 0;
+}
+.js-preview-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #ccc;
+}
+.js-preview-close {
+  background: none;
+  border: none;
+  color: #888;
+  font-size: 16px;
+  cursor: pointer;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.js-preview-close:hover { background: #333; color: #e8eaed; }
+.js-preview-iframe {
+  width: 100%;
+  min-height: 80px;
+  border: none;
+  border-radius: 0 0 12px 12px;
+  background: #f5f5f5;
+}
+
 /* 全屏编辑器 */
 .code-block__fullscreen-overlay {
   position: fixed;

@@ -137,8 +137,6 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
       langBtn.style.display = 'none';       // 有标题时隐藏语言下拉
       canvasActions.style.display = 'flex';  // 显示 Canvas 按钮组
       btnCopy.style.display = 'none';        // 隐藏普通复制按钮
-      // Preview 按钮只在插件有 preview 能力时显示
-      btnCanvasPreview.style.display = currentPlugin?.hasPreview ? '' : 'none';
     } else {
       titleEl.style.display = 'none';
       typeBadge.style.display = 'none';
@@ -243,24 +241,12 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
   btnCanvasCopy.textContent = 'Copy';
   btnCanvasCopy.title = '复制代码';
 
-  const btnCanvasEdit = document.createElement('button');
-  btnCanvasEdit.classList.add('code-block__canvas-btn');
-  btnCanvasEdit.textContent = 'Edit';
-  btnCanvasEdit.title = '编辑';
-
-  const btnCanvasDownload = document.createElement('button');
-  btnCanvasDownload.classList.add('code-block__canvas-btn');
-  btnCanvasDownload.textContent = 'Download';
-  btnCanvasDownload.title = '下载文件';
-
   const btnCanvasPreview = document.createElement('button');
   btnCanvasPreview.classList.add('code-block__canvas-btn', 'code-block__canvas-btn--primary');
   btnCanvasPreview.textContent = 'Preview';
   btnCanvasPreview.title = '预览';
 
   canvasActions.appendChild(btnCanvasCopy);
-  canvasActions.appendChild(btnCanvasEdit);
-  canvasActions.appendChild(btnCanvasDownload);
   canvasActions.appendChild(btnCanvasPreview);
   toolbar.appendChild(canvasActions);
 
@@ -273,38 +259,16 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
     });
   });
 
-  // Edit — 调用插件全屏编辑器，或直接聚焦代码区
-  btnCanvasEdit.addEventListener('mousedown', (e) => {
-    e.preventDefault(); e.stopPropagation();
-    if (currentPlugin?.openFullscreen) {
-      currentPlugin.openFullscreen(buildPluginContext());
-    } else {
-      // 无全屏编辑器的语言：聚焦到代码区
-      code.focus();
-    }
-  });
-
-  // Download — 下载为文件
-  btnCanvasDownload.addEventListener('mousedown', (e) => {
-    e.preventDefault(); e.stopPropagation();
-    const lang = node.attrs.language || 'txt';
-    const title = node.attrs.title || 'code';
-    const EXT_MAP: Record<string, string> = { javascript: 'js', typescript: 'ts', python: 'py', jsx: 'jsx', html: 'html', css: 'css', markdown: 'md', json: 'json', yaml: 'yml', rust: 'rs', go: 'go', java: 'java', cpp: 'cpp', c: 'c', ruby: 'rb', php: 'php', swift: 'swift', kotlin: 'kt', sql: 'sql', bash: 'sh', shell: 'sh', xml: 'xml', svg: 'svg', mermaid: 'mmd' };
-    const ext = EXT_MAP[lang] || lang || 'txt';
-    const filename = `${title.replace(/[/\\?%*:|"<>]/g, '-')}.${ext}`;
-    const blob = new Blob([code.textContent || ''], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = filename;
-    document.body.appendChild(a); a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  });
-
-  // Preview — toggle 预览区
+  // Preview — 浮窗模式（openFullscreen）或 inline toggle
   let canvasPreviewOpen = false;
   btnCanvasPreview.addEventListener('mousedown', (e) => {
     e.preventDefault(); e.stopPropagation();
+    // 有 openFullscreen 的插件 → 弹出浮窗，不做 inline toggle
+    if (currentPlugin?.openFullscreen) {
+      currentPlugin.openFullscreen(buildPluginContext());
+      return;
+    }
+    // 其他插件 → inline preview toggle
     canvasPreviewOpen = !canvasPreviewOpen;
     if (canvasPreviewOpen) {
       preview.style.display = 'flex';
