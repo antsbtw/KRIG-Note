@@ -39,6 +39,8 @@ export type ChatGPTAssistantMessage = {
   fileRefs: string[];
   recipient: string | null;
   createdAt: number | null;
+  /** Expected image count per image_group widget (parsed from widget JSON) */
+  imageGroupSizes: number[];
 };
 
 export type ChatGPTTextdoc = {
@@ -221,6 +223,7 @@ function extractMessageContent(raw: any): {
   fileRefs: string[];
   recipient: string | null;
   hidden: boolean;
+  imageGroupSizes: number[];
 } {
   const parts = raw.content?.parts || [];
   const textParts: string[] = [];
@@ -256,11 +259,28 @@ function extractMessageContent(raw: any): {
     }
   }
 
-  const text = stripUnicodeWidgets(unwrapWidgets(textParts.join('\n\n')));
+  const rawJoined = textParts.join('\n\n');
+
+  // Parse image_group sizes before widget stripping removes the JSON
+  const imageGroupSizes: number[] = [];
+  const igRegex = /\uE200image_group\uE202([\s\S]*?)\uE201/g;
+  let igm: RegExpExecArray | null;
+  while ((igm = igRegex.exec(rawJoined)) !== null) {
+    try {
+      const obj = JSON.parse(igm[1]);
+      const queries = obj.query || [];
+      const numPer = obj.num_per_query || 1;
+      imageGroupSizes.push(queries.length * numPer);
+    } catch {
+      imageGroupSizes.push(4);
+    }
+  }
+
+  const text = stripUnicodeWidgets(unwrapWidgets(rawJoined));
   const hidden = !!raw.metadata?.is_visually_hidden_from_conversation;
   const recipient: string | null = raw.recipient ?? null;
 
-  return { text, fileRefs: Array.from(new Set(fileRefs)), recipient, hidden };
+  return { text, fileRefs: Array.from(new Set(fileRefs)), recipient, hidden, imageGroupSizes };
 }
 
 // ── Main API ──
@@ -323,13 +343,14 @@ export function getChatGPTConversationData(pageId: string): ChatGPTConversationD
     hidden: boolean;
     id: string;
     createdAt: number | null;
+    imageGroupSizes: number[];
   };
 
   const parsed: ParsedMsg[] = [];
   for (const msg of orderedMessages) {
     const role = msg.author?.role || 'unknown';
     const contentType = msg.content?.content_type || 'text';
-    const { text, fileRefs, recipient, hidden } = extractMessageContent(msg);
+    const { text, fileRefs, recipient, hidden, imageGroupSizes } = extractMessageContent(msg);
     if (hidden) continue;
     parsed.push({
       role,
@@ -340,6 +361,7 @@ export function getChatGPTConversationData(pageId: string): ChatGPTConversationD
       hidden,
       id: msg.id || '',
       createdAt: msg.create_time ?? null,
+      imageGroupSizes,
     });
   }
 
@@ -407,6 +429,7 @@ export function getChatGPTConversationData(pageId: string): ChatGPTConversationD
         fileRefs: assistantMsg.fileRefs,
         recipient: assistantMsg.recipient,
         createdAt: assistantMsg.createdAt,
+        imageGroupSizes: assistantMsg.imageGroupSizes,
       }],
       fileRefs: allFileRefs,
     });

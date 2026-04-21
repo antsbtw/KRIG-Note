@@ -565,20 +565,8 @@ async function turnToMarkdown(turn: ChatGPTTurn, pageId: string, conversationId:
   let imageGroups: string[][] = [];
 
   if (imageGroupCount > 0) {
-    // Parse expected image counts per group from the original widget JSON
-    const groupSizes: number[] = [];
-    const widgetRegex = /\uE200image_group\uE202([\s\S]*?)\uE201/g;
-    let wm: RegExpExecArray | null;
-    while ((wm = widgetRegex.exec(rawText)) !== null) {
-      try {
-        const obj = JSON.parse(wm[1]);
-        const queries = obj.query || [];
-        const numPer = obj.num_per_query || 1;
-        groupSizes.push(queries.length * numPer);
-      } catch {
-        groupSizes.push(4); // fallback
-      }
-    }
+    // Use pre-parsed group sizes from conversation-query
+    const groupSizes = turn.assistantMessages[0]?.imageGroupSizes || [];
 
     // Collect all image URLs via carousel
     const allUrls = await extractImageGroupImages(plainText);
