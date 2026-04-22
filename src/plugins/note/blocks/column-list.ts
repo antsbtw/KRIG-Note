@@ -375,7 +375,7 @@ export const columnListBlock: BlockDef = {
     toDOM() { return ['div', { class: 'column-list' }, 0]; },
   },
   nodeView: columnListNodeView,
-  capabilities: { turnInto: ['textBlock'], canDelete: true, canDrag: true },
+  capabilities: { turnInto: ['textBlock'], canDelete: true, canDrag: true, cascadeBoundary: true },
   containerRule: {},
   slashMenu: { label: '2 Columns', icon: '▥', group: 'layout', keywords: ['column', 'two', '两列'], order: 2 },
 };
@@ -394,7 +394,7 @@ export const columnBlock: BlockDef = {
     toDOM() { return ['div', { class: 'column' }, 0]; },
   },
   nodeView: columnNodeView,
-  capabilities: {},
+  capabilities: { cascadeBoundary: true },
   containerRule: {},
   slashMenu: null,
 };

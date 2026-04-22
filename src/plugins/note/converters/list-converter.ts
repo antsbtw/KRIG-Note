@@ -89,35 +89,57 @@ export const listItemConverter: AtomConverter = {
     const c = atom.content as ListItemContent;
     return {
       type: 'textBlock',
-      content: atomInlinesToPM(c.children),
+      content: atomInlinesToPM(c.children ?? []),
     };
   },
 };
 
 // ── taskItem ──
-// content: 'block+' → 子节点是 textBlock 等
+// content: 'block+' → 子节点作为独立 Atom 通过 parentId 挂接
+// （与 tableCell 同构；早期实现用 children: InlineElement[] 内嵌导致多 block 持久化丢失）
 
 export const taskItemConverter: AtomConverter = {
   atomTypes: ['taskItem'],
   pmType: 'taskItem',
 
   toAtom(node: PMNode, parentId?: string): Atom {
-    const firstChild = node.content.firstChild;
-    const children = firstChild ? pmInlinesToAtom(firstChild) : [];
     return createAtom('taskItem', {
-      children,
       checked: node.attrs.checked ?? false,
+      createdAt: node.attrs.createdAt ?? undefined,
+      completedAt: node.attrs.completedAt ?? undefined,
+      deadline: node.attrs.deadline ?? undefined,
     } as ListItemContent, parentId);
   },
 
-  toPM(atom: Atom): PMNodeJSON {
+  toPM(atom: Atom, children?: Atom[]): PMNodeJSON {
     const c = atom.content as ListItemContent;
+    const attrs = {
+      checked: c.checked ?? false,
+      createdAt: c.createdAt ?? null,
+      completedAt: c.completedAt ?? null,
+      deadline: c.deadline ?? null,
+    };
+
+    // 新模式：子 Atom 通过 parentId 挂接，由运行器填充 content
+    if (children && children.length > 0) {
+      return { type: 'taskItem', attrs };
+    }
+
+    // 兼容旧数据：content.children（inline 数组）→ 吐出单个 textBlock
+    // 再次保存时 toAtom 会按新格式写回，自动升级
+    if (Array.isArray(c.children) && c.children.length > 0) {
+      return {
+        type: 'taskItem',
+        attrs,
+        content: [{ type: 'textBlock', content: atomInlinesToPM(c.children) }],
+      };
+    }
+
+    // 空 taskItem：content 是 block+，必须至少一个 block
     return {
       type: 'taskItem',
-      attrs: { checked: c.checked ?? false },
-      content: c.children.length > 0
-        ? [{ type: 'textBlock', content: atomInlinesToPM(c.children) }]
-        : [{ type: 'textBlock' }],
+      attrs,
+      content: [{ type: 'textBlock' }],
     };
   },
 };

@@ -11,13 +11,17 @@
  */
 
 import type { EditorView } from 'prosemirror-view';
-import type { MarkType, Node as PMNode } from 'prosemirror-model';
-import { Fragment } from 'prosemirror-model';
+import type { MarkType } from 'prosemirror-model';
 import { NodeSelection, TextSelection } from 'prosemirror-state';
 import { toggleMark } from 'prosemirror-commands';
 import { blockSelectionKey } from '../plugins/block-selection';
 import { deleteColumnAt } from '../plugins/container-keyboard';
 import { blockRegistry } from '../registry';
+
+/** 该类型是否为"级联删除边界"——由 BlockDef.capabilities.cascadeBoundary 声明。 */
+function isCascadeBoundary(typeName: string): boolean {
+  return blockRegistry.get(typeName)?.capabilities?.cascadeBoundary === true;
+}
 
 // ── Clipboard ──
 
@@ -46,8 +50,13 @@ export function deleteSelection(view: EditorView): boolean {
 /**
  * 删除指定位置的 block 节点。
  *
- * 处理 column 级联：如果删除的是 column，走 deleteColumnAt 处理
- * "只剩 1 列时解散 column-list" 的逻辑。
+ * 语义（可视化视角）：删掉用户看到的那一块。
+ *   - 如果删完后父容器变空，容器也跟着消失（级联向上，直到父是 doc 或剩下的容器合法）
+ *   - 被删的节点在父容器的所有兄弟都被删光之前，不会越级
+ *
+ * 特殊路径：
+ *   - column：走 deleteColumnAt 处理 "只剩 1 列时解散 column-list" 的规则
+ *   - tableCell / tableHeader：不走级联（表格结构由 prosemirror-tables 管理）
  *
  * 触发方式：ContextMenu Delete / HandleMenu Delete / block-selection Delete/Backspace
  */
@@ -58,7 +67,7 @@ export function deleteBlockAt(view: EditorView, pos: number): boolean {
   // title 保护
   if (node.type.name === 'textBlock' && node.attrs.isTitle) return false;
 
-  // column 级联
+  // column 级联（独立规则）
   if (node.type.name === 'column') {
     const $pos = view.state.doc.resolve(pos);
     if ($pos.parent.type.name === 'columnList') {
@@ -67,39 +76,39 @@ export function deleteBlockAt(view: EditorView, pos: number): boolean {
     }
   }
 
-  // 容器首子节点 → 提升为删除容器本身
-  // 手柄定位到容器内第一个子 block 时，Delete 应该删除整个容器
-  const CONTAINER_EXCLUDE = new Set(['columnList', 'column', 'table', 'tableRow', 'tableCell', 'tableHeader']);
-  const $pos = view.state.doc.resolve(pos);
-  if ($pos.depth >= 1) {
-    const parent = $pos.parent;
-    const parentDef = blockRegistry.get(parent.type.name);
-    if (parentDef?.containerRule && !CONTAINER_EXCLUDE.has(parent.type.name)) {
-      // 检查是否为父容器的第一个子节点
-      const parentPos = $pos.before($pos.depth);
-      const firstChildPos = parentPos + 1;
-      if (pos === firstChildPos) {
-        const parentNode = view.state.doc.nodeAt(parentPos);
-        if (parentNode) {
-          return deleteBlockAt(view, parentPos);
-        }
-      }
-    }
+  // 级联向上的边界：BlockDef.capabilities.cascadeBoundary 声明的类型（table / column 家族）
+  // 由各自的特殊逻辑 / 结构约束管理，不在此函数级联。
+  // cell 内唯一 block 的 content 约束是 block+，删除会让 cell 违反 schema——此时拒绝。
+  const $direct = view.state.doc.resolve(pos);
+  if ($direct.depth >= 1
+      && isCascadeBoundary($direct.parent.type.name)
+      && $direct.parent.childCount === 1) {
+    return false;
   }
 
-  // 展开的容器（toggleList / callout / blockquote 等）：只删除容器壳，子 block 提升到上一级
-  // 收起的容器（open === false）：整体删除
-  const def = blockRegistry.get(node.type.name);
-  if (def?.containerRule && !CONTAINER_EXCLUDE.has(node.type.name)
-      && node.attrs.open !== false && node.childCount > 0) {
-    const children: PMNode[] = [];
-    node.forEach(child => children.push(child));
-    const tr = view.state.tr.replaceWith(pos, pos + node.nodeSize, Fragment.from(children));
-    view.dispatch(tr);
-    return true;
+  // 收集从 pos 起的一连串"删了就空"的祖先：删 pos 节点 → 父变空 → 父也删 → 祖父变空 → ...
+  // 直到某层父还剩其他兄弟、或父是 doc、或父是 cascadeBoundary。
+  let deleteFrom = pos;
+  let deleteTo = pos + node.nodeSize;
+  let $cursor = $direct;
+  while ($cursor.depth >= 1) {
+    const parent = $cursor.parent;
+    if (parent.type.name === 'doc') break;
+    if (isCascadeBoundary(parent.type.name)) break;
+    if (parent.childCount > 1) break;
+
+    // 父容器只有当前这一个子节点 → 把父也一起删
+    deleteFrom = $cursor.before($cursor.depth);
+    deleteTo = $cursor.after($cursor.depth);
+    $cursor = view.state.doc.resolve(deleteFrom);
   }
 
-  view.dispatch(view.state.tr.delete(pos, pos + node.nodeSize));
+  const tr = view.state.tr.delete(deleteFrom, deleteTo);
+  // doc 至少要有一个 block：全删空时补一个 textBlock（与 deleteBlocks 行为一致）
+  if (tr.doc.childCount === 0) {
+    tr.insert(0, view.state.schema.nodes.textBlock.create());
+  }
+  view.dispatch(tr);
   return true;
 }
 

@@ -339,10 +339,18 @@ interface TableCellAtomContent {
   isHeader?: boolean;         // tableHeader 为 true
   // 单元格的子 Block 通过 parentId 关联，不内嵌在 content 中
   // 即：单元格内的 paragraph、list 等子 Block 各自是独立 Atom，parentId 指向此 cell Atom
+
+  /** @deprecated 历史旧数据：早期实现曾把 cell 内 inline 流直接内嵌到此字段，
+   *  导致非 textBlock 的子 block（taskList / image / mathBlock 等）持久化后丢失。
+   *  现已改为"子 Atom + parentId"模式。读时若字段仍有值，toPM 会兼容地吐出单个 textBlock；
+   *  再次保存时 toAtom 会按新格式写回，自动升级。 */
+  children?: InlineElement[];
 }
 ```
 
 **注意**：单元格的 Schema 是 `content: 'block+'`，子节点是 Block 级别。因此单元格内的子 Block 通过独立的 Atom + parentId 层级关系组织，而非 `children: InlineElement[]` 内嵌。这与 TextBlock 的 `children: InlineElement[]`（inline 流）是不同的存储模式。
+
+**历史修复说明**（见 commit `fix(note): table cell 富内容持久化`）：旧实现的 `tableCellConverter.toAtom` 只取 cell 内第一个子 block 抽其 inline，`toPM` 硬编码吐出单个 textBlock，导致 taskList / image / bulletList / mathBlock / callout 等放入 cell 后，重启 app 打开文档即消失。现已迁移到"cell 下子 block 作为独立 Atom + parentId"，`tableConverter` 早已采用的 "`children?: Atom[]` 由运行器填充 content" 模式现在也应用于 `tableCell` / `tableHeader`。
 
 ---
 

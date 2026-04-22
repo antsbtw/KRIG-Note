@@ -28,6 +28,7 @@ export const tableBlock: BlockDef = {
     canDuplicate: true,
     canDelete: true,
     canDrag: true,
+    cascadeBoundary: true,
   },
   containerRule: {},
   plugin: () => tableEditing(),
@@ -43,7 +44,7 @@ export const tableRowBlock: BlockDef = {
     parseDOM: [{ tag: 'tr' }],
     toDOM() { return ['tr', 0]; },
   },
-  capabilities: {},
+  capabilities: { cascadeBoundary: true },
   slashMenu: null,
 };
 
@@ -79,7 +80,7 @@ export const tableCellBlock: BlockDef = {
       return ['td', attrs, 0];
     },
   },
-  capabilities: {},
+  capabilities: { cascadeBoundary: true },
   containerRule: { requiredFirstChildType: undefined },
   slashMenu: null,
 };
@@ -116,7 +117,7 @@ export const tableHeaderBlock: BlockDef = {
       return ['th', attrs, 0];
     },
   },
-  capabilities: {},
+  capabilities: { cascadeBoundary: true },
   containerRule: { requiredFirstChildType: undefined },
   slashMenu: null,
 };
