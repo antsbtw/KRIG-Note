@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import type { EditorView } from 'prosemirror-view';
 import { showDictionaryPanel, showTranslationPanel } from '../learning';
-import { deleteCurrentBlock, deleteSelection } from '../commands/editor-commands';
+import { deleteCurrentBlock, deleteSelection, indentBlockAt, outdentBlockAt, indentBlocksAt } from '../commands/editor-commands';
 import { THOUGHT_ACTION } from '../../thought/thought-protocol';
 import { addThought } from '../commands/thought-commands';
 import { openAskAIPanel } from './AskAIPanel';
@@ -104,6 +104,49 @@ export function ContextMenu({ view }: ContextMenuProps) {
       action: () => { deleteCurrentBlock(view); close(); },
     },
   ];
+
+  // ── 布局缩进：Indent / Outdent ──
+  {
+    // 多选时批量缩进，单选时缩进当前 block
+    const blockPositions = menu.blockPositions;
+    const hasMultiple = blockPositions.length > 1;
+
+    // 单 block: 找 top-level block pos
+    const singleBlockPos = (() => {
+      if (hasMultiple) return null;
+      const $from = view.state.selection.$from;
+      if ($from.depth >= 1) return $from.before(1);
+      return null;
+    })();
+
+    // 检查是否有可缩进的 block
+    const canIndent = hasMultiple || (singleBlockPos != null && view.state.doc.nodeAt(singleBlockPos)?.attrs.indent !== undefined);
+
+    if (canIndent) {
+      items.push({
+        id: 'indent', label: 'Indent', icon: '→', separator: true, shortcut: 'Tab',
+        action: () => {
+          if (hasMultiple) {
+            indentBlocksAt(view, blockPositions, 1);
+          } else if (singleBlockPos != null) {
+            indentBlockAt(view, singleBlockPos);
+          }
+          close();
+        },
+      });
+      items.push({
+        id: 'outdent', label: 'Outdent', icon: '←', shortcut: '⇧Tab',
+        action: () => {
+          if (hasMultiple) {
+            indentBlocksAt(view, blockPositions, -1);
+          } else if (singleBlockPos != null) {
+            outdentBlockAt(view, singleBlockPos);
+          }
+          close();
+        },
+      });
+    }
+  }
 
   // ── 格式检测：光标处发现的所有 mark → 提供移除选项 ──
   {

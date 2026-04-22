@@ -256,6 +256,60 @@ export function toggleTextIndent(view: EditorView, pos: number): boolean {
   return true;
 }
 
+// ── Block Indent (布局缩进) ──
+
+const MAX_INDENT = 8;
+
+/**
+ * 增加指定位置 block 的布局缩进（indent attr +1）。
+ *
+ * 触发方式：Tab / HandleMenu Format / ContextMenu
+ */
+export function indentBlockAt(view: EditorView, pos: number): boolean {
+  const node = view.state.doc.nodeAt(pos);
+  if (!node || node.attrs.indent === undefined) return false;
+  const current = node.attrs.indent || 0;
+  if (current >= MAX_INDENT) return true;
+  view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, indent: current + 1 }));
+  return true;
+}
+
+/**
+ * 减少指定位置 block 的布局缩进（indent attr -1）。
+ *
+ * 触发方式：Shift+Tab / HandleMenu Format / ContextMenu
+ */
+export function outdentBlockAt(view: EditorView, pos: number): boolean {
+  const node = view.state.doc.nodeAt(pos);
+  if (!node || node.attrs.indent === undefined) return false;
+  const current = node.attrs.indent || 0;
+  if (current <= 0) return false;
+  view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, indent: current - 1 }));
+  return true;
+}
+
+/**
+ * 批量缩进多个 block（用于 ContextMenu 多选场景）。
+ *
+ * 触发方式：ContextMenu（block-selection 多选时）
+ */
+export function indentBlocksAt(view: EditorView, positions: number[], delta: 1 | -1): boolean {
+  const tr = view.state.tr;
+  let changed = false;
+  for (const pos of positions) {
+    const node = tr.doc.nodeAt(pos);
+    if (node && node.attrs.indent !== undefined) {
+      const newIndent = Math.max(0, Math.min(MAX_INDENT, (node.attrs.indent || 0) + delta));
+      if (newIndent !== (node.attrs.indent || 0)) {
+        tr.setNodeMarkup(pos, undefined, { ...node.attrs, indent: newIndent });
+        changed = true;
+      }
+    }
+  }
+  if (changed) view.dispatch(tr);
+  return changed;
+}
+
 // ── Text Align ──
 
 /**

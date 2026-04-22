@@ -5,7 +5,7 @@ import { blockRegistry } from '../registry';
 import { toggleHeadingCollapse } from '../plugins/heading-collapse';
 import { openAskAIPanel } from './AskAIPanel';
 import { setTextBlockLevel } from '../commands/set-text-block-level';
-import { deleteBlockAt, applyTextColor as applyTextColorCmd, applyHighlight as applyHighlightCmd, toggleTextIndent as toggleTextIndentCmd, setTextAlign as setTextAlignCmd } from '../commands/editor-commands';
+import { deleteBlockAt, applyTextColor as applyTextColorCmd, applyHighlight as applyHighlightCmd, toggleTextIndent as toggleTextIndentCmd, setTextAlign as setTextAlignCmd, indentBlockAt, outdentBlockAt } from '../commands/editor-commands';
 import { addThought } from '../commands/thought-commands';
 import { addBlockFrame, updateBlockFrameColor, updateBlockFrameStyle, removeBlockFrame } from '../commands/frame-commands';
 import { FramePicker } from './FramePicker';
@@ -365,10 +365,10 @@ export function HandleMenu({ view }: HandleMenuProps) {
           <span style={styles.arrow}>▸</span>
         </div>
 
-        {/* Format — only for textBlock */}
+        {/* Format — for blocks with indent attr (title excluded) */}
         {(() => {
           const node = view.state.doc.nodeAt(menu.pos);
-          if (node?.type.name !== 'textBlock' || node.attrs.isTitle) return null;
+          if (!node || node.attrs.indent === undefined || node.attrs.isTitle) return null;
           return (
             <div
               style={styles.item}
@@ -548,6 +548,8 @@ export function HandleMenu({ view }: HandleMenuProps) {
             const currentIndent = node?.attrs.textIndent ?? false;
             const currentAlign = node?.attrs.align ?? 'left';
 
+            const currentBlockIndent = node?.attrs.indent || 0;
+
             const toggleTextIndent = () => {
               toggleTextIndentCmd(view, menu.pos);
               close();
@@ -560,18 +562,51 @@ export function HandleMenu({ view }: HandleMenuProps) {
 
             return (
               <>
-                <div
-                  style={{ ...styles.item, ...(currentIndent ? { background: '#3a3a3a' } : {}) }}
-                  onMouseDown={(e) => { e.preventDefault(); toggleTextIndent(); }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = '#3a3a3a'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = currentIndent ? '#3a3a3a' : 'transparent'; }}
-                >
-                  <span style={styles.icon}>⇥</span>
-                  <span style={{ flex: 1 }}>Text Indent</span>
-                  <span style={{ fontSize: 11, color: '#888' }}>⇧⌘I</span>
+                {/* Block Indent（布局缩进） */}
+                <div style={{ display: 'flex', gap: '2px', padding: '4px 8px' }}>
+                  <div
+                    style={{ ...styles.item, flex: 1, justifyContent: 'center', opacity: currentBlockIndent >= 8 ? 0.3 : 1 }}
+                    onMouseDown={(e) => { e.preventDefault(); indentBlockAt(view, menu.pos); close(); }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = '#3a3a3a'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                    title="Indent (Tab)"
+                  >
+                    <span style={styles.icon}>
+                      <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 3h12M6 7h8M6 11h8" stroke="#e8eaed" strokeWidth="1.5" strokeLinecap="round"/><path d="M2 6l2.5 2-2.5 2" stroke="#e8eaed" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                    </span>
+                    <span>Indent</span>
+                  </div>
+                  <div
+                    style={{ ...styles.item, flex: 1, justifyContent: 'center', opacity: currentBlockIndent <= 0 ? 0.3 : 1 }}
+                    onMouseDown={(e) => { e.preventDefault(); outdentBlockAt(view, menu.pos); close(); }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = '#3a3a3a'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                    title="Outdent (Shift+Tab)"
+                  >
+                    <span style={styles.icon}>
+                      <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 3h12M6 7h8M6 11h8" stroke="#e8eaed" strokeWidth="1.5" strokeLinecap="round"/><path d="M4.5 6L2 8l2.5 2" stroke="#e8eaed" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                    </span>
+                    <span>Outdent</span>
+                  </div>
                 </div>
-                <div style={styles.separator} />
-                {([
+                {/* Text Indent + Align — only for textBlock */}
+                {node?.type.name === 'textBlock' && (
+                  <>
+                    <div style={styles.separator} />
+                    <div
+                      style={{ ...styles.item, ...(currentIndent ? { background: '#3a3a3a' } : {}) }}
+                      onMouseDown={(e) => { e.preventDefault(); toggleTextIndent(); }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = '#3a3a3a'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = currentIndent ? '#3a3a3a' : 'transparent'; }}
+                    >
+                      <span style={styles.icon}>⇥</span>
+                      <span style={{ flex: 1 }}>Text Indent</span>
+                      <span style={{ fontSize: 11, color: '#888' }}>⇧⌘I</span>
+                    </div>
+                    <div style={styles.separator} />
+                  </>
+                )}
+                {node?.type.name === 'textBlock' && ([
                   ['left', 'Align Left', <svg key="l" width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="3" width="12" height="1.5" rx=".5" fill="#e8eaed"/><rect x="2" y="7" width="8" height="1.5" rx=".5" fill="#e8eaed"/><rect x="2" y="11" width="12" height="1.5" rx=".5" fill="#e8eaed"/></svg>],
                   ['center', 'Align Center', <svg key="c" width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="3" width="12" height="1.5" rx=".5" fill="#e8eaed"/><rect x="4" y="7" width="8" height="1.5" rx=".5" fill="#e8eaed"/><rect x="2" y="11" width="12" height="1.5" rx=".5" fill="#e8eaed"/></svg>],
                   ['right', 'Align Right', <svg key="r" width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="3" width="12" height="1.5" rx=".5" fill="#e8eaed"/><rect x="6" y="7" width="8" height="1.5" rx=".5" fill="#e8eaed"/><rect x="2" y="11" width="12" height="1.5" rx=".5" fill="#e8eaed"/></svg>],
@@ -586,7 +621,8 @@ export function HandleMenu({ view }: HandleMenuProps) {
                     <span style={styles.icon}>{icon}</span>
                     <span>{label}</span>
                   </div>
-                ))}
+                ))
+                }
               </>
             );
           })()}
