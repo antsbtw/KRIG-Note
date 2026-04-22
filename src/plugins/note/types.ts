@@ -36,6 +36,18 @@ export interface BlockCapabilities {
   canDuplicate?: boolean;
   canDelete?: boolean;
   canDrag?: boolean;
+
+  /**
+   * 级联删除边界：该 block 作为"结构骨架"类型，
+   *   - content 表达式不是泛 `block+`，而是受限的特定子类型（如 `tableRow+` / `column+` / `block+` 但 cell 必须非空）
+   *   - 删除它的子节点时，不应通过"级联删空容器"把它本身当成普通容器删掉
+   *
+   * deleteBlockAt / cascadeDeleteAtChild 遇到这种父容器时停止向上级联；
+   * deleteBlockAt 对这种容器的"唯一子"还会拒绝删除（cell 不能变空）。
+   *
+   * 目前声明此标志的：table / tableRow / tableCell / tableHeader / column / columnList
+   */
+  cascadeBoundary?: boolean;
 }
 
 // ── Container 规则 ──

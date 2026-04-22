@@ -247,7 +247,6 @@ function cascadeDeleteAtChild(
   view: import('prosemirror-view').EditorView,
   childDepth: number,
 ): void {
-  const CASCADE_STOP = new Set(['tableCell', 'tableHeader', 'tableRow', 'table', 'column', 'columnList']);
   const { state } = view;
   const { $from } = state.selection;
 
@@ -255,10 +254,11 @@ function cascadeDeleteAtChild(
   let deleteTo = $from.after(childDepth);
 
   // 向上合并：若 childDepth 所在父容器只有这一个子，连父一起删
+  // cascadeBoundary（table/column 家族）由 BlockDef 自声明，遇到即停。
   for (let d = childDepth - 1; d >= 1; d--) {
     const parent = $from.node(d);
     if (parent.type.name === 'doc') break;
-    if (CASCADE_STOP.has(parent.type.name)) break;
+    if (blockRegistry.get(parent.type.name)?.capabilities?.cascadeBoundary) break;
     if (parent.childCount > 1) break;
     deleteFrom = $from.before(d);
     deleteTo = $from.after(d);

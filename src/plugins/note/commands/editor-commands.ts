@@ -16,6 +16,12 @@ import { NodeSelection, TextSelection } from 'prosemirror-state';
 import { toggleMark } from 'prosemirror-commands';
 import { blockSelectionKey } from '../plugins/block-selection';
 import { deleteColumnAt } from '../plugins/container-keyboard';
+import { blockRegistry } from '../registry';
+
+/** 该类型是否为"级联删除边界"——由 BlockDef.capabilities.cascadeBoundary 声明。 */
+function isCascadeBoundary(typeName: string): boolean {
+  return blockRegistry.get(typeName)?.capabilities?.cascadeBoundary === true;
+}
 
 // ── Clipboard ──
 
@@ -70,27 +76,25 @@ export function deleteBlockAt(view: EditorView, pos: number): boolean {
     }
   }
 
-  // 级联向上的边界：这些类型由各自的特殊逻辑/结构约束管理，不在此函数级联
-  // tableCell / tableHeader 的 content 约束是 block+（必须至少一个 block），
-  // 如果 handle 落在 cell 内唯一 block 上，删除会让 cell 违反 schema——此时拒绝。
-  const CASCADE_STOP = new Set(['tableCell', 'tableHeader', 'tableRow', 'table', 'column', 'columnList']);
-
+  // 级联向上的边界：BlockDef.capabilities.cascadeBoundary 声明的类型（table / column 家族）
+  // 由各自的特殊逻辑 / 结构约束管理，不在此函数级联。
+  // cell 内唯一 block 的 content 约束是 block+，删除会让 cell 违反 schema——此时拒绝。
   const $direct = view.state.doc.resolve(pos);
   if ($direct.depth >= 1
-      && CASCADE_STOP.has($direct.parent.type.name)
+      && isCascadeBoundary($direct.parent.type.name)
       && $direct.parent.childCount === 1) {
     return false;
   }
 
   // 收集从 pos 起的一连串"删了就空"的祖先：删 pos 节点 → 父变空 → 父也删 → 祖父变空 → ...
-  // 直到某层父还剩其他兄弟、或父是 doc、或父在 CASCADE_STOP 里。
+  // 直到某层父还剩其他兄弟、或父是 doc、或父是 cascadeBoundary。
   let deleteFrom = pos;
   let deleteTo = pos + node.nodeSize;
   let $cursor = $direct;
   while ($cursor.depth >= 1) {
     const parent = $cursor.parent;
     if (parent.type.name === 'doc') break;
-    if (CASCADE_STOP.has(parent.type.name)) break;
+    if (isCascadeBoundary(parent.type.name)) break;
     if (parent.childCount > 1) break;
 
     // 父容器只有当前这一个子节点 → 把父也一起删
