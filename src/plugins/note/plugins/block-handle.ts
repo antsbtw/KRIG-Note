@@ -5,6 +5,7 @@ import type { EditorView } from 'prosemirror-view';
 import type { Node as PMNode } from 'prosemirror-model';
 import { blockSelectionKey } from './block-selection';
 import { blockRegistry } from '../registry';
+import { computeCascadeDeleteRange } from '../commands/editor-commands';
 import {
   computeSliceForClipboard,
   writeKrigDataToTransfer,
@@ -489,12 +490,14 @@ export function blockHandlePlugin(): Plugin {
         const tr = view.state.tr;
         // 先在目标插入 Slice
         tr.insert(target.insertPos, slice.content);
-        // 再删源位置范围（位置已经被 insert 影响，用 mapping 还原）
+        // 再删源位置范围（位置已经被 insert 影响，用 mapping 还原）。
+        // 走 computeCascadeDeleteRange 以级联清理"拖走后变空"的父容器
+        // —— 如从 orderedList 拖走唯一 listItem 时，同步清理空 orderedList 容器。
         const sortedSources = [...sourcePositions].sort((a, b) => b - a); // 从后往前删
         for (const srcPos of sortedSources) {
           const mappedPos = tr.mapping.map(srcPos);
-          const node = tr.doc.nodeAt(mappedPos);
-          if (node) tr.delete(mappedPos, mappedPos + node.nodeSize);
+          const range = computeCascadeDeleteRange(tr.doc, mappedPos);
+          if (range) tr.delete(range.from, range.to);
         }
 
         // 显式把 selection 设到"新插入 block 的开头"。

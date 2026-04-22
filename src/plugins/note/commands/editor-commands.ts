@@ -23,6 +23,45 @@ function isCascadeBoundary(typeName: string): boolean {
   return blockRegistry.get(typeName)?.capabilities?.cascadeBoundary === true;
 }
 
+/**
+ * 计算从 pos 处"删掉这一块 + 级联删空容器"的最终 [from, to) 范围。
+ *
+ * 收集"删了就空"的祖先：删 pos 节点 → 父变空 → 父也删 → 祖父变空 → ...
+ * 直到某层父还剩其他兄弟、或父是 doc、或父是 cascadeBoundary。
+ *
+ * 返回 null 表示该节点不允许删除（cascadeBoundary 容器的唯一子节点）。
+ *
+ * 供 deleteBlockAt 和 handleDrop（以及其它需要"删块并清理空容器"的场景）共用。
+ */
+export function computeCascadeDeleteRange(
+  doc: import('prosemirror-model').Node,
+  pos: number,
+): { from: number; to: number } | null {
+  const node = doc.nodeAt(pos);
+  if (!node) return null;
+
+  const $direct = doc.resolve(pos);
+  if ($direct.depth >= 1
+      && isCascadeBoundary($direct.parent.type.name)
+      && $direct.parent.childCount === 1) {
+    return null;
+  }
+
+  let from = pos;
+  let to = pos + node.nodeSize;
+  let $cursor = $direct;
+  while ($cursor.depth >= 1) {
+    const parent = $cursor.parent;
+    if (parent.type.name === 'doc') break;
+    if (isCascadeBoundary(parent.type.name)) break;
+    if (parent.childCount > 1) break;
+    from = $cursor.before($cursor.depth);
+    to = $cursor.after($cursor.depth);
+    $cursor = doc.resolve(from);
+  }
+  return { from, to };
+}
+
 // ── Clipboard ──
 
 /**
@@ -76,34 +115,11 @@ export function deleteBlockAt(view: EditorView, pos: number): boolean {
     }
   }
 
-  // 级联向上的边界：BlockDef.capabilities.cascadeBoundary 声明的类型（table / column 家族）
-  // 由各自的特殊逻辑 / 结构约束管理，不在此函数级联。
-  // cell 内唯一 block 的 content 约束是 block+，删除会让 cell 违反 schema——此时拒绝。
-  const $direct = view.state.doc.resolve(pos);
-  if ($direct.depth >= 1
-      && isCascadeBoundary($direct.parent.type.name)
-      && $direct.parent.childCount === 1) {
-    return false;
-  }
+  // 计算级联删除范围（含"删了就空"的祖先；cascadeBoundary 唯一子 → 拒绝）
+  const range = computeCascadeDeleteRange(view.state.doc, pos);
+  if (!range) return false;
 
-  // 收集从 pos 起的一连串"删了就空"的祖先：删 pos 节点 → 父变空 → 父也删 → 祖父变空 → ...
-  // 直到某层父还剩其他兄弟、或父是 doc、或父是 cascadeBoundary。
-  let deleteFrom = pos;
-  let deleteTo = pos + node.nodeSize;
-  let $cursor = $direct;
-  while ($cursor.depth >= 1) {
-    const parent = $cursor.parent;
-    if (parent.type.name === 'doc') break;
-    if (isCascadeBoundary(parent.type.name)) break;
-    if (parent.childCount > 1) break;
-
-    // 父容器只有当前这一个子节点 → 把父也一起删
-    deleteFrom = $cursor.before($cursor.depth);
-    deleteTo = $cursor.after($cursor.depth);
-    $cursor = view.state.doc.resolve(deleteFrom);
-  }
-
-  const tr = view.state.tr.delete(deleteFrom, deleteTo);
+  const tr = view.state.tr.delete(range.from, range.to);
   // doc 至少要有一个 block：全删空时补一个 textBlock（与 deleteBlocks 行为一致）
   if (tr.doc.childCount === 0) {
     tr.insert(0, view.state.schema.nodes.textBlock.create());
