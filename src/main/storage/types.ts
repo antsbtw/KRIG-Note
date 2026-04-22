@@ -57,6 +57,7 @@ export interface INoteStore {
   delete(id: string): Promise<void>;
   rename(id: string, title: string): Promise<void>;
   moveToFolder(id: string, folderId: string | null): Promise<void>;
+  duplicate(id: string, targetFolderId?: string | null): Promise<NoteRecord | null>;
   list(): Promise<NoteListItem[]>;
 }
 

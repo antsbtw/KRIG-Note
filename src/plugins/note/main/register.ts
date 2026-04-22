@@ -32,6 +32,15 @@ export function register(ctx: PluginContext): void {
       { id: 'create-note', label: '+ 新建' },
     ]},
     contentType: 'note-list',
+    contextMenu: [
+      { id: 'create-note', label: '新建笔记', icon: '📄' },
+      { id: 'create-folder', label: '新建文件夹', icon: '📁' },
+      { id: 'sep-1', label: '', separator: true },
+      { id: 'paste', label: '粘贴', icon: '📋' },
+      { id: 'sep-2', label: '', separator: true },
+      { id: 'sort-by-title', label: '按名称排序', icon: '↕' },
+      { id: 'sort-by-date', label: '按修改时间排序', icon: '↕' },
+    ],
   });
 
   // ── Protocol ──
