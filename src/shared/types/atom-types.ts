@@ -171,8 +171,24 @@ export interface ListContent {
 }
 
 export interface ListItemContent {
-  children: InlineElement[];
   checked?: boolean;
+  /** taskItem：创建时间（ISO string） */
+  createdAt?: string;
+  /** taskItem：完成时间（ISO string），勾选后写入 */
+  completedAt?: string;
+  /** taskItem：截止时间（ISO string） */
+  deadline?: string;
+  /**
+   * @deprecated 旧数据兼容字段：
+   *   - taskItem 历史实现把第一个子 textBlock 的 inline 抽出来存这里 → 导致 cell/taskItem 内
+   *     非 textBlock 的子 block（如嵌套 bulletList / image）在持久化后丢失。
+   *   - listItem 是 markdown 导入的 compat atom（schema 无此节点），toPM 会把它展平成 textBlock，
+   *     仍沿用此字段。
+   *
+   * 新数据下 taskItem 子 block 走"子 Atom + parentId"层级，不再内嵌。
+   * 读时兼容（toPM 发现字段非空 → 吐 textBlock 包裹 inline），再次保存会自动升级为新格式。
+   */
+  children?: InlineElement[];
 }
 
 export interface BlockquoteContent {
