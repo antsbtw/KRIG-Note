@@ -15,4 +15,10 @@ export interface PluginContext {
 
   /** 确保 companion View 存在（已打开则不动） */
   ensureCompanion: (workModeId: string) => any;
+
+  /** 根据 webContentsId 判断 View 在哪个 slot */
+  getSlotBySenderId: (senderId: number) => 'left' | 'right' | null;
+
+  /** 获取当前活跃的 Left/Right View 的 webContents ID */
+  getActiveViewWebContentsIds: () => { leftId: number | null; rightId: number | null };
 }

@@ -1,5 +1,5 @@
-import { app, nativeTheme } from 'electron';
-import { createShell, getMainWindow } from './window/shell';
+import { app, nativeTheme, webContents } from 'electron';
+import { createShell, getMainWindow, getActiveViewWebContentsIds } from './window/shell';
 import { registerIpcHandlers } from './ipc/handlers';
 import { setupDividerController } from './slot/divider';
 import { workspaceManager } from './workspace/manager';
@@ -45,6 +45,14 @@ function registerPlugins(): void {
       const { openRightSlot } = require('./window/shell');
       return openRightSlot(workModeId); // ensureRightSlot 内部逻辑相同
     },
+    getSlotBySenderId: (senderId: number) => {
+      const { getSlotBySenderId } = require('./window/shell');
+      return getSlotBySenderId(senderId);
+    },
+    getActiveViewWebContentsIds: () => {
+      const { getActiveViewWebContentsIds } = require('./window/shell');
+      return getActiveViewWebContentsIds();
+    },
   };
 
   // L5 插件各自注册 WorkMode / NavSide / Protocol / Menu
@@ -71,17 +79,6 @@ function registerFrameworkMenus(): void {
           (child as any).webContents.toggleDevTools();
           return;
         }
-      }
-    }
-  }
-
-  // 广播到所有 View
-  function broadcastToAll(channel: string, ...args: unknown[]): void {
-    const win = getMainWindow();
-    if (!win) return;
-    for (const child of win.contentView.children) {
-      if ('webContents' in child) {
-        (child as any).webContents.send(channel, ...args);
       }
     }
   }
@@ -136,7 +133,9 @@ function registerFrameworkMenus(): void {
       { id: 'sep1', label: '', separator: true, handler: () => {} },
       { id: 'user-guide', label: 'Note 使用手册', handler: async () => {
         const noteId = await loadUserGuide();
-        if (noteId) broadcastToAll('note:open-in-editor', noteId);
+        if (!noteId) return;
+        const { leftId } = getActiveViewWebContentsIds();
+        if (leftId != null) webContents.fromId(leftId)?.send('note:open-in-editor', noteId);
       }},
     ],
   });
@@ -184,6 +183,7 @@ app.whenReady().then(() => {
         navSideWidth: ws.navSideWidth ?? session.navSideWidth ?? null,
         dividerRatio: ws.dividerRatio,
         activeNoteId: ws.activeNoteId ?? null,
+        rightActiveNoteId: ws.rightActiveNoteId ?? null,
         expandedFolders: ws.expandedFolders ?? [],
         activeBookId: ws.activeBookId ?? null,
         ebookExpandedFolders: ws.ebookExpandedFolders ?? [],

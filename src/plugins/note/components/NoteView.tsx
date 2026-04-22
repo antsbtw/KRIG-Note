@@ -258,7 +258,7 @@ export function NoteView() {
         <SlotToggle />
         <button
           style={styles.closeSlotBtn}
-          onClick={() => (window as any).viewAPI.closeSlot()}
+          onClick={() => (window as any).viewAPI.closeSelf()}
           title="关闭此面板"
         >
           ×

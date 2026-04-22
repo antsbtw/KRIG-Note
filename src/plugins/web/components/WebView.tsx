@@ -350,7 +350,7 @@ export function WebView() {
         onGoForward={handleGoForward}
         onReload={handleReload}
         onBookmarkToggle={handleBookmarkToggle}
-        onCloseSlot={() => (viewAPI as any).closeSlot()}
+        onCloseSlot={() => (viewAPI as any).closeSelf()}
       />
       <div className="web-view__content" style={{ position: 'relative' }}>
         <webview

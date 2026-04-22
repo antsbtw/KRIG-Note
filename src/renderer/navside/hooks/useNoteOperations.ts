@@ -265,21 +265,45 @@ export function useNoteOperations(input: NoteOperationsInput) {
     });
   }, [clipboard]);
 
-  // 文件夹排序
-  const [folderSortMap, setFolderSortMap] = useState<Record<string, 'title' | 'date'>>({});
+  // 文件夹排序：title-asc → title-desc → title-asc ...  /  date-asc → date-desc → date-asc ...
+  type SortState = 'title-asc' | 'title-desc' | 'date-asc' | 'date-desc';
+  const [folderSortMap, setFolderSortMap] = useState<Record<string, SortState>>({});
 
   const handleSortFolder = useCallback((folderId: string, sortBy: 'title' | 'date') => {
-    setFolderSortMap(prev => ({ ...prev, [folderId]: sortBy }));
+    setFolderSortMap(prev => {
+      const current = prev[folderId];
+      // 同类型点击：正序 ↔ 倒序 切换；不同类型：从正序开始
+      let next: SortState;
+      if (current === `${sortBy}-asc`) {
+        next = `${sortBy}-desc`;
+      } else {
+        next = `${sortBy}-asc`;
+      }
+      return { ...prev, [folderId]: next };
+    });
   }, []);
+
+  /** 获取指定文件夹下的子文件夹（已排序） */
+  const getSortedFolders = useCallback((parentId: string | null): FolderRecord[] => {
+    const folders = folderList.filter(f => f.parent_id === parentId);
+    const sortKey = parentId ?? '__root__';
+    const sort = folderSortMap[sortKey];
+    if (sort === 'title-asc') return folders.sort((a, b) => a.title.localeCompare(b.title, 'zh-CN'));
+    if (sort === 'title-desc') return folders.sort((a, b) => b.title.localeCompare(a.title, 'zh-CN'));
+    if (sort === 'date-asc') return folders.sort((a, b) => a.created_at - b.created_at);
+    if (sort === 'date-desc') return folders.sort((a, b) => b.created_at - a.created_at);
+    return folders.sort((a, b) => a.sort_order - b.sort_order);
+  }, [folderList, folderSortMap]);
 
   /** 获取指定文件夹下的笔记（已排序） */
   const getSortedNotes = useCallback((folderId: string | null): NoteListItem[] => {
     const notes = noteList.filter(n => n.folder_id === folderId);
-    const sortBy = folderId ? folderSortMap[folderId] : undefined;
-    if (sortBy === 'title') {
-      return notes.sort((a, b) => a.title.localeCompare(b.title, 'zh-CN'));
-    }
-    // 默认按修改时间倒序（最新在前）
+    const sortKey = folderId ?? '__root__';
+    const sort = folderSortMap[sortKey];
+    if (sort === 'title-asc') return notes.sort((a, b) => a.title.localeCompare(b.title, 'zh-CN'));
+    if (sort === 'title-desc') return notes.sort((a, b) => b.title.localeCompare(a.title, 'zh-CN'));
+    if (sort === 'date-asc') return notes.sort((a, b) => a.updated_at - b.updated_at);
+    if (sort === 'date-desc') return notes.sort((a, b) => b.updated_at - a.updated_at);
     return notes.sort((a, b) => b.updated_at - a.updated_at);
   }, [noteList, folderSortMap]);
 
@@ -291,7 +315,7 @@ export function useNoteOperations(input: NoteOperationsInput) {
     handleClickNote, handleClickFolder, toggleFolder,
     handleContextMenu, handleDelete, handleDeleteSelected,
     startRename, commitRename, handleMoveOut,
-    handleSortFolder, getSortedNotes,
+    handleSortFolder, folderSortMap, getSortedFolders, getSortedNotes,
     clipboard, handleCopy, handlePaste,
   };
 }

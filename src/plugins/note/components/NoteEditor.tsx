@@ -55,18 +55,22 @@ import '../note.css';
  */
 
 declare const viewAPI: {
+  noteCreate: (title?: string) => Promise<{ id: string; title: string } | null>;
   noteLoad: (id: string) => Promise<any>;
   noteSave: (id: string, docContent: unknown[], title: string) => Promise<void>;
   noteRename: (id: string, title: string) => Promise<void>;
+  noteOpenInEditor: (id: string) => Promise<void>;
   onNoteOpenInEditor: (callback: (noteId: string) => void) => () => void;
   notePendingOpen: () => Promise<string | null>;
   setActiveNote: (noteId: string | null, noteTitle?: string) => Promise<void>;
   getActiveNoteId: () => Promise<string | null>;
-  onRestoreWorkspaceState: (callback: (state: { activeNoteId: string | null }) => void) => () => void;
+  getMyRole: () => Promise<'primary' | 'companion' | null>;
+  onRestoreWorkspaceState: (callback: (state: { activeNoteId: string | null; rightActiveNoteId?: string | null }) => void) => () => void;
   onNoteTitleChanged: (callback: (data: { noteId: string; title: string }) => void) => () => void;
   onLoadTestDoc: (callback: () => void) => () => void;
   isDBReady: () => Promise<boolean>;
   onDBReady: (callback: () => void) => () => void;
+  markdownToPMNodes: (markdown: string) => Promise<unknown[]>;
   listVocabWords?: () => Promise<{ word: string; definition: string }[]>;
   onVocabChanged?: (callback: (entries: { word: string; definition: string }[]) => void) => () => void;
   // AI Sync
@@ -564,11 +568,60 @@ export function NoteEditor() {
     };
     window.addEventListener('note:import-json', onImportJson);
 
-    // 恢复上次打开的笔记
-    const unsubRestore = viewAPI.onRestoreWorkspaceState((state) => {
-      if (state.activeNoteId) {
-        loadNote(state.activeNoteId);
+    // Import Markdown：为每个 .md 文件创建新笔记，最后一个加载到编辑器
+    const onImportMarkdown = async (e: Event) => {
+      const files = (e as CustomEvent).detail as { markdown: string; title: string }[];
+      if (!Array.isArray(files) || files.length === 0) return;
+      try {
+        for (const { markdown, title } of files) {
+          // 创建新笔记
+          const note = await viewAPI.noteCreate(title);
+          if (!note) { console.error('[NoteEditor] Import Markdown: noteCreate failed'); continue; }
+
+          // Markdown → ProseMirror JSON nodes
+          const pmNodes = await viewAPI.markdownToPMNodes(markdown);
+          if (!Array.isArray(pmNodes) || pmNodes.length === 0) {
+            // 空内容，跳过（笔记已创建，NavSide 可见）
+            continue;
+          }
+
+          // 构建完整 doc（noteTitle + 转换后的内容节点）
+          const titleNode = s.nodes.textBlock.create(
+            { isTitle: true },
+            title ? s.text(title) : undefined,
+          );
+          const contentNodes = pmNodes
+            .map(n => { try { return PMNode.fromJSON(s, n as any); } catch { return null; } })
+            .filter((n): n is PMNode => !!n);
+          const doc = s.node('doc', null, [titleNode, ...contentNodes]);
+
+          // 如果正在编辑某笔记，先保存
+          if (currentNoteIdRef.current && viewRef.current) {
+            await saveNote();
+          }
+
+          // 加载到编辑器
+          loadMoreRef.current = null;
+          fullAtomsRef.current = null;
+          loadedTopCountRef.current = -1;
+          currentNoteIdRef.current = note.id;
+          setCurrentNote(note.id);
+          createEditor(doc);
+
+          // 立即保存（将 PM doc 持久化为 Atom[] 到 DB）
+          await saveNote();
+        }
+      } catch (err) {
+        console.error('[NoteEditor] Import Markdown failed:', err);
       }
+    };
+    window.addEventListener('note:import-markdown', onImportMarkdown);
+
+    // 恢复上次打开的笔记（根据所在 slot 选取正确的 noteId）
+    const unsubRestore = viewAPI.onRestoreWorkspaceState(async (state: any) => {
+      const role = await viewAPI.getMyRole();
+      const noteId = role === 'companion' ? state.rightActiveNoteId : state.activeNoteId;
+      if (noteId) loadNote(noteId);
     });
 
     // 拉取导入时设置的 pending noteId，或恢复上次打开的笔记
@@ -656,6 +709,7 @@ export function NoteEditor() {
       unsubTitle();
       unsubVocab();
       window.removeEventListener('note:import-json', onImportJson);
+      window.removeEventListener('note:import-markdown', onImportMarkdown);
       window.removeEventListener('note:save', manualSaveHandler);
       if (saveTimerRef.current) {
         clearTimeout(saveTimerRef.current);

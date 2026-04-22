@@ -8,7 +8,7 @@ import '../web.css';
 declare const viewAPI: {
   sendToOtherSlot: (message: { protocol: string; action: string; payload: unknown }) => void;
   onMessage: (callback: (message: { protocol: string; action: string; payload: unknown }) => void) => () => void;
-  closeSlot: () => Promise<void>;
+  closeSelf: () => Promise<void>;
   translateFetchElementJs: () => Promise<string | null>;
 };
 
@@ -148,7 +148,7 @@ export function TranslateWebView() {
         </select>
         <button
           className="web-toolbar__btn web-toolbar__btn--close-slot"
-          onClick={() => viewAPI.closeSlot()}
+          onClick={() => viewAPI.closeSelf()}
           title="关闭翻译"
         >
           ×

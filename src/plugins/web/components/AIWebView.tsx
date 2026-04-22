@@ -86,7 +86,7 @@ declare const viewAPI: {
     error?: string;
   }>;
   browserCapabilityProbeConversation: () => Promise<{ success: boolean; error?: string }>;
-  closeSlot: () => void;
+  closeSelf: () => void;
 };
 
 /**
@@ -1308,7 +1308,7 @@ export function AIWebView({ workModeId: _workModeId = '' }: AIWebViewProps) {
         {/* Close */}
         <button
           style={{ background: 'transparent', border: 'none', color: '#aaa', cursor: 'pointer', fontSize: 16 }}
-          onClick={() => viewAPI.closeSlot()}
+          onClick={() => viewAPI.closeSelf()}
           title="关闭"
         >
           ×

@@ -26,7 +26,8 @@ export interface WorkspaceState {
   navSideVisible: boolean;
   navSideWidth: number | null;       // 每个 Workspace 独立的 NavSide 宽度，null = 使用默认值
   dividerRatio: number;
-  activeNoteId: string | null;        // NoteView 当前打开的笔记 ID
+  activeNoteId: string | null;        // NoteView 当前打开的笔记 ID（left slot）
+  rightActiveNoteId: string | null;   // Right slot NoteView 当前打开的笔记 ID
   expandedFolders: string[];          // NavSide 展开的文件夹 ID 列表
   activeBookId: string | null;        // EBookView 当前打开的电子书 ID
   ebookExpandedFolders: string[];     // 书架文件夹展开状态

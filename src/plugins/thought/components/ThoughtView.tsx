@@ -243,7 +243,7 @@ export function ThoughtView() {
           className="thought-view__close-btn"
           onClick={() => {
             const api = viewAPI();
-            if (api) (api as any).closeSlot();
+            if (api) (api as any).closeSelf();
           }}
           title="关闭此面板"
         >

@@ -121,7 +121,10 @@ contextBridge.exposeInMainWorld('viewAPI', {
   setActiveNote: (noteId: string | null, noteTitle?: string) => ipcRenderer.invoke(IPC.SET_ACTIVE_NOTE, noteId, noteTitle),
   getActiveNoteId: async (): Promise<string | null> => {
     const data = await ipcRenderer.invoke(IPC.WORKSPACE_LIST);
-    return data?.active?.activeNoteId ?? null;
+    if (!data?.active) return null;
+    const side = await ipcRenderer.invoke(IPC.SLOT_GET_SIDE);
+    if (side === 'right') return data.active.rightActiveNoteId ?? null;
+    return data.active.activeNoteId ?? null;
   },
   onNoteListChanged: (callback: (list: unknown[]) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, list: unknown[]) => callback(list);
@@ -301,4 +304,9 @@ contextBridge.exposeInMainWorld('viewAPI', {
 // Bridge: forward IPC 'note:import-json' → DOM CustomEvent (for NoteEditor)
 ipcRenderer.on('note:import-json', (_event, data) => {
   window.dispatchEvent(new CustomEvent('note:import-json', { detail: data }));
+});
+
+// Bridge: forward IPC 'note:import-markdown' → DOM CustomEvent (for NoteEditor)
+ipcRenderer.on('note:import-markdown', (_event, data) => {
+  window.dispatchEvent(new CustomEvent('note:import-markdown', { detail: data }));
 });

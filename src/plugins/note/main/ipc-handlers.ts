@@ -1,5 +1,6 @@
-import { ipcMain, BaseWindow } from 'electron';
+import { ipcMain, webContents } from 'electron';
 import { IPC } from '../../../shared/types';
+import type { PluginContext } from '../../../shared/plugin-types';
 import { workspaceManager } from '../../../main/workspace/manager';
 import { noteStore } from '../../../main/storage/note-store';
 import { folderStore } from '../../../main/storage/folder-store';
@@ -20,7 +21,8 @@ export function setPendingNoteId(noteId: string): void {
   pendingNoteId = noteId;
 }
 
-export function registerNoteIpcHandlers(getMainWindow: () => BaseWindow | null): void {
+export function registerNoteIpcHandlers(ctx: PluginContext): void {
+  const getMainWindow = ctx.getMainWindow;
   // ── 广播辅助 ──
   function broadcastNoteList(): void {
     const win = getMainWindow();
@@ -95,9 +97,13 @@ export function registerNoteIpcHandlers(getMainWindow: () => BaseWindow | null):
   });
 
   // ── Workspace 状态同步 ──
-  ipcMain.handle(IPC.SET_ACTIVE_NOTE, (_event, noteId: string | null, noteTitle?: string) => {
+  ipcMain.handle(IPC.SET_ACTIVE_NOTE, (event, noteId: string | null, noteTitle?: string) => {
     const active = workspaceManager.getActive();
-    if (active) {
+    if (!active) return;
+    const slot = ctx.getSlotBySenderId(event.sender.id);
+    if (slot === 'right') {
+      workspaceManager.update(active.id, { rightActiveNoteId: noteId });
+    } else {
       const updates: Record<string, unknown> = { activeNoteId: noteId };
       if (!active.customLabel && noteTitle) {
         updates.label = noteTitle;
@@ -127,8 +133,20 @@ export function registerNoteIpcHandlers(getMainWindow: () => BaseWindow | null):
     return result;
   });
 
-  ipcMain.handle(IPC.NOTE_OPEN_IN_EDITOR, async (_event, noteId: string) => {
-    broadcastToAll(IPC.NOTE_OPEN_IN_EDITOR, noteId);
+  ipcMain.handle(IPC.NOTE_OPEN_IN_EDITOR, async (event, noteId: string) => {
+    // 根据发送者所在 slot 定向发送，左右独立互不干扰
+    const senderId = event.sender.id;
+    const slot = ctx.getSlotBySenderId(senderId);
+    if (slot) {
+      // view 内部触发（toolbar Open 按钮）→ 只发回自己
+      event.sender.send(IPC.NOTE_OPEN_IN_EDITOR, noteId);
+    } else {
+      // NavSide 或其他非 slot view 触发 → 发给 left slot
+      const { leftId } = ctx.getActiveViewWebContentsIds();
+      if (leftId != null) {
+        webContents.fromId(leftId)?.send(IPC.NOTE_OPEN_IN_EDITOR, noteId);
+      }
+    }
   });
 
   // ── Folder CRUD ──

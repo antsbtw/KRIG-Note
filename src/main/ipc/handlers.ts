@@ -61,6 +61,7 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
           if ('webContents' in child) {
             (child as any).webContents.send(IPC.RESTORE_WORKSPACE_STATE, {
               activeNoteId: workspace.activeNoteId,
+              rightActiveNoteId: workspace.rightActiveNoteId,
               expandedFolders: workspace.expandedFolders,
               activeBookId: workspace.activeBookId,
               ebookExpandedFolders: workspace.ebookExpandedFolders,

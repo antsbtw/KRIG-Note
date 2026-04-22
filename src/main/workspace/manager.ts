@@ -26,6 +26,7 @@ class WorkspaceManager {
       navSideWidth: null,
       dividerRatio: 0.5,
       activeNoteId: null,
+      rightActiveNoteId: null,
       expandedFolders: [],
       activeBookId: null,
       ebookExpandedFolders: [],

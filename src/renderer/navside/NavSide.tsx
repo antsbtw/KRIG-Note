@@ -87,7 +87,12 @@ export function NavSide() {
 
   const handleBlankMenuAction = async (actionId: string) => {
     setBlankContextMenu(null);
-    // 通过 executeAction 分发到插件处理，Shell 不知道具体操作
+
+    // 排序是纯前端状态，不走 IPC
+    if (actionId === 'sort-by-title') { ops.handleSortFolder('__root__', 'title'); return; }
+    if (actionId === 'sort-by-date') { ops.handleSortFolder('__root__', 'date'); return; }
+
+    // 其他操作通过 executeAction 分发到插件处理
     const result = await (window as any).navSideAPI.executeAction(actionId, {});
     // 创建类操作：返回 id 后进入重命名模式
     if (result?.id && actionId.startsWith('create-')) {
@@ -133,9 +138,7 @@ export function NavSide() {
   // ── 树形构建 ──
 
   function buildTree(parentId: string | null, depth: number): React.ReactNode[] {
-    const folders = ws.folderList
-      .filter((f) => f.parent_id === parentId)
-      .sort((a, b) => a.sort_order - b.sort_order);
+    const folders = ops.getSortedFolders(parentId);
     const notes = ops.getSortedNotes(parentId);
     const nodes: React.ReactNode[] = [];
 
@@ -308,22 +311,29 @@ export function NavSide() {
               新建子文件夹
             </div>
             <div style={styles.contextMenuSeparator} />
-            <div
-              style={styles.contextMenuItem}
-              onClick={() => { ops.setContextMenu(null); ops.handleSortFolder(id, 'title'); }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = '#3a3a3a')}
-              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-            >
-              按名称排序
-            </div>
-            <div
-              style={styles.contextMenuItem}
-              onClick={() => { ops.setContextMenu(null); ops.handleSortFolder(id, 'date'); }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = '#3a3a3a')}
-              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-            >
-              按修改时间排序
-            </div>
+            {(() => {
+              const sortState = ops.folderSortMap[id];
+              const titleArrow = sortState === 'title-asc' ? ' ↑' : sortState === 'title-desc' ? ' ↓' : '';
+              const dateArrow = sortState === 'date-asc' ? ' ↑' : sortState === 'date-desc' ? ' ↓' : '';
+              return (<>
+                <div
+                  style={styles.contextMenuItem}
+                  onClick={() => { ops.setContextMenu(null); ops.handleSortFolder(id, 'title'); }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = '#3a3a3a')}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                >
+                  按名称排序{titleArrow}
+                </div>
+                <div
+                  style={styles.contextMenuItem}
+                  onClick={() => { ops.setContextMenu(null); ops.handleSortFolder(id, 'date'); }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = '#3a3a3a')}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                >
+                  按修改时间排序{dateArrow}
+                </div>
+              </>);
+            })()}
             <div style={styles.contextMenuSeparator} />
           </>
         )}
@@ -499,10 +509,17 @@ export function NavSide() {
               style={{ ...styles.contextMenu, left: blankContextMenu.x, top: blankContextMenu.y }}
               onClick={(e) => e.stopPropagation()}
             >
-              {ws.registration.contextMenu.map((item) =>
-                item.separator ? (
-                  <div key={item.id} style={styles.contextMenuSeparator} />
-                ) : (
+              {ws.registration.contextMenu.map((item) => {
+                if (item.separator) return <div key={item.id} style={styles.contextMenuSeparator} />;
+                // 排序项：追加方向箭头
+                let label = item.label;
+                const rootSort = ops.folderSortMap['__root__'];
+                if (item.id === 'sort-by-title') {
+                  label += rootSort === 'title-asc' ? ' ↑' : rootSort === 'title-desc' ? ' ↓' : '';
+                } else if (item.id === 'sort-by-date') {
+                  label += rootSort === 'date-asc' ? ' ↑' : rootSort === 'date-desc' ? ' ↓' : '';
+                }
+                return (
                   <div
                     key={item.id}
                     style={styles.contextMenuItem}
@@ -511,10 +528,10 @@ export function NavSide() {
                     onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                   >
                     {item.icon && <span style={{ marginRight: 8 }}>{item.icon}</span>}
-                    {item.label}
+                    {label}
                   </div>
-                )
-              )}
+                );
+              })}
             </div>
           )}
         </>

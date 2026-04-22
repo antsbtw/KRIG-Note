@@ -17,7 +17,7 @@ import { registerNoteIpcHandlers } from './ipc-handlers';
 
 export function register(ctx: PluginContext): void {
   // ── IPC Handlers ──
-  registerNoteIpcHandlers(ctx.getMainWindow);
+  registerNoteIpcHandlers(ctx);
   // ── WorkMode ──
   workModeRegistry.register({
     id: 'demo-a',
@@ -32,7 +32,7 @@ export function register(ctx: PluginContext): void {
     workModeId: 'demo-a',
     actionBar: { title: '笔记目录', actions: [
       { id: 'create-folder', label: '+ 文件夹' },
-      { id: 'create-note', label: '+ 新建' },
+      { id: 'create-note', label: '+ 笔记' },
     ]},
     contentType: 'note-list',
     contextMenu: [
@@ -135,6 +135,35 @@ export function register(ctx: PluginContext): void {
           }
         } catch (err) {
           console.error('[Note] Import JSON failed:', err);
+        }
+      }},
+      { id: 'import-markdown', label: 'Import Markdown...', handler: async () => {
+        const { dialog } = await import('electron');
+        const fs = await import('node:fs');
+        const path = await import('node:path');
+        const win = ctx.getMainWindow();
+        if (!win) return;
+        const result = await dialog.showOpenDialog(win as any, {
+          title: 'Import Markdown',
+          filters: [{ name: 'Markdown', extensions: ['md', 'markdown'] }],
+          properties: ['openFile', 'multiSelections'],
+        });
+        if (result.canceled || result.filePaths.length === 0) return;
+        const files: { markdown: string; title: string }[] = [];
+        for (const filePath of result.filePaths) {
+          try {
+            const markdown = fs.readFileSync(filePath, 'utf-8');
+            const title = path.basename(filePath, path.extname(filePath));
+            files.push({ markdown, title });
+          } catch (err) {
+            console.error('[Note] Read Markdown failed:', filePath, err);
+          }
+        }
+        if (files.length === 0) return;
+        for (const child of win.contentView.children) {
+          if ('webContents' in child) {
+            (child as any).webContents.send('note:import-markdown', files);
+          }
         }
       }},
       { id: 'export-md', label: 'Export as Markdown', handler: () => console.log('Export MD') },
