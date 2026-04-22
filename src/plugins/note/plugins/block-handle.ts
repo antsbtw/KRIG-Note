@@ -331,7 +331,8 @@ export function blockHandlePlugin(): Plugin {
                 const dom = view.nodeDOM(blockStart);
                 targetBlockDOM = dom instanceof HTMLElement ? dom : (dom as Node)?.parentElement as HTMLElement ?? null;
 
-                if (blockNode && isContainerType(blockNode.type.name)) {
+                // columnList/column 没有自身手柄，需钻入子 block
+                if (blockNode && (blockNode.type.name === 'columnList' || blockNode.type.name === 'column')) {
                   const picked = pickChildByY(view, blockStart, blockNode, mouseY);
                   if (picked) {
                     blockStart = picked.start;

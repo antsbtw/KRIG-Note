@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
+import { APP_CONFIG } from '../app-config';
 
 /**
  * SlotToggle — 跨 View 切换按钮
@@ -105,7 +106,8 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 4,
     color: '#e8eaed',
     fontSize: 12,
-    padding: '2px 8px',
+    height: APP_CONFIG.layout.toolbarBtnHeight,
+    padding: '0 8px',
     cursor: 'pointer',
     display: 'flex',
     alignItems: 'center',
