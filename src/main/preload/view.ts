@@ -38,7 +38,9 @@ contextBridge.exposeInMainWorld('viewAPI', {
   // 编排意图（View 只表达需求，框架决策布局）
   requestCompanion: (workModeId: string) => ipcRenderer.invoke(IPC.SLOT_ENSURE_RIGHT, workModeId),
   openCompanion: (workModeId: string) => ipcRenderer.invoke(IPC.SLOT_OPEN_RIGHT, workModeId),
+  openRightSlot: (workModeId: string) => ipcRenderer.invoke(IPC.SLOT_OPEN_RIGHT, workModeId),
   closeCompanion: () => ipcRenderer.invoke(IPC.SLOT_CLOSE_RIGHT),
+  closeRightSlot: () => ipcRenderer.invoke(IPC.SLOT_CLOSE_RIGHT),
   closeSelf: () => ipcRenderer.invoke(IPC.SLOT_CLOSE),
   getMyRole: async (): Promise<'primary' | 'companion' | null> => {
     const side = await ipcRenderer.invoke(IPC.SLOT_GET_SIDE);

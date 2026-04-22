@@ -85,11 +85,19 @@ export function NavSide() {
     setBlankContextMenu({ x: e.clientX, y: e.clientY });
   };
 
-  const handleBlankMenuAction = (actionId: string) => {
+  const handleBlankMenuAction = async (actionId: string) => {
     setBlankContextMenu(null);
-    if (actionId === 'create-note') ops.handleCreateNote(null);
-    else if (actionId === 'create-folder') ops.handleCreateFolder(null);
-    // 其他命令后续扩展
+    // 通过 executeAction 分发到插件处理，Shell 不知道具体操作
+    const result = await (window as any).navSideAPI.executeAction(actionId, {});
+    // 创建类操作：返回 id 后进入重命名模式
+    if (result?.id && actionId.startsWith('create-')) {
+      if (actionId === 'create-note') {
+        ws.setActiveNoteId(result.id);
+        (window as any).navSideAPI.noteOpenInEditor(result.id);
+      }
+      ops.setRenamingId(result.id);
+      ops.setRenameValue(result.title || '');
+    }
   };
 
   // ── 搜索 ──

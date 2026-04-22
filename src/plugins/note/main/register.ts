@@ -3,6 +3,9 @@ import { navSideRegistry } from '../../../main/navside/registry';
 import { protocolRegistry } from '../../../main/protocol/registry';
 import { menuRegistry } from '../../../main/menu/registry';
 import type { PluginContext } from '../../../shared/plugin-types';
+import { IPC } from '../../../shared/types';
+import { noteStore } from '../../../main/storage/note-store';
+import { folderStore } from '../../../main/storage/folder-store';
 import { registerNoteIpcHandlers } from './ipc-handlers';
 
 /**
@@ -41,6 +44,59 @@ export function register(ctx: PluginContext): void {
       { id: 'sort-by-title', label: '按名称排序', icon: '↕' },
       { id: 'sort-by-date', label: '按修改时间排序', icon: '↕' },
     ],
+  });
+
+  // ── NavSide Action Handlers ──
+  const broadcastNoteList = () => {
+    const win = ctx.getMainWindow();
+    if (!win) return;
+    noteStore.list().then((list) => {
+      for (const view of win.contentView.children) {
+        if ('webContents' in view) (view as any).webContents.send(IPC.NOTE_LIST_CHANGED, list);
+      }
+    }).catch(() => {});
+  };
+
+  navSideRegistry.registerAction('demo-a', 'create-note', async (params) => {
+    const folderId = (params.folderId as string) ?? null;
+    const note = await noteStore.create('新建笔记', folderId);
+    broadcastNoteList();
+    return { id: note.id, title: note.title };
+  });
+
+  navSideRegistry.registerAction('demo-a', 'create-folder', async (params) => {
+    const parentId = (params.parentId as string) ?? null;
+    const folder = await folderStore.create('新建文件夹', parentId);
+    broadcastNoteList();
+    return { id: folder.id, title: folder.title };
+  });
+
+  navSideRegistry.registerAction('demo-a', 'paste', async (params) => {
+    const clipboardType = params.clipboardType as string;
+    const clipboardId = params.clipboardId as string;
+    const targetFolderId = (params.targetFolderId as string) ?? null;
+
+    if (clipboardType === 'folder') {
+      // 递归复制文件夹
+      async function duplicateFolder(srcId: string, destParentId: string | null): Promise<void> {
+        const allFolders = await folderStore.list();
+        const srcFolder = allFolders.find(f => f.id === srcId);
+        if (!srcFolder) return;
+        const newFolder = await folderStore.create(srcFolder.title + ' (副本)', destParentId);
+        const allNotes = await noteStore.list();
+        for (const note of allNotes.filter(n => n.folder_id === srcId)) {
+          await noteStore.duplicate(note.id, newFolder.id);
+        }
+        for (const child of allFolders.filter(f => f.parent_id === srcId)) {
+          await duplicateFolder(child.id, newFolder.id);
+        }
+      }
+      await duplicateFolder(clipboardId, targetFolderId);
+    } else {
+      await noteStore.duplicate(clipboardId, targetFolderId);
+    }
+    broadcastNoteList();
+    return { success: true };
   });
 
   // ── Protocol ──

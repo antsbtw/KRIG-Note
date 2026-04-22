@@ -11,6 +11,8 @@ contextBridge.exposeInMainWorld('navSideAPI', {
 
   // NavSide
   toggle: () => ipcRenderer.invoke(IPC.NAVSIDE_TOGGLE),
+  executeAction: (actionId: string, params?: Record<string, unknown>) =>
+    ipcRenderer.invoke(IPC.NAVSIDE_EXECUTE_ACTION, actionId, params),
 
   // Right Slot
   openRightSlot: (workModeId: string) => ipcRenderer.invoke(IPC.SLOT_OPEN_RIGHT, workModeId),
@@ -27,7 +29,6 @@ contextBridge.exposeInMainWorld('navSideAPI', {
   noteDelete: (id: string) => ipcRenderer.invoke(IPC.NOTE_DELETE, id),
   noteRename: (id: string, title: string) => ipcRenderer.invoke(IPC.NOTE_RENAME, id, title),
   noteMoveToFolder: (noteId: string, folderId: string | null) => ipcRenderer.invoke(IPC.NOTE_MOVE_TO_FOLDER, noteId, folderId),
-  noteDuplicate: (noteId: string, targetFolderId?: string | null) => ipcRenderer.invoke(IPC.NOTE_DUPLICATE, noteId, targetFolderId),
   noteOpenInEditor: (id: string) => ipcRenderer.invoke(IPC.NOTE_OPEN_IN_EDITOR, id),
 
   // Folder 操作
@@ -36,7 +37,6 @@ contextBridge.exposeInMainWorld('navSideAPI', {
   folderDelete: (id: string) => ipcRenderer.invoke(IPC.FOLDER_DELETE, id),
   folderMove: (id: string, parentId: string | null) => ipcRenderer.invoke(IPC.FOLDER_MOVE, id, parentId),
   folderList: () => ipcRenderer.invoke(IPC.FOLDER_LIST),
-  folderDuplicate: (folderId: string, targetParentId?: string | null) => ipcRenderer.invoke(IPC.FOLDER_DUPLICATE, folderId, targetParentId),
 
   onNoteListChanged: (callback: (list: unknown[]) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, list: unknown[]) => callback(list);

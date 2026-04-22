@@ -17,16 +17,15 @@ interface FolderRecord {
 
 declare const navSideAPI: {
   switchWorkMode: (id: string) => Promise<void>;
+  executeAction: (actionId: string, params?: Record<string, unknown>) => Promise<any>;
   noteCreate: (title?: string, folderId?: string | null) => Promise<any>;
   noteDelete: (id: string) => Promise<void>;
   noteRename: (id: string, title: string) => Promise<void>;
   noteMoveToFolder: (noteId: string, folderId: string | null) => Promise<void>;
-  noteDuplicate: (noteId: string, targetFolderId?: string | null) => Promise<any>;
   noteOpenInEditor: (id: string) => Promise<void>;
   folderCreate: (title: string, parentId?: string | null) => Promise<any>;
   folderRename: (id: string, title: string) => Promise<void>;
   folderDelete: (id: string) => Promise<void>;
-  folderDuplicate: (folderId: string, targetParentId?: string | null) => Promise<any>;
 };
 
 export interface NoteOperationsInput {
@@ -255,15 +254,15 @@ export function useNoteOperations(input: NoteOperationsInput) {
     setClipboard({ type, id });
   }, []);
 
-  /** 粘贴到指定文件夹（递归复制文件夹或复制笔记） */
+  /** 粘贴到指定文件夹 — 通过 executeAction 分发到插件处理 */
   const handlePaste = useCallback((targetFolderId: string | null) => {
     setContextMenu(null);
     if (!clipboard) return;
-    if (clipboard.type === 'folder') {
-      navSideAPI.folderDuplicate(clipboard.id, targetFolderId);
-    } else {
-      navSideAPI.noteDuplicate(clipboard.id, targetFolderId);
-    }
+    navSideAPI.executeAction('paste', {
+      clipboardType: clipboard.type,
+      clipboardId: clipboard.id,
+      targetFolderId,
+    });
   }, [clipboard]);
 
   // 文件夹排序

@@ -259,6 +259,7 @@ export const IPC = {
 
   // NavSide 注册制
   NAVSIDE_GET_REGISTRATION: 'navside:get-registration',
+  NAVSIDE_EXECUTE_ACTION: 'navside:execute-action',
 
   // eBook 书架（NavSide 用）
   EBOOK_BOOKSHELF_LIST: 'ebook:bookshelf-list',
