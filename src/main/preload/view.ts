@@ -136,6 +136,11 @@ contextBridge.exposeInMainWorld('viewAPI', {
     ipcRenderer.on(IPC.NOTE_OPEN_IN_EDITOR, listener);
     return () => ipcRenderer.removeListener(IPC.NOTE_OPEN_IN_EDITOR, listener);
   },
+  onNoteDeleted: (callback: (noteId: string) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, noteId: string) => callback(noteId);
+    ipcRenderer.on(IPC.NOTE_DELETED, listener);
+    return () => ipcRenderer.removeListener(IPC.NOTE_DELETED, listener);
+  },
   onNoteTitleChanged: (callback: (data: { noteId: string; title: string }) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, data: { noteId: string; title: string }) => callback(data);
     ipcRenderer.on(IPC.NOTE_TITLE_CHANGED, listener);

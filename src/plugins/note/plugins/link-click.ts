@@ -28,7 +28,7 @@ export interface NoteHistory {
 
 const history: NoteHistory = { back: [], forward: [], current: null };
 
-export function setCurrentNote(noteId: string) {
+export function setCurrentNote(noteId: string | null) {
   history.current = noteId;
 }
 

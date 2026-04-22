@@ -82,6 +82,7 @@ export function registerNoteIpcHandlers(ctx: PluginContext): void {
     await noteStore.delete(id);
     activityStore.log('note.delete', id);
     broadcastNoteList();
+    broadcastToAll(IPC.NOTE_DELETED, id);
   });
 
   ipcMain.handle(IPC.NOTE_RENAME, async (_event, id: string, title: string) => {

@@ -207,6 +207,7 @@ export const IPC = {
   // NoteFile 编辑器操作
   NOTE_OPEN_IN_EDITOR: 'note:open-in-editor',
   NOTE_PENDING_OPEN: 'note:pending-open',    // NoteEditor ready 后拉取待打开的 noteId
+  NOTE_DELETED: 'note:deleted',               // main → NoteView: 笔记已删除，编辑器需清除
   NOTE_TITLE_CHANGED: 'note:title-changed',  // NavSide → NoteView: 文件名变更同步到 noteTitle
 
   // Folder 操作
@@ -377,4 +378,28 @@ export const IPC = {
   // Backup/Restore
   BACKUP_CREATE: 'backup:create',
   BACKUP_RESTORE: 'backup:restore',
+
+  // 全局进度覆盖层（长耗时任务：备份/恢复/重置等）
+  PROGRESS_START: 'progress:start',    // main → shell: 显示进度覆盖层
+  PROGRESS_UPDATE: 'progress:update',  // main → shell: 更新阶段/百分比
+  PROGRESS_DONE: 'progress:done',      // main → shell: 关闭覆盖层
 } as const;
+
+// 进度事件负载
+export interface ProgressStartPayload {
+  taskId: string;           // 唯一任务 ID
+  title: string;            // 标题（如「数据备份中」）
+  message?: string;         // 初始消息
+  indeterminate?: boolean;  // true = 不确定进度条；false = 有 current/total
+}
+export interface ProgressUpdatePayload {
+  taskId: string;
+  message?: string;         // 当前阶段文字（如「3/5 复制媒体文件」）
+  current?: number;         // 已完成量
+  total?: number;           // 总量
+}
+export interface ProgressDonePayload {
+  taskId: string;
+  success: boolean;
+  message?: string;         // 完成提示（成功或错误）
+}

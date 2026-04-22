@@ -27,6 +27,7 @@ let shellView: WebContentsView | null = null;
 let navSideView: WebContentsView | null = null;
 let navResizeView: WebContentsView | null = null;
 let dividerView: WebContentsView | null = null;
+let overlayView: WebContentsView | null = null;
 
 // ── Workspace 隔离的 View 实例池 ──
 
@@ -553,10 +554,23 @@ export function createShell(): BaseWindow {
   navResizeView.setBackgroundColor('#1a1a1a');
   navResizeView.webContents.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(NAV_RESIZE_HTML)}`);
 
+  // 全屏进度覆盖层（默认隐藏，备份/恢复/重置等长任务时显示）
+  overlayView = new WebContentsView({
+    webPreferences: {
+      preload: path.join(__dirname, 'shell.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      transparent: true,
+    },
+  });
+  overlayView.setBackgroundColor('#00000000');
+  overlayView.setVisible(false);
+
   mainWindow.contentView.addChildView(toggleView);
   mainWindow.contentView.addChildView(shellView);
   mainWindow.contentView.addChildView(navSideView);
   mainWindow.contentView.addChildView(navResizeView);
+  // overlayView 延迟加载：不 addChildView，只在 showOverlay() 时按需挂载
 
   if (SHELL_VITE_DEV_SERVER_URL) {
     shellView.webContents.loadURL(`${SHELL_VITE_DEV_SERVER_URL}/shell.html`);
@@ -603,6 +617,7 @@ export function createShell(): BaseWindow {
     navSideView = null;
     navResizeView = null;
     dividerView = null;
+    overlayView = null;
     workspaceViewPools.clear();
   });
 
@@ -662,6 +677,48 @@ export function updateLayout(): void {
       if (dividerView) dividerView.setBounds(layout.divider);
     }
   }
+
+  // 进度覆盖层：占满整个窗口
+  if (overlayView) {
+    overlayView.setBounds({ x: 0, y: 0, width: windowWidth, height: windowHeight });
+  }
+}
+
+/**
+ * 显示/隐藏全屏进度覆盖层
+ * 长耗时任务（backup/restore/reset）期间阻塞 UI
+ * 首次调用时才加载 overlay HTML，避免干扰正常启动流程
+ */
+let overlayLoaded = false;
+export async function showOverlay(): Promise<void> {
+  if (!overlayView || !mainWindow) return;
+
+  // 首次使用才加载 HTML
+  if (!overlayLoaded) {
+    if (OVERLAY_VITE_DEV_SERVER_URL) {
+      await overlayView.webContents.loadURL(`${OVERLAY_VITE_DEV_SERVER_URL}/overlay.html`);
+    } else {
+      await overlayView.webContents.loadFile(path.join(__dirname, `../renderer/overlay/overlay.html`));
+    }
+    overlayLoaded = true;
+  }
+
+  overlayView.setVisible(true);
+  // 确保在最上层
+  mainWindow.contentView.addChildView(overlayView);
+  updateLayout();
+}
+
+export function hideOverlay(): void {
+  if (!overlayView || !mainWindow) return;
+  overlayView.setVisible(false);
+  // 从 child views 中移除，让下方 view 恢复接收事件
+  try { mainWindow.contentView.removeChildView(overlayView); } catch {}
+}
+
+/** 向 overlayView 发送进度事件 */
+export function sendToOverlay(channel: string, payload: unknown): void {
+  overlayView?.webContents.send(channel, payload);
 }
 
 // Toggle inline HTML
@@ -738,6 +795,7 @@ const NAV_RESIZE_HTML = `<!DOCTYPE html>
 </html>`;
 
 declare const SHELL_VITE_DEV_SERVER_URL: string | undefined;
+declare const OVERLAY_VITE_DEV_SERVER_URL: string | undefined;
 declare const NAVSIDE_VITE_DEV_SERVER_URL: string | undefined;
 declare const DEMO_VIEW_VITE_DEV_SERVER_URL: string | undefined;
 declare const NOTE_VIEW_VITE_DEV_SERVER_URL: string | undefined;

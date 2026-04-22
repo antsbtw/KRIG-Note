@@ -54,6 +54,10 @@ const config: ForgeConfig = {
           config: 'vite.shell.config.mts',
         },
         {
+          name: 'overlay',
+          config: 'vite.overlay.config.mts',
+        },
+        {
           name: 'navside',
           config: 'vite.navside.config.mts',
         },

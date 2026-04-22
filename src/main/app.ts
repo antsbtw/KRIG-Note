@@ -1,5 +1,6 @@
-import { app, nativeTheme, webContents } from 'electron';
-import { createShell, getMainWindow, getActiveViewWebContentsIds } from './window/shell';
+import { app, nativeTheme, webContents, dialog } from 'electron';
+import { createShell, getMainWindow, getActiveViewWebContentsIds, getSlotBySenderId, openRightSlot } from './window/shell';
+import { runWithProgress } from './window/progress';
 import { registerIpcHandlers } from './ipc/handlers';
 import { setupDividerController } from './slot/divider';
 import { workspaceManager } from './workspace/manager';
@@ -34,25 +35,13 @@ import { register as registerThoughtPlugin } from '../plugins/thought/main/regis
 // ── 插件注册 ──
 
 function registerPlugins(): void {
-  // 延迟导入 shell 函数，避免循环依赖
   const ctx = {
     getMainWindow,
-    openCompanion: (workModeId: string) => {
-      const { openRightSlot } = require('./window/shell');
-      return openRightSlot(workModeId);
-    },
-    ensureCompanion: (workModeId: string) => {
-      const { openRightSlot } = require('./window/shell');
-      return openRightSlot(workModeId); // ensureRightSlot 内部逻辑相同
-    },
-    getSlotBySenderId: (senderId: number) => {
-      const { getSlotBySenderId } = require('./window/shell');
-      return getSlotBySenderId(senderId);
-    },
-    getActiveViewWebContentsIds: () => {
-      const { getActiveViewWebContentsIds } = require('./window/shell');
-      return getActiveViewWebContentsIds();
-    },
+    openCompanion: openRightSlot,
+    ensureCompanion: openRightSlot, // ensureRightSlot 内部逻辑相同
+    getSlotBySenderId,
+    getActiveViewWebContentsIds,
+    runWithProgress,
   };
 
   // L5 插件各自注册 WorkMode / NavSide / Protocol / Menu
@@ -136,6 +125,33 @@ function registerFrameworkMenus(): void {
         if (!noteId) return;
         const { leftId } = getActiveViewWebContentsIds();
         if (leftId != null) webContents.fromId(leftId)?.send('note:open-in-editor', noteId);
+      }},
+      { id: 'sep2', label: '', separator: true, handler: () => {} },
+      { id: 'reset-db', label: '重置数据库（高危）', handler: async () => {
+        const win = getMainWindow();
+        const confirm = await dialog.showMessageBox(win as any, {
+          type: 'warning',
+          buttons: ['取消', '确认重置'],
+          defaultId: 0,
+          cancelId: 0,
+          title: '重置数据库',
+          message: '此操作将清空所有笔记、书签、媒体文件，且无法自动恢复。',
+          detail: '如需保留数据，请先通过「Note → Backup All Data」手动备份，再执行重置。',
+        });
+        if (confirm.response !== 1) return;
+
+        const { backupStore } = await import('./storage/backup-store');
+
+        const result = await runWithProgress('数据库重置中', (report) => backupStore.reset(report), {
+          doneMessage: (r) => r.success
+            ? { success: true, message: '重置完成。应用即将退出，请手动启动。' }
+            : { success: false, message: r.error || 'Unknown error' },
+        });
+
+        if (result.success) {
+          // 自动退出，用户手动重启（避免 relaunch 在 dev 模式下失败）
+          setTimeout(() => app.exit(0), 2500);
+        }
       }},
     ],
   });

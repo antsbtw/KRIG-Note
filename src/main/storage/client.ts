@@ -218,15 +218,50 @@ export function shutdownSurrealDB(): void {
   }
 
   if (serverProcess) {
-    serverProcess.kill('SIGTERM');
-    // 给 2 秒优雅关闭
+    // app 退出时场景：先 SIGTERM，若同步 tick 内进程没响应就 SIGKILL
+    // 避免子进程变成孤儿 (PPID=1) 后继续运行并占用数据目录
+    try { serverProcess.kill('SIGTERM'); } catch { /* ignore */ }
+    // 300ms 后强制 kill（而不是 2 秒，before-quit 往往没这么长时间）
     setTimeout(() => {
       if (serverProcess) {
-        serverProcess.kill('SIGKILL');
+        try { serverProcess.kill('SIGKILL'); } catch { /* ignore */ }
         serverProcess = null;
       }
-    }, 2000);
+    }, 300);
   }
 
+  isReady = false;
+}
+
+/**
+ * 异步关闭 SurrealDB，等待进程真正退出。
+ * 用于 reset/restore 等需要保证磁盘文件可写的场景。
+ */
+export async function shutdownSurrealDBAsync(): Promise<void> {
+  if (db) {
+    try { db.close(); } catch { /* ignore */ }
+    db = null;
+  }
+
+  if (!serverProcess) {
+    isReady = false;
+    return;
+  }
+
+  const proc = serverProcess;
+  await new Promise<void>((resolve) => {
+    const killTimer = setTimeout(() => {
+      try { proc.kill('SIGKILL'); } catch { /* ignore */ }
+    }, 2000);
+
+    proc.once('close', () => {
+      clearTimeout(killTimer);
+      resolve();
+    });
+
+    try { proc.kill('SIGTERM'); } catch { resolve(); }
+  });
+
+  serverProcess = null;
   isReady = false;
 }

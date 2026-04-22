@@ -178,16 +178,16 @@ export function register(ctx: PluginContext): void {
           filters: [{ name: 'KRIG Backup', extensions: ['tar.gz'] }],
         });
         if (result.canceled || !result.filePath) return;
+        const filePath = result.filePath;
         const { backupStore } = await import('../../../main/storage/backup-store');
-        const r = await backupStore.backup(result.filePath);
-        if (r.success) {
-          dialog.showMessageBox(win as any, { type: 'info', title: 'Backup Complete', message: `Backup saved to:\n${result.filePath}\n(${((r.size || 0) / 1024 / 1024).toFixed(1)} MB)` });
-        } else {
-          dialog.showMessageBox(win as any, { type: 'error', title: 'Backup Failed', message: r.error || 'Unknown error' });
-        }
+        await ctx.runWithProgress('数据备份中', (report) => backupStore.backup(filePath, report), {
+          doneMessage: (r) => r.success
+            ? { success: true, message: `备份完成 (${((r.size || 0) / 1024 / 1024).toFixed(1)} MB)` }
+            : { success: false, message: r.error || 'Unknown error' },
+        });
       }},
       { id: 'restore', label: 'Restore from Backup...', handler: async () => {
-        const { dialog } = await import('electron');
+        const { dialog, app } = await import('electron');
         const win = ctx.getMainWindow();
         if (!win) return;
         const confirm = await dialog.showMessageBox(win as any, {
@@ -199,13 +199,17 @@ export function register(ctx: PluginContext): void {
           title: 'Select Backup File', filters: [{ name: 'KRIG Backup', extensions: ['tar.gz'] }], properties: ['openFile'],
         });
         if (openResult.canceled || openResult.filePaths.length === 0) return;
+        const archivePath = openResult.filePaths[0];
         const { backupStore } = await import('../../../main/storage/backup-store');
-        const r = await backupStore.restore(openResult.filePaths[0]);
-        dialog.showMessageBox(win as any, {
-          type: r.success ? 'info' : 'error',
-          title: r.success ? 'Restore Complete' : 'Restore Failed',
-          message: r.success ? 'Data restored successfully. Please restart the app.' : (r.error || 'Unknown error'),
+        const result = await ctx.runWithProgress('数据恢复中', (report) => backupStore.restore(archivePath, report), {
+          doneMessage: (r) => r.success
+            ? { success: true, message: '恢复完成。应用即将退出，请手动启动。' }
+            : { success: false, message: r.error || 'Unknown error' },
         });
+        if (result.success) {
+          // 自动退出，用户手动重启（避免 relaunch 在 dev 模式下黑屏）
+          setTimeout(() => app.exit(0), 1500);
+        }
       }},
     ],
   });

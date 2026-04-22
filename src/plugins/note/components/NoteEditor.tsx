@@ -13,7 +13,7 @@ import { noteTitleNodeView } from '../blocks/text-block';
 import { buildInputRules } from '../plugins/input-rules';
 import { containerKeyboardPlugin } from '../plugins/container-keyboard';
 import { slashCommandPlugin } from '../plugins/slash-command';
-import { linkClickPlugin, setCurrentNote, flushPendingAnchor } from '../plugins/link-click';
+import { linkClickPlugin, setCurrentNote, flushPendingAnchor, canGoBack, goBack } from '../plugins/link-click';
 import { tableKeymapPlugin } from '../blocks/table';
 import { columnResizing } from 'prosemirror-tables';
 import { SlashMenu } from './SlashMenu';
@@ -61,6 +61,7 @@ declare const viewAPI: {
   noteRename: (id: string, title: string) => Promise<void>;
   noteOpenInEditor: (id: string) => Promise<void>;
   onNoteOpenInEditor: (callback: (noteId: string) => void) => () => void;
+  onNoteDeleted: (callback: (noteId: string) => void) => () => void;
   notePendingOpen: () => Promise<string | null>;
   setActiveNote: (noteId: string | null, noteTitle?: string) => Promise<void>;
   getActiveNoteId: () => Promise<string | null>;
@@ -387,10 +388,32 @@ export function NoteEditor() {
   const loadNote = useCallback(async (noteId: string) => {
     const seq = ++loadSeqRef.current;
     const s = getSchema();
+
+    // graceful fallback：noteId 不存在或加载失败 → 显示空编辑器 + 清除 session 中的引用
+    const fallbackToEmpty = (reason: string) => {
+      console.warn(`[NoteEditor] ${reason} — fallback to empty editor`);
+      loadMoreRef.current = null;
+      fullAtomsRef.current = null;
+      loadedTopCountRef.current = -1;
+      createEditor(createEmptyDoc(s));
+      currentNoteIdRef.current = null;
+      setCurrentNote(null);
+      // 清除 workspace state 中的陈旧 activeNoteId，避免下次启动又卡在同一个 note
+      viewAPI.setActiveNote(null, undefined);
+      window.dispatchEvent(new CustomEvent('note:title-changed', { detail: 'Untitled' }));
+    };
+
     try {
       const record = await viewAPI.noteLoad(noteId);
       if (seq !== loadSeqRef.current) { return; }
-      if (!record || !record.doc_content || record.doc_content.length === 0) {
+
+      // note 不存在 → graceful fallback
+      if (!record) {
+        fallbackToEmpty(`Note ${noteId} not found in DB`);
+        return;
+      }
+
+      if (!record.doc_content || record.doc_content.length === 0) {
         loadMoreRef.current = null;
         fullAtomsRef.current = null;
         loadedTopCountRef.current = -1;
@@ -428,9 +451,8 @@ export function NoteEditor() {
     } catch (err) {
       if (seq !== loadSeqRef.current) return;
       console.error('[NoteEditor] Failed to load note:', err);
-      createEditor(createEmptyDoc(s));
-      currentNoteIdRef.current = noteId;
-      setCurrentNote(noteId);
+      // 坏数据导致 schema 解析失败 → 视为加载失败，fallback
+      fallbackToEmpty(`Note ${noteId} load threw: ${(err as Error)?.message || err}`);
     }
   }, [createEditor]);
 
@@ -539,6 +561,22 @@ export function NoteEditor() {
     // 监听打开笔记事件
     const unsubOpen = viewAPI.onNoteOpenInEditor((noteId) => {
       loadNote(noteId);
+    });
+
+    // 监听笔记删除事件：如果是当前编辑的笔记，取消 auto-save 并导航到上一个
+    const unsubDeleted = viewAPI.onNoteDeleted((deletedId) => {
+      if (currentNoteIdRef.current !== deletedId) return;
+      // 取消待执行的 auto-save
+      if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null; }
+      currentNoteIdRef.current = null;
+      // 导航到历史中的上一篇笔记
+      if (canGoBack()) {
+        goBack();
+      } else {
+        // 无历史，清除编辑器
+        viewRef.current?.destroy();
+        viewRef.current = null;
+      }
     });
 
     // 测试用：直接导入 JSON 文件到编辑器（不走 IPC）
@@ -704,6 +742,7 @@ export function NoteEditor() {
 
     return () => {
       unsubOpen();
+      unsubDeleted();
       unsubRestore();
       unsubTestDoc();
       unsubTitle();

@@ -21,4 +21,14 @@ export interface PluginContext {
 
   /** 获取当前活跃的 Left/Right View 的 webContents ID */
   getActiveViewWebContentsIds: () => { leftId: number | null; rightId: number | null };
+
+  /**
+   * 运行长耗时任务，期间显示全屏进度遮罩。
+   * 插件无需关心覆盖层实现细节——task 中调用 reportProgress(message, current?, total?) 即可推进进度。
+   */
+  runWithProgress: <T>(
+    title: string,
+    task: (reportProgress: (message: string, current?: number, total?: number) => void) => Promise<T>,
+    options?: { keepOnDone?: boolean; doneMessage?: (result: T) => { success: boolean; message: string } },
+  ) => Promise<T>;
 }

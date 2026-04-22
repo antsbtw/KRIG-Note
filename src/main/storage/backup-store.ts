@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { app } from 'electron';
-import { findBinary, getConnectionInfo, shutdownSurrealDB, initSurrealDB } from './client';
+import { findBinary, getConnectionInfo, shutdownSurrealDBAsync, initSurrealDB } from './client';
 import { initSchema } from './schema';
 
 /**
@@ -24,6 +24,11 @@ export interface RestoreResult {
   success: boolean;
   error?: string;
 }
+
+/** 进度回调——阶段文字 + 可选的 current/total */
+export type ProgressReporter = (message: string, current?: number, total?: number) => void;
+
+const noop: ProgressReporter = () => {};
 
 /** 数据目录路径 */
 function getPaths() {
@@ -50,7 +55,7 @@ function run(cmd: string, args: string[]): Promise<{ code: number; stdout: strin
 }
 
 export const backupStore = {
-  async backup(destPath: string): Promise<BackupResult> {
+  async backup(destPath: string, reportProgress: ProgressReporter = noop): Promise<BackupResult> {
     const binary = findBinary();
     if (!binary) {
       return { success: false, error: 'SurrealDB binary not found' };
@@ -63,8 +68,10 @@ export const backupStore = {
     const contentDir = path.join(tmpDir, backupName);
     fs.mkdirSync(contentDir, { recursive: true });
 
+    const TOTAL_STEPS = 6;
     try {
       // 1. surreal export
+      reportProgress('导出数据库...', 1, TOTAL_STEPS);
       const surqlPath = path.join(contentDir, 'database.surql');
       const exportResult = await run(binary, [
         'export',
@@ -80,21 +87,25 @@ export const backupStore = {
       }
 
       // 2. 复制 media 目录
+      reportProgress('复制媒体文件...', 2, TOTAL_STEPS);
       if (fs.existsSync(paths.mediaDir)) {
         fs.cpSync(paths.mediaDir, path.join(contentDir, 'media'), { recursive: true });
       }
 
       // 3. 复制 ebook 目录
+      reportProgress('复制电子书...', 3, TOTAL_STEPS);
       if (fs.existsSync(paths.ebookDir)) {
         fs.cpSync(paths.ebookDir, path.join(contentDir, 'ebook', 'library'), { recursive: true });
       }
 
       // 4. 复制 session.json
+      reportProgress('保存会话状态...', 4, TOTAL_STEPS);
       if (fs.existsSync(paths.sessionFile)) {
         fs.copyFileSync(paths.sessionFile, path.join(contentDir, 'session.json'));
       }
 
       // 5. 写入 manifest
+      reportProgress('写入元数据...', 5, TOTAL_STEPS);
       fs.writeFileSync(path.join(contentDir, 'manifest.json'), JSON.stringify({
         version: 1,
         createdAt: new Date().toISOString(),
@@ -108,6 +119,7 @@ export const backupStore = {
       }, null, 2));
 
       // 6. tar 打包
+      reportProgress('压缩为归档文件（耗时较长）...', 6, TOTAL_STEPS);
       const tarResult = await run('tar', ['-czf', destPath, '-C', tmpDir, backupName]);
       if (tarResult.code !== 0) {
         return { success: false, error: `tar failed: ${tarResult.stderr}` };
@@ -124,7 +136,46 @@ export const backupStore = {
     }
   },
 
-  async restore(archivePath: string): Promise<RestoreResult> {
+  /**
+   * 重置数据库 — 清空所有数据，重建空库。
+   *
+   * 不做自动备份。调用者应提前引导用户手动备份（Note → Backup All Data）。
+   */
+  async reset(reportProgress: ProgressReporter = noop): Promise<{ success: boolean; error?: string }> {
+    const paths = getPaths();
+    try {
+      // 1. 等待 SurrealDB 完全关闭（确保没有进程占用数据库文件）
+      reportProgress('关闭数据库服务...');
+      await shutdownSurrealDBAsync();
+
+      // 2. 清空数据目录
+      reportProgress('清空数据目录...');
+      if (fs.existsSync(paths.dbDir)) {
+        fs.rmSync(paths.dbDir, { recursive: true, force: true });
+      }
+      if (fs.existsSync(paths.mediaDir)) {
+        fs.rmSync(paths.mediaDir, { recursive: true, force: true });
+      }
+      if (fs.existsSync(paths.ebookDir)) {
+        fs.rmSync(paths.ebookDir, { recursive: true, force: true });
+      }
+      if (fs.existsSync(paths.sessionFile)) {
+        fs.rmSync(paths.sessionFile, { force: true });
+      }
+
+      // 2. 重启空数据库 + 初始化 schema
+      reportProgress('初始化空数据库...');
+      await initSurrealDB();
+      await initSchema();
+
+      console.log('[Reset] Database reset.');
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: String(err) };
+    }
+  },
+
+  async restore(archivePath: string, reportProgress: ProgressReporter = noop): Promise<RestoreResult> {
     const binary = findBinary();
     if (!binary) {
       return { success: false, error: 'SurrealDB binary not found' };
@@ -132,9 +183,11 @@ export const backupStore = {
 
     const paths = getPaths();
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'krig-restore-'));
+    const TOTAL_STEPS = 8;
 
     try {
       // 1. 解压
+      reportProgress('解压备份文件...', 1, TOTAL_STEPS);
       const extractResult = await run('tar', ['-xzf', archivePath, '-C', tmpDir]);
       if (extractResult.code !== 0) {
         return { success: false, error: `tar extract failed: ${extractResult.stderr}` };
@@ -147,6 +200,7 @@ export const backupStore = {
         : tmpDir;
 
       // 2. 验证 manifest
+      reportProgress('验证备份文件...', 2, TOTAL_STEPS);
       const manifestPath = path.join(contentDir, 'manifest.json');
       if (!fs.existsSync(manifestPath)) {
         return { success: false, error: 'Invalid backup: manifest.json not found' };
@@ -161,7 +215,10 @@ export const backupStore = {
         return { success: false, error: 'Invalid backup: database.surql not found' };
       }
 
-      // 3. 安全回退：重命名旧 DB 目录
+      // 3. 关闭 SurrealDB 并安全重命名旧 DB 目录
+      reportProgress('关闭数据库服务...', 3, TOTAL_STEPS);
+      await shutdownSurrealDBAsync();
+
       const preRestoreDir = `${paths.dbDir}.pre-restore`;
       if (fs.existsSync(preRestoreDir)) {
         fs.rmSync(preRestoreDir, { recursive: true, force: true });
@@ -170,12 +227,13 @@ export const backupStore = {
         fs.renameSync(paths.dbDir, preRestoreDir);
       }
 
-      // 4. 重启 SurrealDB（新空库）
-      shutdownSurrealDB();
+      // 4. 启动 SurrealDB（新空库）
+      reportProgress('初始化新数据库...', 4, TOTAL_STEPS);
       await initSurrealDB();
       await initSchema();
 
       // 5. surreal import
+      reportProgress('导入数据...', 5, TOTAL_STEPS);
       const conn = getConnectionInfo();
       const importResult = await run(binary, [
         'import',
@@ -188,7 +246,7 @@ export const backupStore = {
       ]);
       if (importResult.code !== 0) {
         // 回滚：恢复旧 DB
-        shutdownSurrealDB();
+        await shutdownSurrealDBAsync();
         if (fs.existsSync(paths.dbDir)) {
           fs.rmSync(paths.dbDir, { recursive: true, force: true });
         }
@@ -201,6 +259,7 @@ export const backupStore = {
       }
 
       // 6. 恢复 media
+      reportProgress('恢复媒体文件...', 6, TOTAL_STEPS);
       const backupMedia = path.join(contentDir, 'media');
       if (fs.existsSync(backupMedia)) {
         if (fs.existsSync(paths.mediaDir)) {
@@ -210,6 +269,7 @@ export const backupStore = {
       }
 
       // 7. 恢复 ebook
+      reportProgress('恢复电子书...', 7, TOTAL_STEPS);
       const backupEbook = path.join(contentDir, 'ebook', 'library');
       if (fs.existsSync(backupEbook)) {
         if (fs.existsSync(paths.ebookDir)) {
@@ -219,13 +279,12 @@ export const backupStore = {
         fs.cpSync(backupEbook, paths.ebookDir, { recursive: true });
       }
 
-      // 8. 恢复 session
+      // 8. 恢复 session + 清理旧 DB 备份
+      reportProgress('清理临时文件...', 8, TOTAL_STEPS);
       const backupSession = path.join(contentDir, 'session.json');
       if (fs.existsSync(backupSession)) {
         fs.copyFileSync(backupSession, paths.sessionFile);
       }
-
-      // 9. 清理旧 DB 备份
       if (fs.existsSync(preRestoreDir)) {
         fs.rmSync(preRestoreDir, { recursive: true, force: true });
       }

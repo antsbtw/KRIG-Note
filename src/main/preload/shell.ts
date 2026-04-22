@@ -22,4 +22,21 @@ contextBridge.exposeInMainWorld('shellAPI', {
     ipcRenderer.on(IPC.WORKSPACE_STATE_CHANGED, listener);
     return () => ipcRenderer.removeListener(IPC.WORKSPACE_STATE_CHANGED, listener);
   },
+
+  // 全局进度覆盖层
+  onProgressStart: (callback: (payload: unknown) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: unknown) => callback(payload);
+    ipcRenderer.on(IPC.PROGRESS_START, listener);
+    return () => ipcRenderer.removeListener(IPC.PROGRESS_START, listener);
+  },
+  onProgressUpdate: (callback: (payload: unknown) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: unknown) => callback(payload);
+    ipcRenderer.on(IPC.PROGRESS_UPDATE, listener);
+    return () => ipcRenderer.removeListener(IPC.PROGRESS_UPDATE, listener);
+  },
+  onProgressDone: (callback: (payload: unknown) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: unknown) => callback(payload);
+    ipcRenderer.on(IPC.PROGRESS_DONE, listener);
+    return () => ipcRenderer.removeListener(IPC.PROGRESS_DONE, listener);
+  },
 });

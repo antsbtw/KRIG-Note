@@ -11,6 +11,9 @@ declare const shellAPI: {
   reorderWorkspaces: (ids: string[]) => Promise<void>;
   toggleNavSide: () => Promise<void>;
   onStateChanged: (callback: (state: unknown) => void) => () => void;
+  onProgressStart: (callback: (payload: unknown) => void) => () => void;
+  onProgressUpdate: (callback: (payload: unknown) => void) => () => void;
+  onProgressDone: (callback: (payload: unknown) => void) => () => void;
 };
 
 interface WorkspaceBarState {
