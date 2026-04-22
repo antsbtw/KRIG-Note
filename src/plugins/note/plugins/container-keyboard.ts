@@ -146,62 +146,178 @@ export function containerKeyboardPlugin(): Plugin {
         }
 
         // ── Backspace（行首） ──
+        //
+        // 方案 P 语义（"有正文走 PM 默认 / 没正文删块 / 容器空了级联删"）：
+        //   非行首                 → PM 默认（删字）
+        //   行首 非空 非首子       → PM 默认（合并到同容器上一个子）
+        //   行首 非空 首子         → 脱容器壳（unwrap，保留正文）
+        //   行首 空   非首子       → PM 默认（合并吃掉空 block）
+        //   行首 空   首子         → 删当前 block；容器因此变空 → 级联删容器
+        //   taskItem 中间层 首子   → 操作层级是 taskList（脱掉整条 taskItem/taskList 壳）
+        //   RenderBlock caption    → 行首吞掉事件（保护 block）
+        //   column 首子+唯一空    → 走 deleteColumn 级联解散 columnList
         if (event.key === 'Backspace') {
-          // RenderBlock caption: 行首 Backspace → 不做任何事（防止删除 RenderBlock）
           if (isRenderBlockCaption) {
             const atStart = $from.parentOffset === 0;
             if (atStart) {
               event.preventDefault();
-              return true; // 吞掉事件，不删除
+              return true;
             }
-            return false; // 非行首，正常删除文字
+            return false;
           }
 
           const atStart = $from.parentOffset === 0;
           if (!atStart) return false;
 
-          // ── column 内行首 Backspace ──
-          // 规则：
-          //   - column 内多行（多个子节点）→ 让 PM 默认合并到上一行
-          //   - column 内只剩 1 个空 textBlock → 删除这个 column
-          //     · column-list 删完后剩 ≥ 2 列 → 正常剩下
-          //     · column-list 删完后只剩 1 列 → column-list 解散，剩下那列内容
-          //       铺开放在 column-list 原位置（变成普通顶层 block）
+          const isEmpty = childNode.content.size === 0;
+
+          // ── column 特殊分支（保留原有级联逻辑）──
           if (isColumn) {
             const columnNode = $from.node(containerDepth);
             const containerStart = $from.before(containerDepth);
             const childStart = $from.before(childDepth);
             const isFirstChild = childStart === containerStart + 1;
-            const isOnlyEmptyChild = columnNode.childCount === 1 && childNode.content.size === 0;
+            const isOnlyEmptyChild = columnNode.childCount === 1 && isEmpty;
 
             if (isFirstChild && isOnlyEmptyChild && columnListDepth >= 0) {
               event.preventDefault();
               deleteColumnAndMaybeUnwrap(view, columnListDepth, containerDepth);
               return true;
             }
-            // column 内非首子 / 还有内容 → 正常合并
             return false;
           }
 
-          // 如果是 Container 的第一个子节点 → 退出 Container
+          // ── taskItem 中间层 ──
+          // parent = taskItem。用户视角：每条 taskItem = 一个"带 checkbox 的块"。
+          //   - taskItem 内非首子（用户在一条 taskItem 内多行写字）→ PM 默认合并
+          //   - taskItem 首子 + taskItem 不是 taskList 首项（第 2+ 条）
+          //     → PM 默认合并到上一条 taskItem 末尾（跨 taskItem 合并）
+          //   - taskItem 首子 + taskItem 是 taskList 首项（第 1 条）
+          //     · 非空 → 脱 taskItem 壳（连带整个 taskList 若仅剩这一条）
+          //     · 空   → 级联删（textBlock → taskItem → taskList 逐层判断）
+          if (taskListDepth >= 0) {
+            const taskItemStart = $from.before(containerDepth);
+            const childStart = $from.before(childDepth);
+            const isFirstChildOfTaskItem = childStart === taskItemStart + 1;
+            if (!isFirstChildOfTaskItem) return false;
+
+            const taskListStart = $from.before(taskListDepth);
+            const isFirstTaskItem = taskItemStart === taskListStart + 1;
+            if (!isFirstTaskItem) return false;
+
+            event.preventDefault();
+            if (isEmpty) {
+              cascadeDeleteAtChild(view, childDepth);
+            } else {
+              unwrapThroughTaskItem(view, taskListDepth, containerDepth, childDepth);
+            }
+            return true;
+          }
+
+          // ── 普通容器（toggleList / callout / blockquote / bulletList / orderedList 等）──
           const containerStart = $from.before(containerDepth);
           const childStart = $from.before(childDepth);
           const isFirstChild = childStart === containerStart + 1;
 
-          if (isFirstChild) {
-            event.preventDefault();
-            unwrapFromContainer(view, containerDepth, childDepth);
-            return true;
-          }
+          if (!isFirstChild) return false; // 非首子 → PM 默认合并
 
-          // 非首子 → 与上一个子节点合并（让 ProseMirror 默认处理）
-          return false;
+          event.preventDefault();
+          if (isEmpty) {
+            cascadeDeleteAtChild(view, childDepth);
+          } else {
+            unwrapFromContainer(view, containerDepth, childDepth);
+          }
+          return true;
         }
 
         return false;
       },
     },
   });
+}
+
+/**
+ * 级联删除：删除 childDepth 对应的节点；若父容器因此变空，连同父一起删，
+ * 逐层向上直到父仍有其他兄弟、或父是 doc、或父在 CASCADE_STOP 里。
+ *
+ * 用于 Backspace 在容器首子 + 空 时的级联路径。光标删除后落在删除点之前
+ * 最近的可定位位置（TextSelection.near）。
+ */
+function cascadeDeleteAtChild(
+  view: import('prosemirror-view').EditorView,
+  childDepth: number,
+): void {
+  const CASCADE_STOP = new Set(['tableCell', 'tableHeader', 'tableRow', 'table', 'column', 'columnList']);
+  const { state } = view;
+  const { $from } = state.selection;
+
+  let deleteFrom = $from.before(childDepth);
+  let deleteTo = $from.after(childDepth);
+
+  // 向上合并：若 childDepth 所在父容器只有这一个子，连父一起删
+  for (let d = childDepth - 1; d >= 1; d--) {
+    const parent = $from.node(d);
+    if (parent.type.name === 'doc') break;
+    if (CASCADE_STOP.has(parent.type.name)) break;
+    if (parent.childCount > 1) break;
+    deleteFrom = $from.before(d);
+    deleteTo = $from.after(d);
+  }
+
+  let tr = state.tr.delete(deleteFrom, deleteTo);
+  // doc 全空兜底
+  if (tr.doc.childCount === 0) {
+    tr.insert(0, state.schema.nodes.textBlock.create());
+  }
+  // 光标落到删除点之前最近的可定位位置
+  try {
+    tr = tr.setSelection(TextSelection.near(tr.doc.resolve(deleteFrom), -1));
+  } catch { /* keep default */ }
+  view.dispatch(tr);
+}
+
+/**
+ * taskItem 首子 + 非空的"脱壳"：把当前 textBlock 从 taskItem 抽出到 taskList 外。
+ *   - taskList 若因此只剩当前这个 taskItem → taskList 整体被 textBlock 替代
+ *   - taskList 仍有其他 taskItem → 在 taskList 前插入 textBlock，原 taskItem 消失
+ *
+ * 两种情况都同时消除 taskItem 壳 + （必要时）taskList 壳。
+ */
+function unwrapThroughTaskItem(
+  view: import('prosemirror-view').EditorView,
+  taskListDepth: number,
+  taskItemDepth: number,
+  childDepth: number,
+): void {
+  const { state } = view;
+  const { $from } = state.selection;
+
+  const taskListStart = $from.before(taskListDepth);
+  const taskListNode = $from.node(taskListDepth);
+  const childNode = $from.parent;
+  const copy = childNode.copy(childNode.content);
+
+  const taskItemStart = $from.before(taskItemDepth);
+  const taskItemEnd = $from.after(taskItemDepth);
+
+  let tr = state.tr;
+
+  if (taskListNode.childCount <= 1) {
+    // taskList 只剩这一个 taskItem → 整个 taskList 替换为 textBlock
+    tr = tr.replaceWith(taskListStart, taskListStart + taskListNode.nodeSize, copy);
+    try {
+      tr = tr.setSelection(TextSelection.create(tr.doc, taskListStart + 1));
+    } catch { /* keep default */ }
+  } else {
+    // taskList 还有其他 taskItem → 只删这个 taskItem，在 taskList 前插入 textBlock
+    tr = tr.delete(taskItemStart, taskItemEnd);
+    tr = tr.insert(taskListStart, copy);
+    try {
+      tr = tr.setSelection(TextSelection.create(tr.doc, taskListStart + 1));
+    } catch { /* keep default */ }
+  }
+
+  view.dispatch(tr);
 }
 
 /**
