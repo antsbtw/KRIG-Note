@@ -496,9 +496,23 @@ export function blockHandlePlugin(): Plugin {
           const node = tr.doc.nodeAt(mappedPos);
           if (node) tr.delete(mappedPos, mappedPos + node.nodeSize);
         }
-        // 退出 block-selection 状态
+
+        // 显式把 selection 设到"新插入 block 的开头"。
+        // 多块拖拽（blockSelection + handle）时旧 selection 常不在被拖的 block 内（例如
+        // TextSelection 停在相邻块），PM 默认 mapping 会把它映射到与拖拽无关的位置。
+        try {
+          // mapping.map(pos, -1)：让 assoc 偏向插入前位置 = 新内容的开始边界
+          const insertStart = tr.mapping.map(target.insertPos, -1);
+          const inside = Math.min(insertStart + 1, tr.doc.content.size);
+          tr.setSelection(TextSelection.near(tr.doc.resolve(inside), 1));
+        } catch { /* 兜底：让 PM 默认 mapping */ }
+
+        // 退出 block-selection 状态 + 移除 class
+        // 关键：.block-selection-active class 会设 caret-color: transparent（见 note.css）。
+        // 如果只 setMeta 不移 class，光标即使定位正确也看不见。
         tr.setMeta(blockSelectionKey, { active: false, selectedPositions: [], anchorPos: null });
         view.dispatch(tr);
+        view.dom.classList.remove('block-selection-active');
         return true;
       },
     },
