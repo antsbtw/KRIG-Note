@@ -49,6 +49,16 @@ export const tableRowBlock: BlockDef = {
   slashMenu: null,
 };
 
+/** Cell 支持的对齐值（null = 继承默认） */
+export type CellAlign = 'left' | 'center' | 'right' | 'justify';
+const VALID_ALIGNS: readonly CellAlign[] = ['left', 'center', 'right', 'justify'];
+
+function parseAlignAttr(dom: HTMLElement): CellAlign | null {
+  const raw = dom.getAttribute('data-align');
+  if (raw && (VALID_ALIGNS as readonly string[]).includes(raw)) return raw as CellAlign;
+  return null;
+}
+
 export const tableCellBlock: BlockDef = {
   name: 'tableCell',
   group: '',
@@ -58,6 +68,7 @@ export const tableCellBlock: BlockDef = {
       colspan: { default: 1 },
       rowspan: { default: 1 },
       colwidth: { default: null },
+      align: { default: null },    // 'left' | 'center' | 'right' | 'justify' | null（继承默认）
     },
     tableRole: 'cell',
     isolating: true,
@@ -68,16 +79,23 @@ export const tableCellBlock: BlockDef = {
         colspan: Number(dom.getAttribute('colspan') || 1),
         rowspan: Number(dom.getAttribute('rowspan') || 1),
         colwidth,
+        align: parseAlignAttr(dom),
       };
     }}],
     toDOM(node) {
       const attrs: Record<string, string> = {};
       if (node.attrs.colspan > 1) attrs.colspan = String(node.attrs.colspan);
       if (node.attrs.rowspan > 1) attrs.rowspan = String(node.attrs.rowspan);
+      const styleParts: string[] = [];
       if (node.attrs.colwidth) {
         attrs['data-colwidth'] = (node.attrs.colwidth as number[]).join(',');
-        attrs.style = `width: ${(node.attrs.colwidth as number[])[0]}px`;
+        styleParts.push(`width: ${(node.attrs.colwidth as number[])[0]}px`);
       }
+      if (node.attrs.align) {
+        attrs['data-align'] = node.attrs.align;
+        styleParts.push(`text-align: ${node.attrs.align}`);
+      }
+      if (styleParts.length) attrs.style = styleParts.join('; ');
       return ['td', attrs, 0];
     },
   },
@@ -95,6 +113,7 @@ export const tableHeaderBlock: BlockDef = {
       colspan: { default: 1 },
       rowspan: { default: 1 },
       colwidth: { default: null },
+      align: { default: null },    // 'left' | 'center' | 'right' | 'justify' | null
     },
     tableRole: 'header_cell',
     isolating: true,
@@ -105,16 +124,23 @@ export const tableHeaderBlock: BlockDef = {
         colspan: Number(dom.getAttribute('colspan') || 1),
         rowspan: Number(dom.getAttribute('rowspan') || 1),
         colwidth,
+        align: parseAlignAttr(dom),
       };
     }}],
     toDOM(node) {
       const attrs: Record<string, string> = {};
       if (node.attrs.colspan > 1) attrs.colspan = String(node.attrs.colspan);
       if (node.attrs.rowspan > 1) attrs.rowspan = String(node.attrs.rowspan);
+      const styleParts: string[] = [];
       if (node.attrs.colwidth) {
         attrs['data-colwidth'] = (node.attrs.colwidth as number[]).join(',');
-        attrs.style = `width: ${(node.attrs.colwidth as number[])[0]}px`;
+        styleParts.push(`width: ${(node.attrs.colwidth as number[])[0]}px`);
       }
+      if (node.attrs.align) {
+        attrs['data-align'] = node.attrs.align;
+        styleParts.push(`text-align: ${node.attrs.align}`);
+      }
+      if (styleParts.length) attrs.style = styleParts.join('; ');
       return ['th', attrs, 0];
     },
   },

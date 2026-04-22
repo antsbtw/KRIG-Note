@@ -219,6 +219,8 @@ export interface TableCellContent {
   colspan?: number;
   rowspan?: number;
   isHeader?: boolean;
+  /** 单元格文字对齐：'left' | 'center' | 'right' | 'justify'。null/缺省 = 继承默认 */
+  align?: 'left' | 'center' | 'right' | 'justify' | null;
   /**
    * @deprecated 旧数据兼容字段。新数据 cell 的内容走 parentId 层级，
    * 不再内嵌 children。读时兼容 + 再次保存自动升级为子 Atom 结构。

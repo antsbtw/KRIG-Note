@@ -5,5 +5,5 @@
  */
 
 export { tableNodeView } from './view';
-export { insertTable, duplicateRow, duplicateColumn, duplicateSelectedCells } from './commands';
+export { insertTable, duplicateRow, duplicateColumn, duplicateSelectedCells, setCellAlign } from './commands';
 export { tableToolbarPlugin } from './toolbar';

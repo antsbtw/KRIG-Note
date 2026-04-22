@@ -1,12 +1,13 @@
 /**
  * table/commands.ts — Table 专有命令
  *
- * insertTable, duplicateRow, duplicateColumn, duplicateSelectedCells
+ * insertTable, duplicateRow, duplicateColumn, duplicateSelectedCells, setCellAlign
  */
 
 import { TextSelection, type Command } from 'prosemirror-state';
 import type { Node as PMNode } from 'prosemirror-model';
 import { selectedRect, CellSelection } from 'prosemirror-tables';
+import type { CellAlign } from '../table';
 
 // ─── Helper: find nearest block-level node ──────────────────
 
@@ -210,3 +211,52 @@ export const duplicateSelectedCells: Command = (state, dispatch) => {
   }
   return true;
 };
+
+// ─── Set Cell Align ─────────────────────────────────────────
+
+/**
+ * 设置 cell 的 align attr。
+ *
+ * 作用范围：
+ * - CellSelection（拖选矩形）→ 选中的所有 cells
+ * - 普通光标在 cell 内 → 仅该 cell
+ *
+ * 传 null 清除对齐（恢复继承）。
+ */
+export function setCellAlign(align: CellAlign | null): Command {
+  return (state, dispatch) => {
+    const sel = state.selection;
+    const targets: { pos: number; node: PMNode }[] = [];
+
+    if (sel instanceof CellSelection) {
+      sel.forEachCell((cell, pos) => {
+        targets.push({ pos, node: cell });
+      });
+    } else {
+      // 普通光标：找最近的 tableCell / tableHeader
+      const $from = sel.$from;
+      for (let d = $from.depth; d > 0; d--) {
+        const node = $from.node(d);
+        if (node.type.name === 'tableCell' || node.type.name === 'tableHeader') {
+          targets.push({ pos: $from.before(d), node });
+          break;
+        }
+      }
+    }
+
+    if (targets.length === 0) return false;
+
+    // 如果所有 targets 已经是同一 align，不做操作（避免重复 dispatch）
+    const allSame = targets.every(t => (t.node.attrs.align ?? null) === align);
+    if (allSame) return true;
+
+    if (dispatch) {
+      const tr = state.tr;
+      for (const { pos, node } of targets) {
+        tr.setNodeMarkup(pos, undefined, { ...node.attrs, align });
+      }
+      dispatch(tr);
+    }
+    return true;
+  };
+}
