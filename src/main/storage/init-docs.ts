@@ -263,6 +263,37 @@ export async function reimportTestDocs(): Promise<boolean> {
   return true;
 }
 
+/** 加载用户手册——如果不存在则从 docs/help/note-user-guide.md 导入，返回 noteId */
+export async function loadUserGuide(): Promise<string | null> {
+  if (!isDBReady()) return null;
+
+  const USER_GUIDE_TITLE = 'KRIG Note 使用手册';
+
+  // 检查是否已存在
+  const allNotes = await noteStore.list();
+  const existing = allNotes.find((n) => n.title === USER_GUIDE_TITLE);
+  if (existing) return existing.id;
+
+  // 读取 markdown 并转换
+  const mdPath = path.join(PROJECT_ROOT, 'docs/help/note-user-guide.md');
+  if (!existsSync(mdPath)) {
+    console.error('[InitDocs] User guide not found:', mdPath);
+    return null;
+  }
+
+  try {
+    const mdContent = readFileSync(mdPath, 'utf-8');
+    const docContent = await mdToAtoms(mdContent, USER_GUIDE_TITLE);
+    const note = await noteStore.create(USER_GUIDE_TITLE);
+    await noteStore.save(note.id, docContent, USER_GUIDE_TITLE);
+    console.log('[InitDocs] User guide created:', note.id);
+    return note.id;
+  } catch (err) {
+    console.error('[InitDocs] Failed to create user guide:', err);
+    return null;
+  }
+}
+
 /** 单独创建 Block 测试任务文档（可在已有 KRIG-Note 文件夹中追加） */
 export async function createBlockTaskDoc(): Promise<boolean> {
   if (!isDBReady()) return false;

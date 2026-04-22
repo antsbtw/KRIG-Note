@@ -9,7 +9,7 @@ import { initSurrealDB, shutdownSurrealDB } from './storage/client';
 import { initSchema } from './storage/schema';
 import { migrateJsonToSurreal } from './storage/migrate-json-to-surreal';
 import { activityStore } from './storage/activity-store';
-import { initKrigNoteDocs, createBlockTaskDoc, reimportTestDocs } from './storage/init-docs';
+import { loadUserGuide } from './storage/init-docs';
 import { mediaSurrealStore as mediaStore } from './media/media-surreal-store';
 import { browserCapabilityServices, browserCapabilityTraceWriter } from '../plugins/browser-capability';
 
@@ -133,22 +133,10 @@ function registerFrameworkMenus(): void {
     order: 100,
     items: [
       { id: 'about', label: 'About KRIG Note', handler: () => console.log('About') },
-      { id: 'shortcuts', label: 'Keyboard Shortcuts', handler: () => console.log('Shortcuts') },
       { id: 'sep1', label: '', separator: true, handler: () => {} },
-      { id: 'test-doc', label: 'Load Test Document', handler: () => broadcastToAll('note:load-test-doc') },
-      { id: 'sep2', label: '', separator: true, handler: () => {} },
-      { id: 'import-docs', label: 'Import KRIG-Note Docs', handler: async () => {
-        try {
-          const { created } = await initKrigNoteDocs();
-          if (created > 0) broadcastToAll('db:ready');
-        } catch (err) { console.error('[Help] Import failed:', err); }
-      }},
-      { id: 'create-task', label: 'Create Block Task Doc', handler: async () => {
-        if (await createBlockTaskDoc()) broadcastToAll('db:ready');
-      }},
-      { id: 'sep3', label: '', separator: true, handler: () => {} },
-      { id: 'reimport-test', label: 'Reimport Test Docs', handler: async () => {
-        if (await reimportTestDocs()) broadcastToAll('db:ready');
+      { id: 'user-guide', label: 'Note 使用手册', handler: async () => {
+        const noteId = await loadUserGuide();
+        if (noteId) broadcastToAll('note:open-in-editor', noteId);
       }},
     ],
   });
