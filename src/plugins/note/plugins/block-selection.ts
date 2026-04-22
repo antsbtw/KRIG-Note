@@ -4,6 +4,13 @@ import { Decoration, DecorationSet } from 'prosemirror-view';
 import { Node as PMNode } from 'prosemirror-model';
 import { findTopBlockPos } from './block-handle';
 import { deleteBlocks } from '../commands/editor-commands';
+import { blockRegistry } from '../registry';
+
+/** 判断节点类型是否为容器（content: block+ 风格，有 containerRule） */
+function isContainerType(name: string): boolean {
+  const def = blockRegistry.get(name);
+  return !!def?.containerRule;
+}
 
 /**
  * Block Selection Plugin — ESC 选中 Block，↑/↓ 导航，Shift 多选
@@ -24,61 +31,81 @@ export const blockSelectionKey = new PluginKey<BlockSelectionState>('blockSelect
 // ── 辅助函数 ──
 
 /**
- * 获取所有可选中 block 的位置（视觉顺序）
+ * 递归收集所有可导航的 block 位置（↑/↓ 导航用）。
  *
- * 普通 block → 直接加入
- * columnList → 展开为: 左列子block从上到下 → 右列子block从上到下 → (第三列...)
- * columnList/column 自身不加入（它们只是布局容器）
+ * - 展开的容器：展开为子 block，容器自身不加入
+ * - 收起的容器（open === false）：作为整体加入，不展开子 block
+ * - 普通 block：直接加入
  */
-function getAllBlockPositions(doc: PMNode): number[] {
-  const positions: number[] = [];
-  doc.forEach((node, offset) => {
-    if (node.type.name === 'columnList') {
-      // 展开 columnList：遍历每个 column 的子 block
-      let colOffset = offset + 1; // 进入 columnList
-      for (let c = 0; c < node.childCount; c++) {
-        const column = node.child(c);
-        if (column.type.name === 'column') {
-          let blockOffset = colOffset + 1; // 进入 column
-          for (let b = 0; b < column.childCount; b++) {
-            positions.push(blockOffset);
-            blockOffset += column.child(b).nodeSize;
-          }
-        }
-        colOffset += column.nodeSize;
+function collectBlockPositions(parent: PMNode, baseOffset: number, positions: number[]): void {
+  parent.forEach((node, offset) => {
+    const absPos = baseOffset + offset;
+    if (isContainerType(node.type.name)) {
+      if (node.attrs.open === false) {
+        // 收起的容器作为整体参与导航
+        positions.push(absPos);
+      } else {
+        // 展开的容器展开为子 block
+        collectBlockPositions(node, absPos + 1, positions);
       }
     } else {
-      positions.push(offset);
+      positions.push(absPos);
     }
   });
+}
+
+function getAllBlockPositions(doc: PMNode): number[] {
+  const positions: number[] = [];
+  collectBlockPositions(doc, 0, positions);
   return positions;
 }
 
 /**
- * 找到光标所在的可选中 block 位置
- * 如果在 column 内，定位到 column 的直接子 block
- * 否则定位到顶层 block
+ * 找到光标所在的可选中 block 位置（有手柄的最小单元）。
+ *
+ * 从光标最深处向上找，第一个父节点是 doc 或容器类型的 block 就是手柄目标。
+ * 特殊处理：如果父容器是收起的（open === false），选中容器整体。
  */
 function findSelectableBlockPos(doc: PMNode, $from: import('prosemirror-model').ResolvedPos): number | null {
-  // 检查是否在 column 内部
   for (let d = $from.depth; d >= 1; d--) {
-    if ($from.node(d).type.name === 'column') {
-      // 找 column 的直接子 block（depth = d + 1）
-      if ($from.depth > d) {
-        return $from.before(d + 1);
+    const parent = $from.node(d - 1);
+    if (parent.type.name === 'doc' || isContainerType(parent.type.name)) {
+      const childPos = $from.before(d);
+      // 如果父容器是收起的，选中容器整体而非子 block
+      if (isContainerType(parent.type.name) && parent.attrs.open === false && d >= 2) {
+        return $from.before(d - 1);
       }
-      break;
+      return childPos;
     }
   }
-  // 普通 block：顶层
   return findTopBlockPos(doc, $from.pos);
 }
 
 /** 找相邻 block */
 function getAdjacentBlockPos(doc: PMNode, currentPos: number, direction: 'up' | 'down'): number | null {
   const positions = getAllBlockPositions(doc);
-  const idx = positions.indexOf(currentPos);
-  if (idx < 0) return null;
+  let idx = positions.indexOf(currentPos);
+
+  // 当前选中的可能是容器（如收起的 toggleList），不在 positions 中
+  // 用二分查找找到最近的位置
+  if (idx < 0) {
+    if (direction === 'down') {
+      // 找第一个 > currentPos 的位置（跳过容器内部所有子 block）
+      const node = doc.nodeAt(currentPos);
+      const afterContainer = node ? currentPos + node.nodeSize : currentPos + 1;
+      idx = positions.findIndex(p => p >= afterContainer);
+      return idx >= 0 ? positions[idx] : null;
+    } else {
+      // 找最后一个 < currentPos 的位置
+      let prev = -1;
+      for (let i = 0; i < positions.length; i++) {
+        if (positions[i] < currentPos) prev = i;
+        else break;
+      }
+      return prev >= 0 ? positions[prev] : null;
+    }
+  }
+
   const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
   if (targetIdx < 0 || targetIdx >= positions.length) return null;
   return positions[targetIdx];
@@ -87,8 +114,21 @@ function getAdjacentBlockPos(doc: PMNode, currentPos: number, direction: 'up' | 
 /** 获取两个位置之间的所有 block 位置（含端点） */
 function getBlockRange(doc: PMNode, fromPos: number, toPos: number): number[] {
   const positions = getAllBlockPositions(doc);
-  const fromIdx = positions.indexOf(fromPos);
-  const toIdx = positions.indexOf(toPos);
+  // 找最近的索引（容器 pos 可能不在列表中）
+  function nearestIdx(pos: number, preferAfter: boolean): number {
+    const exact = positions.indexOf(pos);
+    if (exact >= 0) return exact;
+    if (preferAfter) {
+      const i = positions.findIndex(p => p > pos);
+      return i >= 0 ? i : positions.length - 1;
+    }
+    for (let i = positions.length - 1; i >= 0; i--) {
+      if (positions[i] < pos) return i;
+    }
+    return 0;
+  }
+  const fromIdx = nearestIdx(fromPos, fromPos <= toPos);
+  const toIdx = nearestIdx(toPos, toPos < fromPos);
   if (fromIdx < 0 || toIdx < 0) return [];
   const minIdx = Math.min(fromIdx, toIdx);
   const maxIdx = Math.max(fromIdx, toIdx);

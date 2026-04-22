@@ -8,8 +8,13 @@ import type { NavSideRegistration } from '../../shared/types';
  *
  * 遵循 workmode.md §四 的注册制设计。
  */
+
+type ActionHandler = (params: Record<string, unknown>) => Promise<unknown>;
+
 class NavSideRegistry {
   private registrations = new Map<string, NavSideRegistration>();
+  /** workModeId → actionId → handler */
+  private actionHandlers = new Map<string, Map<string, ActionHandler>>();
 
   register(reg: NavSideRegistration): void {
     this.registrations.set(reg.workModeId, reg);
@@ -17,6 +22,23 @@ class NavSideRegistry {
 
   get(workModeId: string): NavSideRegistration | undefined {
     return this.registrations.get(workModeId);
+  }
+
+  /** 插件注册 action handler */
+  registerAction(workModeId: string, actionId: string, handler: ActionHandler): void {
+    let map = this.actionHandlers.get(workModeId);
+    if (!map) {
+      map = new Map();
+      this.actionHandlers.set(workModeId, map);
+    }
+    map.set(actionId, handler);
+  }
+
+  /** Shell 通过 IPC 执行 action，路由到对应插件 */
+  async executeAction(workModeId: string, actionId: string, params: Record<string, unknown>): Promise<unknown> {
+    const handler = this.actionHandlers.get(workModeId)?.get(actionId);
+    if (!handler) return null;
+    return handler(params);
   }
 }
 

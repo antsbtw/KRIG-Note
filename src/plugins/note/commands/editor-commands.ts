@@ -11,11 +11,13 @@
  */
 
 import type { EditorView } from 'prosemirror-view';
-import type { MarkType } from 'prosemirror-model';
+import type { MarkType, Node as PMNode } from 'prosemirror-model';
+import { Fragment } from 'prosemirror-model';
 import { NodeSelection, TextSelection } from 'prosemirror-state';
 import { toggleMark } from 'prosemirror-commands';
 import { blockSelectionKey } from '../plugins/block-selection';
 import { deleteColumnAt } from '../plugins/container-keyboard';
+import { blockRegistry } from '../registry';
 
 // ── Clipboard ──
 
@@ -63,6 +65,38 @@ export function deleteBlockAt(view: EditorView, pos: number): boolean {
       deleteColumnAt(view, $pos.before($pos.depth), pos);
       return true;
     }
+  }
+
+  // 容器首子节点 → 提升为删除容器本身
+  // 手柄定位到容器内第一个子 block 时，Delete 应该删除整个容器
+  const CONTAINER_EXCLUDE = new Set(['columnList', 'column', 'table', 'tableRow', 'tableCell', 'tableHeader']);
+  const $pos = view.state.doc.resolve(pos);
+  if ($pos.depth >= 1) {
+    const parent = $pos.parent;
+    const parentDef = blockRegistry.get(parent.type.name);
+    if (parentDef?.containerRule && !CONTAINER_EXCLUDE.has(parent.type.name)) {
+      // 检查是否为父容器的第一个子节点
+      const parentPos = $pos.before($pos.depth);
+      const firstChildPos = parentPos + 1;
+      if (pos === firstChildPos) {
+        const parentNode = view.state.doc.nodeAt(parentPos);
+        if (parentNode) {
+          return deleteBlockAt(view, parentPos);
+        }
+      }
+    }
+  }
+
+  // 展开的容器（toggleList / callout / blockquote 等）：只删除容器壳，子 block 提升到上一级
+  // 收起的容器（open === false）：整体删除
+  const def = blockRegistry.get(node.type.name);
+  if (def?.containerRule && !CONTAINER_EXCLUDE.has(node.type.name)
+      && node.attrs.open !== false && node.childCount > 0) {
+    const children: PMNode[] = [];
+    node.forEach(child => children.push(child));
+    const tr = view.state.tr.replaceWith(pos, pos + node.nodeSize, Fragment.from(children));
+    view.dispatch(tr);
+    return true;
   }
 
   view.dispatch(view.state.tr.delete(pos, pos + node.nodeSize));

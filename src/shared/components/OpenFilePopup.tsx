@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import { APP_CONFIG } from '../app-config';
 
 /**
  * OpenFilePopup — 通用文件搜索弹窗
@@ -139,7 +140,8 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 4,
     color: '#e8eaed',
     fontSize: 12,
-    padding: '2px 10px',
+    height: APP_CONFIG.layout.toolbarBtnHeight,
+    padding: '0 10px',
     cursor: 'pointer',
   },
   popup: {

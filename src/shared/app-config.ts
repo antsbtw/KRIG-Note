@@ -30,6 +30,7 @@ export const APP_CONFIG = {
   layout: {
     navSideWidth: 240,
     topBarHeight: 36,
+    toolbarBtnHeight: 28,
     toggleWidth: 40,
     dividerWidth: 6,
   },

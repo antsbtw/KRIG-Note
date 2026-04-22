@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import { getNavPanel } from './panel-registry';
 import { useWorkspaceSync } from './hooks/useWorkspaceSync';
 import { useNoteOperations } from './hooks/useNoteOperations';
@@ -39,6 +39,77 @@ export function NavSide() {
     setExpandedFolders: ws.setExpandedFolders,
   });
 
+  // ── 空白区右键菜单 ──
+  const [blankContextMenu, setBlankContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const blankMenuRef = useRef<HTMLDivElement>(null);
+
+  // 点击外部关闭空白区右键菜单
+  useEffect(() => {
+    if (!blankContextMenu) return;
+    const close = (e: MouseEvent) => {
+      if (blankMenuRef.current && !blankMenuRef.current.contains(e.target as Node)) {
+        setBlankContextMenu(null);
+      }
+    };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [blankContextMenu]);
+
+  // 空白区右键菜单位置自适应
+  useEffect(() => {
+    if (!blankContextMenu || !blankMenuRef.current) return;
+    const el = blankMenuRef.current;
+    requestAnimationFrame(() => {
+      const rect = el.getBoundingClientRect();
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      let left = blankContextMenu.x;
+      let top = blankContextMenu.y;
+      if (left + rect.width > vw) left = Math.max(4, blankContextMenu.x - rect.width);
+      if (top + rect.height > vh) top = Math.max(4, blankContextMenu.y - rect.height);
+      el.style.left = `${left}px`;
+      el.style.top = `${top}px`;
+    });
+  }, [blankContextMenu]);
+
+  // 项目级右键菜单打开时关闭空白区菜单
+  useEffect(() => {
+    if (ops.contextMenu) setBlankContextMenu(null);
+  }, [ops.contextMenu]);
+
+  const handleBlankContextMenu = (e: React.MouseEvent) => {
+    // 只在空白区域触发（不是笔记/文件夹项）
+    if (e.target !== e.currentTarget) return;
+    e.preventDefault();
+    ops.setContextMenu(null); // 关闭项目级右键菜单
+    setBlankContextMenu({ x: e.clientX, y: e.clientY });
+  };
+
+  const handleBlankMenuAction = async (actionId: string) => {
+    setBlankContextMenu(null);
+    // 通过 executeAction 分发到插件处理，Shell 不知道具体操作
+    const result = await (window as any).navSideAPI.executeAction(actionId, {});
+    // 创建类操作：返回 id 后进入重命名模式
+    if (result?.id && actionId.startsWith('create-')) {
+      if (actionId === 'create-note') {
+        ws.setActiveNoteId(result.id);
+        (window as any).navSideAPI.noteOpenInEditor(result.id);
+      }
+      ops.setRenamingId(result.id);
+      ops.setRenameValue(result.title || '');
+    }
+  };
+
+  // ── 搜索 ──
+  const [searchQuery, setSearchQuery] = useState('');
+
+  /** 搜索时：扁平展示匹配的笔记（忽略文件夹层级） */
+  const searchResults = useMemo(() => {
+    if (!searchQuery.trim()) return null;
+    const q = searchQuery.toLowerCase();
+    return ws.noteList.filter(n => n.title.toLowerCase().includes(q));
+  }, [searchQuery, ws.noteList]);
+
   // ── 右键菜单位置自适应 ──
 
   const contextMenuRef = useRef<HTMLDivElement>(null);
@@ -65,7 +136,7 @@ export function NavSide() {
     const folders = ws.folderList
       .filter((f) => f.parent_id === parentId)
       .sort((a, b) => a.sort_order - b.sort_order);
-    const notes = ws.noteList.filter((n) => n.folder_id === parentId);
+    const notes = ops.getSortedNotes(parentId);
     const nodes: React.ReactNode[] = [];
 
     for (const folder of folders) {
@@ -102,7 +173,7 @@ export function NavSide() {
             onDragLeave={(e) => dnd.handleDragLeave(e, folder.id)}
             onDrop={(e) => dnd.handleDrop(e, folder.id)}
           >
-            <span style={styles.folderToggle}>{isExpanded ? '▾' : '▸'}</span>
+            <span style={styles.folderToggle}>{isExpanded ? '▼' : '▶'}</span>
             <span style={styles.folderIcon}>{(isExpanded || dnd.dropTargetId === folder.id) ? '📂' : '📁'}</span>
             {ops.renamingId === folder.id ? (
               <input
@@ -237,8 +308,44 @@ export function NavSide() {
               新建子文件夹
             </div>
             <div style={styles.contextMenuSeparator} />
+            <div
+              style={styles.contextMenuItem}
+              onClick={() => { ops.setContextMenu(null); ops.handleSortFolder(id, 'title'); }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = '#3a3a3a')}
+              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+            >
+              按名称排序
+            </div>
+            <div
+              style={styles.contextMenuItem}
+              onClick={() => { ops.setContextMenu(null); ops.handleSortFolder(id, 'date'); }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = '#3a3a3a')}
+              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+            >
+              按修改时间排序
+            </div>
+            <div style={styles.contextMenuSeparator} />
           </>
         )}
+        <div
+          style={styles.contextMenuItem}
+          onClick={() => ops.handleCopy(type, id)}
+          onMouseEnter={(e) => (e.currentTarget.style.background = '#3a3a3a')}
+          onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+        >
+          复制
+        </div>
+        {type === 'folder' && ops.clipboard && (
+          <div
+            style={styles.contextMenuItem}
+            onClick={() => ops.handlePaste(id)}
+            onMouseEnter={(e) => (e.currentTarget.style.background = '#3a3a3a')}
+            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+          >
+            粘贴
+          </div>
+        )}
+        <div style={styles.contextMenuSeparator} />
         <div
           style={styles.contextMenuItem}
           onClick={() => ops.startRename(type, id)}
@@ -326,7 +433,11 @@ export function NavSide() {
             : ws.registration?.contentType === 'web-bookmarks' ? '搜索书签...'
             : '搜索笔记...'
           }
-          readOnly
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') { setSearchQuery(''); (e.target as HTMLInputElement).blur(); }
+          }}
         />
       </div>
 
@@ -339,21 +450,73 @@ export function NavSide() {
               ...(dnd.dropTargetId === 'root' ? styles.dropTargetRoot : {}),
             }}
             onClick={(e) => {
-              if (e.target === e.currentTarget) ops.setSelectedItems(new Set());
+              if (e.target === e.currentTarget) { ops.setSelectedItems(new Set()); setBlankContextMenu(null); }
             }}
+            onContextMenu={handleBlankContextMenu}
             onDragOver={(e) => dnd.handleDragOver(e, 'root')}
             onDragLeave={(e) => dnd.handleDragLeave(e, 'root')}
             onDrop={(e) => dnd.handleDrop(e, null)}
           >
             {!ws.dbReady ? (
               <div style={styles.placeholder}>数据库启动中...</div>
+            ) : searchResults !== null ? (
+              // 搜索结果：扁平列表
+              searchResults.length === 0 ? (
+                <div style={styles.placeholder}>未找到匹配的笔记</div>
+              ) : (
+                searchResults.map(note => (
+                  <div
+                    key={`s-${note.id}`}
+                    style={{
+                      ...styles.noteItem,
+                      paddingLeft: '12px',
+                      ...(note.id === ws.activeNoteId ? styles.noteItemActive : {}),
+                    }}
+                    onClick={(e) => ops.handleClickNote(e, note.id)}
+                    onMouseEnter={(e) => {
+                      if (note.id !== ws.activeNoteId) e.currentTarget.style.background = '#2a2a2a';
+                    }}
+                    onMouseLeave={(e) => {
+                      if (note.id !== ws.activeNoteId) e.currentTarget.style.background = 'transparent';
+                    }}
+                  >
+                    <span style={styles.noteIcon}>📄</span>
+                    <span style={styles.noteTitle}>{note.title}</span>
+                    <span style={styles.noteDate}>{relativeTime(note.updated_at)}</span>
+                  </div>
+                ))
+              )
             ) : ws.noteList.length === 0 && ws.folderList.length === 0 ? (
               <div style={styles.placeholder}>暂无笔记</div>
             ) : (
               buildTree(null, 0)
             )}
           </div>
-          {renderContextMenu()}
+          {!searchResults && renderContextMenu()}
+          {blankContextMenu && ws.registration?.contextMenu && (
+            <div
+              ref={blankMenuRef}
+              style={{ ...styles.contextMenu, left: blankContextMenu.x, top: blankContextMenu.y }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {ws.registration.contextMenu.map((item) =>
+                item.separator ? (
+                  <div key={item.id} style={styles.contextMenuSeparator} />
+                ) : (
+                  <div
+                    key={item.id}
+                    style={styles.contextMenuItem}
+                    onClick={() => handleBlankMenuAction(item.id)}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = '#3a3a3a')}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                  >
+                    {item.icon && <span style={{ marginRight: 8 }}>{item.icon}</span>}
+                    {item.label}
+                  </div>
+                )
+              )}
+            </div>
+          )}
         </>
       )}
 

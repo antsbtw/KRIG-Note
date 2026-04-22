@@ -147,7 +147,7 @@ const htmlBlockRenderer: RenderBlockRenderer = {
       iframe.classList.add('html-block__iframe');
       iframe.setAttribute('sandbox', node.attrs.sandbox || 'allow-scripts');
       iframe.style.width = '100%';
-      iframe.style.height = `${node.attrs.height || 400}px`;
+      iframe.style.height = node.attrs.height ? `${node.attrs.height}px` : '0px';
       iframe.style.border = 'none';
       iframe.style.borderRadius = '8px';
       iframe.style.backgroundColor = '#ffffff';
@@ -159,6 +159,7 @@ const htmlBlockRenderer: RenderBlockRenderer = {
           const themeStyle = claudeThemeStyleTag();
           const heightScript = `<script>
             (function() {
+              var lastH = 0;
               function reportHeight() {
                 var h = Math.max(
                   document.body.scrollHeight,
@@ -166,11 +167,16 @@ const htmlBlockRenderer: RenderBlockRenderer = {
                   document.documentElement.scrollHeight,
                   document.documentElement.offsetHeight
                 );
-                parent.postMessage({ type: 'krig-iframe-height', height: h }, '*');
+                if (h !== lastH && h > 0) {
+                  lastH = h;
+                  parent.postMessage({ type: 'krig-iframe-height', height: h }, '*');
+                }
               }
-              window.addEventListener('load', function() { setTimeout(reportHeight, 100); });
+              window.addEventListener('load', function() { setTimeout(reportHeight, 50); });
               new MutationObserver(reportHeight).observe(document.body, { childList: true, subtree: true, attributes: true });
-              setTimeout(reportHeight, 500);
+              setTimeout(reportHeight, 200);
+              setTimeout(reportHeight, 1000);
+              setTimeout(reportHeight, 3000);
             })();
           </script>`;
           // 注入主题变量：插入到 <head> 中或 HTML 开头
@@ -191,11 +197,11 @@ const htmlBlockRenderer: RenderBlockRenderer = {
         }
       });
 
-      // 监听 iframe 高度上报
+      // 监听 iframe 高度上报 — 根据内容自适应，无人为下限
       const onMessage = (e: MessageEvent) => {
         if (e.data?.type === 'krig-iframe-height' && typeof e.data.height === 'number') {
           if (e.source === iframe.contentWindow) {
-            const h = Math.max(200, Math.min(e.data.height + 20, 2000));
+            const h = Math.min(e.data.height + 20, 4000);
             iframe.style.height = `${h}px`;
           }
         }
@@ -309,7 +315,7 @@ export const htmlBlockBlock: BlockDef = {
       thoughtId:   { default: null },
       src:         { default: null },
       title:       { default: '' },
-      height:      { default: 400 },
+      height:      { default: null },
       sandbox:     { default: 'allow-scripts' },
     },
     parseDOM: [{ tag: 'div.html-block' }],

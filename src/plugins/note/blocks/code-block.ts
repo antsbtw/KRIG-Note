@@ -499,8 +499,8 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
   if (node.attrs.language === 'mermaid') {
     updateViewMode(viewMode);
     setTimeout(() => renderMermaid(code.textContent || ''), 50);
-  } else if (currentPlugin?.hasPreview && !node.attrs.title) {
-    // 非 Canvas 的普通 codeBlock 自动显示预览
+  } else if (currentPlugin?.hasPreview && !node.attrs.title && !currentPlugin.openFullscreen) {
+    // 非 Canvas 且有 inline 预览能力的普通 codeBlock 自动显示预览（排除浮窗式插件如 JS）
     preview.style.display = 'flex';
     setTimeout(() => {
       currentPlugin?.activate?.(buildPluginContext());
@@ -539,8 +539,8 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
       if (node.attrs.language === 'mermaid') {
         if (langChanged) { updateViewMode(viewMode); renderMermaid(node.textContent); openMermaidPanel(); }
         else scheduleRender();
-      } else if (currentPlugin?.hasPreview) {
-        // 非 Mermaid 的 Preview 插件
+      } else if (currentPlugin?.hasPreview && !currentPlugin.openFullscreen) {
+        // 非 Mermaid 的 inline Preview 插件（排除浮窗式插件如 JS）
         preview.style.display = 'flex';
         if (langChanged) {
           currentPlugin.activate?.(buildPluginContext());

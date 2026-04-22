@@ -112,6 +112,13 @@ export interface WorkModeRegistration {
 }
 
 /** NavSide 内容注册（按 WorkMode 驱动） */
+export interface NavSideContextMenuItem {
+  id: string;
+  label: string;
+  icon?: string;
+  separator?: boolean;
+}
+
 export interface NavSideRegistration {
   workModeId: string;
   actionBar: {
@@ -119,6 +126,8 @@ export interface NavSideRegistration {
     actions: { id: string; label: string }[];
   };
   contentType: string;
+  /** 空白区域右键菜单命令（各插件注册） */
+  contextMenu?: NavSideContextMenuItem[];
 }
 
 /** 协同协议匹配条件 */
@@ -192,6 +201,7 @@ export const IPC = {
   NOTE_LIST_CHANGED: 'note:list-changed',
 
   NOTE_MOVE_TO_FOLDER: 'note:move-to-folder',
+  NOTE_DUPLICATE: 'note:duplicate',
 
   // NoteFile 编辑器操作
   NOTE_OPEN_IN_EDITOR: 'note:open-in-editor',
@@ -204,6 +214,7 @@ export const IPC = {
   FOLDER_DELETE: 'folder:delete',
   FOLDER_MOVE: 'folder:move',
   FOLDER_LIST: 'folder:list',
+  FOLDER_DUPLICATE: 'folder:duplicate',
 
   // Workspace ↔ View 状态同步
   SET_ACTIVE_NOTE: 'workspace:set-active-note',            // NoteView → main: 报告当前打开的笔记
@@ -248,6 +259,7 @@ export const IPC = {
 
   // NavSide 注册制
   NAVSIDE_GET_REGISTRATION: 'navside:get-registration',
+  NAVSIDE_EXECUTE_ACTION: 'navside:execute-action',
 
   // eBook 书架（NavSide 用）
   EBOOK_BOOKSHELF_LIST: 'ebook:bookshelf-list',

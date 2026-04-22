@@ -4,6 +4,7 @@ import { SlotToggle } from '../../../shared/components/SlotToggle';
 import { OpenFilePopup } from '../../../shared/components/OpenFilePopup';
 import type { FileItem } from '../../../shared/components/OpenFilePopup';
 import { canGoBack, canGoForward, goBack, goForward } from '../plugins/link-click';
+import { APP_CONFIG } from '../../../shared/app-config';
 
 /**
  * NoteView — L3 View 组件
@@ -326,7 +327,8 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 4,
     color: '#e8eaed',
     fontSize: 12,
-    padding: '2px 10px',
+    height: APP_CONFIG.layout.toolbarBtnHeight,
+    padding: '0 10px',
     cursor: 'pointer',
     flexShrink: 0,
   },
@@ -336,7 +338,8 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 4,
     color: '#e8eaed',
     fontSize: 12,
-    padding: '2px 10px',
+    height: APP_CONFIG.layout.toolbarBtnHeight,
+    padding: '0 10px',
     cursor: 'pointer',
     flexShrink: 0,
   },
@@ -372,9 +375,9 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 4,
     color: '#888',
     fontSize: 16,
+    height: APP_CONFIG.layout.toolbarBtnHeight,
     padding: '0 6px',
     cursor: 'pointer',
     flexShrink: 0,
-    lineHeight: '24px',
   },
 };

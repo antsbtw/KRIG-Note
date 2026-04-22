@@ -229,6 +229,11 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
     return navSideRegistry.get(workModeId) ?? null;
   });
 
+  ipcMain.handle(IPC.NAVSIDE_EXECUTE_ACTION, async (_event, actionId: string, params?: Record<string, unknown>) => {
+    const active = workspaceManager.getActive();
+    if (!active) return null;
+    return navSideRegistry.executeAction(active.workModeId, actionId, params ?? {});
+  });
 
   // ── 文件保存对话框 ──
   ipcMain.handle(IPC.FILE_SAVE_DIALOG, async (_event, options: {

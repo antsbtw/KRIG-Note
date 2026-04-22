@@ -11,6 +11,8 @@ contextBridge.exposeInMainWorld('navSideAPI', {
 
   // NavSide
   toggle: () => ipcRenderer.invoke(IPC.NAVSIDE_TOGGLE),
+  executeAction: (actionId: string, params?: Record<string, unknown>) =>
+    ipcRenderer.invoke(IPC.NAVSIDE_EXECUTE_ACTION, actionId, params),
 
   // Right Slot
   openRightSlot: (workModeId: string) => ipcRenderer.invoke(IPC.SLOT_OPEN_RIGHT, workModeId),

@@ -17,6 +17,7 @@ interface FolderRecord {
 
 declare const navSideAPI: {
   switchWorkMode: (id: string) => Promise<void>;
+  executeAction: (actionId: string, params?: Record<string, unknown>) => Promise<any>;
   noteCreate: (title?: string, folderId?: string | null) => Promise<any>;
   noteDelete: (id: string) => Promise<void>;
   noteRename: (id: string, title: string) => Promise<void>;
@@ -56,7 +57,10 @@ export function useNoteOperations(input: NoteOperationsInput) {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renamingType, setRenamingType] = useState<'note' | 'folder'>('note');
   const [renameValue, setRenameValue] = useState('');
-  const renameInputRef = useRef<HTMLInputElement>(null);
+  // callback ref：每次 input 挂载（含列表刷新导致的重建）都自动 focus + 全选
+  const renameInputRef = useCallback((el: HTMLInputElement | null) => {
+    if (el) { el.focus(); el.select(); }
+  }, []);
 
   // 右键菜单：点击空白关闭
   useEffect(() => {
@@ -66,23 +70,18 @@ export function useNoteOperations(input: NoteOperationsInput) {
     return () => window.removeEventListener('click', close);
   }, [contextMenu]);
 
-  // 重命名自动聚焦
-  useEffect(() => {
-    if (renamingId && renameInputRef.current) {
-      renameInputRef.current.focus();
-      renameInputRef.current.select();
-    }
-  }, [renamingId]);
-
   const handleSwitchMode = useCallback((id: string) => {
     navSideAPI.switchWorkMode(id);
   }, []);
 
   const handleCreateNote = useCallback((folderId?: string | null) => {
-    navSideAPI.noteCreate(undefined, folderId).then((note: any) => {
+    navSideAPI.noteCreate('新建笔记', folderId).then((note: any) => {
       if (note?.id) {
         setActiveNoteId(note.id);
         navSideAPI.noteOpenInEditor(note.id);
+        setRenamingId(note.id);
+        setRenamingType('note');
+        setRenameValue('新建笔记');
       }
     });
   }, [setActiveNoteId]);
@@ -169,8 +168,9 @@ export function useNoteOperations(input: NoteOperationsInput) {
     if (e.metaKey || e.ctrlKey || e.shiftKey) {
       handleItemClick(e, `f:${folderId}`);
     } else {
-      setSelectedItems(new Set());
-      lastClickedRef.current = `f:${folderId}`;
+      const key = `f:${folderId}`;
+      setSelectedItems(new Set([key]));
+      lastClickedRef.current = key;
       setExpandedFolders((s) => {
         const next = new Set(s);
         if (next.has(folderId)) next.delete(folderId); else next.add(folderId);
@@ -245,6 +245,44 @@ export function useNoteOperations(input: NoteOperationsInput) {
     navSideAPI.noteMoveToFolder(noteId, null);
   }, []);
 
+  // NavSide 剪贴板
+  const [clipboard, setClipboard] = useState<{ type: 'note' | 'folder'; id: string } | null>(null);
+
+  /** 复制笔记或文件夹 */
+  const handleCopy = useCallback((type: 'note' | 'folder', id: string) => {
+    setContextMenu(null);
+    setClipboard({ type, id });
+  }, []);
+
+  /** 粘贴到指定文件夹 — 通过 executeAction 分发到插件处理 */
+  const handlePaste = useCallback((targetFolderId: string | null) => {
+    setContextMenu(null);
+    if (!clipboard) return;
+    navSideAPI.executeAction('paste', {
+      clipboardType: clipboard.type,
+      clipboardId: clipboard.id,
+      targetFolderId,
+    });
+  }, [clipboard]);
+
+  // 文件夹排序
+  const [folderSortMap, setFolderSortMap] = useState<Record<string, 'title' | 'date'>>({});
+
+  const handleSortFolder = useCallback((folderId: string, sortBy: 'title' | 'date') => {
+    setFolderSortMap(prev => ({ ...prev, [folderId]: sortBy }));
+  }, []);
+
+  /** 获取指定文件夹下的笔记（已排序） */
+  const getSortedNotes = useCallback((folderId: string | null): NoteListItem[] => {
+    const notes = noteList.filter(n => n.folder_id === folderId);
+    const sortBy = folderId ? folderSortMap[folderId] : undefined;
+    if (sortBy === 'title') {
+      return notes.sort((a, b) => a.title.localeCompare(b.title, 'zh-CN'));
+    }
+    // 默认按修改时间倒序（最新在前）
+    return notes.sort((a, b) => b.updated_at - a.updated_at);
+  }, [noteList, folderSortMap]);
+
   return {
     selectedItems, setSelectedItems,
     contextMenu, setContextMenu,
@@ -253,5 +291,7 @@ export function useNoteOperations(input: NoteOperationsInput) {
     handleClickNote, handleClickFolder, toggleFolder,
     handleContextMenu, handleDelete, handleDeleteSelected,
     startRename, commitRename, handleMoveOut,
+    handleSortFolder, getSortedNotes,
+    clipboard, handleCopy, handlePaste,
   };
 }

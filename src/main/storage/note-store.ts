@@ -121,6 +121,30 @@ export const noteStore: INoteStore = {
     );
   },
 
+  async duplicate(id: string, targetFolderId?: string | null): Promise<NoteRecord | null> {
+    const original = await this.get(id);
+    if (!original) return null;
+
+    const newId = generateId();
+    const now = Date.now();
+    const record: NoteRecord = {
+      id: newId,
+      title: `${original.title} (副本)`,
+      doc_content: JSON.parse(JSON.stringify(original.doc_content)),
+      folder_id: targetFolderId !== undefined ? targetFolderId : original.folder_id,
+      created_at: now,
+      updated_at: now,
+    };
+
+    const db = getDB();
+    if (!db) return null;
+    await db.query(
+      `CREATE note SET id = $id, title = $title, doc_content = $doc_content, folder_id = $folder_id, created_at = $created_at, updated_at = $updated_at`,
+      { id: newId, title: record.title, doc_content: record.doc_content, folder_id: record.folder_id, created_at: now, updated_at: now },
+    );
+    return record;
+  },
+
   async list(): Promise<NoteListItem[]> {
     const db = getDB();
     if (!db) return [];

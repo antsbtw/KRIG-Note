@@ -1,36 +1,83 @@
-# toggleList — 折叠列表
+# toggleList — 折叠段落
 
 > **类型**：ContainerBlock（见 `base/container-block.md`）
 > **位置**：文档中任意位置
-> **状态**：待实现
+> **状态**：已实现
 
 ---
 
-## 一、定义
+## 一、核心概念
 
-toggleList 是可折叠的列表容器——首行作为摘要始终可见，子内容可以折叠/展开。与 toggleHeading 不同，toggleList 没有必填首子——首行是 paragraph 而非 heading。
+toggleList 本质是一个**特殊的段落**——它的标题行就是普通段落，只是多了折叠箭头，可以把下方的子 block 隐藏起来。
 
 ```
 展开状态：
-▾ 这是折叠列表的摘要行          ← paragraph（首行，始终可见）
-    详细内容段落...              ← block*（折叠时隐藏）
+▾ 这是折叠段落的标题行          ← 普通段落 + 折叠箭头
+    详细内容段落...              ← 子 block（折叠时隐藏）
     代码示例...
 
 折叠状态：
-▸ 这是折叠列表的摘要行          ← 首行仍可见，子内容隐藏
+▸ 这是折叠段落的标题行          ← 标题行始终可见，子内容隐藏
 ```
+
+### 两个身份
+
+toggleList 同时具备两个身份：
+
+| 身份 | 说明 |
+|------|------|
+| **段落** | 标题行继承段落的所有操作（编辑、格式、Turn Into 等） |
+| **容器** | 管理子 block 的折叠/展开，收起时作为整体操作 |
+
+### 子 block 独立性
+
+子 block 属于 toggleList 的子叶，但**每个子 block 都是独立的操作单元**：
+- 每个子 block 有自己的手柄（+ ⠿）
+- 每个子 block 可以独立删除、拖拽、Turn Into
+- 不会因为是 toggleList 的子叶就失去自身的功能
 
 ---
 
-## 二、toggleList vs toggleHeading
+## 二、操作规则
 
-| 维度 | toggleHeading | toggleList |
-|------|--------------|------------|
-| 首子 | heading（必填，H1-H3） | 无必填首子（通常是 paragraph） |
-| 用途 | 章节折叠（结构化大纲） | 细节折叠（FAQ、步骤详情） |
-| 大纲 | 参与文档大纲 | 不参与大纲 |
-| 视觉 | 大字号标题 | 正常字号 |
-| 互转 | toggleHeading → toggleList（heading → paragraph 时） | toggleList → toggleHeading（首行转为 heading 时） |
+### 2.1 状态决定操作粒度
+
+| 状态 | 操作 | 行为 |
+|------|------|------|
+| **收起** | ESC 选中 | 选中整个 toggleList（包括所有隐藏的子 block） |
+| **收起** | 删除 / 剪切 | 整体操作（标题行 + 所有子 block 一起删除） |
+| **收起** | 拖拽 | 整体移动 |
+| **展开** | 删除 tog 标题行 | 只删除 toggleList 壳，子 block 回退一级缩进 |
+| **展开** | 子 block 操作 | 每个子 block 独立操作，不影响 toggleList |
+
+### 2.2 ESC 与 ↑/↓ 导航
+
+| 场景 | 行为 |
+|------|------|
+| 光标在标题行，按 ESC | 选中标题行所在的子 block |
+| 光标在子 block，按 ESC | 选中该子 block |
+| 选中后按 ↑/↓ | 在所有 block（含 toggleList 子 block）间导航 |
+
+### 2.3 折叠/展开
+
+- 点击 ▸/▾ 图标切换
+- 折叠时子内容隐藏（标题行后面的所有 block）
+
+### 2.4 删除逻辑
+
+```
+收起的 toggleList → Delete：
+  整体删除（标题行 + 所有子 block）
+
+展开的 toggleList → Delete 标题行：
+  ▾ 标题行      ← 删除这一行
+      子段落 A   ← 提升到上一级
+      子段落 B   ← 提升到上一级
+  
+  结果：
+  子段落 A
+  子段落 B
+```
 
 ---
 
@@ -52,10 +99,7 @@ nodeSpec: {
 
 ```typescript
 capabilities: {
-  turnInto: ['paragraph', 'toggleHeading'],
-  marks: [],
-  canIndent: true,     // Tab 嵌套
-  canDuplicate: false,
+  turnInto: ['textBlock'],
   canDelete: true,
   canDrag: true,
 }
@@ -66,75 +110,32 @@ capabilities: {
 ## 五、Container 规则
 
 ```typescript
-containerRule: {
-  requiredFirstChildType: undefined,  // 无必填首子
-}
+containerRule: {}
 ```
 
 ---
 
-## 六、EnterBehavior
-
-```typescript
-enterBehavior: {
-  action: 'split',
-  exitCondition: 'empty-enter',
-}
-```
-
-- 在首行按 Enter → 在折叠内容区域创建新 paragraph
-- 在子内容的空行按 Enter → 退出 toggleList
-
----
-
-## 七、SlashMenu
+## 六、SlashMenu
 
 ```typescript
 slashMenu: {
   label: 'Toggle List',
-  icon: '▸',
-  group: 'toggle',
-  keywords: ['toggle', 'collapse', 'fold', 'detail', 'summary'],
-  order: 1,
+  icon: '▶',
+  group: 'basic',
+  keywords: ['toggle', 'fold', 'collapse', '折叠'],
+  order: 9,
 }
 ```
 
 ---
 
-## 八、交互行为
-
-### 8.1 折叠/展开
-
-与 toggleHeading 相同：
-- 点击 ▸/▾ 图标切换
-- 折叠时子内容隐藏（首行后面的所有 block）
-
-### 8.2 Tab / Shift+Tab
-
-| 操作 | 行为 |
-|------|------|
-| Tab | toggleList 嵌套到上一个同级 toggle 内部 |
-| Shift+Tab | 从父 toggle 中提升出来 |
-
-### 8.3 首行的定义
-
-toggleList 没有 `requiredFirstChildType`，但视觉上第一个 block 作为"摘要行"始终可见。折叠时隐藏的是第二个 block 开始的所有内容。
-
-```
-content: block+
-         ↑ 第一个 = 摘要行（始终可见）
-           ↑ 第二个开始 = 折叠区域
-```
-
----
-
-## 九、NodeView
+## 七、NodeView
 
 ```
 ┌─ toggleList ─────────────────────────┐
-│ ▾ 摘要行 paragraph（始终可见）       │
+│ ▾ 标题行 textBlock（始终可见）       │  ← 段落 + 折叠箭头
 │ ┌─ 折叠区域 ─────────────────────┐  │
-│ │ paragraph...                    │  │
+│ │ textBlock...                    │  │  ← 独立子 block，各有手柄
 │ │ codeBlock...                    │  │
 │ └─────────────────────────────────┘  │
 └──────────────────────────────────────┘
@@ -142,29 +143,7 @@ content: block+
 
 ---
 
-## 十、与 toggleHeading 的互转
-
-```
-toggleList:
-▾ 普通文字摘要
-    子内容...
-
-turnInto toggleHeading:
-▾ 普通文字摘要 → H2 标题     ← 首行 paragraph 转为 heading
-    子内容...（保留）
-
-toggleHeading:
-▾ H2 标题
-    子内容...
-
-turnInto toggleList:
-▾ H2 标题 → 普通文字         ← 首子 heading 转为 paragraph
-    子内容...（保留）
-```
-
----
-
-## 十一、BlockDef
+## 八、BlockDef
 
 ```typescript
 export const toggleListBlock: BlockDef = {
@@ -173,37 +152,30 @@ export const toggleListBlock: BlockDef = {
   nodeSpec: {
     content: 'block+',
     group: 'block',
+    defining: true,
     attrs: { open: { default: true } },
+    parseDOM: [{ tag: 'div.toggle-list' }],
+    toDOM() { return ['div', { class: 'toggle-list' }, 0]; },
   },
   nodeView: toggleListNodeView,
-  plugin: toggleListPlugin,
-  enterBehavior: {
-    action: 'split',
-    exitCondition: 'empty-enter',
-  },
-  capabilities: {
-    turnInto: ['paragraph', 'toggleHeading'],
-    canIndent: true,
-    canDelete: true,
-    canDrag: true,
-  },
+  capabilities: { turnInto: ['textBlock'], canDelete: true, canDrag: true },
   containerRule: {},
   slashMenu: {
     label: 'Toggle List',
-    icon: '▸',
-    group: 'toggle',
-    keywords: ['toggle', 'collapse', 'fold', 'detail', 'summary'],
-    order: 1,
+    icon: '▶',
+    group: 'basic',
+    keywords: ['toggle', 'fold', 'collapse', '折叠'],
+    order: 9,
   },
 };
 ```
 
 ---
 
-## 十二、设计原则
+## 九、设计原则
 
-1. **无必填首子**：与 toggleHeading 的核心区别。任何 block 都可以作为首行
-2. **首行 = 摘要**：视觉上第一个 block 始终可见，作为折叠摘要
-3. **与 toggleHeading 互转**：首行 paragraph ↔ heading 决定了容器类型
-4. **缩进即嵌套**：Tab 把 toggleList 塞进上一个 toggle，不是视觉缩进
+1. **段落优先**：toggleList 的标题行就是普通段落，继承段落的所有能力
+2. **子 block 独立**：每个子 block 保留完整功能，不因嵌套而降级
+3. **状态决定粒度**：收起 = 整体操作，展开 = 各自独立
+4. **删除即解散**：展开时删除容器，子 block 回退缩进，不丢失内容
 5. **整体移动**：拖拽时所有子内容一起移动

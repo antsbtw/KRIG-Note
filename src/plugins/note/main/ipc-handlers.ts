@@ -120,6 +120,13 @@ export function registerNoteIpcHandlers(getMainWindow: () => BaseWindow | null):
     broadcastNoteList();
   });
 
+  ipcMain.handle(IPC.NOTE_DUPLICATE, async (_event, noteId: string, targetFolderId?: string | null) => {
+    if (!isDBReady()) return null;
+    const result = await noteStore.duplicate(noteId, targetFolderId);
+    broadcastNoteList();
+    return result;
+  });
+
   ipcMain.handle(IPC.NOTE_OPEN_IN_EDITOR, async (_event, noteId: string) => {
     broadcastToAll(IPC.NOTE_OPEN_IN_EDITOR, noteId);
   });
@@ -127,22 +134,57 @@ export function registerNoteIpcHandlers(getMainWindow: () => BaseWindow | null):
   // ── Folder CRUD ──
   ipcMain.handle(IPC.FOLDER_CREATE, async (_event, title: string, parentId?: string | null) => {
     if (!isDBReady()) return null;
-    return folderStore.create(title, parentId ?? null);
+    const result = folderStore.create(title, parentId ?? null);
+    broadcastNoteList();
+    return result;
   });
 
   ipcMain.handle(IPC.FOLDER_RENAME, async (_event, id: string, title: string) => {
     if (!isDBReady()) return;
     await folderStore.rename(id, title);
+    broadcastNoteList();
   });
 
   ipcMain.handle(IPC.FOLDER_DELETE, async (_event, id: string) => {
     if (!isDBReady()) return;
     await folderStore.delete(id);
+    broadcastNoteList();
   });
 
   ipcMain.handle(IPC.FOLDER_MOVE, async (_event, id: string, parentId: string | null) => {
     if (!isDBReady()) return;
     await folderStore.move(id, parentId);
+    broadcastNoteList();
+  });
+
+  // 递归复制文件夹（含子文件夹和笔记）
+  ipcMain.handle(IPC.FOLDER_DUPLICATE, async (_event, folderId: string, targetParentId?: string | null) => {
+    if (!isDBReady()) return null;
+
+    async function duplicateFolder(srcId: string, destParentId: string | null): Promise<void> {
+      // 1. 复制文件夹本身
+      const allFolders = await folderStore.list();
+      const srcFolder = allFolders.find(f => f.id === srcId);
+      if (!srcFolder) return;
+
+      const newFolder = await folderStore.create(srcFolder.title + ' (副本)', destParentId);
+
+      // 2. 复制文件夹下的所有笔记
+      const allNotes = await noteStore.list();
+      const childNotes = allNotes.filter(n => n.folder_id === srcId);
+      for (const note of childNotes) {
+        await noteStore.duplicate(note.id, newFolder.id);
+      }
+
+      // 3. 递归复制子文件夹
+      const childFolders = allFolders.filter(f => f.parent_id === srcId);
+      for (const child of childFolders) {
+        await duplicateFolder(child.id, newFolder.id);
+      }
+    }
+
+    await duplicateFolder(folderId, targetParentId ?? null);
+    broadcastNoteList();
   });
 
   ipcMain.handle(IPC.FOLDER_LIST, async () => {

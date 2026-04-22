@@ -327,9 +327,8 @@ export const jsPlugin: CodeLanguagePlugin = {
     openPreviewModal(ctx.getCode(), ctx.node.attrs.title || '');
   },
 
-  activate(ctx: CodePluginContext) {
-    // Canvas Preview 按钮也走浮窗
-    openPreviewModal(ctx.getCode(), ctx.node.attrs.title || '');
+  activate() {
+    // JS 插件只走 openFullscreen 浮窗模式，不需要 inline activate
   },
 
   deactivate() {
