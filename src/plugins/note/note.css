@@ -1364,6 +1364,180 @@
   cursor: col-resize;
 }
 
+/* Table 行/列指示器 —— Notion 风格 */
+.ProseMirror .table-block-wrapper {
+  /* 给指示器留出顶部 / 左侧空间（hover 显示） */
+  padding-top: 14px;
+  padding-left: 14px;
+}
+
+.ProseMirror .table-block__col-indicators {
+  position: absolute;
+  top: 0;
+  left: 14px;
+  right: 0;
+  height: 14px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.ProseMirror .table-block__row-indicators {
+  position: absolute;
+  top: 14px;
+  left: 0;
+  bottom: 0;
+  width: 14px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.ProseMirror .table-block-wrapper:hover .table-block__col-indicators,
+.ProseMirror .table-block-wrapper:hover .table-block__row-indicators {
+  opacity: 1;
+}
+
+.ProseMirror .table-block__col-indicator,
+.ProseMirror .table-block__row-indicator {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: #5f6368;
+  background: transparent;
+  border-radius: 3px;
+  pointer-events: auto;
+  transition: background 0.12s, color 0.12s;
+}
+
+.ProseMirror .table-block__col-indicator {
+  top: 0;
+  height: 12px;
+}
+
+.ProseMirror .table-block__row-indicator {
+  left: 0;
+  width: 12px;
+}
+
+.ProseMirror .table-block__col-indicator:hover,
+.ProseMirror .table-block__row-indicator:hover {
+  background: rgba(138, 180, 248, 0.15);
+  color: #8ab4f8;
+}
+
+.ProseMirror .table-block__indicator-dot {
+  font-size: 14px;
+  line-height: 1;
+  letter-spacing: -1px;
+  user-select: none;
+}
+
+.ProseMirror .table-block__row-indicator .table-block__indicator-dot {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+}
+
+/* Table 上下文菜单（挂在 body 上） */
+.table-block__menu {
+  position: fixed;
+  z-index: 9999;
+  min-width: 160px;
+  background: #2a2a2a;
+  border: 1px solid #3c3c3c;
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-size: 13px;
+  color: #e8eaed;
+  user-select: none;
+}
+
+.table-block__menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  background: transparent;
+  border: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 4px;
+  font: inherit;
+}
+
+.table-block__menu-item:hover {
+  background: rgba(138, 180, 248, 0.15);
+}
+
+.table-block__menu-item.is-danger {
+  color: #f28b82;
+}
+
+.table-block__menu-item.is-danger:hover {
+  background: rgba(242, 139, 130, 0.15);
+}
+
+.table-block__menu-icon {
+  width: 16px;
+  display: inline-flex;
+  justify-content: center;
+  font-size: 13px;
+  opacity: 0.9;
+}
+
+/* Table 单元格选区浮动工具条 */
+.table-block__toolbar {
+  position: fixed;
+  z-index: 9998;
+  display: flex;
+  gap: 2px;
+  background: #2a2a2a;
+  border: 1px solid #3c3c3c;
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  padding: 4px;
+  font-size: 12px;
+  color: #e8eaed;
+  user-select: none;
+}
+
+.table-block__toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: transparent;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  border-radius: 4px;
+  font: inherit;
+}
+
+.table-block__toolbar-btn:hover {
+  background: rgba(138, 180, 248, 0.15);
+}
+
+.table-block__toolbar-btn.is-danger {
+  color: #f28b82;
+}
+
+.table-block__toolbar-btn.is-danger:hover {
+  background: rgba(242, 139, 130, 0.15);
+}
+
+.table-block__toolbar-icon {
+  font-size: 12px;
+  opacity: 0.9;
+}
+
 /* ── columnList ── */
 
 .column-list {

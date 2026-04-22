@@ -173,7 +173,9 @@ class BlockRegistry {
     const plugins: Plugin[] = [];
     for (const block of this.blocks.values()) {
       if (block.plugin) {
-        plugins.push(block.plugin());
+        const result = block.plugin();
+        if (Array.isArray(result)) plugins.push(...result);
+        else plugins.push(result);
       }
     }
     return plugins;

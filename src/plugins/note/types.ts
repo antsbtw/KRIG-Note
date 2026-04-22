@@ -102,7 +102,7 @@ export interface BlockDef {
   onIndent?: (view: EditorView, pos: number) => boolean;
   onOutdent?: (view: EditorView, pos: number) => boolean;
 
-  plugin?: () => Plugin;
+  plugin?: () => Plugin | Plugin[];
   containerRule?: ContainerRule;
 
   // ── 数据层 ──

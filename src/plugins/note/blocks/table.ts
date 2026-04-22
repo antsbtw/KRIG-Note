@@ -1,7 +1,8 @@
 import type { BlockDef } from '../types';
 import { keymap } from 'prosemirror-keymap';
-import { tableEditing, goToNextCell, columnResizing, addRowAfter } from 'prosemirror-tables';
+import { tableEditing, goToNextCell, addRowAfter } from 'prosemirror-tables';
 import { tableNodeView } from './table/view';
+import { tableToolbarPlugin } from './table/toolbar';
 
 /**
  * Table — 表格系统（4 个节点）
@@ -31,7 +32,7 @@ export const tableBlock: BlockDef = {
     cascadeBoundary: true,
   },
   containerRule: {},
-  plugin: () => tableEditing(),
+  plugin: () => [tableEditing(), tableKeymapPlugin(), tableToolbarPlugin()],
   slashMenu: { label: 'Table', icon: '▦', group: 'basic', keywords: ['table', 'grid', '表格'], order: 12 },
 };
 

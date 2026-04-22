@@ -251,6 +251,13 @@ export function indentPlugin(): Plugin {
 
         const { $from } = view.state.selection;
 
+        // 在 tableCell / tableHeader 内 → 让 tableKeymapPlugin 接管（跳 cell / 加行）
+        for (let d = $from.depth; d > 0; d--) {
+          const name = $from.node(d).type.name;
+          if (name === 'tableCell' || name === 'tableHeader') return false;
+          if (name === 'table') break;
+        }
+
         // codeBlock 有自己的 Tab 处理（插入空格），这里跳过
         if ($from.parent.type.spec.code) return false;
 
