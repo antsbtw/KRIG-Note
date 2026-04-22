@@ -1538,6 +1538,36 @@
   opacity: 0.9;
 }
 
+/* 菜单 / 工具条的选中态 + 分隔线（用于对齐指示） */
+.table-block__menu-item.is-active,
+.table-block__toolbar-btn.is-active {
+  background: rgba(138, 180, 248, 0.2);
+  color: #8ab4f8;
+}
+
+.table-block__menu-divider {
+  height: 1px;
+  margin: 4px 2px;
+  background: #3c3c3c;
+}
+
+/* Cell 文字对齐 —— 让 cell 内所有子 block 跟随对齐 */
+.ProseMirror table.pm-table td[data-align="left"],
+.ProseMirror table.pm-table th[data-align="left"]   { text-align: left; }
+.ProseMirror table.pm-table td[data-align="center"],
+.ProseMirror table.pm-table th[data-align="center"] { text-align: center; }
+.ProseMirror table.pm-table td[data-align="right"],
+.ProseMirror table.pm-table th[data-align="right"]  { text-align: right; }
+.ProseMirror table.pm-table td[data-align="justify"],
+.ProseMirror table.pm-table th[data-align="justify"]{ text-align: justify; }
+
+/* cell 内的 textBlock / p / li 等块级后代默认继承 text-align；
+ * 但部分 block（如 textBlock）可能有自己的对齐样式，这里强制覆盖。 */
+.ProseMirror table.pm-table td[data-align] > *,
+.ProseMirror table.pm-table th[data-align] > * {
+  text-align: inherit;
+}
+
 /* ── columnList ── */
 
 .column-list {

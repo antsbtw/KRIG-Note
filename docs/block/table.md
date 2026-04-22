@@ -201,9 +201,19 @@ table 是不变量 9 的**例外**。子节点组织方式是**二维网格**，
 | 选中 cell 蓝色 overlay | ✅ CSS | `.selectedCell::after` |
 | 单元格背景色（per-cell） | ❌ | attrs 无 `background` 字段 |
 | 单元格文字色（per-cell） | ❌ | 只能通过文本 mark |
-| 对齐方式（左/中/右） | ❌ | attrs 无 `align` 字段 |
+| 对齐方式（左/中/右/两端对齐） | ✅ | tableCell/tableHeader `attrs.align`，通过列/行指示器菜单或 CellSelection 浮动工具条设置；实现见 [table.ts](../../src/plugins/note/blocks/table.ts) + [commands.ts `setCellAlign`](../../src/plugins/note/blocks/table/commands.ts) |
 | Header row / column toggle | ❌ | —— |
 | 冻结首行 / 首列 | ❌ | 需 sticky CSS + scroll 协同 |
+
+**对齐操作入口**（3 种）：
+- **列指示器菜单** → 对齐项对**整列**所有 cell 批量设置
+- **行指示器菜单** → 对齐项对**整行**所有 cell 批量设置
+- **CellSelection 浮动工具条**（拖选多格或光标在已合并 cell 内）→ 对选区/cell 批量设置
+
+Align 值：`left` / `center` / `right` / `justify` / `null`（清除 = 继承默认）。存储形态：
+- Schema 层：`tableCell` / `tableHeader` 的 `attrs.align`
+- DOM 层：`<td data-align="center" style="text-align: center">`（同时写 `data-align` 方便 CSS 选择器 + `style` 方便打印/复制）
+- Atom 层：`TableCellContent.align`
 
 ### 8.5 导入导出
 
@@ -329,7 +339,8 @@ interface TableCellContent {
    - paste handler 识别 tab 分隔或 CSV 文本，转 table 节点
 
 6. **单元格样式（per-cell attrs）**
-   - tableCell / tableHeader 加 `background` / `color` / `align` attrs
+   - `align` ✅ **已完成**（left / center / right / justify，见 §8.4）
+   - `background` / `color` ❌ 未实现
    - 接入 HandleMenu 的颜色面板（当前颜色面板只作用在 block 级别，需扩展到 cell 级别）
 
 7. **Header row / Header column toggle**

@@ -20,12 +20,14 @@ import {
   addRowBefore,
   deleteColumn,
   deleteRow,
+  selectedRect,
   updateColumnsOnResize,
 } from 'prosemirror-tables';
 import { TextSelection } from 'prosemirror-state';
 import type { EditorView } from 'prosemirror-view';
 import type { NodeViewFactory } from '../../types';
-import { duplicateColumn, duplicateRow } from './commands';
+import type { CellAlign } from '../table';
+import { duplicateColumn, duplicateRow, setCellAlign } from './commands';
 
 // ─── Helper: place cursor into a specific cell ─────────────
 
@@ -60,7 +62,16 @@ interface MenuItem {
   label: string;
   icon?: string;
   danger?: boolean;
+  active?: boolean;    // 选中态（如当前对齐方式）
   run: () => void;
+}
+
+interface MenuDivider { divider: true }
+
+type MenuEntry = MenuItem | MenuDivider;
+
+function isDivider(e: MenuEntry): e is MenuDivider {
+  return (e as MenuDivider).divider === true;
 }
 
 let currentMenu: HTMLElement | null = null;
@@ -75,15 +86,25 @@ function closeOnOutside(e: MouseEvent) {
   if (currentMenu && !currentMenu.contains(e.target as Node)) closeMenu();
 }
 
-function openMenu(anchor: HTMLElement, items: MenuItem[]) {
+function openMenu(anchor: HTMLElement, entries: MenuEntry[]) {
   closeMenu();
   const menu = document.createElement('div');
   menu.className = 'table-block__menu';
   menu.setAttribute('contenteditable', 'false');
 
-  for (const item of items) {
+  for (const entry of entries) {
+    if (isDivider(entry)) {
+      const sep = document.createElement('div');
+      sep.className = 'table-block__menu-divider';
+      menu.appendChild(sep);
+      continue;
+    }
+    const item = entry;
+    const classes = ['table-block__menu-item'];
+    if (item.danger) classes.push('is-danger');
+    if (item.active) classes.push('is-active');
     const btn = document.createElement('button');
-    btn.className = 'table-block__menu-item' + (item.danger ? ' is-danger' : '');
+    btn.className = classes.join(' ');
     btn.setAttribute('contenteditable', 'false');
     if (item.icon) {
       const icon = document.createElement('span');
@@ -191,15 +212,77 @@ function rebuildIndicators(
   });
 }
 
+/**
+ * 把"整列"/"整行"的所有 cell attr.align 批量 setNodeMarkup。
+ * 列/行指示器菜单用——不依赖当前 selection，直接用 selectedRect 拿到 map + tableStart。
+ */
+function setAlignForAxis(view: EditorView, axis: 'col' | 'row', align: CellAlign | null) {
+  try {
+    const rect = selectedRect(view.state);
+    if (!rect) return;
+    const { map, tableStart, left, top } = rect;
+    const tr = view.state.tr;
+    if (axis === 'col') {
+      // 遍历该列所有行
+      for (let r = 0; r < map.height; r++) {
+        const cellPos = tableStart + map.map[r * map.width + left];
+        const cellNode = tr.doc.nodeAt(cellPos);
+        if (!cellNode) continue;
+        if ((cellNode.attrs.align ?? null) === align) continue;
+        tr.setNodeMarkup(cellPos, undefined, { ...cellNode.attrs, align });
+      }
+    } else {
+      // 遍历该行所有列
+      for (let c = 0; c < map.width; c++) {
+        const cellPos = tableStart + map.map[top * map.width + c];
+        const cellNode = tr.doc.nodeAt(cellPos);
+        if (!cellNode) continue;
+        if ((cellNode.attrs.align ?? null) === align) continue;
+        tr.setNodeMarkup(cellPos, undefined, { ...cellNode.attrs, align });
+      }
+    }
+    if (tr.docChanged) view.dispatch(tr);
+  } catch {
+    // selectedRect 在光标不在表格内时会抛 —— 退化到单 cell
+    setCellAlign(align)(view.state, view.dispatch);
+  }
+  view.focus();
+}
+
+/** 当前 cell（光标所在）的 align，用于菜单 active 标记 */
+function currentCellAlign(view: EditorView): CellAlign | null {
+  const $from = view.state.selection.$from;
+  for (let d = $from.depth; d > 0; d--) {
+    const n = $from.node(d);
+    if (n.type.name === 'tableCell' || n.type.name === 'tableHeader') {
+      return (n.attrs.align ?? null) as CellAlign | null;
+    }
+  }
+  return null;
+}
+
 function openColumnMenu(anchor: HTMLElement, view: EditorView) {
   const run = (cmd: (s: any, d: any) => boolean) => () => {
     cmd(view.state, view.dispatch);
     view.focus();
   };
+  const curAlign = currentCellAlign(view);
+  const alignItem = (label: string, icon: string, value: CellAlign | null) => ({
+    label, icon,
+    active: (curAlign ?? null) === value,
+    run: () => setAlignForAxis(view, 'col', value),
+  });
   openMenu(anchor, [
     { label: '向左插入列', icon: '←', run: run(addColumnBefore) },
     { label: '向右插入列', icon: '→', run: run(addColumnAfter) },
     { label: '复制列',     icon: '⧉', run: run(duplicateColumn) },
+    { divider: true },
+    alignItem('左对齐',   '⇤', 'left'),
+    alignItem('居中',     '↔', 'center'),
+    alignItem('右对齐',   '⇥', 'right'),
+    alignItem('两端对齐', '☰', 'justify'),
+    alignItem('清除对齐', '∅', null),
+    { divider: true },
     { label: '删除列',     icon: '🗑', danger: true, run: run(deleteColumn) },
   ]);
 }
@@ -209,10 +292,23 @@ function openRowMenu(anchor: HTMLElement, view: EditorView) {
     cmd(view.state, view.dispatch);
     view.focus();
   };
+  const curAlign = currentCellAlign(view);
+  const alignItem = (label: string, icon: string, value: CellAlign | null) => ({
+    label, icon,
+    active: (curAlign ?? null) === value,
+    run: () => setAlignForAxis(view, 'row', value),
+  });
   openMenu(anchor, [
     { label: '向上插入行', icon: '↑', run: run(addRowBefore) },
     { label: '向下插入行', icon: '↓', run: run(addRowAfter) },
     { label: '复制行',     icon: '⧉', run: run(duplicateRow) },
+    { divider: true },
+    alignItem('左对齐',   '⇤', 'left'),
+    alignItem('居中',     '↔', 'center'),
+    alignItem('右对齐',   '⇥', 'right'),
+    alignItem('两端对齐', '☰', 'justify'),
+    alignItem('清除对齐', '∅', null),
+    { divider: true },
     { label: '删除行',     icon: '🗑', danger: true, run: run(deleteRow) },
   ]);
 }

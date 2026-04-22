@@ -190,12 +190,17 @@ export const tableCellConverter: AtomConverter = {
     return createAtom('tableCell', {
       colspan: node.attrs.colspan > 1 ? node.attrs.colspan : undefined,
       rowspan: node.attrs.rowspan > 1 ? node.attrs.rowspan : undefined,
+      align: node.attrs.align ?? undefined,
     } as TableCellContent, parentId);
   },
 
   toPM(atom: Atom, children?: Atom[]): PMNodeJSON {
     const c = atom.content as TableCellContent;
-    const attrs = { colspan: c.colspan ?? 1, rowspan: c.rowspan ?? 1 };
+    const attrs: Record<string, unknown> = {
+      colspan: c.colspan ?? 1,
+      rowspan: c.rowspan ?? 1,
+      align: c.align ?? null,
+    };
 
     // 新模式：子 Atom 通过 parentId 挂接，由运行器填充 content
     if (children && children.length > 0) {
@@ -232,12 +237,17 @@ export const tableHeaderConverter: AtomConverter = {
       isHeader: true,
       colspan: node.attrs.colspan > 1 ? node.attrs.colspan : undefined,
       rowspan: node.attrs.rowspan > 1 ? node.attrs.rowspan : undefined,
+      align: node.attrs.align ?? undefined,
     } as TableCellContent, parentId);
   },
 
   toPM(atom: Atom, children?: Atom[]): PMNodeJSON {
     const c = atom.content as TableCellContent;
-    const attrs = { colspan: c.colspan ?? 1, rowspan: c.rowspan ?? 1 };
+    const attrs: Record<string, unknown> = {
+      colspan: c.colspan ?? 1,
+      rowspan: c.rowspan ?? 1,
+      align: c.align ?? null,
+    };
 
     if (children && children.length > 0) {
       return { type: 'tableHeader', attrs };

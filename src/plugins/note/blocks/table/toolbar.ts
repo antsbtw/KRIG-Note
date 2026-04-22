@@ -12,15 +12,55 @@
 import { Plugin, PluginKey } from 'prosemirror-state';
 import type { EditorView } from 'prosemirror-view';
 import { CellSelection, mergeCells, splitCell } from 'prosemirror-tables';
-import { duplicateSelectedCells } from './commands';
+import type { CellAlign } from '../table';
+import { duplicateSelectedCells, setCellAlign } from './commands';
 
 const key = new PluginKey('tableToolbar');
 
 interface ToolbarItem {
   label: string;
   icon?: string;
+  title?: string;       // hover tooltip
   danger?: boolean;
+  active?: boolean;     // 选中态
   run: (view: EditorView) => void;
+}
+
+/** 构造 4 档对齐 + 清除 的工具条按钮列表 */
+function alignItems(currentAlign: CellAlign | null): ToolbarItem[] {
+  const make = (value: CellAlign | null, icon: string, title: string): ToolbarItem => ({
+    label: '',
+    icon,
+    title,
+    active: currentAlign === value,
+    run: (v) => { setCellAlign(value)(v.state, v.dispatch); v.focus(); },
+  });
+  return [
+    make('left',    '⇤', '左对齐'),
+    make('center',  '↔', '居中'),
+    make('right',   '⇥', '右对齐'),
+    make('justify', '☰', '两端对齐'),
+    make(null,      '∅', '清除对齐'),
+  ];
+}
+
+/** 计算选区/当前 cell 的代表 align（如果所有 cell align 一致则返回该值，否则返回 null） */
+function getSelectionAlign(view: EditorView): CellAlign | null {
+  const sel = view.state.selection;
+  const aligns = new Set<CellAlign | null>();
+  if (sel instanceof CellSelection) {
+    sel.forEachCell((cell) => { aligns.add((cell.attrs.align ?? null) as CellAlign | null); });
+  } else {
+    const $from = sel.$from;
+    for (let d = $from.depth; d > 0; d--) {
+      const n = $from.node(d);
+      if (n.type.name === 'tableCell' || n.type.name === 'tableHeader') {
+        aligns.add((n.attrs.align ?? null) as CellAlign | null);
+        break;
+      }
+    }
+  }
+  return aligns.size === 1 ? (aligns.values().next().value as CellAlign | null) : null;
 }
 
 function getToolbarTarget(view: EditorView): {
@@ -29,6 +69,8 @@ function getToolbarTarget(view: EditorView): {
 } | null {
   const { state } = view;
   const sel = state.selection;
+
+  const curAlign = getSelectionAlign(view);
 
   // (a) CellSelection 多格
   if (sel instanceof CellSelection) {
@@ -45,6 +87,7 @@ function getToolbarTarget(view: EditorView): {
       items: [
         { label: '合并单元格', icon: '⊞', run: (v) => { mergeCells(v.state, v.dispatch); v.focus(); } },
         { label: '复制选区',   icon: '⧉', run: (v) => { duplicateSelectedCells(v.state, v.dispatch); v.focus(); } },
+        ...alignItems(curAlign),
       ],
     };
   }
@@ -63,6 +106,7 @@ function getToolbarTarget(view: EditorView): {
           anchorRect: dom.getBoundingClientRect(),
           items: [
             { label: '拆分单元格', icon: '⊟', run: (v) => { splitCell(v.state, v.dispatch); v.focus(); } },
+            ...alignItems(curAlign),
           ],
         };
       }
@@ -102,17 +146,23 @@ export function tableToolbarPlugin(): Plugin {
         toolbar.innerHTML = '';
         for (const item of target.items) {
           const btn = document.createElement('button');
-          btn.className = 'table-block__toolbar-btn' + (item.danger ? ' is-danger' : '');
+          const classes = ['table-block__toolbar-btn'];
+          if (item.danger) classes.push('is-danger');
+          if (item.active) classes.push('is-active');
+          btn.className = classes.join(' ');
           btn.setAttribute('contenteditable', 'false');
+          if (item.title) btn.title = item.title;
           if (item.icon) {
             const ic = document.createElement('span');
             ic.className = 'table-block__toolbar-icon';
             ic.textContent = item.icon;
             btn.appendChild(ic);
           }
-          const lbl = document.createElement('span');
-          lbl.textContent = item.label;
-          btn.appendChild(lbl);
+          if (item.label) {
+            const lbl = document.createElement('span');
+            lbl.textContent = item.label;
+            btn.appendChild(lbl);
+          }
           btn.addEventListener('mousedown', (e) => {
             e.preventDefault();
             e.stopPropagation();
