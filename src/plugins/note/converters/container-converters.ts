@@ -185,21 +185,38 @@ export const tableCellConverter: AtomConverter = {
   pmType: 'tableCell',
 
   toAtom(node: PMNode, parentId?: string): Atom {
-    const firstChild = node.content.firstChild;
-    const children = firstChild ? pmInlinesToAtom(firstChild) : [];
+    // cell 下的子 block（textBlock / taskList / image 等）作为独立 Atom
+    // 由 ConverterRegistry.nodeToAtoms 通过 parentId 挂接，这里只保存 cell 自身 attrs
     return createAtom('tableCell', {
-      children,
       colspan: node.attrs.colspan > 1 ? node.attrs.colspan : undefined,
       rowspan: node.attrs.rowspan > 1 ? node.attrs.rowspan : undefined,
     } as TableCellContent, parentId);
   },
 
-  toPM(atom: Atom): PMNodeJSON {
+  toPM(atom: Atom, children?: Atom[]): PMNodeJSON {
     const c = atom.content as TableCellContent;
+    const attrs = { colspan: c.colspan ?? 1, rowspan: c.rowspan ?? 1 };
+
+    // 新模式：子 Atom 通过 parentId 挂接，由运行器填充 content
+    if (children && children.length > 0) {
+      return { type: 'tableCell', attrs };
+    }
+
+    // 兼容旧数据：content.children（inline 数组）→ 吐出单个 textBlock
+    // 再次保存时 toAtom 会按新格式写回，自动升级
+    if (Array.isArray(c.children) && c.children.length > 0) {
+      return {
+        type: 'tableCell',
+        attrs,
+        content: [{ type: 'textBlock', content: atomInlinesToPM(c.children) }],
+      };
+    }
+
+    // 空 cell：cell.content 是 block+，必须至少一个 block
     return {
       type: 'tableCell',
-      attrs: { colspan: c.colspan ?? 1, rowspan: c.rowspan ?? 1 },
-      content: [{ type: 'textBlock', content: atomInlinesToPM(c.children) }],
+      attrs,
+      content: [{ type: 'textBlock' }],
     };
   },
 };
@@ -211,22 +228,33 @@ export const tableHeaderConverter: AtomConverter = {
   pmType: 'tableHeader',
 
   toAtom(node: PMNode, parentId?: string): Atom {
-    const firstChild = node.content.firstChild;
-    const children = firstChild ? pmInlinesToAtom(firstChild) : [];
     return createAtom('tableHeader', {
-      children,
       isHeader: true,
       colspan: node.attrs.colspan > 1 ? node.attrs.colspan : undefined,
       rowspan: node.attrs.rowspan > 1 ? node.attrs.rowspan : undefined,
     } as TableCellContent, parentId);
   },
 
-  toPM(atom: Atom): PMNodeJSON {
+  toPM(atom: Atom, children?: Atom[]): PMNodeJSON {
     const c = atom.content as TableCellContent;
+    const attrs = { colspan: c.colspan ?? 1, rowspan: c.rowspan ?? 1 };
+
+    if (children && children.length > 0) {
+      return { type: 'tableHeader', attrs };
+    }
+
+    if (Array.isArray(c.children) && c.children.length > 0) {
+      return {
+        type: 'tableHeader',
+        attrs,
+        content: [{ type: 'textBlock', content: atomInlinesToPM(c.children) }],
+      };
+    }
+
     return {
       type: 'tableHeader',
-      attrs: { colspan: c.colspan ?? 1, rowspan: c.rowspan ?? 1 },
-      content: [{ type: 'textBlock', content: atomInlinesToPM(c.children) }],
+      attrs,
+      content: [{ type: 'textBlock' }],
     };
   },
 };

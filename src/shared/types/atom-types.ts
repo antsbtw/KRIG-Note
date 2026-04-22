@@ -200,10 +200,14 @@ export interface TableContent {
 }
 
 export interface TableCellContent {
-  children: InlineElement[];
   colspan?: number;
   rowspan?: number;
   isHeader?: boolean;
+  /**
+   * @deprecated 旧数据兼容字段。新数据 cell 的内容走 parentId 层级，
+   * 不再内嵌 children。读时兼容 + 再次保存自动升级为子 Atom 结构。
+   */
+  children?: InlineElement[];
 }
 
 export interface ColumnListContent {
