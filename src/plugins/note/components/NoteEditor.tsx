@@ -14,7 +14,6 @@ import { buildInputRules } from '../plugins/input-rules';
 import { containerKeyboardPlugin } from '../plugins/container-keyboard';
 import { slashCommandPlugin } from '../plugins/slash-command';
 import { linkClickPlugin, setCurrentNote, flushPendingAnchor, canGoBack, goBack } from '../plugins/link-click';
-import { tableKeymapPlugin } from '../blocks/table';
 import { columnResizing } from 'prosemirror-tables';
 import { SlashMenu } from './SlashMenu';
 import { FloatingToolbar } from './FloatingToolbar';
@@ -170,18 +169,20 @@ function buildPlugins(s: ReturnType<typeof getSchema>) {
   const blockPlugins = blockRegistry.buildBlockPlugins();
 
   return [
-    columnResizing({ cellMinWidth: 80, View: null as any }),  // 列宽拖拽
+    // columnResizing 必须在编辑器装配处手动注册，不能下沉到 tableBlock.plugin：
+    // 它有全局 PluginKey（tableColumnResizing$），整个编辑器只能存在一个实例。
+    // 见 docs/block/table.md §十二。
+    columnResizing({ cellMinWidth: 80, View: null as any }),
     blockSelectionPlugin(),
     indentPlugin(),              // Tab/Shift+Tab — 在 baseKeymap 之前拦截
     slashCommandPlugin(),
     linkClickPlugin(),
     containerKeyboardPlugin(),
-    ...blockPlugins,             // Block 专有键盘处理（codeBlock 等）— 在 baseKeymap 之前
+    ...blockPlugins,             // Block 专有键盘/行为（codeBlock Tab、tableKeymap、tableEditing 等）— 在 baseKeymap 之前
     buildInputRules(s),
     keymap({ 'Mod-z': undo, 'Mod-Shift-z': redo, 'Mod-y': redo }),
     keymap(markKeymap),
     keymap(baseKeymap),
-    tableKeymapPlugin(),
     blockHandlePlugin(),
     titleGuardPlugin(),
     columnCollapsePlugin(),

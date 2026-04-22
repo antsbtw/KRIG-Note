@@ -16,7 +16,6 @@ import { blockHandlePlugin } from '../../note/plugins/block-handle';
 import { indentPlugin } from '../../note/plugins/indent';
 import { pasteMediaPlugin } from '../../note/plugins/paste-media';
 import { renderBlockFocusPlugin } from '../../note/plugins/render-block-focus';
-import { tableKeymapPlugin } from '../../note/blocks/table';
 import { columnResizing } from 'prosemirror-tables';
 import { SlashMenu } from '../../note/components/SlashMenu';
 import { FloatingToolbar } from '../../note/components/FloatingToolbar';
@@ -73,6 +72,9 @@ function buildThoughtPlugins(s: ReturnType<typeof getSchema>) {
   const blockPlugins = blockRegistry.buildBlockPlugins();
 
   return [
+    // columnResizing 必须在编辑器装配处手动注册，不能下沉到 tableBlock.plugin：
+    // 它有全局 PluginKey（tableColumnResizing$），整个编辑器只能存在一个实例。
+    // 见 docs/block/table.md §十二。
     columnResizing({ cellMinWidth: 80, View: null as any }),
     indentPlugin(),
     slashCommandPlugin(),
@@ -83,7 +85,6 @@ function buildThoughtPlugins(s: ReturnType<typeof getSchema>) {
     keymap({ 'Mod-z': undo, 'Mod-Shift-z': redo, 'Mod-y': redo }),
     keymap(markKeymap),
     keymap(baseKeymap),
-    tableKeymapPlugin(),
     blockHandlePlugin(),
     pasteMediaPlugin(),
     renderBlockFocusPlugin(),
