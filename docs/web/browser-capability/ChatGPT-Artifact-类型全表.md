@@ -249,50 +249,49 @@ conversation API → 直接 fetch（cookie 认证）
   → local_resource → wiggle API 主动下载
 ```
 
-### ChatGPT 提取策略（待实现）
+### ChatGPT 提取策略（已实现）
 
-**推荐方案：注入脚本主动 fetch（和 Claude 类似）**
-
-```
-1. 注入脚本 fetch('/api/auth/session') → 获取 accessToken
-2. 用 Bearer token fetch('/backend-api/conversation/{uuid}') → 对话数据
-3. 文本/代码/LaTeX 直接在 parts[] 中
-4. 图片/文件 → fetch estuary API（同样带 Bearer token）
-5. Canvas → fetch '/backend-api/conversation/{uuid}/textdocs'
-```
-
-**备选方案：CDP 被动捕获**（用于 fetch 不可用时的 fallback）
+**纯数据驱动：注入脚本 fetch API，零 DOM 操作**
 
 ```
-1. 启动 CDP → 刷新页面 → 从 CDP 缓存中提取响应
+1. 注入脚本 fetch('/api/auth/session') → 获取 accessToken（4 分钟缓存 + 401 自动刷新）
+2. Bearer token fetch('/backend-api/conversation/{uuid}') → 对话树 mapping
+3. 解析 mapping 树 → 按 user 消息分组为 turn → 构建 contentParts[]
+4. contentParts 保持原始交错顺序（text / canvas / file / image_group）
+5. Canvas → 从 canmore.create_textdoc 消息的 content.text JSON 直接解析
+6. image_group → 从 metadata.content_references[type=image_group].images[].content_url 获取
+7. DALL·E / Code Interpreter 文件 → /backend-api/files/download/{id}?conversation_id={cid}
+8. Sandbox 文件 → /backend-api/conversation/{id}/interpreter/download（精确 messageId）
 ```
 
-**与 Claude 的差异**：Claude 用 cookie 认证可以直接 fetch；ChatGPT 需要先获取 Bearer token 再 fetch。但核心思路一致——在页面上下文中注入脚本主动获取数据。
+**与 Claude 的对齐**：两者共享 `contentParts` 架构——text 和 artifact 交错排列，渲染时按序处理。ChatGPT 用 Bearer token 认证（注入 fetch 获取），Claude 用 cookie 认证（直接 fetch）。
+
+> **⛔ 禁止使用 DOM/CDP**：所有数据通过 API 获取，不扫描 HTML 元素，不使用 CDP 调试协议。已验证纯 API 路径更快更稳定。
 
 ---
 
 ## 六、处理状态
 
-| # | 类型 | 内容可获取 | 现有提取器 | Browser Capability 集成 | Note 中的呈现 |
-|---|------|-----------|-----------|----------------------|-------------|
-| 1 | 纯文本回复 | ✅ API 自包含 | ✅ chatgpt-content-extractor | ❌ 未集成 | 文本段落 |
-| 2 | LaTeX 行内 | ✅ API 自包含 | ✅ 已处理 | ❌ 未集成 | math-inline |
-| 3 | LaTeX 块级 | ✅ widget 解包 | ✅ 已处理 | ❌ 未集成 | math-block |
-| 4 | 代码块 | ✅ API 自包含 | ✅ 已处理 | ❌ 未集成 | code-block |
-| 5 | DALL·E 图片 | ✅ estuary API | ✅ 已处理 | ❌ 未集成 | image block |
-| 6 | Code Interpreter 图片 | ✅ estuary API | ✅ 已处理 | ❌ 未集成 | image block |
-| 7 | 用户上传图片 | ✅ estuary API | ✅ 已处理 | ❌ 未集成 | image block |
-| 8 | 用户上传文件 | ✅ estuary API | ⚠️ 引用已提取 | ❌ 未集成 | 附件引用 |
-| 9 | Code Interpreter 文件 | ✅ estuary API | ⚠️ 部分 | ❌ 未集成 | 附件/代码块 |
-| 10 | Canvas 文档 | ✅ textdocs API | ✅ 已处理 | ❌ 未集成 | 文本段落 |
-| 11 | Canvas 代码 | ✅ textdocs API | ✅ 已处理 | ❌ 未集成 | code-block |
-| 12 | Code Interpreter 调用 | ✅ 代码在 parts 中 | ✅ 已处理 | ❌ 未集成 | code-block |
-| 13 | DALL·E 调用 | ⏭ prompt 在 parts 中 | ⏭ 跳过 | ❌ | 无需呈现 |
-| 14 | 网页浏览结果 | ✅ 搜索摘要 | ⚠️ 部分 | ❌ 未集成 | 引用列表 |
-| 15 | Plugin 调用 | ⚠️ 取决于 plugin | ❌ 未处理 | ❌ | 因插件而异 |
-| 16 | 系统提示 | ⏭ 隐藏 | ⏭ 跳过 | ❌ | 无需呈现 |
-| 17 | 工具结果 | ✅ 在 tool 消息中 | ✅ 作为 turn 组成 | ❌ 未集成 | 合入对应 turn |
-| 18 | 隐藏消息 | ⏭ 跳过 | ⏭ 跳过 | ❌ | 无需呈现 |
+| # | 类型 | 内容可获取 | 提取方式 | 集成状态 | Note 中的呈现 |
+|---|------|-----------|---------|---------|-------------|
+| 1 | 纯文本回复 | ✅ API 自包含 | contentParts text | ✅ 已完成 | 文本段落 |
+| 2 | LaTeX 行内 | ✅ API 自包含 | `\(...\)` 保留 | ✅ 已完成 | math-inline |
+| 3 | LaTeX 块级 | ✅ widget 解包 | stripUnicodeWidgets → `$$...$$` | ✅ 已完成 | math-block |
+| 4 | 代码块 | ✅ API 自包含 | markdown fenced code block | ✅ 已完成 | code-block |
+| 5 | DALL·E 图片 | ✅ files/download API | `/backend-api/files/download/{id}?conversation_id={cid}` | ✅ 已完成 | image block |
+| 6 | Code Interpreter 图片 | ✅ sandbox API | `/backend-api/conversation/{id}/interpreter/download` | ✅ 已完成 | image block |
+| 7 | 用户上传图片 | ✅ estuary API | 用户端内容，不提取 | ⏭ 跳过 | — |
+| 8 | 用户上传文件 | ✅ estuary API | 用户端内容，不提取 | ⏭ 跳过 | — |
+| 9 | Code Interpreter 文件 | ✅ sandbox API | sandbox 链接 → 精确 messageId 下载 | ✅ 已完成 | 附件/图片 |
+| 10 | Canvas 文档 | ✅ canmore 消息 | `canmore.create_textdoc` content.text JSON | ✅ 已完成 | markdown Canvas Block |
+| 11 | Canvas 代码 | ✅ canmore 消息 | 同上，生成 `\`\`\`lang title="..."` | ✅ 已完成 | code Canvas Block |
+| 12 | Code Interpreter 调用 | ✅ 代码在 parts 中 | text 中保留代码块 | ✅ 已完成 | code-block |
+| 13 | DALL·E 调用 | ⏭ prompt 在 parts 中 | 内部工具调用，不提取 | ⏭ 跳过 | — |
+| 14 | 网页浏览结果 | ✅ 搜索摘要在 text 中 | 文字 + image_group 图片均提取 | ✅ 已完成 | 文本 + 图片 |
+| 15 | Plugin 调用 | ⚠️ 取决于 plugin | 暂不处理 | ⏭ 跳过 | — |
+| 16 | 系统提示 | ⏭ 隐藏 | hidden 消息跳过 | ⏭ 跳过 | — |
+| 17 | 工具结果 | ✅ 在 tool 消息中 | contentParts 保序合入 turn | ✅ 已完成 | 合入对应 turn |
+| 18 | 隐藏消息 | ⏭ 跳过 | hidden 消息跳过 | ⏭ 跳过 | — |
 
 ---
 

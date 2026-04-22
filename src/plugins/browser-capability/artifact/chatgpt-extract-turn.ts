@@ -12,8 +12,8 @@
 import { webContents as electronWebContents } from 'electron';
 import {
   getChatGPTConversationData,
-  getChatGPTTextdocs,
   type ChatGPTTurn,
+  type ChatGPTCanvasData,
 } from './chatgpt-conversation-query';
 import { browserCapabilityTraceWriter } from '../persistence';
 import type { ExtractedTurn, ExtractedConversation } from './extract-turn';
@@ -33,42 +33,93 @@ async function ensureMediaStore(): Promise<typeof mediaPutBase64> {
   return mediaPutBase64;
 }
 
+// ── Bearer token management ──
+
+/**
+ * Get or refresh ChatGPT Bearer token via the page context.
+ *
+ * Token is cached in window.__krig_chatgpt_token with a 4-minute TTL.
+ * On 401, caller should call this with forceRefresh=true to get a new token.
+ */
+async function getChatGPTToken(wc: Electron.WebContents, forceRefresh = false): Promise<string | null> {
+  try {
+    const token: string | null = await wc.executeJavaScript(`
+      (async () => {
+        try {
+          var cache = window.__krig_chatgpt_token;
+          var forceRefresh = ${forceRefresh};
+          if (!forceRefresh && cache && cache.token && (Date.now() - cache.ts < 4 * 60 * 1000)) {
+            return cache.token;
+          }
+          var resp = await fetch('/api/auth/session', { credentials: 'include' });
+          if (!resp.ok) return null;
+          var session = await resp.json();
+          var token = session.accessToken;
+          if (token) {
+            window.__krig_chatgpt_token = { token: token, ts: Date.now() };
+          }
+          return token || null;
+        } catch (e) {
+          return null;
+        }
+      })()
+    `);
+    return token;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Find a ChatGPT webContents to execute API calls in.
+ */
+function findChatGPTWebContents(): Electron.WebContents | null {
+  for (const wc of electronWebContents.getAllWebContents()) {
+    const url = wc.getURL();
+    if (url.includes('chatgpt.com') || url.includes('chat.openai.com')) return wc;
+  }
+  return null;
+}
+
 // ── Image fetching ──
 
 /**
- * Fetch a file from ChatGPT's estuary API using Bearer token.
- * Returns base64 data URL or null.
+ * Fetch a ChatGPT file via the files/download API.
+ *
+ * Correct endpoint: /backend-api/files/download/{file_id}?conversation_id={conv_id}
+ * This works for both old (file-XXX) and new (file_00000000XXX) file ID formats.
+ * Returns JSON with download_url → fetch actual bytes.
+ *
+ * On 401, automatically refreshes the Bearer token and retries once.
  */
-async function fetchChatGPTFile(fileId: string): Promise<{ dataUrl: string; mimeType: string } | null> {
-  try {
-    for (const wc of electronWebContents.getAllWebContents()) {
-      const url = wc.getURL();
-      if (!url.includes('chatgpt.com') && !url.includes('chat.openai.com')) continue;
+async function fetchChatGPTFile(fileId: string, conversationId: string): Promise<{ dataUrl: string; mimeType: string } | null> {
+  const wc = findChatGPTWebContents();
+  if (!wc) return null;
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const token = await getChatGPTToken(wc, attempt > 0);
+      if (!token) {
+        console.warn('[chatgpt-extract] fetchChatGPTFile: no token');
+        return null;
+      }
 
       const result = await wc.executeJavaScript(`
         (async () => {
           try {
-            var fileId = ${JSON.stringify(fileId)};
-
-            // Get token
-            var sessionResp = await fetch('/api/auth/session', { credentials: 'include' });
-            if (!sessionResp.ok) return { error: 'no-session', status: sessionResp.status };
-            var session = await sessionResp.json();
-            var token = session.accessToken;
-            if (!token) return { error: 'no-token' };
-
-            // ChatGPT API requires these headers (discovered via community exporters)
+            var token = ${JSON.stringify(token)};
             var headers = {
               'Authorization': 'Bearer ' + token,
               'Oai-Device-Id': crypto.randomUUID(),
               'Oai-Language': 'en-US',
             };
 
-            // files/download → download_url → fetch actual bytes
-            var dlResp = await fetch('/backend-api/files/' + fileId + '/download', {
-              credentials: 'include',
-              headers: headers,
-            });
+            var dlResp = await fetch(
+              '/backend-api/files/download/' + ${JSON.stringify(fileId)}
+                + '?conversation_id=' + encodeURIComponent(${JSON.stringify(conversationId)}),
+              { credentials: 'include', headers: headers },
+            );
+            if (dlResp.status === 401 || dlResp.status === 403) return { error: 'auth-failed', status: dlResp.status };
             if (!dlResp.ok) return { error: 'download-endpoint-failed', status: dlResp.status };
             var dlData = await dlResp.json();
             if (!dlData.download_url) return { error: 'no-download-url', data: JSON.stringify(dlData).slice(0, 200) };
@@ -93,43 +144,37 @@ async function fetchChatGPTFile(fileId: string): Promise<{ dataUrl: string; mime
         console.log('[chatgpt-extract] fetchChatGPTFile succeeded:', fileId, 'mime:', result.mimeType, 'size:', result.dataUrl.length);
         return result;
       }
+
+      // 401/403 → retry with refreshed token
+      if (result?.error === 'auth-failed' && attempt === 0) {
+        console.log('[chatgpt-extract] token expired, refreshing...');
+        continue;
+      }
+
       console.warn('[chatgpt-extract] fetchChatGPTFile failed:', fileId, JSON.stringify(result));
+      return null;
+    } catch (err) {
+      console.warn('[chatgpt-extract] fetchChatGPTFile error:', fileId, err);
+      return null;
     }
-    return null;
-  } catch (err) {
-    console.warn('[chatgpt-extract] fetchChatGPTFile error:', fileId, err);
-    return null;
   }
+  return null;
 }
 
 /**
  * Download a ChatGPT file and persist to media store.
  *
- * Two file_id formats exist:
- * - file-XXXX (old, Code Interpreter) → /backend-api/files/{id}/download → download_url
- * - file_00000000XXXX (new, DALL·E gpt-image-1) → signed estuary URL from DOM <img src>
+ * Uses /backend-api/files/download/{file_id}?conversation_id={conv_id}
+ * which works for both old (file-XXX) and new (file_00000000XXX) formats.
  *
  * Returns media:// URL or null.
  */
-async function downloadChatGPTFileToMedia(fileId: string): Promise<string | null> {
-  let dataUrl: string | null = null;
-  let mimeType = 'image/png';
+async function downloadChatGPTFileToMedia(fileId: string, conversationId: string): Promise<string | null> {
+  const result = await fetchChatGPTFile(fileId, conversationId);
+  if (!result?.dataUrl) return null;
 
-  // Old format (file-XXX): use files/download API
-  if (fileId.startsWith('file-')) {
-    const result = await fetchChatGPTFile(fileId);
-    if (result?.dataUrl) {
-      dataUrl = result.dataUrl;
-      mimeType = result.mimeType || 'image/png';
-    }
-  }
-
-  // New format (file_XXX) or API failed: resolve signed URL from page
-  if (!dataUrl) {
-    dataUrl = await fetchFileFromSignedUrl(fileId);
-  }
-
-  if (!dataUrl) return null;
+  let dataUrl = result.dataUrl;
+  let mimeType = result.mimeType || 'image/png';
 
   // Fix MIME if octet-stream
   if (mimeType === 'application/octet-stream') {
@@ -152,61 +197,6 @@ async function downloadChatGPTFileToMedia(fileId: string): Promise<string | null
 }
 
 /**
- * Download a file using its signed estuary URL from the ChatGPT page.
- *
- * DALL·E gpt-image-1 files use file_00000000... IDs that the files/download
- * API rejects as "Invalid file_id". The only way to download them is via
- * the estuary signed URL (with ts/sig params) that ChatGPT's frontend JS
- * generates.
- *
- * Method:
- * 1. executeJavaScript to resolve the signed URL from the page's <img> elements
- * 2. session.fetch to download the bytes (uses Chrome network stack with session cookies)
- *
- * This is NOT a DOM fallback — it's the correct download path for new-format
- * file IDs, matching how ChatGPT's own client loads these images.
- */
-async function fetchFileFromSignedUrl(fileId: string): Promise<string | null> {
-  try {
-    for (const wc of electronWebContents.getAllWebContents()) {
-      const wcUrl = wc.getURL();
-      if (!wcUrl.includes('chatgpt.com') && !wcUrl.includes('chat.openai.com')) continue;
-
-      // Step 1: Get the signed URL from page (ChatGPT's JS already generated it)
-      const signedUrl: string | null = await wc.executeJavaScript(`
-        (function() {
-          var imgs = document.querySelectorAll('img');
-          for (var i = 0; i < imgs.length; i++) {
-            if ((imgs[i].src || '').indexOf(${JSON.stringify(fileId)}) >= 0 && imgs[i].naturalWidth > 50) {
-              return imgs[i].src;
-            }
-          }
-          return null;
-        })()
-      `);
-
-      if (!signedUrl) continue;
-      console.log('[chatgpt-extract] resolved signed URL for', fileId);
-
-      // Step 2: Download via session.fetch (Chrome network stack, auto-cookies)
-      const response = await wc.session.fetch(signedUrl);
-      if (!response.ok) {
-        console.warn('[chatgpt-extract] session.fetch failed:', fileId, response.status);
-        continue;
-      }
-
-      const buffer = Buffer.from(await response.arrayBuffer());
-      const contentType = response.headers.get('content-type') || 'application/octet-stream';
-      return `data:${contentType};base64,${buffer.toString('base64')}`;
-    }
-    return null;
-  } catch (err) {
-    console.warn('[chatgpt-extract] fetchFileFromSignedUrl error:', err);
-    return null;
-  }
-}
-
-/**
  * Sniff MIME from base64 when Content-Type is octet-stream.
  */
 function sniffMimeFromBase64(b64: string): string | null {
@@ -219,168 +209,6 @@ function sniffMimeFromBase64(b64: string): string | null {
   if (head.startsWith('PHN2Zy') || head.startsWith('PD94bWw')) return 'image/svg+xml';
   if (head.startsWith('JVBER')) return 'application/pdf';
   return null;
-}
-
-// ── Image group extraction ──
-
-/**
- * Extract all images from ChatGPT image_group widgets (carousel/gallery).
- *
- * Returns a flat array of all image URLs across all groups.
- * Each image_group is handled independently:
- *   1. Find thumbnail groups via DOM ancestor analysis (5th-level ancestor)
- *   2. Click each group's first thumbnail to open its carousel
- *   3. Collect unique URLs from that carousel
- *   4. Close carousel, proceed to next group
- *
- * All operations via executeJavaScript injection + session.fetch download.
- */
-async function extractImageGroupImages(textPrefix: string): Promise<string[][]> {
-  if (!textPrefix) return [];
-  try {
-    const searchPrefix = textPrefix.replace(/\s+/g, ' ').trim().slice(0, 40);
-    console.log('[chatgpt-extract] extractImageGroupImages searching for:', JSON.stringify(searchPrefix));
-
-    for (const wc of electronWebContents.getAllWebContents()) {
-      const url = wc.getURL();
-      if (!url.includes('chatgpt.com') && !url.includes('chat.openai.com')) continue;
-
-      // Inject script: find groups, open each carousel, collect URLs per group
-      const imgUrls: string[][] = await wc.executeJavaScript(`
-        (async function() {
-          var prefix = ${JSON.stringify(searchPrefix)};
-
-          // Find the assistant container
-          var containers = document.querySelectorAll('[data-message-author-role="assistant"]');
-          var target = null;
-          for (var i = 0; i < containers.length; i++) {
-            var text = (containers[i].textContent || '').replace(/\\s+/g, ' ').trim();
-            if (text.indexOf(prefix) >= 0) { target = containers[i]; break; }
-          }
-          if (!target) return [];
-
-          // Find all content thumbnails
-          var allThumbs = [];
-          var thumbImgs = target.querySelectorAll('img');
-          for (var j = 0; j < thumbImgs.length; j++) {
-            if (thumbImgs[j].naturalWidth > 80 && thumbImgs[j].src.startsWith('https://images.openai.com/')) {
-              allThumbs.push(thumbImgs[j]);
-            }
-          }
-          if (allThumbs.length === 0) return [];
-
-          // Group thumbnails by 5th-level ancestor (image_group container)
-          var groupMap = new Map();
-          allThumbs.forEach(function(img) {
-            var el = img;
-            for (var d = 0; d < 5; d++) { if (el.parentElement) el = el.parentElement; }
-            if (!groupMap.has(el)) groupMap.set(el, []);
-            groupMap.get(el).push(img);
-          });
-
-          // For each group: click first thumb → collect carousel URLs → close
-          var allGroups = [];
-          var groupEntries = Array.from(groupMap.values());
-          var globalSeen = new Set();
-
-          for (var gi = 0; gi < groupEntries.length; gi++) {
-            var groupThumbs = groupEntries[gi];
-            var firstThumb = groupThumbs[0];
-
-            // Record URLs before opening carousel
-            var beforeUrls = new Set();
-            document.querySelectorAll('img').forEach(function(img) {
-              if (img.naturalWidth > 80 && img.src.startsWith('https://images.openai.com/')) {
-                beforeUrls.add(img.src);
-              }
-            });
-
-            // Click to open this group's carousel
-            firstThumb.click();
-            await new Promise(function(r) { setTimeout(r, 1500); });
-
-            // Collect all images now visible (includes carousel images)
-            var carouselUrls = new Set();
-            document.querySelectorAll('img').forEach(function(img) {
-              if (img.naturalWidth > 80 && img.src.startsWith('https://images.openai.com/')) {
-                carouselUrls.add(img.src);
-              }
-            });
-
-            // This group's images = new URLs from carousel + this group's thumbnails
-            var groupThumbUrls = new Set(groupThumbs.map(function(t) { return t.src; }));
-            var groupUrls = [];
-            carouselUrls.forEach(function(url) {
-              if ((!beforeUrls.has(url) || groupThumbUrls.has(url)) && !globalSeen.has(url)) {
-                globalSeen.add(url);
-                groupUrls.push(url);
-              }
-            });
-
-            allGroups.push(groupUrls);
-
-            // Close carousel
-            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-            await new Promise(function(r) { setTimeout(r, 500); });
-          }
-
-          return allGroups;
-        })()
-      `);
-
-      const groups = imgUrls || [];
-      console.log('[chatgpt-extract] image groups found:', groups.length, groups.map((g: string[]) => g.length));
-
-      if (groups.length === 0) return [];
-
-      // Download images per group via session.fetch
-      const put = await ensureMediaStore();
-      const resultGroups: string[][] = [];
-      for (const group of groups) {
-        const groupResults: string[] = [];
-        const groupSeen = new Set<string>();
-        for (const imgUrl of group) {
-          try {
-            const response = await wc.session.fetch(imgUrl);
-            if (!response.ok) {
-              console.warn('[chatgpt-extract] image download failed:', imgUrl.slice(0, 80), response.status);
-              continue;
-            }
-            const buffer = Buffer.from(await response.arrayBuffer());
-            const contentType = response.headers.get('content-type') || 'application/octet-stream';
-            const dataUrl = `data:${contentType};base64,${buffer.toString('base64')}`;
-
-            if (put) {
-              const mimeMatch = dataUrl.match(/^data:([^;]+);/);
-              const mime = mimeMatch ? mimeMatch[1] : 'image/png';
-              const ext = mime.includes('jpeg') ? 'jpg' : mime.includes('png') ? 'png' : mime.includes('gif') ? 'gif' : 'webp';
-              const r = await put(dataUrl, mime, `chatgpt-image.${ext}`);
-              if (r.success && r.mediaUrl) {
-                // Dedup by mediaUrl (same content hash → same mediaUrl)
-                if (!groupSeen.has(r.mediaUrl)) {
-                  groupSeen.add(r.mediaUrl);
-                  groupResults.push(r.mediaUrl);
-                }
-                continue;
-              }
-            }
-            if (!groupSeen.has(dataUrl)) {
-              groupSeen.add(dataUrl);
-              groupResults.push(dataUrl);
-            }
-          } catch (err) {
-            console.warn('[chatgpt-extract] image download error:', err);
-          }
-        }
-        resultGroups.push(groupResults);
-      }
-      console.log('[chatgpt-extract] downloaded groups:', resultGroups.map(g => g.length));
-      return resultGroups;
-    }
-    return [];
-  } catch {
-    return [];
-  }
 }
 
 // ── Sandbox link processing ──
@@ -499,29 +327,25 @@ async function processSandboxLinks(markdown: string, conversationId: string, mes
  * API: GET /backend-api/conversation/{conv_id}/interpreter/download
  *        ?message_id={msg_id}&sandbox_path=/mnt/data/{filename}
  *
- * - message_id is the assistant message that references the sandbox file
- * - Bearer token required
- * - Returns the file bytes directly (not JSON)
+ * On 401, automatically refreshes the Bearer token and retries once.
  */
 async function downloadSandboxFile(
   filename: string,
   conversationId: string,
   messageId: string,
 ): Promise<string | null> {
-  try {
-    for (const wc of electronWebContents.getAllWebContents()) {
-      const url = wc.getURL();
-      if (!url.includes('chatgpt.com') && !url.includes('chat.openai.com')) continue;
+  const wc = findChatGPTWebContents();
+  if (!wc) return null;
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const token = await getChatGPTToken(wc, attempt > 0);
+      if (!token) return null;
 
       const result = await wc.executeJavaScript(`
         (async () => {
           try {
-            var sessionResp = await fetch('/api/auth/session', { credentials: 'include' });
-            if (!sessionResp.ok) return { error: 'no-session' };
-            var session = await sessionResp.json();
-            var token = session.accessToken;
-            if (!token) return { error: 'no-token' };
-
+            var token = ${JSON.stringify(token)};
             var apiUrl = '/backend-api/conversation/'
               + ${JSON.stringify(conversationId)}
               + '/interpreter/download?message_id='
@@ -533,9 +357,9 @@ async function downloadSandboxFile(
               credentials: 'include',
               headers: { 'Authorization': 'Bearer ' + token },
             });
+            if (resp.status === 401 || resp.status === 403) return { error: 'auth-failed', status: resp.status };
             if (!resp.ok) return { error: 'fetch-failed', status: resp.status };
 
-            // API returns JSON with download_url → need a second fetch
             var ct = resp.headers.get('content-type') || '';
             var actualBlob;
             if (ct.includes('json')) {
@@ -566,94 +390,140 @@ async function downloadSandboxFile(
       if (result?.dataUrl && typeof result.dataUrl === 'string' && result.dataUrl.startsWith('data:')) {
         return result.dataUrl;
       }
+
+      if (result?.error === 'auth-failed' && attempt === 0) {
+        console.log('[chatgpt-extract] sandbox token expired, refreshing...');
+        continue;
+      }
+
       if (result?.error) {
         console.warn('[chatgpt-extract] sandbox download failed:', filename, JSON.stringify(result));
       }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+// ── Image URL download ──
+
+/**
+ * Download an image from a public URL (e.g. images.openai.com) and persist to media store.
+ * Used for image_group search result images — these are public URLs, no Bearer token needed.
+ */
+async function downloadImageUrlToMedia(imageUrl: string): Promise<string | null> {
+  try {
+    for (const wc of electronWebContents.getAllWebContents()) {
+      const wcUrl = wc.getURL();
+      if (!wcUrl.includes('chatgpt.com') && !wcUrl.includes('chat.openai.com')) continue;
+
+      const response = await wc.session.fetch(imageUrl);
+      if (!response.ok) continue;
+
+      const buffer = Buffer.from(await response.arrayBuffer());
+      const contentType = response.headers.get('content-type') || 'image/jpeg';
+      const dataUrl = `data:${contentType};base64,${buffer.toString('base64')}`;
+
+      const put = await ensureMediaStore();
+      if (put) {
+        const ext = contentType.includes('png') ? 'png' : contentType.includes('webp') ? 'webp' : 'jpg';
+        const hash = imageUrl.slice(-12).replace(/[^a-zA-Z0-9]/g, '');
+        const r = await put(dataUrl, contentType, `chatgpt-search-${hash}.${ext}`);
+        if (r.success && r.mediaUrl) return r.mediaUrl;
+      }
+      return dataUrl;
     }
     return null;
-  } catch {
+  } catch (err) {
+    console.warn('[chatgpt-extract] downloadImageUrlToMedia error:', err);
     return null;
   }
+}
+
+// ── Canvas → Markdown ──
+
+const CANVAS_LANG_MAP: Record<string, string> = {
+  react: 'jsx', javascript: 'javascript', python: 'python',
+  typescript: 'typescript', html: 'html', css: 'css',
+  java: 'java', go: 'go', rust: 'rust', cpp: 'cpp', c: 'c',
+};
+
+function canvasToMarkdown(canvas: ChatGPTCanvasData): string {
+  if (!canvas.content.trim()) return '';
+  const titleAttr = canvas.name ? ` title="${canvas.name}"` : '';
+  const tdType = canvas.canvasType || '';
+  if (tdType.startsWith('code/') || tdType === 'code') {
+    const lang = tdType.replace('code/', '') || '';
+    const mdLang = CANVAS_LANG_MAP[lang] || lang || '';
+    return `\`\`\`${mdLang}${titleAttr}\n${canvas.content.trim()}\n\`\`\``;
+  }
+  // Document canvas → markdown code fence with title
+  return `\`\`\`markdown${titleAttr}\n${canvas.content.trim()}\n\`\`\``;
 }
 
 // ── Turn → Markdown conversion ──
 
 /**
- * Convert a ChatGPT turn to markdown, including images.
+ * Convert a ChatGPT turn to markdown, preserving original content order.
+ *
+ * Iterates turn.contentParts (text, canvas, file) in the order they appear
+ * in the conversation mapping tree, so Canvas blocks, images, and text
+ * maintain their correct positions.
  */
-async function turnToMarkdown(turn: ChatGPTTurn, pageId: string, conversationId: string): Promise<string> {
+async function turnToMarkdown(turn: ChatGPTTurn, _pageId: string, conversationId: string): Promise<string> {
   const parts: string[] = [];
 
-  // Combine assistant message text
-  for (const msg of turn.assistantMessages) {
-    if (msg.text.trim()) {
-      parts.push(msg.text.trim());
-    }
-  }
+  // Track which fileRefs have already been rendered via contentParts
+  const renderedFileIds = new Set<string>();
 
-  // Check if this turn contains {{IMAGE_GROUP_N}} placeholders
-  const rawText = turn.assistantMessages[0]?.text || '';
-  const plainText = rawText.replace(/\*\*|__|[*_`#\[\]]/g, '').replace(/\n+/g, ' ').trim();
-  const imageGroupCount = (parts.join('\n').match(/\{\{IMAGE_GROUP_\d+\}\}/g) || []).length;
-  let imageGroups: string[][] = [];
-
-  if (imageGroupCount > 0) {
-    // Extract images per group (each group opened independently via carousel)
-    imageGroups = await extractImageGroupImages(plainText);
-    console.log('[chatgpt-extract] image_group results:', imageGroups.map(g => g.length));
-  }
-
-  // Fetch images for file refs (DALL·E / Code Interpreter)
-  // Strategy: files/download API (file- prefix) or DOM signed URL (file_ prefix)
-  if (turn.fileRefs.length > 0 && imageGroups.flat().length === 0) {
-    for (const fileId of turn.fileRefs) {
-      const mediaUrl = await downloadChatGPTFileToMedia(fileId);
+  for (const part of turn.contentParts) {
+    if (part.type === 'text') {
+      // Process sandbox links immediately with the correct messageId
+      let text = part.text.trim();
+      if (text.includes('sandbox:/mnt/data/')) {
+        text = await processSandboxLinks(text, conversationId, part.messageId);
+      }
+      parts.push(text);
+    } else if (part.type === 'canvas') {
+      const md = canvasToMarkdown(part.canvas);
+      if (md) parts.push(md);
+    } else if (part.type === 'file') {
+      renderedFileIds.add(part.fileId);
+      const mediaUrl = await downloadChatGPTFileToMedia(part.fileId, conversationId);
       if (mediaUrl) {
         parts.push(`![](${mediaUrl})`);
       } else {
-        parts.push(`> 📎 图片引用: ${fileId}（下载失败）`);
+        parts.push(`> 📎 图片引用: ${part.fileId}（下载失败）`);
+      }
+    } else if (part.type === 'image_group') {
+      // Download image_group images to media store (data-driven, no DOM)
+      const imgParts: string[] = [];
+      for (const url of part.urls) {
+        const mediaUrl = await downloadImageUrlToMedia(url);
+        if (mediaUrl) {
+          imgParts.push(`![](${mediaUrl})`);
+        }
+      }
+      if (imgParts.length > 0) {
+        parts.push(imgParts.join('\n\n'));
       }
     }
   }
 
-  // Append Canvas (textdocs) content as titled code blocks
-  const textdocs = getChatGPTTextdocs(pageId);
-  if (textdocs.length > 0) {
-    for (const td of textdocs) {
-      if (!td.content.trim()) continue;
-      const tdType = td.textdocType || '';
-      const titleAttr = td.title ? ` title="${td.title}"` : '';
-      if (tdType.startsWith('code/') || tdType === 'code') {
-        const lang = tdType.replace('code/', '') || '';
-        const langMap: Record<string, string> = {
-          react: 'jsx', javascript: 'javascript', python: 'python',
-          typescript: 'typescript', html: 'html', css: 'css',
-          java: 'java', go: 'go', rust: 'rust', cpp: 'cpp', c: 'c',
-        };
-        const mdLang = langMap[lang] || lang || '';
-        parts.push(`\n\`\`\`${mdLang}${titleAttr}\n${td.content.trim()}\n\`\`\``);
-      } else {
-        // Document canvas → markdown code fence with title
-        parts.push(`\n\`\`\`markdown${titleAttr}\n${td.content.trim()}\n\`\`\``);
-      }
+  // Fetch remaining file refs not already rendered via contentParts
+  for (const fileId of turn.fileRefs) {
+    if (renderedFileIds.has(fileId)) continue;
+    const mediaUrl = await downloadChatGPTFileToMedia(fileId, conversationId);
+    if (mediaUrl) {
+      parts.push(`![](${mediaUrl})`);
+    } else {
+      parts.push(`> 📎 图片引用: ${fileId}（下载失败）`);
     }
   }
 
-  // Process sandbox:// links (Code Interpreter files)
-  const messageId = turn.assistantMessages[0]?.id || '';
   let markdown = parts.join('\n\n');
-  markdown = await processSandboxLinks(markdown, conversationId, messageId);
-
-  // Replace {{IMAGE_GROUP_N}} placeholders with extracted images at correct positions
-  for (let gi = 0; gi < imageGroups.length; gi++) {
-    const group = imageGroups[gi];
-    if (group.length > 0) {
-      const imageMarkdown = group.map(url => `![](${url})`).join('\n\n');
-      markdown = markdown.replace(`{{IMAGE_GROUP_${gi}}}`, imageMarkdown);
-    }
-  }
-  // Remove any remaining unreplaced placeholders
-  markdown = markdown.replace(/\{\{IMAGE_GROUP_\d+\}\}/g, '');
 
   return markdown;
 }
@@ -673,12 +543,25 @@ export async function extractChatGPTTurn(
     return null;
   }
 
-  const turn = conversation.turns[msgIndex];
+  // Map DOM msgIndex (visible assistant element index) to turn.
+  // Each turn may contain multiple visible assistant DOM elements;
+  // domAssistantIndexStart..+domAssistantCount covers which DOM indices it owns.
+  let turn: ChatGPTTurn | undefined = conversation.turns[msgIndex]; // fast path: indices align
+  if (!turn || msgIndex < turn.domAssistantIndexStart
+    || msgIndex >= turn.domAssistantIndexStart + turn.domAssistantCount) {
+    turn = conversation.turns.find(t =>
+      msgIndex >= t.domAssistantIndexStart
+      && msgIndex < t.domAssistantIndexStart + t.domAssistantCount,
+    );
+  }
   if (!turn) {
     browserCapabilityTraceWriter.writeDebugLog(pageId, 'chatgpt-extract-turn', {
       msgIndex,
       error: 'turn not found',
       totalTurns: conversation.turns.length,
+      turnDomRanges: conversation.turns.map(t => ({
+        index: t.index, start: t.domAssistantIndexStart, count: t.domAssistantCount,
+      })),
     });
     return null;
   }

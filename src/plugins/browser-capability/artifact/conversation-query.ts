@@ -126,6 +126,7 @@ function extractArtifactsFromContent(
   artifacts: ArtifactRecord[],
 ): MessageArtifact[] {
   const result: MessageArtifact[] = [];
+  const skippedToolUseIds = new Set<string>();
 
   // Collect local_resource entries from tool_result (bash_tool output)
   const localResources = extractLocalResources(content);
@@ -218,8 +219,20 @@ function extractArtifactsFromContent(
       continue;
     }
 
-    // For present_files: use local_resource from tool_result as content
+    // For present_files: use local_resource from tool_result as content.
+    // Skip if the same file was already created by a preceding create_file in this message.
     if (isPresentFiles) {
+      const filepathsToCheck = Array.isArray(input.filepaths) ? input.filepaths : [];
+      const alreadyCreated = filepathsToCheck.length > 0 && filepathsToCheck.every((fp: unknown) => {
+        if (typeof fp !== 'string') return false;
+        const fname = fp.split('/').pop();
+        return result.some(r => r.toolName === 'create_file' && r.content?.type === 'file_text'
+          && (r.content as any).path?.split('/').pop() === fname);
+      });
+      if (alreadyCreated) {
+        skippedToolUseIds.add(toolUseId);
+        continue;
+      }
       const filepaths = Array.isArray(input.filepaths) ? input.filepaths : [];
       const fileNames = filepaths
         .map((fp: unknown) => typeof fp === 'string' ? fp.split('/').pop() : null)
@@ -296,8 +309,8 @@ function extractArtifactsFromContent(
   // Add local_resource entries that aren't already covered by tool_use artifacts
   const coveredToolUseIds = new Set(result.map((a) => a.toolUseId));
   for (const res of localResources) {
-    // Skip if this resource's tool_use is already represented
-    if (res.toolUseId && coveredToolUseIds.has(res.toolUseId)) continue;
+    // Skip if this resource's tool_use is already represented or was skipped (deduped)
+    if (res.toolUseId && (coveredToolUseIds.has(res.toolUseId) || skippedToolUseIds.has(res.toolUseId))) continue;
 
     // Check if already matched by download event
     const matched = artifacts.find((a) =>

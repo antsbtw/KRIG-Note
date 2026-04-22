@@ -265,36 +265,35 @@ async function probeClaudeConversation(webContents: WebContents, force = false):
     const result = await webContents.executeJavaScript(`
       (async () => {
         try {
-          const url = window.location.href;
-          const chatMatch = url.match(/\\/chat\\/([^/?#]+)/);
+          var chatMatch = window.location.href.match(/\\/chat\\/([^/?#]+)/);
           if (!chatMatch) return null;
-          const conversationId = chatMatch[1];
+          var conversationId = chatMatch[1];
 
-          // 从已有 API 请求中推断 org ID
-          const orgMatch = document.cookie.match(/lastActiveOrg=([^;]+)/)
-            || document.querySelector('meta[name="organization-id"]')?.content;
-          let orgId = null;
+          // Extract orgId — zero DOM, use performance API + cookie only
+          var orgId = null;
 
-          // 从页面中的 API URL 推断
-          const scripts = document.querySelectorAll('script[src*="claude.ai"]');
-          // 更可靠的方式：从 fetch 拦截或已有请求中获取
-          // 直接尝试从 URL 路径中获取
-          const apiLinks = document.querySelectorAll('a[href*="/api/organizations/"]');
-          if (apiLinks.length > 0) {
-            const m = apiLinks[0].href.match(/\\/organizations\\/([^/]+)/);
-            if (m) orgId = m[1];
+          // 1. Cache: reuse previously found orgId
+          if (window.__krig_claude_orgId) {
+            orgId = window.__krig_claude_orgId;
           }
 
-          // 如果从 DOM 找不到，尝试从 performance entries 中找
+          // 2. Performance entries: extract from API request URLs (most reliable)
           if (!orgId) {
-            const entries = performance.getEntriesByType('resource');
-            for (const entry of entries) {
-              const m = entry.name.match(/claude\\.ai\\/api\\/organizations\\/([0-9a-f-]{36})/);
+            var entries = performance.getEntriesByType('resource');
+            for (var i = 0; i < entries.length; i++) {
+              var m = entries[i].name.match(/claude\\.ai\\/api\\/organizations\\/([0-9a-f-]{36})/);
               if (m) { orgId = m[1]; break; }
             }
           }
 
+          // 3. Cookie fallback
+          if (!orgId) {
+            var cm = document.cookie.match(/lastActiveOrg=([0-9a-f-]{36})/);
+            if (cm) orgId = cm[1];
+          }
+
           if (!orgId) return null;
+          window.__krig_claude_orgId = orgId;
 
           const apiUrl = '/api/organizations/' + orgId + '/chat_conversations/' + conversationId
             + '?tree=True&rendering_mode=messages&render_all_tools=true';
@@ -458,6 +457,154 @@ async function probeChatGPTConversation(webContents: WebContents, force = false)
   }
 }
 
+/**
+ * Probe Gemini conversation — inject fetch interceptor to capture hNvQHb response.
+ *
+ * Strategy: monkey-patch window.fetch to intercept the batchexecute response
+ * that Gemini's frontend sends when loading a conversation. The interceptor
+ * stores the response body in window.__krig_gemini_conv. If the page has
+ * already loaded (data already fetched), we trigger a re-fetch by calling
+ * the batchexecute API ourselves with parameters extracted from the page.
+ *
+ * Zero DOM/CDP — only uses inject fetch in page context.
+ */
+async function probeGeminiConversation(webContents: WebContents, force = false): Promise<void> {
+  const pageId = getPageIdForWebContents(webContents);
+  if (!pageId || webContents.isDestroyed()) return;
+
+  const url = safeGetURL(webContents);
+  console.log('[BrowserCapability] probeGemini called:', { pageId, url: url.slice(0, 100), force });
+  if (!url.includes('gemini.google.com/app/')) {
+    console.warn('[BrowserCapability] probeGemini skipped: not a Gemini conversation URL');
+    return;
+  }
+
+  if (!force && browserCapabilityTraceWriter.hasExtractedFile(pageId, 'conversation.json')) return;
+
+  try {
+    // Step 1: Install fetch interceptor (captures hNvQHb responses from page's own requests)
+    // Must be done early so subsequent navigations within the SPA are captured.
+    await webContents.executeJavaScript(`
+      (function() {
+        if (window.__krig_gemini_fetch_hooked) return;
+        window.__krig_gemini_fetch_hooked = true;
+        var _origFetch = window.fetch;
+        window.fetch = function() {
+          var reqUrl = typeof arguments[0] === 'string' ? arguments[0]
+            : (arguments[0] && arguments[0].url) || '';
+          var p = _origFetch.apply(this, arguments);
+          if (reqUrl.indexOf('rpcids=') >= 0 && reqUrl.indexOf('hNvQHb') >= 0) {
+            p.then(function(resp) {
+              var clone = resp.clone();
+              clone.text().then(function(body) {
+                window.__krig_gemini_conv = { body: body, ts: Date.now(), url: reqUrl };
+              });
+            });
+          }
+          return p;
+        };
+      })()
+    `);
+
+    // Step 2: Try to read conversation data
+    const result = await webContents.executeJavaScript(`
+      (async () => {
+        try {
+          // Check if interceptor already captured data
+          if (window.__krig_gemini_conv && window.__krig_gemini_conv.body) {
+            return { source: 'intercepted', body: window.__krig_gemini_conv.body };
+          }
+
+          // Not captured yet — construct batchexecute request ourselves
+          var convMatch = window.location.href.match(/\\/app\\/([a-f0-9]+)/);
+          if (!convMatch) return { error: 'no-conversation-id' };
+          var convHash = convMatch[1];
+
+          // Extract parameters from WIZ_global_data (zero DOM)
+          var wd = window.WIZ_global_data || {};
+          var at = wd.SNlM0e || '';   // XSRF token
+          var bl = '';                 // build label (extracted below)
+
+          if (!at) return { error: 'no-xsrf-token' };
+
+          var cfb2h = wd.cfb2h || '';   // build label
+          var fsid = wd.FdrFJe || '';  // session ID
+
+          // Construct f.req: conversation ID needs "c_" prefix
+          var innerPayload = JSON.stringify(['c_' + convHash, 10, null, 1, [1], [4], null, 1]);
+          var freqPayload = JSON.stringify([[['hNvQHb', innerPayload, null, 'generic']]]);
+          var body = 'f.req=' + encodeURIComponent(freqPayload)
+            + '&at=' + encodeURIComponent(at);
+
+          var url = '/_/BardChatUi/data/batchexecute?rpcids=hNvQHb'
+            + '&source-path=' + encodeURIComponent('/app/' + convHash)
+            + '&bl=' + encodeURIComponent(cfb2h)
+            + '&f.sid=' + encodeURIComponent(fsid)
+            + '&hl=en'
+            + '&_reqid=' + Math.floor(Math.random() * 9000000 + 1000000)
+            + '&rt=c';
+
+          var resp = await fetch(url, {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+              'X-Same-Domain': '1',
+            },
+            body: body,
+          });
+
+          if (!resp.ok) {
+            var errText = '';
+            try { errText = (await resp.text()).slice(0, 200); } catch(e) {}
+            return { error: 'fetch-failed', status: resp.status, detail: errText };
+          }
+          var respBody = await resp.text();
+
+          // Verify response has meaningful content
+          if (respBody.length < 500) {
+            return { error: 'response-too-small', bodyLen: respBody.length, preview: respBody.slice(0, 300), at: at.slice(0, 20) + '...' };
+          }
+
+          window.__krig_gemini_conv = { body: respBody, ts: Date.now(), url: resp.url };
+          return { source: 'fetched', body: respBody };
+        } catch (e) {
+          return { error: String(e) };
+        }
+      })()
+    `);
+
+    if (!result || result.error) {
+      console.warn('[BrowserCapability] Gemini probe failed:', JSON.stringify(result));
+      return;
+    }
+
+    if (!result.body || typeof result.body !== 'string') {
+      console.warn('[BrowserCapability] Gemini probe: no body in result:', JSON.stringify(result).slice(0, 300));
+      return;
+    }
+
+    console.log('[BrowserCapability] Gemini probe succeeded:', {
+      source: result.source,
+      bodyLen: result.body.length,
+    });
+
+    // Write raw batchexecute response to trace
+    browserCapabilityTraceWriter.writeExtractedJsonSync(pageId, 'conversation.json', {
+      kind: 'gemini-conversation',
+      pageId,
+      url: url,
+      capturedAt: new Date().toISOString(),
+      status: 200,
+      mimeType: 'text/plain',
+      body: result.body,
+    });
+
+  } catch (err) {
+    console.warn('[BrowserCapability] Gemini probe injection failed:', err);
+  }
+}
+
 function scheduleAnchorRefresh(webContents: WebContents): void {
   clearAnchorRefreshTimers(webContents.id);
   const delays = [250, 1500, 4000];
@@ -494,6 +641,8 @@ function scheduleAnchorRefresh(webContents: WebContents): void {
     const pageUrl = safeGetURL(webContents);
     if (pageUrl.includes('chatgpt.com') || pageUrl.includes('chat.openai.com')) {
       void probeChatGPTConversation(webContents);
+    } else if (pageUrl.includes('gemini.google.com')) {
+      void probeGeminiConversation(webContents);
     } else {
       void probeClaudeConversation(webContents);
     }
@@ -510,6 +659,7 @@ export const browserCapabilityServices = {
   network: networkService,
   probeClaudeConversation,
   probeChatGPTConversation,
+  probeGeminiConversation,
 };
 
 export function bindWebContentsPage(webContents: WebContents, input: BindPageInput): string {
