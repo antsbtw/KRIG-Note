@@ -97,6 +97,19 @@ export function registerNoteIpcHandlers(ctx: PluginContext): void {
     return noteStore.list();
   });
 
+  ipcMain.handle(IPC.NOTE_SAVE_LAST_VIEW, async (_event, id: string, blockIndex: number) => {
+    if (!isDBReady()) return;
+    if (typeof blockIndex !== 'number' || !Number.isFinite(blockIndex) || blockIndex < 0) return;
+    await noteStore.saveLastViewBlockIndex(id, Math.floor(blockIndex));
+  });
+
+  ipcMain.handle(IPC.NOTE_SAVE_BOOKMARKS, async (_event, id: string, bookmarks: unknown) => {
+    if (!isDBReady()) return;
+    if (!Array.isArray(bookmarks)) return;
+    await noteStore.saveBookmarks(id, bookmarks as import('../../../main/storage/types').NoteBookmark[]);
+    broadcastNoteList();
+  });
+
   // ── Workspace 状态同步 ──
   ipcMain.handle(IPC.SET_ACTIVE_NOTE, (event, noteId: string | null, noteTitle?: string) => {
     const active = workspaceManager.getActive();

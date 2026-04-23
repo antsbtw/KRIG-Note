@@ -2,6 +2,14 @@
  * 存储层类型定义
  */
 
+/** Note 内的书签：指向顶层 block 的索引 */
+export interface NoteBookmark {
+  id: string;              // 稳定 ID
+  block_index: number;     // 顶层 block 索引
+  label: string;           // 显示名（默认取 block 文字前 30 字，用户可改）
+  created_at: number;
+}
+
 export interface NoteRecord {
   id: string;
   title: string;
@@ -9,6 +17,10 @@ export interface NoteRecord {
   folder_id: string | null;
   created_at: number;
   updated_at: number;
+  /** 上次阅读/编辑的顶层 block 索引，重开时恢复滚动 */
+  last_view_block_index?: number;
+  /** 用户书签列表（类 PDF 阅读书签） */
+  bookmarks?: NoteBookmark[];
 }
 
 export interface NoteListItem {
@@ -59,6 +71,10 @@ export interface INoteStore {
   moveToFolder(id: string, folderId: string | null): Promise<void>;
   duplicate(id: string, targetFolderId?: string | null): Promise<NoteRecord | null>;
   list(): Promise<NoteListItem[]>;
+  /** 保存上次阅读顶层 block 索引，不扰动 updated_at */
+  saveLastViewBlockIndex(id: string, index: number): Promise<void>;
+  /** 保存书签列表（全量替换） */
+  saveBookmarks(id: string, bookmarks: NoteBookmark[]): Promise<void>;
 }
 
 export interface IActivityStore {

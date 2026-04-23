@@ -243,6 +243,14 @@ export function NoteView() {
           {dirty ? '保存' : '已保存'}
         </button>
         <button
+          className="note-toolbar__bookmark-btn"
+          style={styles.toolbarIconBtn}
+          onClick={() => window.dispatchEvent(new CustomEvent('note:bookmark-toggle-panel'))}
+          title="书签：点击记录当前位置并打开列表"
+        >
+          📑
+        </button>
+        <button
           style={styles.newBtn}
           onClick={handleNewNote}
           title="新建笔记"
@@ -340,6 +348,17 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 12,
     height: APP_CONFIG.layout.toolbarBtnHeight,
     padding: '0 10px',
+    cursor: 'pointer',
+    flexShrink: 0,
+  },
+  toolbarIconBtn: {
+    background: 'transparent',
+    border: '1px solid #555',
+    borderRadius: 4,
+    color: '#e8eaed',
+    fontSize: 12,
+    height: APP_CONFIG.layout.toolbarBtnHeight,
+    padding: '0 8px',
     cursor: 'pointer',
     flexShrink: 0,
   },

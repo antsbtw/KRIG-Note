@@ -203,6 +203,8 @@ export const IPC = {
 
   NOTE_MOVE_TO_FOLDER: 'note:move-to-folder',
   NOTE_DUPLICATE: 'note:duplicate',
+  NOTE_SAVE_LAST_VIEW: 'note:save-last-view',   // 保存上次阅读顶层 block 索引
+  NOTE_SAVE_BOOKMARKS: 'note:save-bookmarks',   // 保存书签列表（全量替换）
 
   // NoteFile 编辑器操作
   NOTE_OPEN_IN_EDITOR: 'note:open-in-editor',

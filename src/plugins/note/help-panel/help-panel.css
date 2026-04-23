@@ -315,3 +315,114 @@
   color: var(--help-panel-text-secondary);
   flex-shrink: 0;
 }
+
+/* ─── Bookmarks Panel ─────────────────────────────────────── */
+
+.bookmarks-panel__body {
+  padding: 8px;
+}
+
+.bookmarks-panel__add-bar {
+  margin-bottom: 8px;
+}
+
+.bookmarks-panel__add-btn {
+  width: 100%;
+  padding: 6px 10px;
+  background: transparent;
+  border: 1px dashed #555;
+  border-radius: 4px;
+  color: var(--help-panel-text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.bookmarks-panel__add-btn:hover {
+  background: rgba(138, 180, 248, 0.1);
+  border-color: #8ab4f8;
+  color: #8ab4f8;
+}
+
+.bookmarks-panel__empty {
+  padding: 24px 12px;
+  font-size: 13px;
+  color: var(--help-panel-text-secondary);
+  text-align: center;
+  line-height: 1.6;
+}
+
+.bookmarks-panel__list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.bookmarks-panel__item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  transition: background 0.12s;
+}
+
+.bookmarks-panel__item:hover {
+  background: rgba(138, 180, 248, 0.08);
+}
+
+.bookmarks-panel__label {
+  flex: 1;
+  font-size: 13px;
+  color: var(--help-panel-text);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 2px 4px;
+  border-radius: 3px;
+}
+
+.bookmarks-panel__label:hover {
+  background: rgba(138, 180, 248, 0.15);
+  color: #8ab4f8;
+}
+
+.bookmarks-panel__label.is-editing {
+  background: rgba(138, 180, 248, 0.12);
+  color: var(--help-panel-text);
+  outline: 1px solid #8ab4f8;
+  cursor: text;
+  white-space: normal;
+}
+
+.bookmarks-panel__label.is-editing:hover {
+  background: rgba(138, 180, 248, 0.12);
+  color: var(--help-panel-text);
+}
+
+.bookmarks-panel__icon-btn {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--help-panel-text-secondary);
+  cursor: pointer;
+  border-radius: 3px;
+  font-size: 13px;
+  flex-shrink: 0;
+  transition: background 0.12s, color 0.12s;
+}
+
+.bookmarks-panel__icon-btn:hover {
+  background: rgba(138, 180, 248, 0.15);
+  color: var(--help-panel-text);
+}
+
+.bookmarks-panel__icon-btn--danger:hover {
+  background: rgba(242, 139, 130, 0.15);
+  color: #f28b82;
+}

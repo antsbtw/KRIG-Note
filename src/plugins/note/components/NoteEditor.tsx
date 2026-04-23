@@ -41,10 +41,19 @@ import { registerConverterTest } from '../converters/converter-test';
 import { converterRegistry } from '../converters/registry';
 import { setTextBlockLevel } from '../commands/set-text-block-level';
 import { toggleTextIndent } from '../commands/editor-commands';
+import { showBookmarksPanel, hideBookmarksPanel } from '../help-panel/bookmarks';
 import type { Atom, NoteTitleContent } from '../../../shared/types/atom-types';
 import { createAtom } from '../../../shared/types/atom-types';
 import { sanitizeAtoms } from '../../../shared/sanitize-atoms';
 import '../note.css';
+
+/** Note 内书签（跟 main 侧的 NoteBookmark 对齐） */
+interface NoteBookmark {
+  id: string;
+  block_index: number;
+  label: string;
+  created_at: number;
+}
 
 /**
  * NoteEditor — ProseMirror 编辑器 React 组件
@@ -63,6 +72,8 @@ declare const viewAPI: {
   onNoteDeleted: (callback: (noteId: string) => void) => () => void;
   notePendingOpen: () => Promise<string | null>;
   setActiveNote: (noteId: string | null, noteTitle?: string) => Promise<void>;
+  noteSaveLastView: (id: string, blockIndex: number) => Promise<void>;
+  noteSaveBookmarks: (id: string, bookmarks: unknown[]) => Promise<void>;
   getActiveNoteId: () => Promise<string | null>;
   getMyRole: () => Promise<'primary' | 'companion' | null>;
   onRestoreWorkspaceState: (callback: (state: { activeNoteId: string | null; rightActiveNoteId?: string | null }) => void) => () => void;
@@ -248,6 +259,36 @@ function createEmptyDoc(s: ReturnType<typeof getSchema>): PMNode {
   ]);
 }
 
+/** 找 scroll 容器顶部可见的顶层 block 索引（0 = 第一个顶层 block） */
+function getTopBlockIndexAtScroll(view: EditorView, scrollContainer: HTMLElement): number {
+  if (view.isDestroyed) return 0;
+  const r = scrollContainer.getBoundingClientRect();
+  const result = view.posAtCoords({ left: r.left + 16, top: r.top + 4 });
+  if (!result) return 0;
+  const doc = view.state.doc;
+  let offset = 0;
+  for (let i = 0; i < doc.childCount; i++) {
+    const size = doc.child(i).nodeSize;
+    if (result.pos < offset + size) return i;
+    offset += size;
+  }
+  return Math.max(0, doc.childCount - 1);
+}
+
+/** 把 scroll 容器滚到指定索引的顶层 block */
+function scrollToTopBlockIndex(view: EditorView, scrollContainer: HTMLElement, index: number): void {
+  if (view.isDestroyed || index <= 0) return;
+  const doc = view.state.doc;
+  if (index >= doc.childCount) return;
+  let pos = 0;
+  for (let i = 0; i < index; i++) pos += doc.child(i).nodeSize;
+  try {
+    const coords = view.coordsAtPos(pos + 1);
+    const r = scrollContainer.getBoundingClientRect();
+    scrollContainer.scrollTop += coords.top - r.top;
+  } catch { /* ignore */ }
+}
+
 export function NoteEditor() {
   const editorRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -262,6 +303,9 @@ export function NoteEditor() {
   const fullAtomsRef = useRef<Atom[] | null>(null); // 完整 atoms（分片加载时用于保存未加载部分）
   const loadedTopCountRef = useRef<number>(-1); // 分片加载：已加载的 topLevel atom 数量（-1 = 全量加载）
   const scheduleSaveRef = useRef<() => void>(() => {});
+  // 书签：当前 note 的书签列表 + 面板是否打开
+  const bookmarksRef = useRef<NoteBookmark[]>([]);
+  const bookmarksPanelOpenRef = useRef<boolean>(false);
 
   // 追加更多内容到编辑器末尾
   const appendMoreContent = useCallback(() => {
@@ -431,6 +475,16 @@ export function NoteEditor() {
       currentNoteIdRef.current = noteId;
       setCurrentNote(noteId);
 
+      // 初始化书签列表（每个 note 独立）
+      bookmarksRef.current = Array.isArray((record as { bookmarks?: unknown }).bookmarks)
+        ? ((record as { bookmarks?: NoteBookmark[] }).bookmarks as NoteBookmark[])
+        : [];
+      // 切 note 时自动关闭书签面板（旧 note 的列表不再适用）
+      if (bookmarksPanelOpenRef.current) {
+        hideBookmarksPanel();
+        bookmarksPanelOpenRef.current = false;
+      }
+
       // 跨文档 block 链接：笔记加载完成后滚动到目标锚点
       const v2 = viewRef.current;
       if (v2) flushPendingAnchor(v2);
@@ -448,6 +502,21 @@ export function NoteEditor() {
         }
       } else {
         viewAPI.setActiveNote(noteId, record?.title);
+      }
+
+      // 恢复上次阅读位置（flushPendingAnchor 上面已调用，pending anchor 会覆盖本次滚动——
+      //  用户主动点击跨文档 block 链接时，锚点跳转优先于阅读位置恢复）
+      const savedIdx = (record as { last_view_block_index?: number })?.last_view_block_index;
+      if (typeof savedIdx === 'number' && savedIdx > 0 && v && editorRef.current?.parentElement) {
+        const scrollContainer = editorRef.current.parentElement;
+        // 双重 rAF：首次打开时 scroll 容器可能还没布局完，等两次 layout/paint 后再滚
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            if (viewRef.current === v && !v.isDestroyed) {
+              scrollToTopBlockIndex(v, scrollContainer, savedIdx);
+            }
+          });
+        });
       }
     } catch (err) {
       if (seq !== loadSeqRef.current) return;
@@ -530,6 +599,13 @@ export function NoteEditor() {
     }
 
     await viewAPI.noteSave(noteId, loadedAtoms, title);
+
+    // 顺带记录阅读位置（跟着自动保存节奏，文档级元数据，不动 updated_at）
+    const scrollContainer = editorRef.current?.parentElement;
+    if (scrollContainer) {
+      const idx = getTopBlockIndexAtScroll(view, scrollContainer);
+      viewAPI.noteSaveLastView(noteId, idx).catch(() => { /* ignore */ });
+    }
   }, []);
 
   // 防抖自动保存（1秒）
@@ -741,6 +817,108 @@ export function NoteEditor() {
     };
     window.addEventListener('note:save', manualSaveHandler);
 
+    // ── 书签 ──
+    /** 持久化 bookmarks，并刷新面板（如果打开） */
+    const persistBookmarks = () => {
+      const noteId = currentNoteIdRef.current;
+      if (!noteId) return;
+      viewAPI.noteSaveBookmarks(noteId, bookmarksRef.current).catch(() => { /* ignore */ });
+      if (bookmarksPanelOpenRef.current) {
+        openBookmarksPanel();   // 重新 render
+      }
+    };
+
+    /** 生成书签默认 label：取该顶层 block 的前 30 字，空则用 "第 N 块" */
+    const deriveBookmarkLabel = (view: EditorView, blockIndex: number): string => {
+      const doc = view.state.doc;
+      if (blockIndex >= doc.childCount) return `第 ${blockIndex + 1} 块`;
+      const text = doc.child(blockIndex).textContent.trim();
+      if (!text) return `第 ${blockIndex + 1} 块`;
+      return text.length > 30 ? text.slice(0, 30) + '…' : text;
+    };
+
+    /** 计算当前应记录的书签 blockIndex（优先光标位置，退化到 scroll 顶部可见块） */
+    const computeCurrentBlockIndex = (): number | null => {
+      const view = viewRef.current;
+      const scrollContainer = editorRef.current?.parentElement;
+      if (!view || view.isDestroyed || !scrollContainer) return null;
+      const { $from } = view.state.selection;
+      if ($from.depth >= 1) return $from.index(0);
+      return getTopBlockIndexAtScroll(view, scrollContainer);
+    };
+
+    /** 在当前位置添加书签；已存在（同 block_index）则跳过 */
+    const addBookmarkAtCurrent = (): boolean => {
+      const view = viewRef.current;
+      const noteId = currentNoteIdRef.current;
+      if (!noteId || !view || view.isDestroyed) return false;
+      const blockIndex = computeCurrentBlockIndex();
+      if (blockIndex == null || blockIndex < 0) return false;
+      // 去重：同一 block 已有书签则不重复添加
+      if (bookmarksRef.current.some(b => b.block_index === blockIndex)) return false;
+      const bm: NoteBookmark = {
+        id: `bm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        block_index: blockIndex,
+        label: deriveBookmarkLabel(view, blockIndex),
+        created_at: Date.now(),
+      };
+      bookmarksRef.current = [...bookmarksRef.current, bm];
+      return true;
+    };
+
+    const openBookmarksPanel = () => {
+      const view = viewRef.current;
+      const scrollContainer = editorRef.current?.parentElement;
+      // 清理失效书签（blockIndex 超出当前 doc）—— "book 级联"
+      if (view && !view.isDestroyed) {
+        const maxIdx = view.state.doc.childCount - 1;
+        const cleaned = bookmarksRef.current.filter(b => b.block_index <= maxIdx);
+        if (cleaned.length !== bookmarksRef.current.length) {
+          bookmarksRef.current = cleaned;
+          const noteId = currentNoteIdRef.current;
+          if (noteId) viewAPI.noteSaveBookmarks(noteId, cleaned).catch(() => { /* ignore */ });
+        }
+      }
+
+      showBookmarksPanel({
+        bookmarks: bookmarksRef.current,
+        onAddCurrent: () => {
+          const added = addBookmarkAtCurrent();
+          if (added) persistBookmarks();
+          // 无论是否新增都重新 render（用户能看到"已存在该位置"的情况）
+          if (!added && bookmarksPanelOpenRef.current) openBookmarksPanel();
+        },
+        onJump: (bmId) => {
+          const bm = bookmarksRef.current.find(b => b.id === bmId);
+          const v = viewRef.current;
+          if (bm && v && !v.isDestroyed && scrollContainer) {
+            scrollToTopBlockIndex(v, scrollContainer, bm.block_index);
+          }
+        },
+        onRemove: (bmId) => {
+          bookmarksRef.current = bookmarksRef.current.filter(b => b.id !== bmId);
+          persistBookmarks();
+        },
+        onRename: (bmId, newLabel) => {
+          bookmarksRef.current = bookmarksRef.current.map(b =>
+            b.id === bmId ? { ...b, label: newLabel } : b,
+          );
+          persistBookmarks();
+        },
+      });
+      bookmarksPanelOpenRef.current = true;
+    };
+
+    const togglePanelHandler = () => {
+      if (bookmarksPanelOpenRef.current) {
+        hideBookmarksPanel();
+        bookmarksPanelOpenRef.current = false;
+      } else {
+        openBookmarksPanel();
+      }
+    };
+    window.addEventListener('note:bookmark-toggle-panel', togglePanelHandler);
+
     return () => {
       unsubOpen();
       unsubDeleted();
@@ -751,6 +929,8 @@ export function NoteEditor() {
       window.removeEventListener('note:import-json', onImportJson);
       window.removeEventListener('note:import-markdown', onImportMarkdown);
       window.removeEventListener('note:save', manualSaveHandler);
+      window.removeEventListener('note:bookmark-toggle-panel', togglePanelHandler);
+      if (bookmarksPanelOpenRef.current) hideBookmarksPanel();
       if (saveTimerRef.current) {
         clearTimeout(saveTimerRef.current);
         saveNote(); // 关闭前保存

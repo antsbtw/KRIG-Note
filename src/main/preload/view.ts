@@ -114,6 +114,8 @@ contextBridge.exposeInMainWorld('viewAPI', {
   noteSave: (id: string, docContent: unknown[], title: string) => ipcRenderer.invoke(IPC.NOTE_SAVE, id, docContent, title),
   noteLoad: (id: string) => ipcRenderer.invoke(IPC.NOTE_LOAD, id),
   noteRename: (id: string, title: string) => ipcRenderer.invoke(IPC.NOTE_RENAME, id, title),
+  noteSaveLastView: (id: string, blockIndex: number) => ipcRenderer.invoke(IPC.NOTE_SAVE_LAST_VIEW, id, blockIndex),
+  noteSaveBookmarks: (id: string, bookmarks: unknown[]) => ipcRenderer.invoke(IPC.NOTE_SAVE_BOOKMARKS, id, bookmarks),
   noteDelete: (id: string) => ipcRenderer.invoke(IPC.NOTE_DELETE, id),
   noteList: () => ipcRenderer.invoke(IPC.NOTE_LIST),
   noteOpenInEditor: (id: string) => ipcRenderer.invoke(IPC.NOTE_OPEN_IN_EDITOR, id),

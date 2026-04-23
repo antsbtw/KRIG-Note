@@ -1,5 +1,5 @@
 import { getDB } from './client';
-import type { INoteStore, NoteRecord, NoteListItem } from './types';
+import type { INoteStore, NoteRecord, NoteListItem, NoteBookmark } from './types';
 import { createAtom } from '../../shared/types/atom-types';
 import type { Atom, NoteTitleContent, ParagraphContent } from '../../shared/types/atom-types';
 
@@ -79,6 +79,8 @@ export const noteStore: INoteStore = {
       folder_id: r.folder_id ?? null,
       created_at: r.created_at || 0,
       updated_at: r.updated_at || 0,
+      last_view_block_index: typeof r.last_view_block_index === 'number' ? r.last_view_block_index : undefined,
+      bookmarks: Array.isArray(r.bookmarks) ? r.bookmarks : undefined,
     };
   },
 
@@ -160,5 +162,26 @@ export const noteStore: INoteStore = {
       folder_id: r.folder_id ?? null,
       updated_at: r.updated_at || 0,
     }));
+  },
+
+  async saveLastViewBlockIndex(id: string, index: number): Promise<void> {
+    const db = getDB();
+    if (!db) return;
+    // 仅更新字段，不碰 updated_at —— 阅读位置不应扰动列表排序
+    await db.query(
+      `UPDATE type::record('note', $id) SET last_view_block_index = $index`,
+      { id, index },
+    );
+  },
+
+  async saveBookmarks(id: string, bookmarks: NoteBookmark[]): Promise<void> {
+    const db = getDB();
+    if (!db) return;
+    // 书签是显式用户操作 —— 算内容修改，更新 updated_at
+    const now = Date.now();
+    await db.query(
+      `UPDATE type::record('note', $id) SET bookmarks = $bookmarks, updated_at = $updated_at`,
+      { id, bookmarks, updated_at: now },
+    );
   },
 };
