@@ -26,6 +26,7 @@ declare const navSideAPI: {
   folderCreate: (title: string, parentId?: string | null) => Promise<any>;
   folderRename: (id: string, title: string) => Promise<void>;
   folderDelete: (id: string) => Promise<void>;
+  closeRightSlot: () => Promise<void>;
 };
 
 export interface NoteOperationsInput {
@@ -71,6 +72,8 @@ export function useNoteOperations(input: NoteOperationsInput) {
   }, [contextMenu]);
 
   const handleSwitchMode = useCallback((id: string) => {
+    // NavSide 契约：任何切换 = 回到干净的单屏
+    navSideAPI.closeRightSlot();
     navSideAPI.switchWorkMode(id);
   }, []);
 
@@ -156,6 +159,8 @@ export function useNoteOperations(input: NoteOperationsInput) {
     lastClickedRef.current = key;
     if (noteId) {
       setActiveNoteId(noteId);
+      // NavSide 契约：任何切换 = 回到干净的单屏
+      navSideAPI.closeRightSlot();
       navSideAPI.noteOpenInEditor(noteId);
     }
   }, [buildVisibleKeys, setActiveNoteId]);
@@ -304,7 +309,8 @@ export function useNoteOperations(input: NoteOperationsInput) {
     if (sort === 'title-desc') return notes.sort((a, b) => b.title.localeCompare(a.title, 'zh-CN'));
     if (sort === 'date-asc') return notes.sort((a, b) => a.updated_at - b.updated_at);
     if (sort === 'date-desc') return notes.sort((a, b) => b.updated_at - a.updated_at);
-    return notes.sort((a, b) => b.updated_at - a.updated_at);
+    // 默认按标题升序 —— 避免改文档就 updated_at 变导致列表跳位
+    return notes.sort((a, b) => a.title.localeCompare(b.title, 'zh-CN'));
   }, [noteList, folderSortMap]);
 
   return {

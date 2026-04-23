@@ -41,6 +41,7 @@ declare const navSideAPI: {
   ebookFolderMove: (id: string, parentId: string | null) => Promise<void>;
   ebookSetExpandedFolders: (folderIds: string[]) => Promise<void>;
   onEbookBookshelfChanged: (callback: (list: EBookEntry[]) => void) => () => void;
+  closeRightSlot: () => Promise<void>;
 };
 
 // ── 工具函数 ──
@@ -165,6 +166,8 @@ export function EBookPanel({ activeBookId, initialExpandedFolders, onActiveBookC
   // ── 操作 ──
 
   const handleOpenBook = useCallback(async (id: string) => {
+    // NavSide 契约：任何切换 = 回到干净的单屏
+    navSideAPI.closeRightSlot();
     const result = await navSideAPI.ebookBookshelfOpen(id);
     if (result.success) {
       onActiveBookChange(id);
