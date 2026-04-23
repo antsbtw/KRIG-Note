@@ -109,6 +109,29 @@ const mathBlockNodeView: NodeViewFactory = (initialNode, view, getPos) => {
   label.classList.add('math-block__label');
   label.textContent = '∑ Block equation';
   headerBar.appendChild(label);
+
+  // LaTeX 参考面板按需触发 —— 熟悉 LaTeX 的用户不会被自动弹出的面板干扰
+  const helpBtn = document.createElement('button');
+  helpBtn.classList.add('math-block__help-btn');
+  helpBtn.setAttribute('contenteditable', 'false');
+  helpBtn.type = 'button';
+  helpBtn.textContent = '?';
+  helpBtn.title = 'LaTeX 参考';
+  let helpPanelOpen = false;
+  helpBtn.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (helpPanelOpen) {
+      hideMathPanel();
+      helpPanelOpen = false;
+      helpBtn.classList.remove('is-active');
+    } else {
+      showMathPanel(insertLatex);
+      helpPanelOpen = true;
+      helpBtn.classList.add('is-active');
+    }
+  });
+  headerBar.appendChild(helpBtn);
   editorArea.appendChild(headerBar);
 
   const code = document.createElement('pre');
@@ -151,6 +174,14 @@ const mathBlockNodeView: NodeViewFactory = (initialNode, view, getPos) => {
   // ── Edit mode ──
   const selfEditor: ActiveMathEditor = { dom, exit: () => exitEditMode() };
 
+  /** help 面板条目点击 → 插入 LaTeX 到当前光标位置 */
+  function insertLatex(latex: string): void {
+    const { state } = view;
+    const tr = state.tr.insertText(latex, state.selection.from);
+    view.dispatch(tr);
+    view.focus();
+  }
+
   function enterEditMode() {
     if (editing) return;
     editing = true;
@@ -160,13 +191,7 @@ const mathBlockNodeView: NodeViewFactory = (initialNode, view, getPos) => {
     lastPreviewLatex = null;  // 清除预览缓存，强制渲染
     renderLivePreview();
 
-    showMathPanel((latex: string) => {
-      const { state } = view;
-      const tr = state.tr.insertText(latex, state.selection.from);
-      view.dispatch(tr);
-      view.focus();
-    });
-
+    // help 面板按需触发（点击 ? 按钮），不再自动弹出
     registerActiveEditor(selfEditor);
 
     setTimeout(() => {
@@ -193,7 +218,10 @@ const mathBlockNodeView: NodeViewFactory = (initialNode, view, getPos) => {
     rendered.style.display = '';
     lastRenderedLatex = null;  // 清除渲染缓存，强制刷新
     renderRenderedView();
+    // 无论 help 面板之前是否开启，退出编辑都要隐藏它并重置按钮状态
     hideMathPanel();
+    helpPanelOpen = false;
+    helpBtn.classList.remove('is-active');
     unregisterActiveEditor(selfEditor);
   }
 

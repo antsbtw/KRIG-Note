@@ -301,6 +301,9 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
   mermaidSep.classList.add('code-block__toolbar-sep');
   const btnDownload = createBtn(ICON_DOWNLOAD, '下载图片');
   const btnFullscreen = createBtn(ICON_FULLSCREEN, '全屏');
+  // Mermaid 语法参考面板按钮 —— 按需触发，不再在点击 code-block 时自动弹
+  const btnMermaidHelp = createBtn('?', 'Mermaid 语法参考');
+  let mermaidPanelOpen = false;
 
   function insertMermaidBtns() {
     if (mermaidBtnsInserted) return;
@@ -308,6 +311,7 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
     toolbar.insertBefore(mermaidSep, spacer);
     toolbar.insertBefore(btnDownload, spacer);
     toolbar.insertBefore(btnFullscreen, spacer);
+    toolbar.insertBefore(btnMermaidHelp, spacer);
     mermaidBtnsInserted = true;
   }
 
@@ -317,6 +321,9 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
     mermaidSep.remove();
     btnDownload.remove();
     btnFullscreen.remove();
+    btnMermaidHelp.remove();
+    mermaidPanelOpen = false;
+    btnMermaidHelp.classList.remove('code-block__toolbar-btn--active');
     mermaidBtnsInserted = false;
   }
 
@@ -364,12 +371,14 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
       // 只在从 mermaid 切走时关闭面板（避免其他 code-block 初始化时误关）
       if (wasMermaid) {
         hideMermaidPanel();
+        mermaidPanelOpen = false;
+        btnMermaidHelp.classList.remove('code-block__toolbar-btn--active');
       }
     }
     wasMermaid = isMermaid;
   }
 
-  /** 打开 Mermaid 面板（点击进入 mermaid code-block 时调用） */
+  /** 打开 Mermaid 面板（由 ? 按钮触发） */
   function openMermaidPanel() {
     if (node.attrs.language !== 'mermaid') return;
     showMermaidPanel((mermaidCode: string) => {
@@ -385,10 +394,19 @@ const codeBlockNodeView: NodeViewFactory = (node, view, getPos) => {
     });
   }
 
-  // 点击 code-block 时，如果是 mermaid 则打开面板
-  dom.addEventListener('mousedown', () => {
-    if (node.attrs.language === 'mermaid') {
+  // ? 按钮 toggle —— 按需触发 Mermaid 语法参考面板，不再点击 code-block 就自动弹
+  btnMermaidHelp.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (node.attrs.language !== 'mermaid') return;
+    if (mermaidPanelOpen) {
+      hideMermaidPanel();
+      mermaidPanelOpen = false;
+      btnMermaidHelp.classList.remove('code-block__toolbar-btn--active');
+    } else {
       openMermaidPanel();
+      mermaidPanelOpen = true;
+      btnMermaidHelp.classList.add('code-block__toolbar-btn--active');
     }
   });
 
