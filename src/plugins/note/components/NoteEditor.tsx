@@ -99,6 +99,13 @@ export interface NoteEditorProps {
   onReady?: (handle: NoteEditorHandle) => void;
   /** 当前编辑的笔记 id —— AI Sync 的协议 payload 需要带上，用于跨 slot 投递识别。 */
   activeNoteId?: string | null;
+  /**
+   * 变体：
+   * - 'note' (默认)：完整 Note 能力，含 noteTitle 节点、titleGuard、thoughtPlugin
+   * - 'thought'：作为 NoteView 的变体，无 noteTitle、禁用 titleGuard/thoughtPlugin
+   *   （thoughtPlugin 自嵌套会递归），其余编辑能力全部继承
+   */
+  variant?: 'note' | 'thought';
 }
 
 /**
@@ -138,7 +145,7 @@ function getSchema() {
 }
 
 /** 构建 ProseMirror 插件列表 */
-function buildPlugins(s: ReturnType<typeof getSchema>) {
+function buildPlugins(s: ReturnType<typeof getSchema>, variant: 'note' | 'thought') {
   const markKeymap: Record<string, any> = {};
   if (s.marks.bold) markKeymap['Mod-b'] = toggleMark(s.marks.bold);
   if (s.marks.italic) markKeymap['Mod-i'] = toggleMark(s.marks.italic);
@@ -207,6 +214,8 @@ function buildPlugins(s: ReturnType<typeof getSchema>) {
 
   const blockPlugins = blockRegistry.buildBlockPlugins();
 
+  const isThought = variant === 'thought';
+
   return [
     // columnResizing 必须在编辑器装配处手动注册，不能下沉到 tableBlock.plugin：
     // 它有全局 PluginKey（tableColumnResizing$），整个编辑器只能存在一个实例。
@@ -223,7 +232,9 @@ function buildPlugins(s: ReturnType<typeof getSchema>) {
     keymap(markKeymap),
     keymap(baseKeymap),
     blockHandlePlugin(),
-    titleGuardPlugin(),
+    // Thought 变体跳过 titleGuardPlugin（无 noteTitle 节点可守护）
+    // 和 thoughtPlugin（避免自嵌套递归）；其余编辑能力完整继承
+    ...(isThought ? [] : [titleGuardPlugin()]),
     columnCollapsePlugin(),
     pasteMediaPlugin(),
     smartPastePlugin(),
@@ -231,7 +242,7 @@ function buildPlugins(s: ReturnType<typeof getSchema>) {
     headingCollapsePlugin(),
     vocabHighlightPlugin(),
     fromPageDecorationPlugin,
-    thoughtPlugin(),
+    ...(isThought ? [] : [thoughtPlugin()]),
     blockFramePlugin(),
     history(),
     dropCursor({ color: '#8ab4f8', width: 2 }),
@@ -244,27 +255,49 @@ const INITIAL_CHUNK_SIZE = 200;
 /** 每次追加的顶层 block 数量 */
 const LOAD_MORE_CHUNK_SIZE = 150;
 
+/**
+ * Thought 变体：converterRegistry.atomsToDoc 会硬补一个 isTitle=true 的 noteTitle
+ * 节点，这里在加载时剥掉，并保证至少有一个 textBlock。
+ */
+function stripNoteTitleFromDocJson(docJson: any): any {
+  if (!docJson?.content) return docJson;
+  const filtered = docJson.content.filter(
+    (n: any) => !(n.type === 'textBlock' && n.attrs?.isTitle),
+  );
+  docJson.content = filtered.length > 0
+    ? filtered
+    : [{ type: 'textBlock', attrs: { isTitle: false } }];
+  return docJson;
+}
+
 /** 从 doc_content（Atom[]）构建 ProseMirror doc（分片加载） */
-function docFromContentChunked(s: ReturnType<typeof getSchema>, docContent: unknown[]): {
+function docFromContentChunked(
+  s: ReturnType<typeof getSchema>,
+  docContent: unknown[],
+  variant: 'note' | 'thought' = 'note',
+): {
   doc: PMNode;
   loadMore: ((count: number) => { nodes: PMNode[]; hasMore: boolean }) | null;
 } {
   const atoms = docContent as Atom[];
+  const isThought = variant === 'thought';
   // 小文档直接全量加载
   if (atoms.filter(a => !a.parentId).length <= INITIAL_CHUNK_SIZE) {
     try {
-      const docJson = converterRegistry.atomsToDoc(atoms);
+      let docJson = converterRegistry.atomsToDoc(atoms);
+      if (isThought) docJson = stripNoteTitleFromDocJson(docJson);
       return { doc: PMNode.fromJSON(s, docJson), loadMore: null };
     } catch (err) {
       console.error('[NoteEditor] Failed to parse doc_content:', err);
-      return { doc: createEmptyDoc(s), loadMore: null };
+      return { doc: createEmptyDoc(s, variant), loadMore: null };
     }
   }
 
-  // 大文档分片加载
+  // 大文档分片加载（Thought 场景下不会走这里 —— 单条 thought 很小 —— 但保持一致性）
   try {
     const chunked = converterRegistry.atomsToDocChunked(atoms, INITIAL_CHUNK_SIZE);
-    const doc = PMNode.fromJSON(s, chunked.doc);
+    const initialDocJson = isThought ? stripNoteTitleFromDocJson(chunked.doc) : chunked.doc;
+    const doc = PMNode.fromJSON(s, initialDocJson);
 
     const loadMore = chunked.hasMore ? (count: number) => {
       const { nodes: jsonNodes, hasMore } = chunked.loadMore(count);
@@ -275,12 +308,18 @@ function docFromContentChunked(s: ReturnType<typeof getSchema>, docContent: unkn
     return { doc, loadMore };
   } catch (err) {
     console.error('[NoteEditor] Failed to parse doc_content (chunked):', err);
-    return { doc: createEmptyDoc(s), loadMore: null };
+    return { doc: createEmptyDoc(s, variant), loadMore: null };
   }
 }
 
-/** 创建空文档（noteTitle + 空段落） */
-function createEmptyDoc(s: ReturnType<typeof getSchema>): PMNode {
+/** 创建空文档。variant='thought' 时不创建 noteTitle 节点。 */
+function createEmptyDoc(
+  s: ReturnType<typeof getSchema>,
+  variant: 'note' | 'thought' = 'note',
+): PMNode {
+  if (variant === 'thought') {
+    return s.node('doc', null, [s.nodes.textBlock.create()]);
+  }
   return s.node('doc', null, [
     s.nodes.textBlock.create({ isTitle: true }),
     s.nodes.textBlock.create(),
@@ -318,7 +357,8 @@ function scrollToTopBlockIndex(view: EditorView, scrollContainer: HTMLElement, i
 }
 
 export function NoteEditor(props: NoteEditorProps = {}) {
-  const { onDocChanged, onTitleChanged, onReady, activeNoteId } = props;
+  const { onDocChanged, onTitleChanged, onReady, activeNoteId, variant = 'note' } = props;
+  const isThought = variant === 'thought';
   const editorRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const [editorView, setEditorView] = useState<EditorView | null>(null);
@@ -392,7 +432,7 @@ export function NoteEditor(props: NoteEditorProps = {}) {
       return undefined as any;
     };
 
-    const state = EditorState.create({ doc, plugins: buildPlugins(s) });
+    const state = EditorState.create({ doc, plugins: buildPlugins(s, variant) });
     const view = new EditorView(editorRef.current, {
       state,
       nodeViews: nodeViews as any,
@@ -408,11 +448,13 @@ export function NoteEditor(props: NoteEditorProps = {}) {
           // 向外层发脏信号（推拉结合的"推"），NoteView 负责防抖 + 写盘 + typing 广播
           onDocChangedRef.current?.({ aiSync });
           tocRef.current?.update();
-          // noteTitle 变化通过 prop 回调通知 NoteView
-          const titleNode = newState.doc.firstChild;
-          if (titleNode?.type.name === 'textBlock' && titleNode.attrs.isTitle) {
-            const newTitle = titleNode.textContent || 'Untitled';
-            onTitleChangedRef.current?.(newTitle);
+          // noteTitle 变化通过 prop 回调通知 NoteView（Thought 无标题，跳过）
+          if (!isThought) {
+            const titleNode = newState.doc.firstChild;
+            if (titleNode?.type.name === 'textBlock' && titleNode.attrs.isTitle) {
+              const newTitle = titleNode.textContent || 'Untitled';
+              onTitleChangedRef.current?.(newTitle);
+            }
           }
         }
       },
@@ -425,9 +467,9 @@ export function NoteEditor(props: NoteEditorProps = {}) {
     const cleanupMouseTracker = startMouseSelectionTracker(view);
     (view as any).__cleanupMouseTracker = cleanupMouseTracker;
 
-    // TOC 指示器
+    // TOC 指示器（Thought 单条文档太短，不需要）
     if (tocRef.current) tocRef.current.destroy();
-    tocRef.current = createTocIndicator(editorRef.current, view);
+    tocRef.current = isThought ? null : createTocIndicator(editorRef.current, view);
 
     // 如果有更多内容待加载，设置 sentinel 元素
     if (loadMoreRef.current) {
@@ -447,7 +489,7 @@ export function NoteEditor(props: NoteEditorProps = {}) {
       observer.observe(sentinel);
       sentinelObserverRef.current = observer;
     }
-  }, [appendMoreContent]);
+  }, [appendMoreContent, variant, isThought]);
 
   // Step 1：命令句柄 —— 外层通过 onReady 拿到，用于按需拉取数据或命令式操作
   const buildHandle = useCallback((): NoteEditorHandle => ({
@@ -494,10 +536,10 @@ export function NoteEditor(props: NoteEditorProps = {}) {
       fullAtomsRef.current = null;
       loadedTopCountRef.current = -1;
       if (!atoms || atoms.length === 0) {
-        createEditor(createEmptyDoc(s));
+        createEditor(createEmptyDoc(s, variant));
         return;
       }
-      const { doc, loadMore } = docFromContentChunked(s, atoms);
+      const { doc, loadMore } = docFromContentChunked(s, atoms, variant);
       loadMoreRef.current = loadMore;
       fullAtomsRef.current = loadMore ? atoms : null;
       loadedTopCountRef.current = loadMore ? INITIAL_CHUNK_SIZE : -1;
@@ -587,14 +629,14 @@ export function NoteEditor(props: NoteEditorProps = {}) {
       loadedTopCountRef.current = -1;
       createEditor(buildTestDocument(s));
     },
-  }), [createEditor]);
+  }), [createEditor, variant]);
 
   // 初始化
   useEffect(() => {
     const s = getSchema();
 
     // 先创建空编辑器
-    createEditor(createEmptyDoc(s));
+    createEditor(createEmptyDoc(s, variant));
 
     // Step 1：编辑器首次就绪后 emit handle（一次性，走 ref 避免重 init）
     if (!handleEmittedRef.current && onReadyRef.current) {
@@ -604,6 +646,20 @@ export function NoteEditor(props: NoteEditorProps = {}) {
 
     // 注册 Converter 测试（DevTools console: __testConverters()）
     registerConverterTest(s);
+
+    // Thought 变体：以下全是 Note 专属业务（笔记删除导航、Import JSON/Markdown、
+    // 生词本同步），对 Thought 不适用 —— 直接跳过注册，只保留编辑器内核
+    if (isThought) {
+      return () => {
+        if (tocRef.current) { tocRef.current.destroy(); tocRef.current = null; }
+        clearSelectionCache();
+        if (viewRef.current) {
+          (viewRef.current as any).__cleanupMouseTracker?.();
+          viewRef.current.destroy();
+          viewRef.current = null;
+        }
+      };
+    }
 
     // Step 3：笔记被删除时若是当前笔记，走历史返回或 destroy 编辑器。
     // onNoteDeleted 的业务状态清理（activeNoteId/pending save）由 NoteView 负责；
@@ -731,16 +787,20 @@ export function NoteEditor(props: NoteEditorProps = {}) {
         viewRef.current = null;
       }
     };
-  }, [createEditor, buildHandle]);
+  }, [createEditor, buildHandle, variant]);
 
   return (
-    <div style={styles.container}>
-      <div ref={editorRef} style={styles.editor} />
+    <div
+      className={isThought ? 'note-editor note-editor--thought' : 'note-editor'}
+      style={isThought ? styles.thoughtContainer : styles.container}
+    >
+      <div ref={editorRef} style={isThought ? styles.thoughtEditor : styles.editor} />
       <SlashMenu view={editorView} />
       <FloatingToolbar view={editorView} />
       <HandleMenu view={editorView} />
       <ContextMenu view={editorView} />
-      <AskAIPanel view={editorView} />
+      {/* AskAIPanel 依赖 Note 的问 AI 流程，Thought 不需要 */}
+      {!isThought && <AskAIPanel view={editorView} />}
     </div>
   );
 }
@@ -756,6 +816,15 @@ const styles: Record<string, React.CSSProperties> = {
     maxWidth: '900px',
     margin: '0 auto',
     minHeight: '100%',
+    position: 'relative' as const,
+  },
+  // Thought 变体：尺寸由外层 ThoughtCard 控制，透明背景 + 内容自适应高度
+  thoughtContainer: {
+    width: '100%',
+    background: 'transparent',
+    position: 'relative' as const,
+  },
+  thoughtEditor: {
     position: 'relative' as const,
   },
 };
