@@ -33,6 +33,7 @@ declare const navSideAPI: {
   webFolderDelete: (id: string) => Promise<void>;
   webHistoryList: (limit?: number) => Promise<WebHistoryEntry[]>;
   noteOpenInEditor: (id: string) => Promise<void>;  // 复用 — 用于导航到 URL
+  closeRightSlot: () => Promise<void>;
 };
 
 /**
@@ -60,8 +61,9 @@ export function WebPanel() {
   useEffect(() => { loadData(); }, [loadData]);
 
   const handleBookmarkClick = useCallback((url: string) => {
-    // 通过 IPC 通知 WebView 导航到 URL
-    // WebView 监听 VIEW_MESSAGE_RECEIVE 处理
+    // NavSide 契约：任何切换 = 回到干净的单屏
+    navSideAPI.closeRightSlot();
+    // 通过 IPC 通知 WebView 导航到 URL（WebView 监听 VIEW_MESSAGE_RECEIVE 处理）
     window.postMessage({ type: 'web:navigate', url }, '*');
   }, []);
 

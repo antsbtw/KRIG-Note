@@ -128,6 +128,15 @@ contextBridge.exposeInMainWorld('viewAPI', {
     if (side === 'right') return data.active.rightActiveNoteId ?? null;
     return data.active.activeNoteId ?? null;
   },
+  /**
+   * 取"主 slot（left）"的 activeNoteId。
+   * ThoughtView 等跟随主笔记的面板用这个 —— 不管自己在哪个 slot，
+   * 都跟随 left slot 当前打开的笔记。
+   */
+  getPrimaryActiveNoteId: async (): Promise<string | null> => {
+    const data = await ipcRenderer.invoke(IPC.WORKSPACE_LIST);
+    return data?.active?.activeNoteId ?? null;
+  },
   onNoteListChanged: (callback: (list: unknown[]) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, list: unknown[]) => callback(list);
     ipcRenderer.on(IPC.NOTE_LIST_CHANGED, listener);
