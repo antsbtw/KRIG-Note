@@ -21,7 +21,7 @@ const viewAPI = () => (window as any).viewAPI as {
   onMessage: (cb: (msg: any) => void) => () => void;
   isDBReady: () => Promise<boolean>;
   onDBReady: (cb: () => void) => () => void;
-  getActiveNoteId: () => Promise<string | null>;
+  getPrimaryActiveNoteId: () => Promise<string | null>;
 } | undefined;
 
 export function ThoughtView() {
@@ -55,7 +55,8 @@ export function ThoughtView() {
         return;
       }
 
-      const nId = await api.getActiveNoteId();
+      // 跟随主（left）slot 的 activeNoteId —— 不管本 ThoughtView 在哪个 slot
+      const nId = await api.getPrimaryActiveNoteId();
       if (nId) {
         setNoteId(nId);
         noteIdRef.current = nId;
