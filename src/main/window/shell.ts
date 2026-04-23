@@ -284,9 +284,10 @@ export function closeRightSlot(): void {
   }
   pool.rightWorkModeId = null;
 
-  // 同步 slotBinding.right 到 WorkspaceState
+  // 同步 slotBinding.right 到 WorkspaceState，并清空 right slot 的活跃资源 id
   workspaceManager.update(active.id, {
     slotBinding: { ...active.slotBinding, right: null },
+    rightActiveNoteId: null,
   });
 
   // 隐藏 Divider
@@ -426,7 +427,30 @@ export function closeSlot(side: 'left' | 'right'): void {
   pool.activeLeftId = promotedModeId;
   pool.rightWorkModeId = null;
   setWebContentsVisibility(promotedView.webContents, 'foreground');
-  workspaceManager.update(active.id, { workModeId: promotedModeId });
+
+  // 同步活跃资源 id：让 NavSide 等"活跃资源消费者"不再高亮已销毁 left view 的资源。
+  // 规则：
+  //   - 晋升的是 NoteView：activeNoteId ← rightActiveNoteId，rightActiveNoteId → null
+  //   - 晋升的是其他类型 view：activeNoteId → null（当前工作空间没有活跃 note 了）
+  // 架构债（见 CLAUDE memory）：eBook 只有 activeBookId 没 rightActiveBookId，
+  //   生命周期对称性不完整；Note 的"left/right 两字段"做法本身也是局部补丁。
+  //   后续应在 workspace 层抽象 "per-slot per-viewType 的活跃资源 id" 统一管理。
+  const promotedViewType = workModeRegistry.get(promotedModeId)?.viewType;
+  const resourceUpdates: Record<string, unknown> = {
+    workModeId: promotedModeId,
+    // 同步 slotBinding：左槽现在装的是晋升上来的 view，右槽清空。
+    // 如果不更新，session 保存时仍是关闭前的双屏布局，下次启动又恢复为双屏。
+    slotBinding: { left: promotedModeId, right: null },
+  };
+  if (promotedViewType === 'note') {
+    resourceUpdates.activeNoteId = active.rightActiveNoteId ?? null;
+    resourceUpdates.rightActiveNoteId = null;
+  } else {
+    resourceUpdates.activeNoteId = null;
+    resourceUpdates.rightActiveNoteId = null;
+  }
+  workspaceManager.update(active.id, resourceUpdates);
+
   dividerView?.setVisible(false);
   updateLayout();
 }
