@@ -13,7 +13,7 @@ import { noteTitleNodeView } from '../blocks/text-block';
 import { buildInputRules } from '../plugins/input-rules';
 import { containerKeyboardPlugin } from '../plugins/container-keyboard';
 import { slashCommandPlugin } from '../plugins/slash-command';
-import { linkClickPlugin, setCurrentNote, flushPendingAnchor, canGoBack, goBack } from '../plugins/link-click';
+import { linkClickPlugin, flushPendingAnchor, canGoBack, goBack } from '../plugins/link-click';
 import { columnResizing } from 'prosemirror-tables';
 import { SlashMenu } from './SlashMenu';
 import { FloatingToolbar } from './FloatingToolbar';
@@ -41,19 +41,10 @@ import { registerConverterTest } from '../converters/converter-test';
 import { converterRegistry } from '../converters/registry';
 import { setTextBlockLevel } from '../commands/set-text-block-level';
 import { toggleTextIndent } from '../commands/editor-commands';
-import { showBookmarksPanel, hideBookmarksPanel } from '../help-panel/bookmarks';
 import type { Atom, NoteTitleContent } from '../../../shared/types/atom-types';
 import { createAtom } from '../../../shared/types/atom-types';
 import { sanitizeAtoms } from '../../../shared/sanitize-atoms';
 import '../note.css';
-
-/** Note 内书签（跟 main 侧的 NoteBookmark 对齐） */
-interface NoteBookmark {
-  id: string;
-  block_index: number;
-  label: string;
-  created_at: number;
-}
 
 /**
  * L1 编辑器内核对外暴露的命令句柄。
@@ -77,6 +68,12 @@ export interface NoteEditorHandle {
   scrollToTopBlockIndex: (index: number) => void;
   /** 当前 scroll 顶部可见的顶层 block 索引（用于持久化阅读位置）。 */
   getTopBlockIndexAtScroll: () => number;
+  /** 外部重命名：把编辑器里的 noteTitle 节点文本改为指定值（不派发 dirty）。 */
+  setTitleText: (text: string) => void;
+  /** 触发 link-click 插件的 pending anchor 滚动（跨文档 block 链接）。 */
+  flushPendingAnchor: () => void;
+  /** 当前顶层 block 数量（供书签面板做失效清理）。 */
+  getTopBlockCount: () => number;
 }
 
 /**
@@ -90,6 +87,8 @@ export interface NoteEditorProps {
   onTitleChanged?: (title: string) => void;
   /** 编辑器首次就绪时回调，外层可保存 handle 供后续命令式操作。 */
   onReady?: (handle: NoteEditorHandle) => void;
+  /** 当前编辑的笔记 id —— AI Sync 的协议 payload 需要带上，用于跨 slot 投递识别。 */
+  activeNoteId?: string | null;
 }
 
 /**
@@ -100,24 +99,12 @@ export interface NoteEditorProps {
  */
 
 declare const viewAPI: {
+  // NoteEditor 自身需要的（Import Markdown + 测试文档 + 生词本 + AI Sync + status broadcast）
   noteCreate: (title?: string) => Promise<{ id: string; title: string } | null>;
-  noteLoad: (id: string) => Promise<any>;
   noteSave: (id: string, docContent: unknown[], title: string) => Promise<void>;
-  noteRename: (id: string, title: string) => Promise<void>;
   noteOpenInEditor: (id: string) => Promise<void>;
-  onNoteOpenInEditor: (callback: (noteId: string) => void) => () => void;
   onNoteDeleted: (callback: (noteId: string) => void) => () => void;
-  notePendingOpen: () => Promise<string | null>;
-  setActiveNote: (noteId: string | null, noteTitle?: string) => Promise<void>;
-  noteSaveLastView: (id: string, blockIndex: number) => Promise<void>;
-  noteSaveBookmarks: (id: string, bookmarks: unknown[]) => Promise<void>;
-  getActiveNoteId: () => Promise<string | null>;
-  getMyRole: () => Promise<'primary' | 'companion' | null>;
-  onRestoreWorkspaceState: (callback: (state: { activeNoteId: string | null; rightActiveNoteId?: string | null }) => void) => () => void;
-  onNoteTitleChanged: (callback: (data: { noteId: string; title: string }) => void) => () => void;
   onLoadTestDoc: (callback: () => void) => () => void;
-  isDBReady: () => Promise<boolean>;
-  onDBReady: (callback: () => void) => () => void;
   markdownToPMNodes: (markdown: string) => Promise<unknown[]>;
   listVocabWords?: () => Promise<{ word: string; definition: string }[]>;
   onVocabChanged?: (callback: (entries: { word: string; definition: string }[]) => void) => () => void;
@@ -327,21 +314,17 @@ function scrollToTopBlockIndex(view: EditorView, scrollContainer: HTMLElement, i
 }
 
 export function NoteEditor(props: NoteEditorProps = {}) {
-  const { onDocChanged, onTitleChanged, onReady } = props;
+  const { onDocChanged, onTitleChanged, onReady, activeNoteId } = props;
   const editorRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const [editorView, setEditorView] = useState<EditorView | null>(null);
   const currentNoteIdRef = useRef<string | null>(null);
   const tocRef = useRef<ReturnType<typeof createTocIndicator> | null>(null);
-  const loadSeqRef = useRef(0); // 竞态取消：每次 loadNote 递增
   const loadMoreRef = useRef<((count: number) => { nodes: PMNode[]; hasMore: boolean }) | null>(null);
   const sentinelObserverRef = useRef<IntersectionObserver | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const fullAtomsRef = useRef<Atom[] | null>(null); // 完整 atoms（分片加载时用于保存未加载部分）
   const loadedTopCountRef = useRef<number>(-1); // 分片加载：已加载的 topLevel atom 数量（-1 = 全量加载）
-  // 书签：当前 note 的书签列表 + 面板是否打开
-  const bookmarksRef = useRef<NoteBookmark[]>([]);
-  const bookmarksPanelOpenRef = useRef<boolean>(false);
   // Step 1：外层回调 ref 化 —— 不进 useEffect 依赖数组，避免回调身份变化
   // 导致整个编辑器重 init（会清空已加载的笔记内容和标题）。
   const onDocChangedRef = useRef(onDocChanged);
@@ -351,6 +334,11 @@ export function NoteEditor(props: NoteEditorProps = {}) {
   useEffect(() => { onTitleChangedRef.current = onTitleChanged; }, [onTitleChanged]);
   useEffect(() => { onReadyRef.current = onReady; }, [onReady]);
   const handleEmittedRef = useRef(false);
+  // Step 3：接收外层传入的 activeNoteId，供 AI Sync / dispatchTransaction 的
+  // note-status payload 使用。NoteView 在 loadNote 成功后通过 prop 下传。
+  useEffect(() => {
+    currentNoteIdRef.current = activeNoteId ?? null;
+  }, [activeNoteId]);
 
   // 追加更多内容到编辑器末尾
   const appendMoreContent = useCallback(() => {
@@ -552,104 +540,37 @@ export function NoteEditor(props: NoteEditorProps = {}) {
       if (!view || view.isDestroyed || !scrollContainer) return 0;
       return getTopBlockIndexAtScroll(view, scrollContainer);
     },
-  }), [createEditor]);
-
-  // 加载文档（带竞态取消：快速切换时丢弃过期的异步结果）
-  const loadNote = useCallback(async (noteId: string) => {
-    const seq = ++loadSeqRef.current;
-    const s = getSchema();
-
-    // graceful fallback：noteId 不存在或加载失败 → 显示空编辑器 + 清除 session 中的引用
-    const fallbackToEmpty = (reason: string) => {
-      console.warn(`[NoteEditor] ${reason} — fallback to empty editor`);
-      loadMoreRef.current = null;
-      fullAtomsRef.current = null;
-      loadedTopCountRef.current = -1;
-      createEditor(createEmptyDoc(s));
-      currentNoteIdRef.current = null;
-      setCurrentNote(null);
-      // 清除 workspace state 中的陈旧 activeNoteId，避免下次启动又卡在同一个 note
-      viewAPI.setActiveNote(null, undefined);
-      onTitleChangedRef.current?.('Untitled');
-    };
-
-    try {
-      const record = await viewAPI.noteLoad(noteId);
-      if (seq !== loadSeqRef.current) { return; }
-
-      // note 不存在 → graceful fallback
-      if (!record) {
-        fallbackToEmpty(`Note ${noteId} not found in DB`);
-        return;
-      }
-
-      if (!record.doc_content || record.doc_content.length === 0) {
-        loadMoreRef.current = null;
-        fullAtomsRef.current = null;
-        loadedTopCountRef.current = -1;
-        createEditor(createEmptyDoc(s));
-      } else {
-        const { doc, loadMore } = docFromContentChunked(s, record.doc_content);
-        loadMoreRef.current = loadMore;
-        // 分片模式下保留原始 atoms 用于部分保存场景
-        fullAtomsRef.current = loadMore ? (record.doc_content as Atom[]) : null;
-        // 记录初始加载的 topLevel atom 数量
-        loadedTopCountRef.current = loadMore ? INITIAL_CHUNK_SIZE : -1;
-        createEditor(doc);
-      }
-      currentNoteIdRef.current = noteId;
-      setCurrentNote(noteId);
-
-      // 初始化书签列表（每个 note 独立）
-      bookmarksRef.current = Array.isArray((record as { bookmarks?: unknown }).bookmarks)
-        ? ((record as { bookmarks?: NoteBookmark[] }).bookmarks as NoteBookmark[])
-        : [];
-      // 切 note 时自动关闭书签面板（旧 note 的列表不再适用）
-      if (bookmarksPanelOpenRef.current) {
-        hideBookmarksPanel();
-        bookmarksPanelOpenRef.current = false;
-      }
-
-      // 跨文档 block 链接：笔记加载完成后滚动到目标锚点
-      const v2 = viewRef.current;
-      if (v2) flushPendingAnchor(v2);
-
-      // 从 doc 中提取 noteTitle 实际文本，同步到 toolbar 和文件名
-      const v = viewRef.current;
-      const firstNode = v?.state.doc.firstChild;
-      if (firstNode?.type.name === 'textBlock' && firstNode.attrs.isTitle) {
-        const docTitle = firstNode.textContent || 'Untitled';
-        onTitleChangedRef.current?.(docTitle);
-        viewAPI.setActiveNote(noteId, docTitle);
-        // 如果 DB title 与文档标题不一致，仅修正 title 字段（不重新保存全部内容）
-        if (record?.title !== docTitle) {
-          viewAPI.noteRename(noteId, docTitle);
+    setTitleText: (text: string) => {
+      const view = viewRef.current;
+      if (!view || view.isDestroyed) return;
+      const s = getSchema();
+      let titlePos = -1;
+      view.state.doc.forEach((node, offset) => {
+        if (titlePos < 0 && node.type.name === 'textBlock' && node.attrs.isTitle) {
+          titlePos = offset;
         }
-      } else {
-        viewAPI.setActiveNote(noteId, record?.title);
-      }
-
-      // 恢复上次阅读位置（flushPendingAnchor 上面已调用，pending anchor 会覆盖本次滚动——
-      //  用户主动点击跨文档 block 链接时，锚点跳转优先于阅读位置恢复）
-      const savedIdx = (record as { last_view_block_index?: number })?.last_view_block_index;
-      if (typeof savedIdx === 'number' && savedIdx > 0 && v && editorRef.current?.parentElement) {
-        const scrollContainer = editorRef.current.parentElement;
-        // 双重 rAF：首次打开时 scroll 容器可能还没布局完，等两次 layout/paint 后再滚
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            if (viewRef.current === v && !v.isDestroyed) {
-              scrollToTopBlockIndex(v, scrollContainer, savedIdx);
-            }
-          });
-        });
-      }
-    } catch (err) {
-      if (seq !== loadSeqRef.current) return;
-      console.error('[NoteEditor] Failed to load note:', err);
-      // 坏数据导致 schema 解析失败 → 视为加载失败，fallback
-      fallbackToEmpty(`Note ${noteId} load threw: ${(err as Error)?.message || err}`);
-    }
-  }, [createEditor]);
+      });
+      if (titlePos < 0) return;
+      const titleNode = view.state.doc.nodeAt(titlePos);
+      if (!titleNode || titleNode.textContent === text) return;
+      const tr = view.state.tr;
+      tr.replaceWith(
+        titlePos + 1,
+        titlePos + titleNode.nodeSize - 1,
+        text ? s.text(text) : s.text(''),
+      );
+      view.dispatch(tr);
+    },
+    flushPendingAnchor: () => {
+      const view = viewRef.current;
+      if (view && !view.isDestroyed) flushPendingAnchor(view);
+    },
+    getTopBlockCount: () => {
+      const view = viewRef.current;
+      if (!view || view.isDestroyed) return 0;
+      return view.state.doc.childCount;
+    },
+  }), [createEditor]);
 
   // 初始化
   useEffect(() => {
@@ -667,16 +588,11 @@ export function NoteEditor(props: NoteEditorProps = {}) {
     // 注册 Converter 测试（DevTools console: __testConverters()）
     registerConverterTest(s);
 
-    // 监听打开笔记事件
-    const unsubOpen = viewAPI.onNoteOpenInEditor((noteId) => {
-      loadNote(noteId);
-    });
-
-    // 监听笔记删除事件：如果是当前编辑的笔记，导航到上一个
-    // （pending save 的取消由 NoteView 同名监听负责）
+    // Step 3：笔记被删除时若是当前笔记，走历史返回或 destroy 编辑器。
+    // onNoteDeleted 的业务状态清理（activeNoteId/pending save）由 NoteView 负责；
+    // 这里只管编辑器 view 的物理清理（无历史可回的情况）。
     const unsubDeleted = viewAPI.onNoteDeleted((deletedId) => {
       if (currentNoteIdRef.current !== deletedId) return;
-      currentNoteIdRef.current = null;
       // 导航到历史中的上一篇笔记
       if (canGoBack()) {
         goBack();
@@ -764,36 +680,6 @@ export function NoteEditor(props: NoteEditorProps = {}) {
     };
     window.addEventListener('note:import-markdown', onImportMarkdown);
 
-    // 恢复上次打开的笔记（根据所在 slot 选取正确的 noteId）
-    // 走 viewAPI.noteOpenInEditor 而非直接 loadNote，确保 NoteView 的
-    // onNoteOpenInEditor 也能收到通知（更新 activeNoteIdRef 等保存状态）
-    const unsubRestore = viewAPI.onRestoreWorkspaceState(async (state: any) => {
-      const role = await viewAPI.getMyRole();
-      const noteId = role === 'companion' ? state.rightActiveNoteId : state.activeNoteId;
-      if (noteId) viewAPI.noteOpenInEditor(noteId);
-    });
-
-    // 拉取导入时设置的 pending noteId，或恢复上次打开的笔记
-    viewAPI.notePendingOpen().then(async (noteId) => {
-      if (noteId) {
-        viewAPI.noteOpenInEditor(noteId);
-        return;
-      }
-      // No pending note — restore last opened note from workspace state
-      // Wait for DB to be ready before loading
-      const dbReady = await viewAPI.isDBReady();
-      if (!dbReady) {
-        await new Promise<void>(resolve => {
-          const unsub = viewAPI.onDBReady(() => { unsub(); resolve(); });
-        });
-      }
-      if (currentNoteIdRef.current) return; // already loaded by another path
-      const activeId = await viewAPI.getActiveNoteId();
-      if (activeId && !currentNoteIdRef.current) {
-        viewAPI.noteOpenInEditor(activeId);
-      }
-    });
-
     // 生词本同步：加载初始词表 + 监听变化
     function applyVocab(entries: { word: string; definition: string }[]) {
       updateVocabDefs(entries);
@@ -816,142 +702,12 @@ export function NoteEditor(props: NoteEditorProps = {}) {
       createEditor(buildTestDocument(s));
     });
 
-    // 标题外部变更同步
-    const unsubTitle = viewAPI.onNoteTitleChanged(({ noteId, title }) => {
-      if (noteId !== currentNoteIdRef.current) return;
-      const view = viewRef.current;
-      if (!view) return;
-      // 找到 noteTitle 节点并更新
-      let titlePos = -1;
-      view.state.doc.forEach((node, offset) => {
-        if (titlePos < 0 && node.type.name === 'textBlock' && node.attrs.isTitle) {
-          titlePos = offset;
-        }
-      });
-      if (titlePos >= 0) {
-        const titleNode = view.state.doc.nodeAt(titlePos);
-        if (titleNode && titleNode.textContent !== title) {
-          const tr = view.state.tr;
-          tr.replaceWith(titlePos + 1, titlePos + titleNode.nodeSize - 1,
-            title ? s.text(title) : s.text(''));
-          view.dispatch(tr);
-        }
-      }
-    });
-
-    // ── 书签 ──
-    /** 持久化 bookmarks，并刷新面板（如果打开） */
-    const persistBookmarks = () => {
-      const noteId = currentNoteIdRef.current;
-      if (!noteId) return;
-      viewAPI.noteSaveBookmarks(noteId, bookmarksRef.current).catch(() => { /* ignore */ });
-      if (bookmarksPanelOpenRef.current) {
-        openBookmarksPanel();   // 重新 render
-      }
-    };
-
-    /** 生成书签默认 label：取该顶层 block 的前 30 字，空则用 "第 N 块" */
-    const deriveBookmarkLabel = (view: EditorView, blockIndex: number): string => {
-      const doc = view.state.doc;
-      if (blockIndex >= doc.childCount) return `第 ${blockIndex + 1} 块`;
-      const text = doc.child(blockIndex).textContent.trim();
-      if (!text) return `第 ${blockIndex + 1} 块`;
-      return text.length > 30 ? text.slice(0, 30) + '…' : text;
-    };
-
-    /** 计算当前应记录的书签 blockIndex（优先光标位置，退化到 scroll 顶部可见块） */
-    const computeCurrentBlockIndex = (): number | null => {
-      const view = viewRef.current;
-      const scrollContainer = editorRef.current?.parentElement;
-      if (!view || view.isDestroyed || !scrollContainer) return null;
-      const { $from } = view.state.selection;
-      if ($from.depth >= 1) return $from.index(0);
-      return getTopBlockIndexAtScroll(view, scrollContainer);
-    };
-
-    /** 在当前位置添加书签；已存在（同 block_index）则跳过 */
-    const addBookmarkAtCurrent = (): boolean => {
-      const view = viewRef.current;
-      const noteId = currentNoteIdRef.current;
-      if (!noteId || !view || view.isDestroyed) return false;
-      const blockIndex = computeCurrentBlockIndex();
-      if (blockIndex == null || blockIndex < 0) return false;
-      // 去重：同一 block 已有书签则不重复添加
-      if (bookmarksRef.current.some(b => b.block_index === blockIndex)) return false;
-      const bm: NoteBookmark = {
-        id: `bm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        block_index: blockIndex,
-        label: deriveBookmarkLabel(view, blockIndex),
-        created_at: Date.now(),
-      };
-      bookmarksRef.current = [...bookmarksRef.current, bm];
-      return true;
-    };
-
-    const openBookmarksPanel = () => {
-      const view = viewRef.current;
-      const scrollContainer = editorRef.current?.parentElement;
-      // 清理失效书签（blockIndex 超出当前 doc）—— "book 级联"
-      if (view && !view.isDestroyed) {
-        const maxIdx = view.state.doc.childCount - 1;
-        const cleaned = bookmarksRef.current.filter(b => b.block_index <= maxIdx);
-        if (cleaned.length !== bookmarksRef.current.length) {
-          bookmarksRef.current = cleaned;
-          const noteId = currentNoteIdRef.current;
-          if (noteId) viewAPI.noteSaveBookmarks(noteId, cleaned).catch(() => { /* ignore */ });
-        }
-      }
-
-      showBookmarksPanel({
-        bookmarks: bookmarksRef.current,
-        onAddCurrent: () => {
-          const added = addBookmarkAtCurrent();
-          if (added) persistBookmarks();
-          // 无论是否新增都重新 render（用户能看到"已存在该位置"的情况）
-          if (!added && bookmarksPanelOpenRef.current) openBookmarksPanel();
-        },
-        onJump: (bmId) => {
-          const bm = bookmarksRef.current.find(b => b.id === bmId);
-          const v = viewRef.current;
-          if (bm && v && !v.isDestroyed && scrollContainer) {
-            scrollToTopBlockIndex(v, scrollContainer, bm.block_index);
-          }
-        },
-        onRemove: (bmId) => {
-          bookmarksRef.current = bookmarksRef.current.filter(b => b.id !== bmId);
-          persistBookmarks();
-        },
-        onRename: (bmId, newLabel) => {
-          bookmarksRef.current = bookmarksRef.current.map(b =>
-            b.id === bmId ? { ...b, label: newLabel } : b,
-          );
-          persistBookmarks();
-        },
-      });
-      bookmarksPanelOpenRef.current = true;
-    };
-
-    const togglePanelHandler = () => {
-      if (bookmarksPanelOpenRef.current) {
-        hideBookmarksPanel();
-        bookmarksPanelOpenRef.current = false;
-      } else {
-        openBookmarksPanel();
-      }
-    };
-    window.addEventListener('note:bookmark-toggle-panel', togglePanelHandler);
-
     return () => {
-      unsubOpen();
       unsubDeleted();
-      unsubRestore();
       unsubTestDoc();
-      unsubTitle();
       unsubVocab();
       window.removeEventListener('note:import-json', onImportJson);
       window.removeEventListener('note:import-markdown', onImportMarkdown);
-      window.removeEventListener('note:bookmark-toggle-panel', togglePanelHandler);
-      if (bookmarksPanelOpenRef.current) hideBookmarksPanel();
       // 关闭前 flush pending save 由 NoteView 负责
       if (tocRef.current) {
         tocRef.current.destroy();
@@ -964,7 +720,7 @@ export function NoteEditor(props: NoteEditorProps = {}) {
         viewRef.current = null;
       }
     };
-  }, [createEditor, loadNote, buildHandle]);
+  }, [createEditor, buildHandle]);
 
   // ── AI Sync: listen for 'as:append-turn' ViewMessage ──
   // Serialize inserts: insertTurnIntoNote awaits IPC markdown parse, so two
