@@ -75,6 +75,8 @@ export interface NoteEditorHandle {
   focus: () => void;
   /** 滚动到指定顶层 block 索引（书签跳转用）。 */
   scrollToTopBlockIndex: (index: number) => void;
+  /** 当前 scroll 顶部可见的顶层 block 索引（用于持久化阅读位置）。 */
+  getTopBlockIndexAtScroll: () => number;
 }
 
 /**
@@ -330,7 +332,6 @@ export function NoteEditor(props: NoteEditorProps = {}) {
   const viewRef = useRef<EditorView | null>(null);
   const [editorView, setEditorView] = useState<EditorView | null>(null);
   const currentNoteIdRef = useRef<string | null>(null);
-  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tocRef = useRef<ReturnType<typeof createTocIndicator> | null>(null);
   const loadSeqRef = useRef(0); // 竞态取消：每次 loadNote 递增
   const loadMoreRef = useRef<((count: number) => { nodes: PMNode[]; hasMore: boolean }) | null>(null);
@@ -338,7 +339,6 @@ export function NoteEditor(props: NoteEditorProps = {}) {
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const fullAtomsRef = useRef<Atom[] | null>(null); // 完整 atoms（分片加载时用于保存未加载部分）
   const loadedTopCountRef = useRef<number>(-1); // 分片加载：已加载的 topLevel atom 数量（-1 = 全量加载）
-  const scheduleSaveRef = useRef<() => void>(() => {});
   // 书签：当前 note 的书签列表 + 面板是否打开
   const bookmarksRef = useRef<NoteBookmark[]>([]);
   const bookmarksPanelOpenRef = useRef<boolean>(false);
@@ -383,12 +383,6 @@ export function NoteEditor(props: NoteEditorProps = {}) {
   const createEditor = useCallback((doc: PMNode) => {
     if (!editorRef.current) return;
 
-    // 清除旧编辑器的 pending save，防止保存到错误文档
-    if (saveTimerRef.current) {
-      clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = null;
-    }
-
     // 清除旧的 sentinel observer
     sentinelObserverRef.current?.disconnect();
     sentinelRef.current?.remove();
@@ -416,7 +410,7 @@ export function NoteEditor(props: NoteEditorProps = {}) {
         view.updateState(newState);
         // 更新选区缓存（供 ContextMenu 问 AI 等使用）
         updateSelectionCache(view);
-        // 文档变化时触发自动保存（排除分片追加的 addToHistory=false 事务）
+        // 文档变化时发脏信号（排除分片追加的 addToHistory=false 事务）
         if (tr.docChanged && tr.getMeta('addToHistory') !== false) {
           // AI sync: notify peer slot that user is typing (debounce source)
           // Skip when the tr originates from sync insertion itself.
@@ -431,16 +425,13 @@ export function NoteEditor(props: NoteEditorProps = {}) {
               },
             });
           }
-          scheduleSaveRef.current();
-          // Step 1 双轨：向外层发脏信号（推拉结合的"推"），不传数据
+          // 向外层发脏信号（推拉结合的"推"），NoteView 负责防抖 + 写盘
           onDocChangedRef.current?.();
           tocRef.current?.update();
-          // noteTitle 变化时实时同步到 NoteView toolbar
+          // noteTitle 变化通过 prop 回调通知 NoteView
           const titleNode = newState.doc.firstChild;
           if (titleNode?.type.name === 'textBlock' && titleNode.attrs.isTitle) {
             const newTitle = titleNode.textContent || 'Untitled';
-            window.dispatchEvent(new CustomEvent('note:title-changed', { detail: newTitle }));
-            // Step 1 双轨：同时通过 prop 回调通知（事件路径保留）
             onTitleChangedRef.current?.(newTitle);
           }
         }
@@ -485,7 +476,7 @@ export function NoteEditor(props: NoteEditorProps = {}) {
       const view = viewRef.current;
       if (!view || view.isDestroyed) return [];
       const loadedAtoms = converterRegistry.docToAtoms(view.state.doc);
-      // 分片加载时拼接未加载的尾部 atoms，和 saveNote 的逻辑一致
+      // 分片加载时拼接未加载的尾部 atoms（参见 Import Markdown 同款逻辑）
       const fullAtoms = fullAtomsRef.current;
       const loadedCount = loadedTopCountRef.current;
       if (fullAtoms && loadedCount >= 0) {
@@ -555,6 +546,12 @@ export function NoteEditor(props: NoteEditorProps = {}) {
       if (!view || view.isDestroyed || !scrollContainer) return;
       scrollToTopBlockIndex(view, scrollContainer, index);
     },
+    getTopBlockIndexAtScroll: () => {
+      const view = viewRef.current;
+      const scrollContainer = editorRef.current?.parentElement;
+      if (!view || view.isDestroyed || !scrollContainer) return 0;
+      return getTopBlockIndexAtScroll(view, scrollContainer);
+    },
   }), [createEditor]);
 
   // 加载文档（带竞态取消：快速切换时丢弃过期的异步结果）
@@ -573,7 +570,7 @@ export function NoteEditor(props: NoteEditorProps = {}) {
       setCurrentNote(null);
       // 清除 workspace state 中的陈旧 activeNoteId，避免下次启动又卡在同一个 note
       viewAPI.setActiveNote(null, undefined);
-      window.dispatchEvent(new CustomEvent('note:title-changed', { detail: 'Untitled' }));
+      onTitleChangedRef.current?.('Untitled');
     };
 
     try {
@@ -622,7 +619,7 @@ export function NoteEditor(props: NoteEditorProps = {}) {
       const firstNode = v?.state.doc.firstChild;
       if (firstNode?.type.name === 'textBlock' && firstNode.attrs.isTitle) {
         const docTitle = firstNode.textContent || 'Untitled';
-        window.dispatchEvent(new CustomEvent('note:title-changed', { detail: docTitle }));
+        onTitleChangedRef.current?.(docTitle);
         viewAPI.setActiveNote(noteId, docTitle);
         // 如果 DB title 与文档标题不一致，仅修正 title 字段（不重新保存全部内容）
         if (record?.title !== docTitle) {
@@ -654,105 +651,6 @@ export function NoteEditor(props: NoteEditorProps = {}) {
     }
   }, [createEditor]);
 
-  // 保存前确保所有内容已加载（防止丢失未渲染的尾部数据）
-  const flushRemainingContent = useCallback(() => {
-    const view = viewRef.current;
-    const loadMore = loadMoreRef.current;
-    if (!view || !loadMore || view.isDestroyed) return;
-
-    // 一次性加载所有剩余内容
-    let hasMore = true;
-    while (hasMore) {
-      const result = loadMore(500);
-      if (result.nodes.length > 0) {
-        const { tr } = view.state;
-        for (const node of result.nodes) {
-          tr.insert(tr.doc.content.size, node);
-        }
-        tr.setMeta('addToHistory', false);
-        view.dispatch(tr);
-      }
-      hasMore = result.hasMore;
-    }
-    loadMoreRef.current = null;
-    fullAtomsRef.current = null;
-    loadedTopCountRef.current = -1;
-    sentinelObserverRef.current?.disconnect();
-    sentinelRef.current?.remove();
-  }, []);
-
-  // 保存文档
-  const saveNote = useCallback(async () => {
-    const noteId = currentNoteIdRef.current;
-    const view = viewRef.current;
-    if (!noteId || !view) return;
-
-    const doc = view.state.doc;
-
-    // 提取标题
-    let title = 'Untitled';
-    doc.forEach((node) => {
-      if (node.type.name === 'textBlock' && node.attrs.isTitle && node.textContent) {
-        title = node.textContent;
-      }
-    });
-
-    // PM Doc → Atom[]（编辑器中已加载的部分）
-    const loadedAtoms = converterRegistry.docToAtoms(doc);
-
-    // 如果还有未加载的尾部内容，从原始 atoms 中取出拼接（避免 flush 到编辑器导致卡顿）
-    const fullAtoms = fullAtomsRef.current;
-    const loadedCount = loadedTopCountRef.current;
-    if (fullAtoms && loadedCount >= 0) {
-      // 从原始 atoms 中找出未加载的 topLevel atoms
-      const topLevelAtoms = fullAtoms.filter(a => !a.parentId);
-      const unloadedTopIds = new Set(
-        topLevelAtoms.slice(loadedCount).map(a => a.id),
-      );
-      // 递归收集所有后代 atom（容器节点如 columnList > column > block 多级嵌套）
-      // 多轮扩展，直到没有新增（处理任意深度嵌套）
-      const allIds = new Set(unloadedTopIds);
-      let changed = true;
-      while (changed) {
-        changed = false;
-        for (const atom of fullAtoms) {
-          if (!allIds.has(atom.id) && atom.parentId && allIds.has(atom.parentId)) {
-            allIds.add(atom.id);
-            changed = true;
-          }
-        }
-      }
-      const tailAtoms = fullAtoms.filter(a => allIds.has(a.id));
-      loadedAtoms.push(...tailAtoms);
-    }
-
-    await viewAPI.noteSave(noteId, loadedAtoms, title);
-
-    // 顺带记录阅读位置（跟着自动保存节奏，文档级元数据，不动 updated_at）
-    const scrollContainer = editorRef.current?.parentElement;
-    if (scrollContainer) {
-      const idx = getTopBlockIndexAtScroll(view, scrollContainer);
-      viewAPI.noteSaveLastView(noteId, idx).catch(() => { /* ignore */ });
-    }
-  }, []);
-
-  // 防抖自动保存（1秒）
-  const scheduleSave = useCallback(() => {
-    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(async () => {
-      try {
-        await saveNote();
-        // 保存完成后通知 NoteView（dirty → saved）
-        window.dispatchEvent(new CustomEvent('note:saved'));
-      } catch (err) {
-        console.error('[NoteEditor] Auto-save failed:', err);
-      }
-    }, 1000);
-    // 通知 NoteView 有未保存的修改
-    window.dispatchEvent(new CustomEvent('note:dirty'));
-  }, [saveNote]);
-  scheduleSaveRef.current = scheduleSave;
-
   // 初始化
   useEffect(() => {
     const s = getSchema();
@@ -774,11 +672,10 @@ export function NoteEditor(props: NoteEditorProps = {}) {
       loadNote(noteId);
     });
 
-    // 监听笔记删除事件：如果是当前编辑的笔记，取消 auto-save 并导航到上一个
+    // 监听笔记删除事件：如果是当前编辑的笔记，导航到上一个
+    // （pending save 的取消由 NoteView 同名监听负责）
     const unsubDeleted = viewAPI.onNoteDeleted((deletedId) => {
       if (currentNoteIdRef.current !== deletedId) return;
-      // 取消待执行的 auto-save
-      if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null; }
       currentNoteIdRef.current = null;
       // 导航到历史中的上一篇笔记
       if (canGoBack()) {
@@ -817,24 +714,33 @@ export function NoteEditor(props: NoteEditorProps = {}) {
     };
     window.addEventListener('note:import-json', onImportJson);
 
-    // Import Markdown：为每个 .md 文件创建新笔记，最后一个加载到编辑器
+    // Import Markdown：为每个 .md 文件创建新笔记；最后通过 noteOpenInEditor
+    // 打开，让 NoteEditor/NoteView 通过正常事件流同步（activeNoteIdRef 等状态）
+    const saveDocToNote = async (noteId: string, doc: PMNode) => {
+      let title = 'Untitled';
+      doc.forEach((node) => {
+        if (node.type.name === 'textBlock' && node.attrs.isTitle && node.textContent) {
+          title = node.textContent;
+        }
+      });
+      const atoms = converterRegistry.docToAtoms(doc);
+      await viewAPI.noteSave(noteId, atoms, title);
+    };
     const onImportMarkdown = async (e: Event) => {
       const files = (e as CustomEvent).detail as { markdown: string; title: string }[];
       if (!Array.isArray(files) || files.length === 0) return;
       try {
+        let lastNoteId: string | null = null;
         for (const { markdown, title } of files) {
-          // 创建新笔记
           const note = await viewAPI.noteCreate(title);
           if (!note) { console.error('[NoteEditor] Import Markdown: noteCreate failed'); continue; }
 
-          // Markdown → ProseMirror JSON nodes
           const pmNodes = await viewAPI.markdownToPMNodes(markdown);
           if (!Array.isArray(pmNodes) || pmNodes.length === 0) {
-            // 空内容，跳过（笔记已创建，NavSide 可见）
+            lastNoteId = note.id; // 空笔记也算最后一个
             continue;
           }
 
-          // 构建完整 doc（noteTitle + 转换后的内容节点）
           const titleNode = s.nodes.textBlock.create(
             { isTitle: true },
             title ? s.text(title) : undefined,
@@ -844,21 +750,13 @@ export function NoteEditor(props: NoteEditorProps = {}) {
             .filter((n): n is PMNode => !!n);
           const doc = s.node('doc', null, [titleNode, ...contentNodes]);
 
-          // 如果正在编辑某笔记，先保存
-          if (currentNoteIdRef.current && viewRef.current) {
-            await saveNote();
-          }
-
-          // 加载到编辑器
-          loadMoreRef.current = null;
-          fullAtomsRef.current = null;
-          loadedTopCountRef.current = -1;
-          currentNoteIdRef.current = note.id;
-          setCurrentNote(note.id);
-          createEditor(doc);
-
-          // 立即保存（将 PM doc 持久化为 Atom[] 到 DB）
-          await saveNote();
+          // 把新 doc 直接序列化写盘到新笔记（不经过编辑器渲染）
+          await saveDocToNote(note.id, doc);
+          lastNoteId = note.id;
+        }
+        // 最后打开最后一个新建笔记，走正常事件流让 NoteView 同步 activeNoteIdRef
+        if (lastNoteId) {
+          viewAPI.noteOpenInEditor(lastNoteId);
         }
       } catch (err) {
         console.error('[NoteEditor] Import Markdown failed:', err);
@@ -867,16 +765,18 @@ export function NoteEditor(props: NoteEditorProps = {}) {
     window.addEventListener('note:import-markdown', onImportMarkdown);
 
     // 恢复上次打开的笔记（根据所在 slot 选取正确的 noteId）
+    // 走 viewAPI.noteOpenInEditor 而非直接 loadNote，确保 NoteView 的
+    // onNoteOpenInEditor 也能收到通知（更新 activeNoteIdRef 等保存状态）
     const unsubRestore = viewAPI.onRestoreWorkspaceState(async (state: any) => {
       const role = await viewAPI.getMyRole();
       const noteId = role === 'companion' ? state.rightActiveNoteId : state.activeNoteId;
-      if (noteId) loadNote(noteId);
+      if (noteId) viewAPI.noteOpenInEditor(noteId);
     });
 
     // 拉取导入时设置的 pending noteId，或恢复上次打开的笔记
     viewAPI.notePendingOpen().then(async (noteId) => {
       if (noteId) {
-        loadNote(noteId);
+        viewAPI.noteOpenInEditor(noteId);
         return;
       }
       // No pending note — restore last opened note from workspace state
@@ -890,7 +790,7 @@ export function NoteEditor(props: NoteEditorProps = {}) {
       if (currentNoteIdRef.current) return; // already loaded by another path
       const activeId = await viewAPI.getActiveNoteId();
       if (activeId && !currentNoteIdRef.current) {
-        loadNote(activeId);
+        viewAPI.noteOpenInEditor(activeId);
       }
     });
 
@@ -938,18 +838,6 @@ export function NoteEditor(props: NoteEditorProps = {}) {
         }
       }
     });
-
-    // 监听手动保存事件（来自 NoteView Toolbar 的 Save 按钮）
-    const manualSaveHandler = async () => {
-      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-      try {
-        await saveNote();
-        window.dispatchEvent(new CustomEvent('note:saved'));
-      } catch (err) {
-        console.error('[NoteEditor] Manual save failed:', err);
-      }
-    };
-    window.addEventListener('note:save', manualSaveHandler);
 
     // ── 书签 ──
     /** 持久化 bookmarks，并刷新面板（如果打开） */
@@ -1062,13 +950,9 @@ export function NoteEditor(props: NoteEditorProps = {}) {
       unsubVocab();
       window.removeEventListener('note:import-json', onImportJson);
       window.removeEventListener('note:import-markdown', onImportMarkdown);
-      window.removeEventListener('note:save', manualSaveHandler);
       window.removeEventListener('note:bookmark-toggle-panel', togglePanelHandler);
       if (bookmarksPanelOpenRef.current) hideBookmarksPanel();
-      if (saveTimerRef.current) {
-        clearTimeout(saveTimerRef.current);
-        saveNote(); // 关闭前保存
-      }
+      // 关闭前 flush pending save 由 NoteView 负责
       if (tocRef.current) {
         tocRef.current.destroy();
         tocRef.current = null;
@@ -1080,7 +964,7 @@ export function NoteEditor(props: NoteEditorProps = {}) {
         viewRef.current = null;
       }
     };
-  }, [createEditor, loadNote, saveNote, buildHandle]);
+  }, [createEditor, loadNote, buildHandle]);
 
   // ── AI Sync: listen for 'as:append-turn' ViewMessage ──
   // Serialize inserts: insertTurnIntoNote awaits IPC markdown parse, so two

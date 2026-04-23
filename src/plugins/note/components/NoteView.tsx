@@ -23,7 +23,10 @@ declare const viewAPI: {
   noteList: () => Promise<Array<{ id: string; title: string }>>;
   noteOpenInEditor: (id: string) => Promise<void>;
   onNoteOpenInEditor: (callback: (noteId: string) => void) => () => void;
+  onNoteDeleted: (callback: (noteId: string) => void) => () => void;
   onNoteTitleChanged: (callback: (data: { noteId: string; title: string }) => void) => () => void;
+  noteSave: (id: string, docContent: unknown[], title: string) => Promise<void>;
+  noteSaveLastView: (id: string, blockIndex: number) => Promise<void>;
   sendToOtherSlot: (message: any) => void;
   onMessage: (callback: (message: any) => void) => () => void;
   getMyRole: () => Promise<'primary' | 'companion' | null>;
@@ -39,13 +42,57 @@ export function NoteView() {
   // is created/opened.
   const [libraryEmpty, setLibraryEmpty] = useState(false);
   const [hasActiveNote, setHasActiveNote] = useState(false);
-  // Step 1（feature/noteview-layer-refactor）：捕获 NoteEditor handle，暂不使用
+  // Step 1（feature/noteview-layer-refactor）：捕获 NoteEditor handle
   const editorHandleRef = useRef<NoteEditorHandle | null>(null);
   // onReady 必须保持引用稳定：NoteEditor 的初始化 useEffect 依赖它，
   // 若每次 NoteView render 都传新函数会导致 editor 被反复 re-init，丢失内容/标题。
   const handleEditorReady = useCallback((handle: NoteEditorHandle) => {
     editorHandleRef.current = handle;
   }, []);
+
+  // Step 2：NoteView 承接保存编排 —— 独立跟踪 noteId + 1s 防抖
+  // 关键陷阱：
+  // (1) Cmd+S 立即保存时，必须清 pending timer，否则 1s 后会重复写盘
+  // (2) 切笔记时，pending save 必须 flush 到"旧 noteId"，不能让新笔记的 atoms
+  //     被写到老笔记的 key 下 —— 所以切换时先 flush，再更新 activeNoteIdRef
+  const activeNoteIdRef = useRef<string | null>(null);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const savingRef = useRef<boolean>(false); // flush 去重：正在写盘时跳过新的 schedule
+
+  /** 立即把当前编辑器内容写盘到指定 noteId。幂等，会清掉 pending timer。 */
+  const flushSave = useCallback(async (targetNoteId: string | null) => {
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    const handle = editorHandleRef.current;
+    if (!targetNoteId || !handle || !handle.view) return;
+    if (savingRef.current) return;
+    savingRef.current = true;
+    try {
+      const atoms = handle.getDocAtoms();
+      const title = handle.getTitle();
+      await viewAPI.noteSave(targetNoteId, atoms, title);
+      const idx = handle.getTopBlockIndexAtScroll();
+      viewAPI.noteSaveLastView(targetNoteId, idx).catch(() => { /* ignore */ });
+      setDirty(false);
+    } catch (err) {
+      console.error('[NoteView] save failed:', err);
+    } finally {
+      savingRef.current = false;
+    }
+  }, []);
+
+  /** 编辑器脏信号 → 启动 1s 防抖 → 到点 flush 到"当时的" activeNoteId */
+  const scheduleSave = useCallback(() => {
+    setDirty(true);
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      saveTimerRef.current = null;
+      // 捕获当前 activeNoteId（防抖到点时可能已切笔记，此处以当前值为准）
+      void flushSave(activeNoteIdRef.current);
+    }, 1000);
+  }, [flushSave]);
 
   const refreshNav = useCallback(() => {
     setNavState({ back: canGoBack(), forward: canGoForward() });
@@ -87,6 +134,18 @@ export function NoteView() {
     refreshLibrary();
 
     const unsubOpen = viewAPI.onNoteOpenInEditor(async (noteId) => {
+      // Step 2：切笔记前 flush pending save 到"旧 noteId"
+      // 避免新笔记的 atoms 被写到老笔记 key 下的竞态
+      const prevId = activeNoteIdRef.current;
+      if (prevId && prevId !== noteId) {
+        await flushSave(prevId);
+      } else if (saveTimerRef.current) {
+        // 同一笔记被再次打开（NoteEditor loadNote 会重置内容），清掉 pending
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+      activeNoteIdRef.current = noteId;
+      setDirty(false);
       refreshNav();
       setHasActiveNote(true);
       setLibraryEmpty(false);
@@ -108,35 +167,38 @@ export function NoteView() {
       setNoteTitle(data.title);
     });
 
-    // Cmd+S 手动保存
+    // Step 2：笔记被删除时，取消 pending save 并清 activeNoteIdRef
+    // 不在这里写盘 —— 笔记已删，写了也无意义，且 noteSave 会报错
+    const unsubDeleted = viewAPI.onNoteDeleted((deletedId) => {
+      if (activeNoteIdRef.current !== deletedId) return;
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+      activeNoteIdRef.current = null;
+      setDirty(false);
+    });
+
+    // Cmd+S 手动保存 —— 立即 flush，清 pending timer
     const keyHandler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 's') {
         e.preventDefault();
-        window.dispatchEvent(new CustomEvent('note:save'));
+        void flushSave(activeNoteIdRef.current);
       }
     };
     window.addEventListener('keydown', keyHandler);
 
-    // 监听编辑器内 noteTitle 实时变化
-    const onTitleChanged = (e: Event) => {
-      setNoteTitle((e as CustomEvent).detail);
-    };
-    window.addEventListener('note:title-changed', onTitleChanged);
-
-    // 监听 dirty / saved 状态
-    const onDirty = () => setDirty(true);
-    const onSaved = () => setDirty(false);
-    window.addEventListener('note:dirty', onDirty);
-    window.addEventListener('note:saved', onSaved);
-
     return () => {
-      unsubOpen(); unsubTitle();
+      unsubOpen(); unsubTitle(); unsubDeleted();
       window.removeEventListener('keydown', keyHandler);
-      window.removeEventListener('note:title-changed', onTitleChanged);
-      window.removeEventListener('note:dirty', onDirty);
-      window.removeEventListener('note:saved', onSaved);
+      // 卸载前 flush pending save
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+        void flushSave(activeNoteIdRef.current);
+      }
     };
-  }, [refreshNav]);
+  }, [refreshNav, flushSave]);
 
   // ── 锚定同步：eBook↔Note ──
   // 规则：左主右从 — 只有位于 left slot 的 View 发射 anchor-sync，
@@ -244,7 +306,7 @@ export function NoteView() {
         <button
           style={{ ...styles.saveBtn, opacity: dirty ? 1 : 0.3 }}
           disabled={!dirty}
-          onClick={() => window.dispatchEvent(new CustomEvent('note:save'))}
+          onClick={() => void flushSave(activeNoteIdRef.current)}
           title="保存 (⌘S)"
         >
           {dirty ? '保存' : '已保存'}
@@ -290,7 +352,11 @@ export function NoteView() {
           </button>
         </div>
       ) : (
-        <NoteEditor onReady={handleEditorReady} />
+        <NoteEditor
+          onReady={handleEditorReady}
+          onDocChanged={scheduleSave}
+          onTitleChanged={setNoteTitle}
+        />
       )}
     </div>
   );
