@@ -74,6 +74,12 @@ export interface NoteEditorHandle {
   flushPendingAnchor: () => void;
   /** 当前顶层 block 数量（供书签面板做失效清理）。 */
   getTopBlockCount: () => number;
+  /** AI Sync：把一条对话轮次插到文末（内部调 insertTurnIntoNote，带 ai-sync meta）。 */
+  insertAiTurn: (payload: unknown) => Promise<void>;
+  /** AI Sync：在文末插入一个 heading（import-conversation 用）。 */
+  insertHeadingAtEnd: (title: string, level?: number) => void;
+  /** 加载测试文档（Help 菜单）—— 不进 DB，直接替换编辑器内容。 */
+  loadTestDocument: () => void;
 }
 
 /**
@@ -81,8 +87,12 @@ export interface NoteEditorHandle {
  * 不传则完全沿用现有 viewAPI 路径，行为零变化。
  */
 export interface NoteEditorProps {
-  /** 文档内容变化（tr.docChanged=true）时的轻量信号。不传递数据，序列化成本归 NoteView。 */
-  onDocChanged?: () => void;
+  /**
+   * 文档内容变化（tr.docChanged=true）时的轻量信号。不传递数据，序列化成本归 NoteView。
+   * info.aiSync 区分"AI Sync 插入"vs"用户实际编辑"；NoteView 用它决定是否广播
+   * typing note-status（避免自反射）。
+   */
+  onDocChanged?: (info: { aiSync: boolean }) => void;
   /** noteTitle 节点文本变化时触发。 */
   onTitleChanged?: (title: string) => void;
   /** 编辑器首次就绪时回调，外层可保存 handle 供后续命令式操作。 */
@@ -99,20 +109,14 @@ export interface NoteEditorProps {
  */
 
 declare const viewAPI: {
-  // NoteEditor 自身需要的（Import Markdown + 测试文档 + 生词本 + AI Sync + status broadcast）
+  // NoteEditor 自身还用到的 viewAPI（Import Markdown + 生词本 + 删除导航）
   noteCreate: (title?: string) => Promise<{ id: string; title: string } | null>;
   noteSave: (id: string, docContent: unknown[], title: string) => Promise<void>;
   noteOpenInEditor: (id: string) => Promise<void>;
   onNoteDeleted: (callback: (noteId: string) => void) => () => void;
-  onLoadTestDoc: (callback: () => void) => () => void;
   markdownToPMNodes: (markdown: string) => Promise<unknown[]>;
   listVocabWords?: () => Promise<{ word: string; definition: string }[]>;
   onVocabChanged?: (callback: (entries: { word: string; definition: string }[]) => void) => () => void;
-  // AI Sync
-  onMessage: (callback: (message: any) => void) => () => void;
-  sendToOtherSlot: (message: { protocol: string; action: string; payload: unknown }) => void;
-  aiParseMarkdown: (markdown: string) => Promise<{ success: boolean; atoms: any[]; error?: string }>;
-  aiExtractionCacheWrite?: (payload: any) => Promise<any>;
 };
 
 // 注册所有 Block（只执行一次）
@@ -400,21 +404,9 @@ export function NoteEditor(props: NoteEditorProps = {}) {
         updateSelectionCache(view);
         // 文档变化时发脏信号（排除分片追加的 addToHistory=false 事务）
         if (tr.docChanged && tr.getMeta('addToHistory') !== false) {
-          // AI sync: notify peer slot that user is typing (debounce source)
-          // Skip when the tr originates from sync insertion itself.
-          if (tr.getMeta('ai-sync') !== true) {
-            viewAPI.sendToOtherSlot({
-              protocol: 'ai-sync',
-              action: 'as:note-status',
-              payload: {
-                open: true,
-                lastTypedAt: Date.now(),
-                noteId: currentNoteIdRef.current,
-              },
-            });
-          }
-          // 向外层发脏信号（推拉结合的"推"），NoteView 负责防抖 + 写盘
-          onDocChangedRef.current?.();
+          const aiSync = tr.getMeta('ai-sync') === true;
+          // 向外层发脏信号（推拉结合的"推"），NoteView 负责防抖 + 写盘 + typing 广播
+          onDocChangedRef.current?.({ aiSync });
           tocRef.current?.update();
           // noteTitle 变化通过 prop 回调通知 NoteView
           const titleNode = newState.doc.firstChild;
@@ -570,6 +562,31 @@ export function NoteEditor(props: NoteEditorProps = {}) {
       if (!view || view.isDestroyed) return 0;
       return view.state.doc.childCount;
     },
+    insertAiTurn: async (payload: unknown) => {
+      const view = viewRef.current;
+      if (!view || view.isDestroyed) return;
+      const { insertTurnIntoNote } = await import('../ai-workflow/sync-note-receiver');
+      await insertTurnIntoNote(view, payload as any);
+    },
+    insertHeadingAtEnd: (title: string, level = 2) => {
+      const view = viewRef.current;
+      if (!view || view.isDestroyed || !title) return;
+      const { schema } = view.state;
+      const headingType = schema.nodes.heading;
+      if (!headingType) return;
+      const headingNode = headingType.create({ level }, [schema.text(String(title))]);
+      const tr = view.state.tr;
+      tr.setMeta('ai-sync', true);
+      tr.insert(view.state.doc.content.size, headingNode);
+      view.dispatch(tr);
+    },
+    loadTestDocument: () => {
+      const s = getSchema();
+      loadMoreRef.current = null;
+      fullAtomsRef.current = null;
+      loadedTopCountRef.current = -1;
+      createEditor(buildTestDocument(s));
+    },
   }), [createEditor]);
 
   // 初始化
@@ -696,15 +713,9 @@ export function NoteEditor(props: NoteEditorProps = {}) {
 
     const unsubVocab = viewAPI.onVocabChanged?.(applyVocab) || (() => {});
 
-    // 加载测试文档（Help 菜单）
-    const unsubTestDoc = viewAPI.onLoadTestDoc(() => {
-      currentNoteIdRef.current = null; // 测试文档不保存到数据库
-      createEditor(buildTestDocument(s));
-    });
 
     return () => {
       unsubDeleted();
-      unsubTestDoc();
       unsubVocab();
       window.removeEventListener('note:import-json', onImportJson);
       window.removeEventListener('note:import-markdown', onImportMarkdown);
@@ -721,190 +732,6 @@ export function NoteEditor(props: NoteEditorProps = {}) {
       }
     };
   }, [createEditor, buildHandle]);
-
-  // ── AI Sync: listen for 'as:append-turn' ViewMessage ──
-  // Serialize inserts: insertTurnIntoNote awaits IPC markdown parse, so two
-  // turns arriving back-to-back would race and can finish out of order (a
-  // shorter second turn lands before a longer first turn). Chain through a
-  // single queue so order matches arrival.
-  useEffect(() => {
-    let queue: Promise<void> = Promise.resolve();
-    let lastAppendFingerprint = '';
-    let lastAppendAt = 0;
-    const writeReceipt = async (payload: any) => {
-      try {
-        await viewAPI.aiExtractionCacheWrite?.(payload);
-      } catch {}
-    };
-    const unsub = viewAPI.onMessage((msg: any) => {
-      if (msg.protocol === 'ai-sync' && msg.action === 'as:append-turn') {
-        const sourceId = String(msg.payload?.source?.serviceId || '');
-        const turn = msg.payload?.turn || {};
-        const extractionId = String(msg.payload?.debug?.extractionId || `note-${Date.now()}`);
-        const noteId = currentNoteIdRef.current ?? null;
-        const fingerprint = JSON.stringify({
-          sourceId,
-          index: turn.index ?? null,
-          userMessage: turn.userMessage ?? '',
-          markdown: turn.markdown ?? '',
-        });
-        void writeReceipt({
-          extractionId,
-          stage: 'note-received',
-          serviceId: sourceId || 'unknown',
-          msgIndex: turn.index ?? -1,
-          userMessage: turn.userMessage ?? '',
-          markdown: turn.markdown ?? '',
-          meta: {
-            noteId,
-            sourceName: String(msg.payload?.source?.serviceName || ''),
-          },
-        });
-        const now = Date.now();
-        if (fingerprint === lastAppendFingerprint && (now - lastAppendAt) < 15000) {
-          void writeReceipt({
-            extractionId,
-            stage: 'note-duplicate-skip',
-            serviceId: sourceId || 'unknown',
-            msgIndex: turn.index ?? -1,
-            userMessage: turn.userMessage ?? '',
-            markdown: turn.markdown ?? '',
-            meta: { noteId },
-          });
-          return;
-        }
-        lastAppendFingerprint = fingerprint;
-        lastAppendAt = now;
-        queue = queue.then(async () => {
-          const view = viewRef.current;
-          if (!view || view.isDestroyed || !currentNoteIdRef.current) {
-            await writeReceipt({
-              extractionId,
-              stage: 'note-no-active-note',
-              serviceId: sourceId || 'unknown',
-              msgIndex: turn.index ?? -1,
-              userMessage: turn.userMessage ?? '',
-              markdown: turn.markdown ?? '',
-              meta: { noteId: currentNoteIdRef.current ?? null },
-            });
-            // No target note (view torn down, note deleted) — tell peer so
-            // it can pause the sync toggle and surface a warning.
-            viewAPI.sendToOtherSlot({
-              protocol: 'ai-sync',
-              action: 'as:insert-failed',
-              payload: { reason: 'no-active-note' },
-            });
-            return;
-          }
-          await writeReceipt({
-            extractionId,
-            stage: 'note-insert-start',
-            serviceId: sourceId || 'unknown',
-            msgIndex: turn.index ?? -1,
-            userMessage: turn.userMessage ?? '',
-            markdown: turn.markdown ?? '',
-            meta: { noteId: currentNoteIdRef.current },
-          });
-          const { insertTurnIntoNote } = await import('../ai-workflow/sync-note-receiver');
-          await insertTurnIntoNote(view, msg.payload);
-          await writeReceipt({
-            extractionId,
-            stage: 'note-insert-success',
-            serviceId: sourceId || 'unknown',
-            msgIndex: turn.index ?? -1,
-            userMessage: turn.userMessage ?? '',
-            markdown: turn.markdown ?? '',
-            meta: { noteId: currentNoteIdRef.current },
-          });
-        }).catch(err => {
-          console.warn('[SyncNote] insert failed:', err);
-          void writeReceipt({
-            extractionId,
-            stage: 'note-insert-failed',
-            serviceId: sourceId || 'unknown',
-            msgIndex: turn.index ?? -1,
-            userMessage: turn.userMessage ?? '',
-            markdown: turn.markdown ?? '',
-            meta: {
-              noteId: currentNoteIdRef.current ?? null,
-              error: String(err),
-            },
-          });
-          viewAPI.sendToOtherSlot({
-            protocol: 'ai-sync',
-            action: 'as:insert-failed',
-            payload: { reason: String(err) },
-          });
-        });
-      } else if (msg.protocol === 'ai-sync' && msg.action === 'as:import-conversation') {
-        const { title, turns, source } = msg.payload ?? {} as any;
-        if (!Array.isArray(turns) || turns.length === 0) return;
-        queue = queue.then(async () => {
-          const view = viewRef.current;
-          if (!view || view.isDestroyed || !currentNoteIdRef.current) return;
-
-          // Insert title as heading
-          const { schema } = view.state;
-          const headingType = schema.nodes.heading;
-          if (headingType && title) {
-            const headingNode = headingType.create(
-              { level: 2 },
-              [schema.text(String(title))],
-            );
-            const tr = view.state.tr;
-            tr.setMeta('ai-sync', true);
-            const pos = view.state.doc.content.size;
-            tr.insert(pos, headingNode);
-            view.dispatch(tr);
-          }
-
-          // Insert each turn sequentially
-          const { insertTurnIntoNote } = await import('../ai-workflow/sync-note-receiver');
-          for (const turn of turns) {
-            await insertTurnIntoNote(view, {
-              turn: {
-                index: turn.index,
-                userMessage: turn.userMessage ?? '',
-                markdown: turn.markdown ?? '',
-                timestamp: turn.timestamp ?? Date.now(),
-              },
-              source: source ?? { serviceId: 'claude', serviceName: 'Claude' },
-            });
-          }
-          console.log(`[SyncNote] Imported conversation "${title}": ${turns.length} turns`);
-        }).catch(err => {
-          console.warn('[SyncNote] import-conversation failed:', err);
-        });
-      } else if (msg.protocol === 'ai-sync' && msg.action === 'as:probe') {
-        // Peer asks "are you open?" — reply immediately.
-        viewAPI.sendToOtherSlot({
-          protocol: 'ai-sync',
-          action: 'as:note-status',
-          payload: { open: true, lastTypedAt: 0, noteId: currentNoteIdRef.current },
-        });
-      }
-    });
-    return unsub;
-  }, []);
-
-  // Broadcast open/close so the AI sync engine can pause when the note
-  // view is unmounted (user closed the right slot). Note switches inside
-  // this component are announced from within loadNote() — no extra effect
-  // needed here.
-  useEffect(() => {
-    viewAPI.sendToOtherSlot({
-      protocol: 'ai-sync',
-      action: 'as:note-status',
-      payload: { open: true, lastTypedAt: 0, noteId: currentNoteIdRef.current },
-    });
-    return () => {
-      viewAPI.sendToOtherSlot({
-        protocol: 'ai-sync',
-        action: 'as:note-status',
-        payload: { open: false, lastTypedAt: 0, noteId: null },
-      });
-    };
-  }, []);
 
   return (
     <div style={styles.container}>

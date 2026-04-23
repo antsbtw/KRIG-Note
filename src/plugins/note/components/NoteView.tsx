@@ -50,9 +50,12 @@ declare const viewAPI: {
   onRestoreWorkspaceState: (callback: (state: { activeNoteId: string | null; rightActiveNoteId?: string | null }) => void) => () => void;
   isDBReady: () => Promise<boolean>;
   onDBReady: (callback: () => void) => () => void;
+  onLoadTestDoc: (callback: () => void) => () => void;
   sendToOtherSlot: (message: any) => void;
   onMessage: (callback: (message: any) => void) => () => void;
   getMyRole: () => Promise<'primary' | 'companion' | null>;
+  // AI Sync
+  aiExtractionCacheWrite?: (payload: any) => Promise<any>;
 };
 
 export function NoteView() {
@@ -67,10 +70,18 @@ export function NoteView() {
   const [hasActiveNote, setHasActiveNote] = useState(false);
   // Step 1（feature/noteview-layer-refactor）：捕获 NoteEditor handle
   const editorHandleRef = useRef<NoteEditorHandle | null>(null);
-  // onReady 必须保持引用稳定：NoteEditor 的初始化 useEffect 依赖它，
-  // 若每次 NoteView render 都传新函数会导致 editor 被反复 re-init，丢失内容/标题。
+  // Step 4 修复：handle 就绪前到达的 noteOpenInEditor 需要延迟处理，
+  // 否则 loadNote 首行的 `if (!handle) return` 会吞掉加载请求，导致
+  // activeNoteIdRef 永远保持 null、后续保存/AI Sync 全部失效。
+  const pendingNoteIdRef = useRef<string | null>(null);
   const handleEditorReady = useCallback((handle: NoteEditorHandle) => {
     editorHandleRef.current = handle;
+    // Handle 就绪：如果有待加载的 noteId，立刻派发一次 open 事件
+    const pending = pendingNoteIdRef.current;
+    if (pending) {
+      pendingNoteIdRef.current = null;
+      viewAPI.noteOpenInEditor(pending);
+    }
   }, []);
 
   // Step 2：NoteView 承接保存编排 —— 独立跟踪 noteId + 1s 防抖
@@ -116,7 +127,7 @@ export function NoteView() {
   }, []);
 
   /** 编辑器脏信号 → 启动 1s 防抖 → 到点 flush 到"当时的" activeNoteId */
-  const scheduleSave = useCallback(() => {
+  const scheduleSave = useCallback((info: { aiSync: boolean }) => {
     setDirty(true);
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
@@ -124,6 +135,20 @@ export function NoteView() {
       // 捕获当前 activeNoteId（防抖到点时可能已切笔记，此处以当前值为准）
       void flushSave(activeNoteIdRef.current);
     }, 1000);
+    // 用户实际编辑 → 广播 typing note-status 给 peer slot（AI Sync 节流源）。
+    // AI Sync 自己的插入也会触发 onDocChanged，但带 aiSync=true，此处跳过
+    // 避免自反射。
+    if (!info.aiSync) {
+      viewAPI.sendToOtherSlot({
+        protocol: 'ai-sync',
+        action: 'as:note-status',
+        payload: {
+          open: true,
+          lastTypedAt: Date.now(),
+          noteId: activeNoteIdRef.current,
+        },
+      });
+    }
   }, [flushSave]);
 
   /** 生成书签默认 label：取该顶层 block 的前 30 字，空则用"第 N 块" */
@@ -203,7 +228,11 @@ export function NoteView() {
    */
   const loadNote = useCallback(async (noteId: string) => {
     const handle = editorHandleRef.current;
-    if (!handle) return;
+    if (!handle) {
+      // Handle 还没就绪 —— 暂存，等 onReady 时重新派发事件
+      pendingNoteIdRef.current = noteId;
+      return;
+    }
     const seq = ++loadSeqRef.current;
 
     const fallbackToEmpty = (reason: string) => {
@@ -363,6 +392,19 @@ export function NoteView() {
     };
     window.addEventListener('keydown', keyHandler);
 
+    // Step 4：测试文档（Help 菜单）—— 清 activeNoteId 避免防抖保存把测试内容
+    // 写到当前笔记；通过 handle 加载测试 doc
+    const unsubTestDoc = viewAPI.onLoadTestDoc(() => {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+      activeNoteIdRef.current = null;
+      setActiveNoteIdState(null);
+      setDirty(false);
+      editorHandleRef.current?.loadTestDocument();
+    });
+
     // Step 3：书签面板 toggle
     const togglePanelHandler = () => {
       if (bookmarksPanelOpenRef.current) {
@@ -400,7 +442,7 @@ export function NoteView() {
     });
 
     return () => {
-      unsubOpen(); unsubTitle(); unsubDeleted(); unsubRestore();
+      unsubOpen(); unsubTitle(); unsubDeleted(); unsubRestore(); unsubTestDoc();
       window.removeEventListener('keydown', keyHandler);
       window.removeEventListener('note:bookmark-toggle-panel', togglePanelHandler);
       if (bookmarksPanelOpenRef.current) {
@@ -415,6 +457,169 @@ export function NoteView() {
       }
     };
   }, [refreshNav, flushSave, loadNote, openBookmarksPanel]);
+
+  // Step 4: ── AI Sync: listen for 'as:append-turn' / 'as:import-conversation' / 'as:probe' ──
+  // 原 NoteEditor 同款逻辑搬到此处（L3 业务）。插入动作委托给 handle（L1）。
+  // 串行化：insertTurnIntoNote 内有 IPC await，若不串行，短 turn 会插到长 turn
+  // 之前 —— 通过单一 promise chain 保证顺序。
+  useEffect(() => {
+    let queue: Promise<void> = Promise.resolve();
+    let lastAppendFingerprint = '';
+    let lastAppendAt = 0;
+    const writeReceipt = async (payload: any) => {
+      try {
+        await viewAPI.aiExtractionCacheWrite?.(payload);
+      } catch {}
+    };
+    const unsub = viewAPI.onMessage((msg: any) => {
+      if (msg.protocol === 'ai-sync' && msg.action === 'as:append-turn') {
+        const sourceId = String(msg.payload?.source?.serviceId || '');
+        const turn = msg.payload?.turn || {};
+        const extractionId = String(msg.payload?.debug?.extractionId || `note-${Date.now()}`);
+        const noteId = activeNoteIdRef.current ?? null;
+        const fingerprint = JSON.stringify({
+          sourceId,
+          index: turn.index ?? null,
+          userMessage: turn.userMessage ?? '',
+          markdown: turn.markdown ?? '',
+        });
+        void writeReceipt({
+          extractionId,
+          stage: 'note-received',
+          serviceId: sourceId || 'unknown',
+          msgIndex: turn.index ?? -1,
+          userMessage: turn.userMessage ?? '',
+          markdown: turn.markdown ?? '',
+          meta: {
+            noteId,
+            sourceName: String(msg.payload?.source?.serviceName || ''),
+          },
+        });
+        const now = Date.now();
+        if (fingerprint === lastAppendFingerprint && (now - lastAppendAt) < 15000) {
+          void writeReceipt({
+            extractionId,
+            stage: 'note-duplicate-skip',
+            serviceId: sourceId || 'unknown',
+            msgIndex: turn.index ?? -1,
+            userMessage: turn.userMessage ?? '',
+            markdown: turn.markdown ?? '',
+            meta: { noteId },
+          });
+          return;
+        }
+        lastAppendFingerprint = fingerprint;
+        lastAppendAt = now;
+        queue = queue.then(async () => {
+          const handle = editorHandleRef.current;
+          if (!handle || !handle.view || handle.view.isDestroyed || !activeNoteIdRef.current) {
+            await writeReceipt({
+              extractionId,
+              stage: 'note-no-active-note',
+              serviceId: sourceId || 'unknown',
+              msgIndex: turn.index ?? -1,
+              userMessage: turn.userMessage ?? '',
+              markdown: turn.markdown ?? '',
+              meta: { noteId: activeNoteIdRef.current ?? null },
+            });
+            viewAPI.sendToOtherSlot({
+              protocol: 'ai-sync',
+              action: 'as:insert-failed',
+              payload: { reason: 'no-active-note' },
+            });
+            return;
+          }
+          await writeReceipt({
+            extractionId,
+            stage: 'note-insert-start',
+            serviceId: sourceId || 'unknown',
+            msgIndex: turn.index ?? -1,
+            userMessage: turn.userMessage ?? '',
+            markdown: turn.markdown ?? '',
+            meta: { noteId: activeNoteIdRef.current },
+          });
+          await handle.insertAiTurn(msg.payload);
+          await writeReceipt({
+            extractionId,
+            stage: 'note-insert-success',
+            serviceId: sourceId || 'unknown',
+            msgIndex: turn.index ?? -1,
+            userMessage: turn.userMessage ?? '',
+            markdown: turn.markdown ?? '',
+            meta: { noteId: activeNoteIdRef.current },
+          });
+        }).catch(err => {
+          console.warn('[SyncNote] insert failed:', err);
+          void writeReceipt({
+            extractionId,
+            stage: 'note-insert-failed',
+            serviceId: sourceId || 'unknown',
+            msgIndex: turn.index ?? -1,
+            userMessage: turn.userMessage ?? '',
+            markdown: turn.markdown ?? '',
+            meta: {
+              noteId: activeNoteIdRef.current ?? null,
+              error: String(err),
+            },
+          });
+          viewAPI.sendToOtherSlot({
+            protocol: 'ai-sync',
+            action: 'as:insert-failed',
+            payload: { reason: String(err) },
+          });
+        });
+      } else if (msg.protocol === 'ai-sync' && msg.action === 'as:import-conversation') {
+        const { title, turns, source } = msg.payload ?? {} as any;
+        if (!Array.isArray(turns) || turns.length === 0) return;
+        queue = queue.then(async () => {
+          const handle = editorHandleRef.current;
+          if (!handle || !handle.view || handle.view.isDestroyed || !activeNoteIdRef.current) return;
+          // 标题作为 heading 插在文末
+          if (title) handle.insertHeadingAtEnd(String(title), 2);
+          for (const turn of turns) {
+            await handle.insertAiTurn({
+              turn: {
+                index: turn.index,
+                userMessage: turn.userMessage ?? '',
+                markdown: turn.markdown ?? '',
+                timestamp: turn.timestamp ?? Date.now(),
+              },
+              source: source ?? { serviceId: 'claude', serviceName: 'Claude' },
+            });
+          }
+          console.log(`[SyncNote] Imported conversation "${title}": ${turns.length} turns`);
+        }).catch(err => {
+          console.warn('[SyncNote] import-conversation failed:', err);
+        });
+      } else if (msg.protocol === 'ai-sync' && msg.action === 'as:probe') {
+        // Peer asks "are you open?" — reply immediately.
+        viewAPI.sendToOtherSlot({
+          protocol: 'ai-sync',
+          action: 'as:note-status',
+          payload: { open: true, lastTypedAt: 0, noteId: activeNoteIdRef.current },
+        });
+      }
+    });
+    return unsub;
+  }, []);
+
+  // Step 4: Broadcast open/close so the AI sync engine can pause when the note
+  // view is unmounted. 注意：activeNoteId 变化由 loadNote 分支处理（切 note 时
+  // NoteView 不会 unmount），这里只管 mount/unmount。
+  useEffect(() => {
+    viewAPI.sendToOtherSlot({
+      protocol: 'ai-sync',
+      action: 'as:note-status',
+      payload: { open: true, lastTypedAt: 0, noteId: activeNoteIdRef.current },
+    });
+    return () => {
+      viewAPI.sendToOtherSlot({
+        protocol: 'ai-sync',
+        action: 'as:note-status',
+        payload: { open: false, lastTypedAt: 0, noteId: null },
+      });
+    };
+  }, []);
 
   // ── 锚定同步：eBook↔Note ──
   // 规则：左主右从 — 只有位于 left slot 的 View 发射 anchor-sync，
@@ -558,23 +763,27 @@ export function NoteView() {
         </button>
       </div>
 
-      {/* Content */}
-      {libraryEmpty && !hasActiveNote ? (
-        <div style={styles.emptyState}>
-          <div style={styles.emptyStateIcon}>📝</div>
-          <div style={styles.emptyStateText}>还没有笔记</div>
-          <button style={styles.emptyStateBtn} onClick={handleNewNote}>
-            + 新建笔记
-          </button>
-        </div>
-      ) : (
+      {/* Content —— 编辑器始终 mount（handle 就绪 pendingNoteIdRef 才能 flush），
+          无 activeNoteId 时在上面叠空态遮罩，避免用户在幽灵笔记里编辑 */}
+      <div style={styles.contentWrap}>
         <NoteEditor
           onReady={handleEditorReady}
           onDocChanged={scheduleSave}
           onTitleChanged={setNoteTitle}
           activeNoteId={activeNoteIdState}
         />
-      )}
+        {!hasActiveNote && (
+          <div style={styles.emptyStateOverlay}>
+            <div style={styles.emptyStateIcon}>📝</div>
+            <div style={styles.emptyStateText}>
+              {libraryEmpty ? '还没有笔记' : '请从左侧选择或新建笔记'}
+            </div>
+            <button style={styles.emptyStateBtn} onClick={handleNewNote}>
+              + 新建笔记
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -652,14 +861,27 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     flexShrink: 0,
   },
-  emptyState: {
+  contentWrap: {
     flex: 1,
+    position: 'relative' as const,
+    overflow: 'hidden' as const,
+    display: 'flex',
+    flexDirection: 'column' as const,
+  },
+  emptyStateOverlay: {
+    position: 'absolute' as const,
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     display: 'flex',
     flexDirection: 'column' as const,
     alignItems: 'center' as const,
     justifyContent: 'center' as const,
     gap: 12,
     color: '#888',
+    background: '#1e1e1e',
+    zIndex: 10,
   },
   emptyStateIcon: {
     fontSize: 48,
