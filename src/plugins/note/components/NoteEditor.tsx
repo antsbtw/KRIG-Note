@@ -56,6 +56,41 @@ interface NoteBookmark {
 }
 
 /**
+ * L1 编辑器内核对外暴露的命令句柄。
+ * Step 1 (feature/noteview-layer-refactor)：双轨期，NoteEditor 内部仍保留
+ * 现有 viewAPI 路径；外层容器可通过 onReady 捕获 handle 用于按需拉取数据。
+ */
+export interface NoteEditorHandle {
+  /** 逃生舱：当前 ProseMirror EditorView。销毁期间可能为 null。 */
+  view: EditorView | null;
+  /** 按需把当前文档序列化为 Atom[]（拉模式，避免 onDocChanged 里同步 O(N) 转换）。 */
+  getDocAtoms: () => Atom[];
+  /** 取当前 noteTitle 节点的文本（空则返回 'Untitled'）。 */
+  getTitle: () => string;
+  /** 用 Atom[] 重建整个文档。 */
+  replaceDoc: (atoms: Atom[]) => void;
+  /** 在指定位置（缺省为文末）插入一段 atoms。 */
+  insertAtoms: (atoms: Atom[], pos?: number) => void;
+  /** 让编辑器获得焦点。 */
+  focus: () => void;
+  /** 滚动到指定顶层 block 索引（书签跳转用）。 */
+  scrollToTopBlockIndex: (index: number) => void;
+}
+
+/**
+ * NoteEditor props。Step 1 全部可选 —— 外层传入即使用推模式的"脏信号"，
+ * 不传则完全沿用现有 viewAPI 路径，行为零变化。
+ */
+export interface NoteEditorProps {
+  /** 文档内容变化（tr.docChanged=true）时的轻量信号。不传递数据，序列化成本归 NoteView。 */
+  onDocChanged?: () => void;
+  /** noteTitle 节点文本变化时触发。 */
+  onTitleChanged?: (title: string) => void;
+  /** 编辑器首次就绪时回调，外层可保存 handle 供后续命令式操作。 */
+  onReady?: (handle: NoteEditorHandle) => void;
+}
+
+/**
  * NoteEditor — ProseMirror 编辑器 React 组件
  *
  * 从 SurrealDB 加载文档，自动保存。
@@ -289,7 +324,8 @@ function scrollToTopBlockIndex(view: EditorView, scrollContainer: HTMLElement, i
   } catch { /* ignore */ }
 }
 
-export function NoteEditor() {
+export function NoteEditor(props: NoteEditorProps = {}) {
+  const { onDocChanged, onTitleChanged, onReady } = props;
   const editorRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const [editorView, setEditorView] = useState<EditorView | null>(null);
@@ -306,6 +342,15 @@ export function NoteEditor() {
   // 书签：当前 note 的书签列表 + 面板是否打开
   const bookmarksRef = useRef<NoteBookmark[]>([]);
   const bookmarksPanelOpenRef = useRef<boolean>(false);
+  // Step 1：外层回调 ref 化 —— 不进 useEffect 依赖数组，避免回调身份变化
+  // 导致整个编辑器重 init（会清空已加载的笔记内容和标题）。
+  const onDocChangedRef = useRef(onDocChanged);
+  const onTitleChangedRef = useRef(onTitleChanged);
+  const onReadyRef = useRef(onReady);
+  useEffect(() => { onDocChangedRef.current = onDocChanged; }, [onDocChanged]);
+  useEffect(() => { onTitleChangedRef.current = onTitleChanged; }, [onTitleChanged]);
+  useEffect(() => { onReadyRef.current = onReady; }, [onReady]);
+  const handleEmittedRef = useRef(false);
 
   // 追加更多内容到编辑器末尾
   const appendMoreContent = useCallback(() => {
@@ -387,12 +432,16 @@ export function NoteEditor() {
             });
           }
           scheduleSaveRef.current();
+          // Step 1 双轨：向外层发脏信号（推拉结合的"推"），不传数据
+          onDocChangedRef.current?.();
           tocRef.current?.update();
           // noteTitle 变化时实时同步到 NoteView toolbar
           const titleNode = newState.doc.firstChild;
           if (titleNode?.type.name === 'textBlock' && titleNode.attrs.isTitle) {
             const newTitle = titleNode.textContent || 'Untitled';
             window.dispatchEvent(new CustomEvent('note:title-changed', { detail: newTitle }));
+            // Step 1 双轨：同时通过 prop 回调通知（事件路径保留）
+            onTitleChangedRef.current?.(newTitle);
           }
         }
       },
@@ -428,6 +477,85 @@ export function NoteEditor() {
       sentinelObserverRef.current = observer;
     }
   }, [appendMoreContent]);
+
+  // Step 1：命令句柄 —— 外层通过 onReady 拿到，用于按需拉取数据或命令式操作
+  const buildHandle = useCallback((): NoteEditorHandle => ({
+    get view() { return viewRef.current; },
+    getDocAtoms: () => {
+      const view = viewRef.current;
+      if (!view || view.isDestroyed) return [];
+      const loadedAtoms = converterRegistry.docToAtoms(view.state.doc);
+      // 分片加载时拼接未加载的尾部 atoms，和 saveNote 的逻辑一致
+      const fullAtoms = fullAtomsRef.current;
+      const loadedCount = loadedTopCountRef.current;
+      if (fullAtoms && loadedCount >= 0) {
+        const topLevelAtoms = fullAtoms.filter(a => !a.parentId);
+        const unloadedTopIds = new Set(topLevelAtoms.slice(loadedCount).map(a => a.id));
+        const allIds = new Set(unloadedTopIds);
+        let changed = true;
+        while (changed) {
+          changed = false;
+          for (const atom of fullAtoms) {
+            if (!allIds.has(atom.id) && atom.parentId && allIds.has(atom.parentId)) {
+              allIds.add(atom.id);
+              changed = true;
+            }
+          }
+        }
+        loadedAtoms.push(...fullAtoms.filter(a => allIds.has(a.id)));
+      }
+      return loadedAtoms;
+    },
+    getTitle: () => {
+      const view = viewRef.current;
+      if (!view || view.isDestroyed) return 'Untitled';
+      let title = 'Untitled';
+      view.state.doc.forEach((node) => {
+        if (node.type.name === 'textBlock' && node.attrs.isTitle && node.textContent) {
+          title = node.textContent;
+        }
+      });
+      return title;
+    },
+    replaceDoc: (atoms: Atom[]) => {
+      const s = getSchema();
+      loadMoreRef.current = null;
+      fullAtomsRef.current = null;
+      loadedTopCountRef.current = -1;
+      if (!atoms || atoms.length === 0) {
+        createEditor(createEmptyDoc(s));
+        return;
+      }
+      const { doc, loadMore } = docFromContentChunked(s, atoms);
+      loadMoreRef.current = loadMore;
+      fullAtomsRef.current = loadMore ? atoms : null;
+      loadedTopCountRef.current = loadMore ? INITIAL_CHUNK_SIZE : -1;
+      createEditor(doc);
+    },
+    insertAtoms: (atoms: Atom[], pos?: number) => {
+      const view = viewRef.current;
+      if (!view || view.isDestroyed || !atoms || atoms.length === 0) return;
+      try {
+        const s = getSchema();
+        const docJson = converterRegistry.atomsToDoc(atoms);
+        const tmpDoc = PMNode.fromJSON(s, docJson);
+        const tr = view.state.tr;
+        const insertPos = typeof pos === 'number' ? pos : view.state.doc.content.size;
+        // 取出临时 doc 的 content 插入（跳过外层 doc 节点本身）
+        tmpDoc.content.forEach(node => { tr.insert(insertPos, node); });
+        view.dispatch(tr);
+      } catch (err) {
+        console.error('[NoteEditor] insertAtoms failed:', err);
+      }
+    },
+    focus: () => { viewRef.current?.focus(); },
+    scrollToTopBlockIndex: (index: number) => {
+      const view = viewRef.current;
+      const scrollContainer = editorRef.current?.parentElement;
+      if (!view || view.isDestroyed || !scrollContainer) return;
+      scrollToTopBlockIndex(view, scrollContainer, index);
+    },
+  }), [createEditor]);
 
   // 加载文档（带竞态取消：快速切换时丢弃过期的异步结果）
   const loadNote = useCallback(async (noteId: string) => {
@@ -631,6 +759,12 @@ export function NoteEditor() {
 
     // 先创建空编辑器
     createEditor(createEmptyDoc(s));
+
+    // Step 1：编辑器首次就绪后 emit handle（一次性，走 ref 避免重 init）
+    if (!handleEmittedRef.current && onReadyRef.current) {
+      handleEmittedRef.current = true;
+      onReadyRef.current(buildHandle());
+    }
 
     // 注册 Converter 测试（DevTools console: __testConverters()）
     registerConverterTest(s);
@@ -946,7 +1080,7 @@ export function NoteEditor() {
         viewRef.current = null;
       }
     };
-  }, [createEditor, loadNote, saveNote]);
+  }, [createEditor, loadNote, saveNote, buildHandle]);
 
   // ── AI Sync: listen for 'as:append-turn' ViewMessage ──
   // Serialize inserts: insertTurnIntoNote awaits IPC markdown parse, so two

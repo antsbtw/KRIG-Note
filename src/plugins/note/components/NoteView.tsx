@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { NoteEditor } from './NoteEditor';
+import { NoteEditor, type NoteEditorHandle } from './NoteEditor';
 import { SlotToggle } from '../../../shared/components/SlotToggle';
 import { OpenFilePopup } from '../../../shared/components/OpenFilePopup';
 import type { FileItem } from '../../../shared/components/OpenFilePopup';
@@ -39,6 +39,13 @@ export function NoteView() {
   // is created/opened.
   const [libraryEmpty, setLibraryEmpty] = useState(false);
   const [hasActiveNote, setHasActiveNote] = useState(false);
+  // Step 1（feature/noteview-layer-refactor）：捕获 NoteEditor handle，暂不使用
+  const editorHandleRef = useRef<NoteEditorHandle | null>(null);
+  // onReady 必须保持引用稳定：NoteEditor 的初始化 useEffect 依赖它，
+  // 若每次 NoteView render 都传新函数会导致 editor 被反复 re-init，丢失内容/标题。
+  const handleEditorReady = useCallback((handle: NoteEditorHandle) => {
+    editorHandleRef.current = handle;
+  }, []);
 
   const refreshNav = useCallback(() => {
     setNavState({ back: canGoBack(), forward: canGoForward() });
@@ -283,7 +290,7 @@ export function NoteView() {
           </button>
         </div>
       ) : (
-        <NoteEditor />
+        <NoteEditor onReady={handleEditorReady} />
       )}
     </div>
   );
