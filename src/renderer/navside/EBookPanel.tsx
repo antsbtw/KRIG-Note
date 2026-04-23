@@ -100,6 +100,14 @@ export function EBookPanel({ activeBookId, initialExpandedFolders, onActiveBookC
   } | null>(null);
   const [importStorage, setImportStorage] = useState<'managed' | 'link'>('managed');
 
+  // Toast 错误提示
+  const [toast, setToast] = useState<string | null>(null);
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(t);
+  }, [toast]);
+
   // 持久化文件夹展开状态
   useEffect(() => {
     navSideAPI.ebookSetExpandedFolders(Array.from(expandedFolders));
@@ -158,8 +166,19 @@ export function EBookPanel({ activeBookId, initialExpandedFolders, onActiveBookC
 
   const handleOpenBook = useCallback(async (id: string) => {
     const result = await navSideAPI.ebookBookshelfOpen(id);
-    if (result.success) onActiveBookChange(id);
-  }, [onActiveBookChange]);
+    if (result.success) {
+      onActiveBookChange(id);
+      return;
+    }
+    const book = bookList.find((b) => b.id === id);
+    const name = book?.displayName ?? '该书';
+    const reason = result.error === 'File not found'
+      ? '源文件已丢失（可能被移动、删除，或备份/还原后路径失效）'
+      : result.error === 'Entry not found'
+        ? '书架记录不存在'
+        : (result.error || '未知错误');
+    setToast(`无法打开「${name}」：${reason}`);
+  }, [onActiveBookChange, bookList]);
 
   const handleClickFolder = useCallback((folderId: string) => {
     setExpandedFolders((s) => {
@@ -548,6 +567,11 @@ export function EBookPanel({ activeBookId, initialExpandedFolders, onActiveBookC
       {buildTree(null, 0)}
       {renderContextMenu()}
       {renderImportModal()}
+      {toast && (
+        <div style={styles.toast} onClick={() => setToast(null)}>
+          {toast}
+        </div>
+      )}
     </div>
   );
 }
@@ -560,6 +584,23 @@ const styles: Record<string, React.CSSProperties> = {
     overflowY: 'auto',
     overflowX: 'hidden',
     padding: '4px 0',
+    position: 'relative',
+  },
+  toast: {
+    position: 'absolute',
+    left: '12px',
+    right: '12px',
+    bottom: '12px',
+    background: '#5a2222',
+    border: '1px solid #a04040',
+    color: '#ffd6d6',
+    fontSize: '12px',
+    lineHeight: 1.4,
+    padding: '8px 10px',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    zIndex: 100,
+    boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
   },
   // ── Folder ──
   folderItem: {

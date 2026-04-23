@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { app } from 'electron';
-import { findBinary, getConnectionInfo, shutdownSurrealDBAsync, initSurrealDB } from './client';
+import { findBinary, getConnectionInfo, shutdownSurrealDBAsync, initSurrealDB, getDB } from './client';
 import { initSchema } from './schema';
 
 /**
@@ -52,6 +52,35 @@ function run(cmd: string, args: string[]): Promise<{ code: number; stdout: strin
     proc.on('close', (code) => resolve({ code: code ?? 1, stdout, stderr }));
     proc.on('error', (err) => resolve({ code: 1, stdout: '', stderr: err.message }));
   });
+}
+
+/**
+ * 重写 managed 书的 file_path 到当前 ebookDir。
+ *
+ * managed 模式存储约定：文件名 = `${id}${ext}`，位于 ebookDir 下。
+ * 备份时存入 DB 的是源机绝对路径，还原后必须用本机当前路径覆盖。
+ */
+async function rewriteManagedEBookPaths(currentEbookDir: string): Promise<void> {
+  const db = getDB();
+  if (!db) return;
+
+  const result = await db.query<[Array<{ id: unknown; file_path?: string }>]>(
+    `SELECT id, file_path FROM ebook WHERE storage = 'managed'`,
+  );
+  const rows = result[0] ?? [];
+
+  for (const row of rows) {
+    const oldPath = row.file_path;
+    if (!oldPath) continue;
+    const ext = path.extname(oldPath);
+    const idStr = String(row.id).replace(/^ebook:⟨?|⟩?$/g, '');
+    const newPath = path.join(currentEbookDir, `${idStr}${ext}`);
+    if (newPath === oldPath) continue;
+    await db.query(
+      `UPDATE type::record('ebook', $id) SET file_path = $file_path`,
+      { id: idStr, file_path: newPath },
+    );
+  }
 }
 
 export const backupStore = {
@@ -278,6 +307,11 @@ export const backupStore = {
         fs.mkdirSync(path.dirname(paths.ebookDir), { recursive: true });
         fs.cpSync(backupEbook, paths.ebookDir, { recursive: true });
       }
+
+      // 7b. 重写 managed 书的 file_path —— 备份里存的是源机的绝对路径，
+      // 还原到不同 userData（换电脑/重置后）时会失效。按文件名 ${id}${ext}
+      // 重新拼接成当前 ebookDir 下的路径。linked 书原样保留（依赖用户原路径）。
+      await rewriteManagedEBookPaths(paths.ebookDir);
 
       // 8. 恢复 session + 清理旧 DB 备份
       reportProgress('清理临时文件...', 8, TOTAL_STEPS);
