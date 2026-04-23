@@ -429,7 +429,7 @@ function broadcastContentTree(mainWindow: BaseWindow | null): void {
   // NavSide 收到后会重新 fetch folderList
 }
 
-function broadcastWorkspaceState(mainWindow: BaseWindow | null): void {
+export function broadcastWorkspaceState(mainWindow: BaseWindow | null): void {
   updateLayout();
 
   if (!mainWindow) return;

@@ -6,6 +6,7 @@ import { noteStore } from '../../../main/storage/note-store';
 import { folderStore } from '../../../main/storage/folder-store';
 import { activityStore } from '../../../main/storage/activity-store';
 import { isDBReady } from '../../../main/storage/client';
+import { broadcastWorkspaceState } from '../../../main/ipc/handlers';
 
 /**
  * Note Plugin — IPC Handlers
@@ -124,6 +125,8 @@ export function registerNoteIpcHandlers(ctx: PluginContext): void {
       }
       workspaceManager.update(active.id, updates);
     }
+    // 广播给 NavSide 和其他 view —— 否则 NavSide 的高亮不会更新
+    broadcastWorkspaceState(ctx.getMainWindow());
   });
 
   ipcMain.handle(IPC.SET_EXPANDED_FOLDERS, (_event, folderIds: string[]) => {
