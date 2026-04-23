@@ -13,7 +13,7 @@ import { noteTitleNodeView } from '../blocks/text-block';
 import { buildInputRules } from '../plugins/input-rules';
 import { containerKeyboardPlugin } from '../plugins/container-keyboard';
 import { slashCommandPlugin } from '../plugins/slash-command';
-import { linkClickPlugin, setCurrentNote, flushPendingAnchor, canGoBack, goBack } from '../plugins/link-click';
+import { linkClickPlugin, flushPendingAnchor, canGoBack, goBack } from '../plugins/link-click';
 import { columnResizing } from 'prosemirror-tables';
 import { SlashMenu } from './SlashMenu';
 import { FloatingToolbar } from './FloatingToolbar';
@@ -41,18 +41,64 @@ import { registerConverterTest } from '../converters/converter-test';
 import { converterRegistry } from '../converters/registry';
 import { setTextBlockLevel } from '../commands/set-text-block-level';
 import { toggleTextIndent } from '../commands/editor-commands';
-import { showBookmarksPanel, hideBookmarksPanel } from '../help-panel/bookmarks';
 import type { Atom, NoteTitleContent } from '../../../shared/types/atom-types';
 import { createAtom } from '../../../shared/types/atom-types';
 import { sanitizeAtoms } from '../../../shared/sanitize-atoms';
 import '../note.css';
 
-/** Note 内书签（跟 main 侧的 NoteBookmark 对齐） */
-interface NoteBookmark {
-  id: string;
-  block_index: number;
-  label: string;
-  created_at: number;
+/**
+ * L1 编辑器内核对外暴露的命令句柄。
+ * Step 1 (feature/noteview-layer-refactor)：双轨期，NoteEditor 内部仍保留
+ * 现有 viewAPI 路径；外层容器可通过 onReady 捕获 handle 用于按需拉取数据。
+ */
+export interface NoteEditorHandle {
+  /** 逃生舱：当前 ProseMirror EditorView。销毁期间可能为 null。 */
+  view: EditorView | null;
+  /** 按需把当前文档序列化为 Atom[]（拉模式，避免 onDocChanged 里同步 O(N) 转换）。 */
+  getDocAtoms: () => Atom[];
+  /** 取当前 noteTitle 节点的文本（空则返回 'Untitled'）。 */
+  getTitle: () => string;
+  /** 用 Atom[] 重建整个文档。 */
+  replaceDoc: (atoms: Atom[]) => void;
+  /** 在指定位置（缺省为文末）插入一段 atoms。 */
+  insertAtoms: (atoms: Atom[], pos?: number) => void;
+  /** 让编辑器获得焦点。 */
+  focus: () => void;
+  /** 滚动到指定顶层 block 索引（书签跳转用）。 */
+  scrollToTopBlockIndex: (index: number) => void;
+  /** 当前 scroll 顶部可见的顶层 block 索引（用于持久化阅读位置）。 */
+  getTopBlockIndexAtScroll: () => number;
+  /** 外部重命名：把编辑器里的 noteTitle 节点文本改为指定值（不派发 dirty）。 */
+  setTitleText: (text: string) => void;
+  /** 触发 link-click 插件的 pending anchor 滚动（跨文档 block 链接）。 */
+  flushPendingAnchor: () => void;
+  /** 当前顶层 block 数量（供书签面板做失效清理）。 */
+  getTopBlockCount: () => number;
+  /** AI Sync：把一条对话轮次插到文末（内部调 insertTurnIntoNote，带 ai-sync meta）。 */
+  insertAiTurn: (payload: unknown) => Promise<void>;
+  /** AI Sync：在文末插入一个 heading（import-conversation 用）。 */
+  insertHeadingAtEnd: (title: string, level?: number) => void;
+  /** 加载测试文档（Help 菜单）—— 不进 DB，直接替换编辑器内容。 */
+  loadTestDocument: () => void;
+}
+
+/**
+ * NoteEditor props。Step 1 全部可选 —— 外层传入即使用推模式的"脏信号"，
+ * 不传则完全沿用现有 viewAPI 路径，行为零变化。
+ */
+export interface NoteEditorProps {
+  /**
+   * 文档内容变化（tr.docChanged=true）时的轻量信号。不传递数据，序列化成本归 NoteView。
+   * info.aiSync 区分"AI Sync 插入"vs"用户实际编辑"；NoteView 用它决定是否广播
+   * typing note-status（避免自反射）。
+   */
+  onDocChanged?: (info: { aiSync: boolean }) => void;
+  /** noteTitle 节点文本变化时触发。 */
+  onTitleChanged?: (title: string) => void;
+  /** 编辑器首次就绪时回调，外层可保存 handle 供后续命令式操作。 */
+  onReady?: (handle: NoteEditorHandle) => void;
+  /** 当前编辑的笔记 id —— AI Sync 的协议 payload 需要带上，用于跨 slot 投递识别。 */
+  activeNoteId?: string | null;
 }
 
 /**
@@ -63,32 +109,14 @@ interface NoteBookmark {
  */
 
 declare const viewAPI: {
+  // NoteEditor 自身还用到的 viewAPI（Import Markdown + 生词本 + 删除导航）
   noteCreate: (title?: string) => Promise<{ id: string; title: string } | null>;
-  noteLoad: (id: string) => Promise<any>;
   noteSave: (id: string, docContent: unknown[], title: string) => Promise<void>;
-  noteRename: (id: string, title: string) => Promise<void>;
   noteOpenInEditor: (id: string) => Promise<void>;
-  onNoteOpenInEditor: (callback: (noteId: string) => void) => () => void;
   onNoteDeleted: (callback: (noteId: string) => void) => () => void;
-  notePendingOpen: () => Promise<string | null>;
-  setActiveNote: (noteId: string | null, noteTitle?: string) => Promise<void>;
-  noteSaveLastView: (id: string, blockIndex: number) => Promise<void>;
-  noteSaveBookmarks: (id: string, bookmarks: unknown[]) => Promise<void>;
-  getActiveNoteId: () => Promise<string | null>;
-  getMyRole: () => Promise<'primary' | 'companion' | null>;
-  onRestoreWorkspaceState: (callback: (state: { activeNoteId: string | null; rightActiveNoteId?: string | null }) => void) => () => void;
-  onNoteTitleChanged: (callback: (data: { noteId: string; title: string }) => void) => () => void;
-  onLoadTestDoc: (callback: () => void) => () => void;
-  isDBReady: () => Promise<boolean>;
-  onDBReady: (callback: () => void) => () => void;
   markdownToPMNodes: (markdown: string) => Promise<unknown[]>;
   listVocabWords?: () => Promise<{ word: string; definition: string }[]>;
   onVocabChanged?: (callback: (entries: { word: string; definition: string }[]) => void) => () => void;
-  // AI Sync
-  onMessage: (callback: (message: any) => void) => () => void;
-  sendToOtherSlot: (message: { protocol: string; action: string; payload: unknown }) => void;
-  aiParseMarkdown: (markdown: string) => Promise<{ success: boolean; atoms: any[]; error?: string }>;
-  aiExtractionCacheWrite?: (payload: any) => Promise<any>;
 };
 
 // 注册所有 Block（只执行一次）
@@ -289,23 +317,32 @@ function scrollToTopBlockIndex(view: EditorView, scrollContainer: HTMLElement, i
   } catch { /* ignore */ }
 }
 
-export function NoteEditor() {
+export function NoteEditor(props: NoteEditorProps = {}) {
+  const { onDocChanged, onTitleChanged, onReady, activeNoteId } = props;
   const editorRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const [editorView, setEditorView] = useState<EditorView | null>(null);
   const currentNoteIdRef = useRef<string | null>(null);
-  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tocRef = useRef<ReturnType<typeof createTocIndicator> | null>(null);
-  const loadSeqRef = useRef(0); // 竞态取消：每次 loadNote 递增
   const loadMoreRef = useRef<((count: number) => { nodes: PMNode[]; hasMore: boolean }) | null>(null);
   const sentinelObserverRef = useRef<IntersectionObserver | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const fullAtomsRef = useRef<Atom[] | null>(null); // 完整 atoms（分片加载时用于保存未加载部分）
   const loadedTopCountRef = useRef<number>(-1); // 分片加载：已加载的 topLevel atom 数量（-1 = 全量加载）
-  const scheduleSaveRef = useRef<() => void>(() => {});
-  // 书签：当前 note 的书签列表 + 面板是否打开
-  const bookmarksRef = useRef<NoteBookmark[]>([]);
-  const bookmarksPanelOpenRef = useRef<boolean>(false);
+  // Step 1：外层回调 ref 化 —— 不进 useEffect 依赖数组，避免回调身份变化
+  // 导致整个编辑器重 init（会清空已加载的笔记内容和标题）。
+  const onDocChangedRef = useRef(onDocChanged);
+  const onTitleChangedRef = useRef(onTitleChanged);
+  const onReadyRef = useRef(onReady);
+  useEffect(() => { onDocChangedRef.current = onDocChanged; }, [onDocChanged]);
+  useEffect(() => { onTitleChangedRef.current = onTitleChanged; }, [onTitleChanged]);
+  useEffect(() => { onReadyRef.current = onReady; }, [onReady]);
+  const handleEmittedRef = useRef(false);
+  // Step 3：接收外层传入的 activeNoteId，供 AI Sync / dispatchTransaction 的
+  // note-status payload 使用。NoteView 在 loadNote 成功后通过 prop 下传。
+  useEffect(() => {
+    currentNoteIdRef.current = activeNoteId ?? null;
+  }, [activeNoteId]);
 
   // 追加更多内容到编辑器末尾
   const appendMoreContent = useCallback(() => {
@@ -338,12 +375,6 @@ export function NoteEditor() {
   const createEditor = useCallback((doc: PMNode) => {
     if (!editorRef.current) return;
 
-    // 清除旧编辑器的 pending save，防止保存到错误文档
-    if (saveTimerRef.current) {
-      clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = null;
-    }
-
     // 清除旧的 sentinel observer
     sentinelObserverRef.current?.disconnect();
     sentinelRef.current?.remove();
@@ -371,28 +402,17 @@ export function NoteEditor() {
         view.updateState(newState);
         // 更新选区缓存（供 ContextMenu 问 AI 等使用）
         updateSelectionCache(view);
-        // 文档变化时触发自动保存（排除分片追加的 addToHistory=false 事务）
+        // 文档变化时发脏信号（排除分片追加的 addToHistory=false 事务）
         if (tr.docChanged && tr.getMeta('addToHistory') !== false) {
-          // AI sync: notify peer slot that user is typing (debounce source)
-          // Skip when the tr originates from sync insertion itself.
-          if (tr.getMeta('ai-sync') !== true) {
-            viewAPI.sendToOtherSlot({
-              protocol: 'ai-sync',
-              action: 'as:note-status',
-              payload: {
-                open: true,
-                lastTypedAt: Date.now(),
-                noteId: currentNoteIdRef.current,
-              },
-            });
-          }
-          scheduleSaveRef.current();
+          const aiSync = tr.getMeta('ai-sync') === true;
+          // 向外层发脏信号（推拉结合的"推"），NoteView 负责防抖 + 写盘 + typing 广播
+          onDocChangedRef.current?.({ aiSync });
           tocRef.current?.update();
-          // noteTitle 变化时实时同步到 NoteView toolbar
+          // noteTitle 变化通过 prop 回调通知 NoteView
           const titleNode = newState.doc.firstChild;
           if (titleNode?.type.name === 'textBlock' && titleNode.attrs.isTitle) {
             const newTitle = titleNode.textContent || 'Untitled';
-            window.dispatchEvent(new CustomEvent('note:title-changed', { detail: newTitle }));
+            onTitleChangedRef.current?.(newTitle);
           }
         }
       },
@@ -429,201 +449,145 @@ export function NoteEditor() {
     }
   }, [appendMoreContent]);
 
-  // 加载文档（带竞态取消：快速切换时丢弃过期的异步结果）
-  const loadNote = useCallback(async (noteId: string) => {
-    const seq = ++loadSeqRef.current;
-    const s = getSchema();
-
-    // graceful fallback：noteId 不存在或加载失败 → 显示空编辑器 + 清除 session 中的引用
-    const fallbackToEmpty = (reason: string) => {
-      console.warn(`[NoteEditor] ${reason} — fallback to empty editor`);
+  // Step 1：命令句柄 —— 外层通过 onReady 拿到，用于按需拉取数据或命令式操作
+  const buildHandle = useCallback((): NoteEditorHandle => ({
+    get view() { return viewRef.current; },
+    getDocAtoms: () => {
+      const view = viewRef.current;
+      if (!view || view.isDestroyed) return [];
+      const loadedAtoms = converterRegistry.docToAtoms(view.state.doc);
+      // 分片加载时拼接未加载的尾部 atoms（参见 Import Markdown 同款逻辑）
+      const fullAtoms = fullAtomsRef.current;
+      const loadedCount = loadedTopCountRef.current;
+      if (fullAtoms && loadedCount >= 0) {
+        const topLevelAtoms = fullAtoms.filter(a => !a.parentId);
+        const unloadedTopIds = new Set(topLevelAtoms.slice(loadedCount).map(a => a.id));
+        const allIds = new Set(unloadedTopIds);
+        let changed = true;
+        while (changed) {
+          changed = false;
+          for (const atom of fullAtoms) {
+            if (!allIds.has(atom.id) && atom.parentId && allIds.has(atom.parentId)) {
+              allIds.add(atom.id);
+              changed = true;
+            }
+          }
+        }
+        loadedAtoms.push(...fullAtoms.filter(a => allIds.has(a.id)));
+      }
+      return loadedAtoms;
+    },
+    getTitle: () => {
+      const view = viewRef.current;
+      if (!view || view.isDestroyed) return 'Untitled';
+      let title = 'Untitled';
+      view.state.doc.forEach((node) => {
+        if (node.type.name === 'textBlock' && node.attrs.isTitle && node.textContent) {
+          title = node.textContent;
+        }
+      });
+      return title;
+    },
+    replaceDoc: (atoms: Atom[]) => {
+      const s = getSchema();
       loadMoreRef.current = null;
       fullAtomsRef.current = null;
       loadedTopCountRef.current = -1;
-      createEditor(createEmptyDoc(s));
-      currentNoteIdRef.current = null;
-      setCurrentNote(null);
-      // 清除 workspace state 中的陈旧 activeNoteId，避免下次启动又卡在同一个 note
-      viewAPI.setActiveNote(null, undefined);
-      window.dispatchEvent(new CustomEvent('note:title-changed', { detail: 'Untitled' }));
-    };
-
-    try {
-      const record = await viewAPI.noteLoad(noteId);
-      if (seq !== loadSeqRef.current) { return; }
-
-      // note 不存在 → graceful fallback
-      if (!record) {
-        fallbackToEmpty(`Note ${noteId} not found in DB`);
+      if (!atoms || atoms.length === 0) {
+        createEditor(createEmptyDoc(s));
         return;
       }
-
-      if (!record.doc_content || record.doc_content.length === 0) {
-        loadMoreRef.current = null;
-        fullAtomsRef.current = null;
-        loadedTopCountRef.current = -1;
-        createEditor(createEmptyDoc(s));
-      } else {
-        const { doc, loadMore } = docFromContentChunked(s, record.doc_content);
-        loadMoreRef.current = loadMore;
-        // 分片模式下保留原始 atoms 用于部分保存场景
-        fullAtomsRef.current = loadMore ? (record.doc_content as Atom[]) : null;
-        // 记录初始加载的 topLevel atom 数量
-        loadedTopCountRef.current = loadMore ? INITIAL_CHUNK_SIZE : -1;
-        createEditor(doc);
-      }
-      currentNoteIdRef.current = noteId;
-      setCurrentNote(noteId);
-
-      // 初始化书签列表（每个 note 独立）
-      bookmarksRef.current = Array.isArray((record as { bookmarks?: unknown }).bookmarks)
-        ? ((record as { bookmarks?: NoteBookmark[] }).bookmarks as NoteBookmark[])
-        : [];
-      // 切 note 时自动关闭书签面板（旧 note 的列表不再适用）
-      if (bookmarksPanelOpenRef.current) {
-        hideBookmarksPanel();
-        bookmarksPanelOpenRef.current = false;
-      }
-
-      // 跨文档 block 链接：笔记加载完成后滚动到目标锚点
-      const v2 = viewRef.current;
-      if (v2) flushPendingAnchor(v2);
-
-      // 从 doc 中提取 noteTitle 实际文本，同步到 toolbar 和文件名
-      const v = viewRef.current;
-      const firstNode = v?.state.doc.firstChild;
-      if (firstNode?.type.name === 'textBlock' && firstNode.attrs.isTitle) {
-        const docTitle = firstNode.textContent || 'Untitled';
-        window.dispatchEvent(new CustomEvent('note:title-changed', { detail: docTitle }));
-        viewAPI.setActiveNote(noteId, docTitle);
-        // 如果 DB title 与文档标题不一致，仅修正 title 字段（不重新保存全部内容）
-        if (record?.title !== docTitle) {
-          viewAPI.noteRename(noteId, docTitle);
-        }
-      } else {
-        viewAPI.setActiveNote(noteId, record?.title);
-      }
-
-      // 恢复上次阅读位置（flushPendingAnchor 上面已调用，pending anchor 会覆盖本次滚动——
-      //  用户主动点击跨文档 block 链接时，锚点跳转优先于阅读位置恢复）
-      const savedIdx = (record as { last_view_block_index?: number })?.last_view_block_index;
-      if (typeof savedIdx === 'number' && savedIdx > 0 && v && editorRef.current?.parentElement) {
-        const scrollContainer = editorRef.current.parentElement;
-        // 双重 rAF：首次打开时 scroll 容器可能还没布局完，等两次 layout/paint 后再滚
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            if (viewRef.current === v && !v.isDestroyed) {
-              scrollToTopBlockIndex(v, scrollContainer, savedIdx);
-            }
-          });
-        });
-      }
-    } catch (err) {
-      if (seq !== loadSeqRef.current) return;
-      console.error('[NoteEditor] Failed to load note:', err);
-      // 坏数据导致 schema 解析失败 → 视为加载失败，fallback
-      fallbackToEmpty(`Note ${noteId} load threw: ${(err as Error)?.message || err}`);
-    }
-  }, [createEditor]);
-
-  // 保存前确保所有内容已加载（防止丢失未渲染的尾部数据）
-  const flushRemainingContent = useCallback(() => {
-    const view = viewRef.current;
-    const loadMore = loadMoreRef.current;
-    if (!view || !loadMore || view.isDestroyed) return;
-
-    // 一次性加载所有剩余内容
-    let hasMore = true;
-    while (hasMore) {
-      const result = loadMore(500);
-      if (result.nodes.length > 0) {
-        const { tr } = view.state;
-        for (const node of result.nodes) {
-          tr.insert(tr.doc.content.size, node);
-        }
-        tr.setMeta('addToHistory', false);
-        view.dispatch(tr);
-      }
-      hasMore = result.hasMore;
-    }
-    loadMoreRef.current = null;
-    fullAtomsRef.current = null;
-    loadedTopCountRef.current = -1;
-    sentinelObserverRef.current?.disconnect();
-    sentinelRef.current?.remove();
-  }, []);
-
-  // 保存文档
-  const saveNote = useCallback(async () => {
-    const noteId = currentNoteIdRef.current;
-    const view = viewRef.current;
-    if (!noteId || !view) return;
-
-    const doc = view.state.doc;
-
-    // 提取标题
-    let title = 'Untitled';
-    doc.forEach((node) => {
-      if (node.type.name === 'textBlock' && node.attrs.isTitle && node.textContent) {
-        title = node.textContent;
-      }
-    });
-
-    // PM Doc → Atom[]（编辑器中已加载的部分）
-    const loadedAtoms = converterRegistry.docToAtoms(doc);
-
-    // 如果还有未加载的尾部内容，从原始 atoms 中取出拼接（避免 flush 到编辑器导致卡顿）
-    const fullAtoms = fullAtomsRef.current;
-    const loadedCount = loadedTopCountRef.current;
-    if (fullAtoms && loadedCount >= 0) {
-      // 从原始 atoms 中找出未加载的 topLevel atoms
-      const topLevelAtoms = fullAtoms.filter(a => !a.parentId);
-      const unloadedTopIds = new Set(
-        topLevelAtoms.slice(loadedCount).map(a => a.id),
-      );
-      // 递归收集所有后代 atom（容器节点如 columnList > column > block 多级嵌套）
-      // 多轮扩展，直到没有新增（处理任意深度嵌套）
-      const allIds = new Set(unloadedTopIds);
-      let changed = true;
-      while (changed) {
-        changed = false;
-        for (const atom of fullAtoms) {
-          if (!allIds.has(atom.id) && atom.parentId && allIds.has(atom.parentId)) {
-            allIds.add(atom.id);
-            changed = true;
-          }
-        }
-      }
-      const tailAtoms = fullAtoms.filter(a => allIds.has(a.id));
-      loadedAtoms.push(...tailAtoms);
-    }
-
-    await viewAPI.noteSave(noteId, loadedAtoms, title);
-
-    // 顺带记录阅读位置（跟着自动保存节奏，文档级元数据，不动 updated_at）
-    const scrollContainer = editorRef.current?.parentElement;
-    if (scrollContainer) {
-      const idx = getTopBlockIndexAtScroll(view, scrollContainer);
-      viewAPI.noteSaveLastView(noteId, idx).catch(() => { /* ignore */ });
-    }
-  }, []);
-
-  // 防抖自动保存（1秒）
-  const scheduleSave = useCallback(() => {
-    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(async () => {
+      const { doc, loadMore } = docFromContentChunked(s, atoms);
+      loadMoreRef.current = loadMore;
+      fullAtomsRef.current = loadMore ? atoms : null;
+      loadedTopCountRef.current = loadMore ? INITIAL_CHUNK_SIZE : -1;
+      createEditor(doc);
+    },
+    insertAtoms: (atoms: Atom[], pos?: number) => {
+      const view = viewRef.current;
+      if (!view || view.isDestroyed || !atoms || atoms.length === 0) return;
       try {
-        await saveNote();
-        // 保存完成后通知 NoteView（dirty → saved）
-        window.dispatchEvent(new CustomEvent('note:saved'));
+        const s = getSchema();
+        const docJson = converterRegistry.atomsToDoc(atoms);
+        const tmpDoc = PMNode.fromJSON(s, docJson);
+        const tr = view.state.tr;
+        const insertPos = typeof pos === 'number' ? pos : view.state.doc.content.size;
+        // 取出临时 doc 的 content 插入（跳过外层 doc 节点本身）
+        tmpDoc.content.forEach(node => { tr.insert(insertPos, node); });
+        view.dispatch(tr);
       } catch (err) {
-        console.error('[NoteEditor] Auto-save failed:', err);
+        console.error('[NoteEditor] insertAtoms failed:', err);
       }
-    }, 1000);
-    // 通知 NoteView 有未保存的修改
-    window.dispatchEvent(new CustomEvent('note:dirty'));
-  }, [saveNote]);
-  scheduleSaveRef.current = scheduleSave;
+    },
+    focus: () => { viewRef.current?.focus(); },
+    scrollToTopBlockIndex: (index: number) => {
+      const view = viewRef.current;
+      const scrollContainer = editorRef.current?.parentElement;
+      if (!view || view.isDestroyed || !scrollContainer) return;
+      scrollToTopBlockIndex(view, scrollContainer, index);
+    },
+    getTopBlockIndexAtScroll: () => {
+      const view = viewRef.current;
+      const scrollContainer = editorRef.current?.parentElement;
+      if (!view || view.isDestroyed || !scrollContainer) return 0;
+      return getTopBlockIndexAtScroll(view, scrollContainer);
+    },
+    setTitleText: (text: string) => {
+      const view = viewRef.current;
+      if (!view || view.isDestroyed) return;
+      const s = getSchema();
+      let titlePos = -1;
+      view.state.doc.forEach((node, offset) => {
+        if (titlePos < 0 && node.type.name === 'textBlock' && node.attrs.isTitle) {
+          titlePos = offset;
+        }
+      });
+      if (titlePos < 0) return;
+      const titleNode = view.state.doc.nodeAt(titlePos);
+      if (!titleNode || titleNode.textContent === text) return;
+      const tr = view.state.tr;
+      tr.replaceWith(
+        titlePos + 1,
+        titlePos + titleNode.nodeSize - 1,
+        text ? s.text(text) : s.text(''),
+      );
+      view.dispatch(tr);
+    },
+    flushPendingAnchor: () => {
+      const view = viewRef.current;
+      if (view && !view.isDestroyed) flushPendingAnchor(view);
+    },
+    getTopBlockCount: () => {
+      const view = viewRef.current;
+      if (!view || view.isDestroyed) return 0;
+      return view.state.doc.childCount;
+    },
+    insertAiTurn: async (payload: unknown) => {
+      const view = viewRef.current;
+      if (!view || view.isDestroyed) return;
+      const { insertTurnIntoNote } = await import('../ai-workflow/sync-note-receiver');
+      await insertTurnIntoNote(view, payload as any);
+    },
+    insertHeadingAtEnd: (title: string, level = 2) => {
+      const view = viewRef.current;
+      if (!view || view.isDestroyed || !title) return;
+      const { schema } = view.state;
+      const headingType = schema.nodes.heading;
+      if (!headingType) return;
+      const headingNode = headingType.create({ level }, [schema.text(String(title))]);
+      const tr = view.state.tr;
+      tr.setMeta('ai-sync', true);
+      tr.insert(view.state.doc.content.size, headingNode);
+      view.dispatch(tr);
+    },
+    loadTestDocument: () => {
+      const s = getSchema();
+      loadMoreRef.current = null;
+      fullAtomsRef.current = null;
+      loadedTopCountRef.current = -1;
+      createEditor(buildTestDocument(s));
+    },
+  }), [createEditor]);
 
   // 初始化
   useEffect(() => {
@@ -632,20 +596,20 @@ export function NoteEditor() {
     // 先创建空编辑器
     createEditor(createEmptyDoc(s));
 
+    // Step 1：编辑器首次就绪后 emit handle（一次性，走 ref 避免重 init）
+    if (!handleEmittedRef.current && onReadyRef.current) {
+      handleEmittedRef.current = true;
+      onReadyRef.current(buildHandle());
+    }
+
     // 注册 Converter 测试（DevTools console: __testConverters()）
     registerConverterTest(s);
 
-    // 监听打开笔记事件
-    const unsubOpen = viewAPI.onNoteOpenInEditor((noteId) => {
-      loadNote(noteId);
-    });
-
-    // 监听笔记删除事件：如果是当前编辑的笔记，取消 auto-save 并导航到上一个
+    // Step 3：笔记被删除时若是当前笔记，走历史返回或 destroy 编辑器。
+    // onNoteDeleted 的业务状态清理（activeNoteId/pending save）由 NoteView 负责；
+    // 这里只管编辑器 view 的物理清理（无历史可回的情况）。
     const unsubDeleted = viewAPI.onNoteDeleted((deletedId) => {
       if (currentNoteIdRef.current !== deletedId) return;
-      // 取消待执行的 auto-save
-      if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null; }
-      currentNoteIdRef.current = null;
       // 导航到历史中的上一篇笔记
       if (canGoBack()) {
         goBack();
@@ -683,24 +647,33 @@ export function NoteEditor() {
     };
     window.addEventListener('note:import-json', onImportJson);
 
-    // Import Markdown：为每个 .md 文件创建新笔记，最后一个加载到编辑器
+    // Import Markdown：为每个 .md 文件创建新笔记；最后通过 noteOpenInEditor
+    // 打开，让 NoteEditor/NoteView 通过正常事件流同步（activeNoteIdRef 等状态）
+    const saveDocToNote = async (noteId: string, doc: PMNode) => {
+      let title = 'Untitled';
+      doc.forEach((node) => {
+        if (node.type.name === 'textBlock' && node.attrs.isTitle && node.textContent) {
+          title = node.textContent;
+        }
+      });
+      const atoms = converterRegistry.docToAtoms(doc);
+      await viewAPI.noteSave(noteId, atoms, title);
+    };
     const onImportMarkdown = async (e: Event) => {
       const files = (e as CustomEvent).detail as { markdown: string; title: string }[];
       if (!Array.isArray(files) || files.length === 0) return;
       try {
+        let lastNoteId: string | null = null;
         for (const { markdown, title } of files) {
-          // 创建新笔记
           const note = await viewAPI.noteCreate(title);
           if (!note) { console.error('[NoteEditor] Import Markdown: noteCreate failed'); continue; }
 
-          // Markdown → ProseMirror JSON nodes
           const pmNodes = await viewAPI.markdownToPMNodes(markdown);
           if (!Array.isArray(pmNodes) || pmNodes.length === 0) {
-            // 空内容，跳过（笔记已创建，NavSide 可见）
+            lastNoteId = note.id; // 空笔记也算最后一个
             continue;
           }
 
-          // 构建完整 doc（noteTitle + 转换后的内容节点）
           const titleNode = s.nodes.textBlock.create(
             { isTitle: true },
             title ? s.text(title) : undefined,
@@ -710,55 +683,19 @@ export function NoteEditor() {
             .filter((n): n is PMNode => !!n);
           const doc = s.node('doc', null, [titleNode, ...contentNodes]);
 
-          // 如果正在编辑某笔记，先保存
-          if (currentNoteIdRef.current && viewRef.current) {
-            await saveNote();
-          }
-
-          // 加载到编辑器
-          loadMoreRef.current = null;
-          fullAtomsRef.current = null;
-          loadedTopCountRef.current = -1;
-          currentNoteIdRef.current = note.id;
-          setCurrentNote(note.id);
-          createEditor(doc);
-
-          // 立即保存（将 PM doc 持久化为 Atom[] 到 DB）
-          await saveNote();
+          // 把新 doc 直接序列化写盘到新笔记（不经过编辑器渲染）
+          await saveDocToNote(note.id, doc);
+          lastNoteId = note.id;
+        }
+        // 最后打开最后一个新建笔记，走正常事件流让 NoteView 同步 activeNoteIdRef
+        if (lastNoteId) {
+          viewAPI.noteOpenInEditor(lastNoteId);
         }
       } catch (err) {
         console.error('[NoteEditor] Import Markdown failed:', err);
       }
     };
     window.addEventListener('note:import-markdown', onImportMarkdown);
-
-    // 恢复上次打开的笔记（根据所在 slot 选取正确的 noteId）
-    const unsubRestore = viewAPI.onRestoreWorkspaceState(async (state: any) => {
-      const role = await viewAPI.getMyRole();
-      const noteId = role === 'companion' ? state.rightActiveNoteId : state.activeNoteId;
-      if (noteId) loadNote(noteId);
-    });
-
-    // 拉取导入时设置的 pending noteId，或恢复上次打开的笔记
-    viewAPI.notePendingOpen().then(async (noteId) => {
-      if (noteId) {
-        loadNote(noteId);
-        return;
-      }
-      // No pending note — restore last opened note from workspace state
-      // Wait for DB to be ready before loading
-      const dbReady = await viewAPI.isDBReady();
-      if (!dbReady) {
-        await new Promise<void>(resolve => {
-          const unsub = viewAPI.onDBReady(() => { unsub(); resolve(); });
-        });
-      }
-      if (currentNoteIdRef.current) return; // already loaded by another path
-      const activeId = await viewAPI.getActiveNoteId();
-      if (activeId && !currentNoteIdRef.current) {
-        loadNote(activeId);
-      }
-    });
 
     // 生词本同步：加载初始词表 + 监听变化
     function applyVocab(entries: { word: string; definition: string }[]) {
@@ -776,165 +713,13 @@ export function NoteEditor() {
 
     const unsubVocab = viewAPI.onVocabChanged?.(applyVocab) || (() => {});
 
-    // 加载测试文档（Help 菜单）
-    const unsubTestDoc = viewAPI.onLoadTestDoc(() => {
-      currentNoteIdRef.current = null; // 测试文档不保存到数据库
-      createEditor(buildTestDocument(s));
-    });
-
-    // 标题外部变更同步
-    const unsubTitle = viewAPI.onNoteTitleChanged(({ noteId, title }) => {
-      if (noteId !== currentNoteIdRef.current) return;
-      const view = viewRef.current;
-      if (!view) return;
-      // 找到 noteTitle 节点并更新
-      let titlePos = -1;
-      view.state.doc.forEach((node, offset) => {
-        if (titlePos < 0 && node.type.name === 'textBlock' && node.attrs.isTitle) {
-          titlePos = offset;
-        }
-      });
-      if (titlePos >= 0) {
-        const titleNode = view.state.doc.nodeAt(titlePos);
-        if (titleNode && titleNode.textContent !== title) {
-          const tr = view.state.tr;
-          tr.replaceWith(titlePos + 1, titlePos + titleNode.nodeSize - 1,
-            title ? s.text(title) : s.text(''));
-          view.dispatch(tr);
-        }
-      }
-    });
-
-    // 监听手动保存事件（来自 NoteView Toolbar 的 Save 按钮）
-    const manualSaveHandler = async () => {
-      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-      try {
-        await saveNote();
-        window.dispatchEvent(new CustomEvent('note:saved'));
-      } catch (err) {
-        console.error('[NoteEditor] Manual save failed:', err);
-      }
-    };
-    window.addEventListener('note:save', manualSaveHandler);
-
-    // ── 书签 ──
-    /** 持久化 bookmarks，并刷新面板（如果打开） */
-    const persistBookmarks = () => {
-      const noteId = currentNoteIdRef.current;
-      if (!noteId) return;
-      viewAPI.noteSaveBookmarks(noteId, bookmarksRef.current).catch(() => { /* ignore */ });
-      if (bookmarksPanelOpenRef.current) {
-        openBookmarksPanel();   // 重新 render
-      }
-    };
-
-    /** 生成书签默认 label：取该顶层 block 的前 30 字，空则用 "第 N 块" */
-    const deriveBookmarkLabel = (view: EditorView, blockIndex: number): string => {
-      const doc = view.state.doc;
-      if (blockIndex >= doc.childCount) return `第 ${blockIndex + 1} 块`;
-      const text = doc.child(blockIndex).textContent.trim();
-      if (!text) return `第 ${blockIndex + 1} 块`;
-      return text.length > 30 ? text.slice(0, 30) + '…' : text;
-    };
-
-    /** 计算当前应记录的书签 blockIndex（优先光标位置，退化到 scroll 顶部可见块） */
-    const computeCurrentBlockIndex = (): number | null => {
-      const view = viewRef.current;
-      const scrollContainer = editorRef.current?.parentElement;
-      if (!view || view.isDestroyed || !scrollContainer) return null;
-      const { $from } = view.state.selection;
-      if ($from.depth >= 1) return $from.index(0);
-      return getTopBlockIndexAtScroll(view, scrollContainer);
-    };
-
-    /** 在当前位置添加书签；已存在（同 block_index）则跳过 */
-    const addBookmarkAtCurrent = (): boolean => {
-      const view = viewRef.current;
-      const noteId = currentNoteIdRef.current;
-      if (!noteId || !view || view.isDestroyed) return false;
-      const blockIndex = computeCurrentBlockIndex();
-      if (blockIndex == null || blockIndex < 0) return false;
-      // 去重：同一 block 已有书签则不重复添加
-      if (bookmarksRef.current.some(b => b.block_index === blockIndex)) return false;
-      const bm: NoteBookmark = {
-        id: `bm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        block_index: blockIndex,
-        label: deriveBookmarkLabel(view, blockIndex),
-        created_at: Date.now(),
-      };
-      bookmarksRef.current = [...bookmarksRef.current, bm];
-      return true;
-    };
-
-    const openBookmarksPanel = () => {
-      const view = viewRef.current;
-      const scrollContainer = editorRef.current?.parentElement;
-      // 清理失效书签（blockIndex 超出当前 doc）—— "book 级联"
-      if (view && !view.isDestroyed) {
-        const maxIdx = view.state.doc.childCount - 1;
-        const cleaned = bookmarksRef.current.filter(b => b.block_index <= maxIdx);
-        if (cleaned.length !== bookmarksRef.current.length) {
-          bookmarksRef.current = cleaned;
-          const noteId = currentNoteIdRef.current;
-          if (noteId) viewAPI.noteSaveBookmarks(noteId, cleaned).catch(() => { /* ignore */ });
-        }
-      }
-
-      showBookmarksPanel({
-        bookmarks: bookmarksRef.current,
-        onAddCurrent: () => {
-          const added = addBookmarkAtCurrent();
-          if (added) persistBookmarks();
-          // 无论是否新增都重新 render（用户能看到"已存在该位置"的情况）
-          if (!added && bookmarksPanelOpenRef.current) openBookmarksPanel();
-        },
-        onJump: (bmId) => {
-          const bm = bookmarksRef.current.find(b => b.id === bmId);
-          const v = viewRef.current;
-          if (bm && v && !v.isDestroyed && scrollContainer) {
-            scrollToTopBlockIndex(v, scrollContainer, bm.block_index);
-          }
-        },
-        onRemove: (bmId) => {
-          bookmarksRef.current = bookmarksRef.current.filter(b => b.id !== bmId);
-          persistBookmarks();
-        },
-        onRename: (bmId, newLabel) => {
-          bookmarksRef.current = bookmarksRef.current.map(b =>
-            b.id === bmId ? { ...b, label: newLabel } : b,
-          );
-          persistBookmarks();
-        },
-      });
-      bookmarksPanelOpenRef.current = true;
-    };
-
-    const togglePanelHandler = () => {
-      if (bookmarksPanelOpenRef.current) {
-        hideBookmarksPanel();
-        bookmarksPanelOpenRef.current = false;
-      } else {
-        openBookmarksPanel();
-      }
-    };
-    window.addEventListener('note:bookmark-toggle-panel', togglePanelHandler);
 
     return () => {
-      unsubOpen();
       unsubDeleted();
-      unsubRestore();
-      unsubTestDoc();
-      unsubTitle();
       unsubVocab();
       window.removeEventListener('note:import-json', onImportJson);
       window.removeEventListener('note:import-markdown', onImportMarkdown);
-      window.removeEventListener('note:save', manualSaveHandler);
-      window.removeEventListener('note:bookmark-toggle-panel', togglePanelHandler);
-      if (bookmarksPanelOpenRef.current) hideBookmarksPanel();
-      if (saveTimerRef.current) {
-        clearTimeout(saveTimerRef.current);
-        saveNote(); // 关闭前保存
-      }
+      // 关闭前 flush pending save 由 NoteView 负责
       if (tocRef.current) {
         tocRef.current.destroy();
         tocRef.current = null;
@@ -946,191 +731,7 @@ export function NoteEditor() {
         viewRef.current = null;
       }
     };
-  }, [createEditor, loadNote, saveNote]);
-
-  // ── AI Sync: listen for 'as:append-turn' ViewMessage ──
-  // Serialize inserts: insertTurnIntoNote awaits IPC markdown parse, so two
-  // turns arriving back-to-back would race and can finish out of order (a
-  // shorter second turn lands before a longer first turn). Chain through a
-  // single queue so order matches arrival.
-  useEffect(() => {
-    let queue: Promise<void> = Promise.resolve();
-    let lastAppendFingerprint = '';
-    let lastAppendAt = 0;
-    const writeReceipt = async (payload: any) => {
-      try {
-        await viewAPI.aiExtractionCacheWrite?.(payload);
-      } catch {}
-    };
-    const unsub = viewAPI.onMessage((msg: any) => {
-      if (msg.protocol === 'ai-sync' && msg.action === 'as:append-turn') {
-        const sourceId = String(msg.payload?.source?.serviceId || '');
-        const turn = msg.payload?.turn || {};
-        const extractionId = String(msg.payload?.debug?.extractionId || `note-${Date.now()}`);
-        const noteId = currentNoteIdRef.current ?? null;
-        const fingerprint = JSON.stringify({
-          sourceId,
-          index: turn.index ?? null,
-          userMessage: turn.userMessage ?? '',
-          markdown: turn.markdown ?? '',
-        });
-        void writeReceipt({
-          extractionId,
-          stage: 'note-received',
-          serviceId: sourceId || 'unknown',
-          msgIndex: turn.index ?? -1,
-          userMessage: turn.userMessage ?? '',
-          markdown: turn.markdown ?? '',
-          meta: {
-            noteId,
-            sourceName: String(msg.payload?.source?.serviceName || ''),
-          },
-        });
-        const now = Date.now();
-        if (fingerprint === lastAppendFingerprint && (now - lastAppendAt) < 15000) {
-          void writeReceipt({
-            extractionId,
-            stage: 'note-duplicate-skip',
-            serviceId: sourceId || 'unknown',
-            msgIndex: turn.index ?? -1,
-            userMessage: turn.userMessage ?? '',
-            markdown: turn.markdown ?? '',
-            meta: { noteId },
-          });
-          return;
-        }
-        lastAppendFingerprint = fingerprint;
-        lastAppendAt = now;
-        queue = queue.then(async () => {
-          const view = viewRef.current;
-          if (!view || view.isDestroyed || !currentNoteIdRef.current) {
-            await writeReceipt({
-              extractionId,
-              stage: 'note-no-active-note',
-              serviceId: sourceId || 'unknown',
-              msgIndex: turn.index ?? -1,
-              userMessage: turn.userMessage ?? '',
-              markdown: turn.markdown ?? '',
-              meta: { noteId: currentNoteIdRef.current ?? null },
-            });
-            // No target note (view torn down, note deleted) — tell peer so
-            // it can pause the sync toggle and surface a warning.
-            viewAPI.sendToOtherSlot({
-              protocol: 'ai-sync',
-              action: 'as:insert-failed',
-              payload: { reason: 'no-active-note' },
-            });
-            return;
-          }
-          await writeReceipt({
-            extractionId,
-            stage: 'note-insert-start',
-            serviceId: sourceId || 'unknown',
-            msgIndex: turn.index ?? -1,
-            userMessage: turn.userMessage ?? '',
-            markdown: turn.markdown ?? '',
-            meta: { noteId: currentNoteIdRef.current },
-          });
-          const { insertTurnIntoNote } = await import('../ai-workflow/sync-note-receiver');
-          await insertTurnIntoNote(view, msg.payload);
-          await writeReceipt({
-            extractionId,
-            stage: 'note-insert-success',
-            serviceId: sourceId || 'unknown',
-            msgIndex: turn.index ?? -1,
-            userMessage: turn.userMessage ?? '',
-            markdown: turn.markdown ?? '',
-            meta: { noteId: currentNoteIdRef.current },
-          });
-        }).catch(err => {
-          console.warn('[SyncNote] insert failed:', err);
-          void writeReceipt({
-            extractionId,
-            stage: 'note-insert-failed',
-            serviceId: sourceId || 'unknown',
-            msgIndex: turn.index ?? -1,
-            userMessage: turn.userMessage ?? '',
-            markdown: turn.markdown ?? '',
-            meta: {
-              noteId: currentNoteIdRef.current ?? null,
-              error: String(err),
-            },
-          });
-          viewAPI.sendToOtherSlot({
-            protocol: 'ai-sync',
-            action: 'as:insert-failed',
-            payload: { reason: String(err) },
-          });
-        });
-      } else if (msg.protocol === 'ai-sync' && msg.action === 'as:import-conversation') {
-        const { title, turns, source } = msg.payload ?? {} as any;
-        if (!Array.isArray(turns) || turns.length === 0) return;
-        queue = queue.then(async () => {
-          const view = viewRef.current;
-          if (!view || view.isDestroyed || !currentNoteIdRef.current) return;
-
-          // Insert title as heading
-          const { schema } = view.state;
-          const headingType = schema.nodes.heading;
-          if (headingType && title) {
-            const headingNode = headingType.create(
-              { level: 2 },
-              [schema.text(String(title))],
-            );
-            const tr = view.state.tr;
-            tr.setMeta('ai-sync', true);
-            const pos = view.state.doc.content.size;
-            tr.insert(pos, headingNode);
-            view.dispatch(tr);
-          }
-
-          // Insert each turn sequentially
-          const { insertTurnIntoNote } = await import('../ai-workflow/sync-note-receiver');
-          for (const turn of turns) {
-            await insertTurnIntoNote(view, {
-              turn: {
-                index: turn.index,
-                userMessage: turn.userMessage ?? '',
-                markdown: turn.markdown ?? '',
-                timestamp: turn.timestamp ?? Date.now(),
-              },
-              source: source ?? { serviceId: 'claude', serviceName: 'Claude' },
-            });
-          }
-          console.log(`[SyncNote] Imported conversation "${title}": ${turns.length} turns`);
-        }).catch(err => {
-          console.warn('[SyncNote] import-conversation failed:', err);
-        });
-      } else if (msg.protocol === 'ai-sync' && msg.action === 'as:probe') {
-        // Peer asks "are you open?" — reply immediately.
-        viewAPI.sendToOtherSlot({
-          protocol: 'ai-sync',
-          action: 'as:note-status',
-          payload: { open: true, lastTypedAt: 0, noteId: currentNoteIdRef.current },
-        });
-      }
-    });
-    return unsub;
-  }, []);
-
-  // Broadcast open/close so the AI sync engine can pause when the note
-  // view is unmounted (user closed the right slot). Note switches inside
-  // this component are announced from within loadNote() — no extra effect
-  // needed here.
-  useEffect(() => {
-    viewAPI.sendToOtherSlot({
-      protocol: 'ai-sync',
-      action: 'as:note-status',
-      payload: { open: true, lastTypedAt: 0, noteId: currentNoteIdRef.current },
-    });
-    return () => {
-      viewAPI.sendToOtherSlot({
-        protocol: 'ai-sync',
-        action: 'as:note-status',
-        payload: { open: false, lastTypedAt: 0, noteId: null },
-      });
-    };
-  }, []);
+  }, [createEditor, buildHandle]);
 
   return (
     <div style={styles.container}>
