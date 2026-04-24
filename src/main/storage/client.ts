@@ -1,5 +1,6 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, execFile, type ChildProcess } from 'node:child_process';
 import { existsSync, unlinkSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { promisify } from 'node:util';
 import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { app } from 'electron';
@@ -119,6 +120,43 @@ function cleanLock(): void {
   }
 }
 
+// ── 孤儿进程清理 ──
+
+const execFileAsync = promisify(execFile);
+
+/**
+ * 杀掉所有指向本 userData/krig-db 的残留 surreal server 进程。
+ *
+ * 背景：app 崩溃/强制 kill 后，spawn 出去的 surreal 子进程可能变成 PPID=1 的孤儿，
+ * 占用端口并继续持有 RocksDB 缓存。这会导致：
+ *   1. app 重启时 startServer 因端口冲突 spawn 失败，但仍能连上孤儿 → 数据看似存在
+ *   2. 点击"重置数据库"时，我们只 shutdown 了当前 app 派生的 serverProcess（可能为 null），
+ *      孤儿继续活着 → 清完磁盘后 app 又连回孤儿内存里的旧数据 → 用户看到"重置不干净"
+ *
+ * 此函数按 `rocksdb://<dbDir>` 命令行特征匹配进程，kill -9。
+ * 幂等：没有匹配到就静默返回。
+ */
+async function killOrphanSurrealProcesses(reason: string): Promise<void> {
+  const dbDir = path.join(app.getPath('userData'), 'krig-db');
+  try {
+    const { stdout } = await execFileAsync('pgrep', ['-f', `surreal start.*rocksdb://.*${dbDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`]);
+    const pids = stdout.split('\n').map((s) => parseInt(s.trim(), 10)).filter((n) => Number.isFinite(n) && n > 0);
+    // 排除当前 app 自己派生的 server（那条路径走正常 SIGTERM）
+    const ownPid = serverProcess?.pid;
+    const orphanPids = pids.filter((pid) => pid !== ownPid);
+    if (orphanPids.length === 0) return;
+
+    console.log(`[SurrealDB] Killing orphan server(s) [${reason}]: PIDs=${orphanPids.join(',')}`);
+    for (const pid of orphanPids) {
+      try { process.kill(pid, 'SIGKILL'); } catch { /* 已死或权限不足 */ }
+    }
+    // 给 OS 时间释放端口和 LOCK
+    await new Promise((r) => setTimeout(r, 500));
+  } catch {
+    // pgrep 无匹配时退出码 1，execFileAsync 会 reject——视为"无孤儿"，静默
+  }
+}
+
 // ── Server 启动 ──
 
 async function startServer(): Promise<void> {
@@ -129,6 +167,8 @@ async function startServer(): Promise<void> {
   }
 
   const dbPath = path.join(app.getPath('userData'), 'krig-db');
+  // 先清孤儿进程，避免它继续占端口 + 持有 RocksDB 缓存（详见 killOrphanSurrealProcesses 注释）
+  await killOrphanSurrealProcesses('pre-start');
   cleanLock();
 
   console.log(`[SurrealDB] Starting server on port ${serverPort}...`);
@@ -236,6 +276,10 @@ export function shutdownSurrealDB(): void {
 /**
  * 异步关闭 SurrealDB，等待进程真正退出。
  * 用于 reset/restore 等需要保证磁盘文件可写的场景。
+ *
+ * 注意：即使本 app 没有派生 serverProcess（serverProcess 为 null），
+ * 也要走孤儿清理 —— 当前 app 可能连上的是上轮崩溃残留的孤儿 server，
+ * 不杀它会导致 reset 后 app 又连回孤儿的内存缓存（"清了还在"）。
  */
 export async function shutdownSurrealDBAsync(): Promise<void> {
   if (db) {
@@ -243,25 +287,25 @@ export async function shutdownSurrealDBAsync(): Promise<void> {
     db = null;
   }
 
-  if (!serverProcess) {
-    isReady = false;
-    return;
+  if (serverProcess) {
+    const proc = serverProcess;
+    await new Promise<void>((resolve) => {
+      const killTimer = setTimeout(() => {
+        try { proc.kill('SIGKILL'); } catch { /* ignore */ }
+      }, 2000);
+
+      proc.once('close', () => {
+        clearTimeout(killTimer);
+        resolve();
+      });
+
+      try { proc.kill('SIGTERM'); } catch { resolve(); }
+    });
+    serverProcess = null;
   }
 
-  const proc = serverProcess;
-  await new Promise<void>((resolve) => {
-    const killTimer = setTimeout(() => {
-      try { proc.kill('SIGKILL'); } catch { /* ignore */ }
-    }, 2000);
+  // 兜底：清掉任何仍在占用 krig-db 的残留 surreal 进程（可能是孤儿，也可能是上面 SIGTERM 后没按时退出的）
+  await killOrphanSurrealProcesses('post-shutdown');
 
-    proc.once('close', () => {
-      clearTimeout(killTimer);
-      resolve();
-    });
-
-    try { proc.kill('SIGTERM'); } catch { resolve(); }
-  });
-
-  serverProcess = null;
   isReady = false;
 }
