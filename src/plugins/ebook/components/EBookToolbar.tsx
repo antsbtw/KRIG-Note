@@ -34,6 +34,8 @@ interface EBookToolbarProps {
   onBookmarkToggle?: () => void;
   onExtract?: () => void;
   onCloseSlot?: () => void;
+  slotLocked?: boolean;
+  onSlotLockToggle?: () => void;
 }
 
 const ZOOM_PRESETS = [
@@ -67,6 +69,8 @@ export function EBookToolbar({
   onBookmarkToggle,
   onExtract,
   onCloseSlot,
+  slotLocked,
+  onSlotLockToggle,
 }: EBookToolbarProps) {
   const [pageInput, setPageInput] = useState('');
   const [editingPage, setEditingPage] = useState(false);
@@ -280,6 +284,15 @@ export function EBookToolbar({
           loadItems={loadBookList}
           onSelect={handleOpenBook}
         />
+        {onSlotLockToggle && (
+          <button
+            className={`ebook-toolbar__btn ${slotLocked ? 'ebook-toolbar__btn--active' : ''}`}
+            onClick={onSlotLockToggle}
+            title={slotLocked ? '已锁定位置：两侧独立滚动（点击恢复联动）' : '联动中：left 滚动时 right 跟随（点击锁定）'}
+          >
+            🔄
+          </button>
+        )}
         <SlotToggle />
         {onCloseSlot && (
           <button className="ebook-toolbar__btn ebook-toolbar__btn--close-slot" onClick={onCloseSlot} title="关闭此面板">

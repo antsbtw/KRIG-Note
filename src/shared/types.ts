@@ -175,6 +175,9 @@ export const IPC = {
   SLOT_CLOSE: 'slot:close',             // View 关闭自己所在的 slot
   SLOT_GET_SIDE: 'slot:get-side',       // View 查询自己在哪个 slot
   SLOT_DIVIDER_CHANGED: 'slot:divider-changed',
+  SLOT_LOCK_GET: 'slot:lock-get',       // 查询位置锁状态
+  SLOT_LOCK_SET: 'slot:lock-set',       // 切换位置锁（true=独立滚动，false=联动）
+  SLOT_LOCK_CHANGED: 'slot:lock-changed', // 主进程 → View 广播锁状态变化
 
   // Divider 拖拽
   DIVIDER_DRAG_START: 'divider:drag-start',

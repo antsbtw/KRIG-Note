@@ -49,6 +49,15 @@ contextBridge.exposeInMainWorld('viewAPI', {
     return null;
   },
 
+  // Slot 位置锁（session 级；锁定时 left 不发 anchor-sync → right 独立滚动）
+  getSlotLock: (): Promise<boolean> => ipcRenderer.invoke(IPC.SLOT_LOCK_GET),
+  setSlotLock: (next: boolean): Promise<boolean> => ipcRenderer.invoke(IPC.SLOT_LOCK_SET, next),
+  onSlotLockChanged: (callback: (locked: boolean) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, locked: boolean) => callback(locked);
+    ipcRenderer.on(IPC.SLOT_LOCK_CHANGED, listener);
+    return () => ipcRenderer.removeListener(IPC.SLOT_LOCK_CHANGED, listener);
+  },
+
   // DB 状态
   isDBReady: () => ipcRenderer.invoke(IPC.IS_DB_READY),
   onDBReady: (callback: () => void) => {
