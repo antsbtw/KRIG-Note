@@ -149,6 +149,7 @@ export type AtomType =
 export interface ParagraphContent {
   children: InlineElement[];
   textIndent?: boolean;
+  indent?: number;
   align?: 'left' | 'center' | 'right';
 }
 
@@ -156,6 +157,7 @@ export interface HeadingContent {
   level: 1 | 2 | 3;
   children: InlineElement[];
   textIndent?: boolean;
+  indent?: number;
   align?: 'left' | 'center' | 'right';
 }
 
