@@ -788,6 +788,19 @@ const NAV_RESIZE_HTML = `<!DOCTYPE html>
     background: transparent;
     cursor: col-resize;
     user-select: none;
+    position: relative;
+  }
+  /* 装订线：和 NoteView 左侧的 TOC hotzone 装订线对称 */
+  body::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 37px;
+    bottom: 0;
+    width: 1px;
+    background: rgba(255,255,255,0.15);
+    pointer-events: none;
+    transform: translateX(-50%);
   }
   body:hover { background: rgba(255,255,255,0.06); }
   body:active, body.dragging { background: rgba(255,255,255,0.1); }

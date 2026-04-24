@@ -1,97 +1,129 @@
 /**
- * toc.css — 目录导航指示器 + 弹出菜单样式
+ * toc.css — 目录侧边面板样式
  *
- * 横线指示器：紧贴 NoteView 左边缘，和正文第一行对齐
- * 弹出菜单：hover 横线区域时在右侧弹出
+ * 左侧窄 hover 触发区：16px 宽，全高，透明（hover 时显示淡提示）
+ * 浮层面板：240px 宽，从左侧滑出，高度占屏幕大部分
  */
 
-/* ─── 指示器容器 ─── */
+/* ─── Hover 触发区 ─── */
+/* 铺满 toolbar 下方整个编辑器高度，左侧可视线 + hover 淡背景 */
 
-.toc-indicator {
+.toc-hotzone {
   position: fixed;
   left: 0;
-  top: 20%;       /* toolbar 37px + 8px gap */
-  bottom: 16px;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  z-index: 10;
-  padding: 4px 8px;
-  border-radius: 0 4px 4px 0;
-  cursor: pointer;
-  scrollbar-width: none; /* Firefox */
-}
-
-.toc-indicator::-webkit-scrollbar {
-  display: none; /* Chrome/Safari */
-}
-
-.toc-indicator:hover,
-.toc-indicator--menu-open {
-  background: rgba(255, 255, 255, 0.04);
-}
-
-/* ─── 横线 ─── */
-
-.toc-indicator__line {
-  height: 2px;
-  border-radius: 1px;
-  background: #555;
-  transition: background 0.15s, width 0.15s;
-}
-
-/* H1 最长最亮，H2 中等，H3 最短最暗 */
-.toc-indicator__line[data-level="1"] {
+  top: 37px; /* toolbar 下方 */
+  bottom: 0;
   width: 24px;
-  background: #666;
+  z-index: 10;
+  cursor: pointer;
+  background: transparent;
+  transition: background 0.15s;
 }
 
-.toc-indicator__line[data-level="2"] {
-  width: 18px;
-  background: #555;
-}
-
-.toc-indicator__line[data-level="3"] {
-  width: 12px;
-  background: #444;
-}
-
-/* 当前可见 heading 高亮 */
-.toc-indicator__line--active {
-  background: #e8eaed !important;
-}
-
-/* ─── 弹出菜单 ─── */
-
-.toc-menu {
+/* 装订线：在 hotzone 内部右侧画一条贯穿高度的竖线（用 ::after 而非 border，
+   避免紧贴 BrowserView 边缘被裁切） */
+.toc-hotzone::after {
+  content: '';
   position: absolute;
-  left: 0;
+  left: 10px;
   top: 0;
-  min-width: 200px;
-  max-width: 320px;
-  max-height: 70vh;
-  overflow: hidden;
+  bottom: 0;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.15);
+  pointer-events: none;
+}
+
+.toc-hotzone:hover {
+  background: linear-gradient(
+    to right,
+    rgba(255, 255, 255, 0.06) 0%,
+    rgba(255, 255, 255, 0.02) 60%,
+    transparent 100%
+  );
+}
+
+/* ─── 浮层面板 ─── */
+
+.toc-panel {
+  position: fixed;
+  left: 0;
+  top: 37px; /* toolbar 下方，和 hotzone 对齐 */
+  bottom: 0;
+  width: 240px;
   display: flex;
   flex-direction: column;
   background: #2a2a2a;
   border: 1px solid #3c3c3c;
-  border-radius: 8px;
-  padding: 0;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  border-left: none;
+  border-bottom: none;
+  border-radius: 0 10px 0 0; /* 只有右上圆角，铺到底 */
+  box-shadow: 4px 0 20px rgba(0, 0, 0, 0.5);
   z-index: 100;
   font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  opacity: 0;
+  transform: translateX(-8px);
+  pointer-events: none;
+  transition: opacity 0.15s, transform 0.15s;
 }
 
-/* 可滚动的目录条目列表 */
-.toc-menu__list {
+.toc-panel--visible {
+  opacity: 1;
+  transform: translateX(0);
+  pointer-events: auto;
+}
+
+/* ─── 顶部：展开级别按钮条 ─── */
+
+.toc-panel__levels {
+  display: flex;
+  padding: 0;
+  flex-shrink: 0;
+  border-bottom: 1px solid #3c3c3c;
+}
+
+.toc-panel__level-btn {
+  flex: 1;
+  height: 34px;
+  background: none;
+  border: none;
+  border-right: 1px solid #3c3c3c;
+  color: #888;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+}
+
+.toc-panel__level-btn:last-child {
+  border-right: none;
+}
+
+.toc-panel__level-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: #e8eaed;
+}
+
+.toc-panel__level-btn--active {
+  color: #8ab4f8;
+  background: rgba(138, 180, 248, 0.08);
+}
+
+/* ─── 主体：heading 列表 ─── */
+
+.toc-panel__list {
   flex: 1;
   overflow-y: auto;
   padding: 6px 0;
   min-height: 0;
 }
 
-.toc-menu__item {
+.toc-panel__empty {
+  padding: 24px 14px;
+  color: #666;
+  font-size: 13px;
+  text-align: center;
+}
+
+.toc-panel__item {
   display: block;
   width: 100%;
   padding: 6px 14px;
@@ -108,58 +140,46 @@
   transition: background 0.1s, color 0.1s;
 }
 
-.toc-menu__item:hover {
+.toc-panel__item:hover {
   background: rgba(255, 255, 255, 0.06);
   color: #e8eaed;
 }
 
-/* 当前可见 heading 高亮 */
-.toc-menu__item--active {
+.toc-panel__item--active {
   color: #8ab4f8;
+  background: rgba(138, 180, 248, 0.08);
 }
 
-/* 层级缩进 */
-.toc-menu__item[data-level="1"] {
+/* 层级缩进 + 字重 */
+.toc-panel__item[data-level="1"] {
   padding-left: 14px;
   font-weight: 600;
 }
 
-.toc-menu__item[data-level="2"] {
+.toc-panel__item[data-level="2"] {
   padding-left: 28px;
   font-weight: 500;
 }
 
-.toc-menu__item[data-level="3"] {
+.toc-panel__item[data-level="3"] {
   padding-left: 42px;
   font-weight: 400;
 }
 
-/* 展开级别按钮 */
-.toc-menu__levels {
-  display: flex;
-  padding: 0;
+/* 滚动条样式（macOS 风格） */
+.toc-panel__list::-webkit-scrollbar {
+  width: 8px;
 }
 
-.toc-menu__level-btn {
-  flex: 1;
-  height: 28px;
-  background: none;
-  border: none;
-  border-top: 1px solid #3c3c3c;
-  color: #666;
-  font-size: 12px;
-  cursor: pointer;
-  transition: all 0.1s;
+.toc-panel__list::-webkit-scrollbar-track {
+  background: transparent;
 }
 
-.toc-menu__level-btn:hover {
-  background: rgba(255, 255, 255, 0.06);
-  color: #e8eaed;
-  border-color: #555;
+.toc-panel__list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
 }
 
-.toc-menu__level-btn--active {
-  color: #8ab4f8;
-  border-color: #8ab4f8;
-  background: rgba(138, 180, 248, 0.1);
+.toc-panel__list::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
 }

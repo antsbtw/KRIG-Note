@@ -343,6 +343,34 @@ function getTopBlockIndexAtScroll(view: EditorView, scrollContainer: HTMLElement
 }
 
 /** 把 scroll 容器滚到指定索引的顶层 block */
+/** 从 view + fullAtomsRef 生成全量 atoms（含未加载尾部）。
+ *  提取为 module 级 helper 供 buildHandle 和 TOC getAtoms 共享。 */
+function buildFullAtoms(
+  view: EditorView | null,
+  fullAtoms: Atom[] | null,
+  loadedCount: number,
+): Atom[] {
+  if (!view || view.isDestroyed) return [];
+  const loadedAtoms = converterRegistry.docToAtoms(view.state.doc);
+  if (fullAtoms && loadedCount >= 0) {
+    const topLevelAtoms = fullAtoms.filter(a => !a.parentId);
+    const unloadedTopIds = new Set(topLevelAtoms.slice(loadedCount).map(a => a.id));
+    const allIds = new Set(unloadedTopIds);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const atom of fullAtoms) {
+        if (!allIds.has(atom.id) && atom.parentId && allIds.has(atom.parentId)) {
+          allIds.add(atom.id);
+          changed = true;
+        }
+      }
+    }
+    loadedAtoms.push(...fullAtoms.filter(a => allIds.has(a.id)));
+  }
+  return loadedAtoms;
+}
+
 function scrollToTopBlockIndex(view: EditorView, scrollContainer: HTMLElement, index: number): void {
   if (view.isDestroyed || index <= 0) return;
   const doc = view.state.doc;
@@ -469,7 +497,13 @@ export function NoteEditor(props: NoteEditorProps = {}) {
 
     // TOC 指示器（Thought 单条文档太短，不需要）
     if (tocRef.current) tocRef.current.destroy();
-    tocRef.current = isThought ? null : createTocIndicator(editorRef.current, view);
+    tocRef.current = isThought
+      ? null
+      : createTocIndicator(
+          editorRef.current,
+          view,
+          () => buildFullAtoms(viewRef.current, fullAtomsRef.current, loadedTopCountRef.current),
+        );
 
     // 如果有更多内容待加载，设置 sentinel 元素
     if (loadMoreRef.current) {
@@ -494,31 +528,7 @@ export function NoteEditor(props: NoteEditorProps = {}) {
   // Step 1：命令句柄 —— 外层通过 onReady 拿到，用于按需拉取数据或命令式操作
   const buildHandle = useCallback((): NoteEditorHandle => ({
     get view() { return viewRef.current; },
-    getDocAtoms: () => {
-      const view = viewRef.current;
-      if (!view || view.isDestroyed) return [];
-      const loadedAtoms = converterRegistry.docToAtoms(view.state.doc);
-      // 分片加载时拼接未加载的尾部 atoms（参见 Import Markdown 同款逻辑）
-      const fullAtoms = fullAtomsRef.current;
-      const loadedCount = loadedTopCountRef.current;
-      if (fullAtoms && loadedCount >= 0) {
-        const topLevelAtoms = fullAtoms.filter(a => !a.parentId);
-        const unloadedTopIds = new Set(topLevelAtoms.slice(loadedCount).map(a => a.id));
-        const allIds = new Set(unloadedTopIds);
-        let changed = true;
-        while (changed) {
-          changed = false;
-          for (const atom of fullAtoms) {
-            if (!allIds.has(atom.id) && atom.parentId && allIds.has(atom.parentId)) {
-              allIds.add(atom.id);
-              changed = true;
-            }
-          }
-        }
-        loadedAtoms.push(...fullAtoms.filter(a => allIds.has(a.id)));
-      }
-      return loadedAtoms;
-    },
+    getDocAtoms: () => buildFullAtoms(viewRef.current, fullAtomsRef.current, loadedTopCountRef.current),
     getTitle: () => {
       const view = viewRef.current;
       if (!view || view.isDestroyed) return 'Untitled';
