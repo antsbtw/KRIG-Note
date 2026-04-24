@@ -234,7 +234,11 @@ export function createTocIndicator(
     if (!entry) return;
     const docPos = atomIndexToDocPos(entry.atomIndex);
     if (docPos === null) {
-      // 目标还未加载进 view —— 先不处理（后续可扩展 ensureLoaded）
+      // 目标在未加载区 —— 派发事件给 NoteView，由它通过 handle.scrollToTopBlockIndex
+      // 循环补齐加载后滚动
+      window.dispatchEvent(new CustomEvent('note:toc-jump', {
+        detail: { atomIndex: entry.atomIndex },
+      }));
       return;
     }
     ensureHeadingVisible(view, docPos);

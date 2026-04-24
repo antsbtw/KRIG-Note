@@ -208,7 +208,7 @@ export function NoteView() {
       },
       onJump: (bmId) => {
         const bm = bookmarksRef.current.find(b => b.id === bmId);
-        if (bm) editorHandleRef.current?.scrollToTopBlockIndex(bm.block_index);
+        if (bm) editorHandleRef.current?.scrollToTopBlockIndex(bm.block_index).catch(() => { /* ignore */ });
       },
       onRemove: (bmId) => {
         const nid = activeNoteIdRef.current;
@@ -293,7 +293,7 @@ export function NoteView() {
         requestAnimationFrame(() => {
           requestAnimationFrame(() => {
             if (loadSeqRef.current === seq) {
-              editorHandleRef.current?.scrollToTopBlockIndex(savedIdx);
+              editorHandleRef.current?.scrollToTopBlockIndex(savedIdx).catch(() => { /* ignore */ });
             }
           });
         });
@@ -422,6 +422,14 @@ export function NoteView() {
     };
     window.addEventListener('note:bookmark-toggle-panel', togglePanelHandler);
 
+    // TOC 跳转到未加载区：让编辑器循环 appendMore 补齐后滚动
+    const tocJumpHandler = (e: Event) => {
+      const atomIndex = (e as CustomEvent<{ atomIndex: number }>).detail?.atomIndex;
+      if (typeof atomIndex !== 'number') return;
+      editorHandleRef.current?.scrollToTopBlockIndex(atomIndex).catch(() => { /* ignore */ });
+    };
+    window.addEventListener('note:toc-jump', tocJumpHandler);
+
     // Step 3：启动恢复 —— notePendingOpen（导入路径）优先，其次 restore workspace state
     // 走 viewAPI.noteOpenInEditor 触发事件流（和用户点 NavSide 等同），不直接 loadNote
     const unsubRestore = viewAPI.onRestoreWorkspaceState(async (state) => {
@@ -451,6 +459,7 @@ export function NoteView() {
       unsubOpen(); unsubTitle(); unsubDeleted(); unsubRestore(); unsubTestDoc();
       window.removeEventListener('keydown', keyHandler);
       window.removeEventListener('note:bookmark-toggle-panel', togglePanelHandler);
+      window.removeEventListener('note:toc-jump', tocJumpHandler);
       if (bookmarksPanelOpenRef.current) {
         hideBookmarksPanel();
         bookmarksPanelOpenRef.current = false;
