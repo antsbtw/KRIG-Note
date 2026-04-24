@@ -64,8 +64,10 @@ export interface NoteEditorHandle {
   insertAtoms: (atoms: Atom[], pos?: number) => void;
   /** 让编辑器获得焦点。 */
   focus: () => void;
-  /** 滚动到指定顶层 block 索引（书签跳转用）。 */
-  scrollToTopBlockIndex: (index: number) => void;
+  /** 滚动到指定顶层 block 索引（书签/TOC 跳转用）。
+   *  若目标索引超出已加载范围，会自动循环 appendMore 补齐直至覆盖，再滚动。
+   */
+  scrollToTopBlockIndex: (index: number) => Promise<void>;
   /** 当前 scroll 顶部可见的顶层 block 索引（用于持久化阅读位置）。 */
   getTopBlockIndexAtScroll: () => number;
   /** 外部重命名：把编辑器里的 noteTitle 节点文本改为指定值（不派发 dirty）。 */
@@ -572,11 +574,27 @@ export function NoteEditor(props: NoteEditorProps = {}) {
       }
     },
     focus: () => { viewRef.current?.focus(); },
-    scrollToTopBlockIndex: (index: number) => {
-      const view = viewRef.current;
+    scrollToTopBlockIndex: async (index: number) => {
       const scrollContainer = editorRef.current?.parentElement;
-      if (!view || view.isDestroyed || !scrollContainer) return;
-      scrollToTopBlockIndex(view, scrollContainer, index);
+      if (!viewRef.current || viewRef.current.isDestroyed || !scrollContainer) return;
+
+      // 目标在未加载区 —— 循环 appendMore 补齐（让出帧给 UI，不卡主线程）
+      let guard = 0; // 防御：正常情况几批就够，上限 100 批避免死循环
+      while (
+        viewRef.current &&
+        !viewRef.current.isDestroyed &&
+        index >= viewRef.current.state.doc.childCount &&
+        loadMoreRef.current &&
+        guard < 100
+      ) {
+        appendMoreContent();
+        guard++;
+        await new Promise<void>((r) => requestAnimationFrame(() => r()));
+      }
+
+      const v = viewRef.current;
+      if (!v || v.isDestroyed) return;
+      scrollToTopBlockIndex(v, scrollContainer, index);
     },
     getTopBlockIndexAtScroll: () => {
       const view = viewRef.current;
