@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import type { EditorView } from 'prosemirror-view';
 import { TextSelection } from 'prosemirror-state';
 import { slashCommandKey } from '../plugins/slash-command';
@@ -18,7 +18,9 @@ interface SlashMenuProps {
 export function SlashMenu({ view }: SlashMenuProps) {
   const [items, setItems] = useState<{ id: string; label: string; icon: string; blockName: string; attrs?: Record<string, unknown> }[]>([]);
   const [selectedIdx, setSelectedIdx] = useState(0);
-  const [coords, setCoords] = useState<{ left: number; top: number } | null>(null);
+  // caretTop/caretBottom 用来做"向上翻 / 向下展开"的参考点。
+  const [coords, setCoords] = useState<{ left: number; caretTop: number; caretBottom: number } | null>(null);
+  const [adjusted, setAdjusted] = useState<{ left: number; top: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   // IME 输入码缓冲：菜单打开期间，拼音/日文等输入法的预编辑文字不会落入 PM doc，
@@ -123,10 +125,10 @@ export function SlashMenu({ view }: SlashMenuProps) {
     setItems(filtered);
     setSelectedIdx(0);
 
-    // 定位菜单
+    // 定位菜单：保存 caret 的 top/bottom 供矫正时选择向下/向上展开。
     try {
       const coordsAt = view.coordsAtPos(state.from);
-      setCoords({ left: coordsAt.left, top: coordsAt.bottom + 4 });
+      setCoords({ left: coordsAt.left, caretTop: coordsAt.top, caretBottom: coordsAt.bottom });
     } catch {
       setCoords(null);
     }
@@ -271,10 +273,37 @@ export function SlashMenu({ view }: SlashMenuProps) {
     view.focus();
   }
 
+  // 边界矫正：默认 caret 下方；下方空间不够就翻到 caret 上方；
+  // 右侧溢出就靠右收。items 变化会导致菜单高度变，需要一并重测。
+  useLayoutEffect(() => {
+    if (!coords || items.length === 0) { setAdjusted(null); return; }
+    const el = menuRef.current;
+    if (!el) { setAdjusted({ left: coords.left, top: coords.caretBottom + 4 }); return; }
+    const rect = el.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const pad = 8;
+    let left = coords.left;
+    let top = coords.caretBottom + 4;
+    if (top + rect.height > vh - pad) top = coords.caretTop - rect.height - 4;
+    if (left + rect.width > vw - pad) left = vw - rect.width - pad;
+    if (top < pad) top = pad;
+    if (left < pad) left = pad;
+    setAdjusted({ left, top });
+  }, [coords, items]);
+
   if (!coords || items.length === 0) return null;
 
   return (
-    <div ref={menuRef} style={{ ...styles.container, left: coords.left, top: coords.top }}>
+    <div
+      ref={menuRef}
+      style={{
+        ...styles.container,
+        left: adjusted?.left ?? coords.left,
+        top: adjusted?.top ?? coords.caretBottom + 4,
+        visibility: adjusted ? 'visible' : 'hidden',
+      }}
+    >
       {items.map((item, i) => (
         <div
           key={item.id}
