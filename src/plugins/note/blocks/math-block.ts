@@ -97,6 +97,14 @@ const mathBlockNodeView: NodeViewFactory = (initialNode, view, getPos) => {
   rendered.setAttribute('contenteditable', 'false');
   dom.appendChild(rendered);
 
+  function applyColorStyles(n: typeof node) {
+    const color = (n.attrs as { color?: string | null }).color;
+    const bgColor = (n.attrs as { bgColor?: string | null }).bgColor;
+    rendered.style.color = color || '';
+    dom.style.backgroundColor = bgColor || '';
+  }
+  applyColorStyles(node);
+
   const editorArea = document.createElement('div');
   editorArea.classList.add('math-block__editor');
   editorArea.style.display = 'none';
@@ -265,6 +273,7 @@ const mathBlockNodeView: NodeViewFactory = (initialNode, view, getPos) => {
     update(updatedNode) {
       if (updatedNode.type.name !== 'mathBlock') return false;
       node = updatedNode;
+      applyColorStyles(updatedNode);
       if (editing) {
         scheduleRender();  // 编辑中用防抖，不直接渲染
       } else {
@@ -292,8 +301,26 @@ export const mathBlockBlock: BlockDef = {
     code: true,
     defining: true,
     marks: '',
-    parseDOM: [{ tag: 'div.math-block-wrapper', preserveWhitespace: 'full' as const }],
-    toDOM() { return ['div', { class: 'math-block-wrapper' }, ['pre', { class: 'math-block__code' }, 0]]; },
+    attrs: {
+      color: { default: null },
+      bgColor: { default: null },
+    },
+    parseDOM: [{
+      tag: 'div.math-block-wrapper',
+      preserveWhitespace: 'full' as const,
+      getAttrs(dom: HTMLElement) {
+        return {
+          color: dom.getAttribute('data-color') || null,
+          bgColor: dom.getAttribute('data-bg-color') || null,
+        };
+      },
+    }],
+    toDOM(node) {
+      const attrs: Record<string, string> = { class: 'math-block-wrapper' };
+      if (node.attrs.color) attrs['data-color'] = node.attrs.color as string;
+      if (node.attrs.bgColor) attrs['data-bg-color'] = node.attrs.bgColor as string;
+      return ['div', attrs, ['pre', { class: 'math-block__code' }, 0]];
+    },
   },
   nodeView: mathBlockNodeView,
   capabilities: { canDelete: true, canDrag: true },

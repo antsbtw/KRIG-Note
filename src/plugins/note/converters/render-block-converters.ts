@@ -56,15 +56,20 @@ export const mathBlockConverter: AtomConverter = {
 
   toAtom(node: PMNode, parentId?: string): Atom {
     // mathBlock content: 'text*' — LaTeX 存在 textContent 中
-    return createAtom('mathBlock', {
-      latex: node.textContent || '',
-    } as MathBlockContent, parentId);
+    const content: MathBlockContent = { latex: node.textContent || '' };
+    if (node.attrs.color) content.color = node.attrs.color as string;
+    if (node.attrs.bgColor) content.bgColor = node.attrs.bgColor as string;
+    return createAtom('mathBlock', content, parentId);
   },
 
   toPM(atom: Atom): PMNodeJSON {
     const c = atom.content as MathBlockContent;
+    const attrs: Record<string, unknown> = {};
+    if (c.color) attrs.color = c.color;
+    if (c.bgColor) attrs.bgColor = c.bgColor;
     return {
       type: 'mathBlock',
+      attrs,
       content: c.latex ? [{ type: 'text', text: c.latex }] : [],
     };
   },

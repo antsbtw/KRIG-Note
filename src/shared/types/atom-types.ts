@@ -245,6 +245,8 @@ export interface CodeBlockContent {
 
 export interface MathBlockContent {
   latex: string;
+  color?: string;
+  bgColor?: string;
 }
 
 export interface MathVisualContent {

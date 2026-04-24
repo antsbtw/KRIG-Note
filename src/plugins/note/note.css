@@ -769,7 +769,8 @@
   min-height: 50px;
   border-radius: 6px;
 }
-.math-block__rendered .katex { font-size: 1.4em; color: #e8eaed; }
+.math-block__rendered { color: #e8eaed; }
+.math-block__rendered .katex { font-size: 1.4em; color: inherit; }
 
 /* Editor area (shown on click) */
 .math-block__editor {

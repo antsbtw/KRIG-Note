@@ -326,12 +326,29 @@ export function HandleMenu({ view }: HandleMenuProps) {
   const applyTextColor = (color: string) => {
     const node = view.state.doc.nodeAt(menu.pos);
     if (!node) return;
+    if (node.type.name === 'mathBlock') {
+      // mathBlock 禁用 marks（marks: ''），走 node attr 路径
+      const tr = view.state.tr.setNodeMarkup(menu.pos, null, {
+        ...node.attrs,
+        color: color || null,
+      });
+      view.dispatch(tr);
+      return;
+    }
     applyTextColorCmd(view, menu.pos + 1, menu.pos + node.nodeSize - 1, color);
   };
 
   const applyBgColor = (color: string) => {
     const node = view.state.doc.nodeAt(menu.pos);
     if (!node) return;
+    if (node.type.name === 'mathBlock') {
+      const tr = view.state.tr.setNodeMarkup(menu.pos, null, {
+        ...node.attrs,
+        bgColor: color || null,
+      });
+      view.dispatch(tr);
+      return;
+    }
     applyHighlightCmd(view, menu.pos + 1, menu.pos + node.nodeSize - 1, color);
   };
 
