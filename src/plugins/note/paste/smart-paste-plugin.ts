@@ -113,6 +113,27 @@ function buildPasteSlice(fragment: Fragment): Slice {
   return Slice.maxOpen(fragment);
 }
 
+/**
+ * 从 slice 里抽出所有"textBlock 级容器"的 inline 内容，拼成一个 Fragment。
+ * 用于 cell → cell 粘贴时，剥掉外层 table/row/cell 包装，保留 mathInline 等
+ * atom 节点（textContent/textBetween 会把 atom 经 leafText 降级成 `$latex$`
+ * 文本，丢失节点身份——这里用节点遍历避开这条降级路径）。
+ *
+ * 目标容器判定：spec.content === 'inline*'，覆盖 textBlock / tableHeader 内层等。
+ */
+function extractInlineFragment(slice: Slice): Fragment | null {
+  const collected: import('prosemirror-model').Node[] = [];
+  slice.content.descendants((node) => {
+    if (node.type.spec.content === 'inline*') {
+      node.content.forEach((child) => collected.push(child));
+      return false; // 不再下钻，inline 容器本身已处理
+    }
+    return true;
+  });
+  if (collected.length === 0) return null;
+  return Fragment.fromArray(collected);
+}
+
 /** Registered handlers, in priority order. Specific → generic. */
 const HANDLERS: PasteHandler[] = [
   // Future: wordHandler, notionHandler, excelHandler, wikiHandler, …
@@ -178,7 +199,20 @@ export function smartPastePlugin(): Plugin {
             if (pasteIsSafe(view.state, tr)) {
               view.dispatch(tr);
             } else {
-              // slice 会破坏容器结构（如 caption 内粘贴），降级为纯文本插入
+              // slice 会破坏容器结构（如 caption / table cell 内粘贴整 cell slice）。
+              // 先尝试抽出 inline 内容平铺插入——保留 mathInline 等 atom 节点；
+              // 实在抽不到才 fallback 到纯文本（textBetween 会把 atom 经 leafText
+              // 降级成 `$latex$`，最后手段才用）。
+              const inlineFrag = extractInlineFragment(slice);
+              if (inlineFrag) {
+                const inlineTr = view.state.tr
+                  .replaceSelection(buildPasteSlice(inlineFrag))
+                  .scrollIntoView();
+                if (pasteIsSafe(view.state, inlineTr)) {
+                  view.dispatch(inlineTr);
+                  return true;
+                }
+              }
               const text = slice.content.textBetween(0, slice.content.size, '\n\n');
               if (text) {
                 view.dispatch(view.state.tr.insertText(text).scrollIntoView());

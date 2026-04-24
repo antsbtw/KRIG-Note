@@ -228,6 +228,14 @@ function buildPlugins(s: ReturnType<typeof getSchema>, variant: 'note' | 'though
     slashCommandPlugin(),
     linkClickPlugin(),
     containerKeyboardPlugin(),
+    // smart-paste 必须排在 blockPlugins 之前：prosemirror-tables 的
+    // tableEditing.handlePaste 会在 table 内吃掉 paste 事件，若 smart-paste
+    // 在其后注册，KRIG 内部剪贴板通道（无损还原 mathInline 等 atom 节点）
+    // 在 table cell 内永远不会被调用。smart-paste 外部通道对"HTML 含 table"
+    // 的情况会走 markdown 路径插入，可能和 tableEditing 的 cell 填充语义
+    // 冲突——若后续观察到回归，再在 smart-paste 外部通道加"table 内让位"判断。
+    pasteMediaPlugin(),
+    smartPastePlugin(),
     ...blockPlugins,             // Block 专有键盘/行为（codeBlock Tab、tableKeymap、tableEditing 等）— 在 baseKeymap 之前
     buildInputRules(s),
     keymap({ 'Mod-z': undo, 'Mod-Shift-z': redo, 'Mod-y': redo }),
@@ -238,8 +246,6 @@ function buildPlugins(s: ReturnType<typeof getSchema>, variant: 'note' | 'though
     // 和 thoughtPlugin（避免自嵌套递归）；其余编辑能力完整继承
     ...(isThought ? [] : [titleGuardPlugin()]),
     columnCollapsePlugin(),
-    pasteMediaPlugin(),
-    smartPastePlugin(),
     renderBlockFocusPlugin(),
     headingCollapsePlugin(),
     vocabHighlightPlugin(),
