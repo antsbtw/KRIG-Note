@@ -132,8 +132,6 @@
 .ordered-list > .ordered-list__content > h1,
 .ordered-list > .ordered-list__content > h2,
 .ordered-list > .ordered-list__content > h3 {
-  position: relative;
-  padding-left: 24px;
   counter-increment: ordered-item;
 }
 .ordered-list > .ordered-list__content > p::before,
@@ -141,14 +139,12 @@
 .ordered-list > .ordered-list__content > h2::before,
 .ordered-list > .ordered-list__content > h3::before {
   content: counter(ordered-item) '.';
-  position: absolute;
-  left: 0;
-  width: 20px;
+  display: inline-block;
+  min-width: 1.5em;
+  margin-right: 0.4em;
   text-align: right;
   color: inherit;
   font-size: inherit;
-  top: 3px;
-  line-height: 1.7;
   font-variant-numeric: tabular-nums;
 }
 /* 嵌套 2 级 → a. b. c. */

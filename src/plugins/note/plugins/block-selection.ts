@@ -13,6 +13,15 @@ function isContainerType(name: string): boolean {
 }
 
 /**
+ * cascadeBoundary 容器（table / columnList / column 等）：
+ *   选择语义里作为不可拆解的整体——框选命中时选 "容器本身"，不递归进内部子节点。
+ *   这样 Delete 能删掉整张 table / 整个 columnList，而不是卡在保护规则里删不动。
+ */
+function isCascadeBoundaryType(name: string): boolean {
+  return blockRegistry.get(name)?.capabilities?.cascadeBoundary === true;
+}
+
+/**
  * Block Selection Plugin — ESC 选中 Block，↑/↓ 导航，Shift 多选
  *
  * 必须在所有 keymap 之前注册（最高优先级）。
@@ -41,7 +50,10 @@ function collectBlockPositions(parent: PMNode, baseOffset: number, positions: nu
   parent.forEach((node, offset) => {
     const absPos = baseOffset + offset;
     if (isContainerType(node.type.name)) {
-      if (node.attrs.open === false) {
+      // cascadeBoundary 容器（table/columnList/column）作为整体，不递归进入
+      if (isCascadeBoundaryType(node.type.name)) {
+        positions.push(absPos);
+      } else if (node.attrs.open === false) {
         // 收起的容器作为整体参与导航
         positions.push(absPos);
       } else {
