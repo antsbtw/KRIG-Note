@@ -754,7 +754,8 @@ const TOGGLE_HTML = `<!DOCTYPE html>
     background: #1e1e1e;
     display: flex;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start;
+    padding-left: 6px;
     height: 100vh;
     -webkit-app-region: drag;
   }
