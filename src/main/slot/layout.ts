@@ -47,15 +47,21 @@ export function calculateLayout(
   // 非全屏时，Toggle 在红绿灯右边；全屏时在左上角
   const toggleX = (!isFullScreen && process.platform === 'darwin') ? TRAFFIC_LIGHT_WIDTH : 0;
 
+  const navSideColumnWidth = navSideVisible ? navSideWidth : 0;
+
+  // NavSide 可见时，Toggle 撑满 NavSide 列顶部，让空白区域也能拖窗
+  const toggleWidth = navSideVisible
+    ? Math.max(TOGGLE_WIDTH, navSideColumnWidth - toggleX)
+    : TOGGLE_WIDTH;
+
   const toggle: Bounds = {
     x: toggleX,
     y: 0,
-    width: TOGGLE_WIDTH,
+    width: toggleWidth,
     height: TOP_BAR_HEIGHT,
   };
 
-  const navSideColumnWidth = navSideVisible ? navSideWidth : 0;
-  const toggleRight = toggleX + TOGGLE_WIDTH;
+  const toggleRight = toggleX + toggleWidth;
 
   // WorkspaceBar 始终从 Toggle 右边开始
   const workspaceBarX = Math.max(navSideColumnWidth, toggleRight);
