@@ -20,11 +20,12 @@ export const textBlockConverter: AtomConverter = {
   pmType: 'textBlock',
 
   toAtom(node: PMNode, parentId?: string): Atom {
-    const { level, isTitle, textIndent, align } = node.attrs;
+    const { level, isTitle, textIndent, indent, align } = node.attrs;
     const children = pmInlinesToAtom(node);
     // Only persist non-default formatting attrs
     const fmt: Record<string, unknown> = {};
     if (textIndent) fmt.textIndent = true;
+    if (indent) fmt.indent = indent;
     if (align && align !== 'left') fmt.align = align;
 
     if (isTitle) {
@@ -49,14 +50,23 @@ export const textBlockConverter: AtomConverter = {
       const c = atom.content as HeadingContent;
       return {
         type: 'textBlock',
-        attrs: { level: c.level, textIndent: c.textIndent ?? false, align: c.align ?? 'left' },
+        attrs: {
+          level: c.level,
+          textIndent: c.textIndent ?? false,
+          indent: c.indent ?? 0,
+          align: c.align ?? 'left',
+        },
         content: atomInlinesToPM(c.children),
       };
     }
     const c = atom.content as ParagraphContent;
     return {
       type: 'textBlock',
-      attrs: { textIndent: c.textIndent ?? false, align: c.align ?? 'left' },
+      attrs: {
+        textIndent: c.textIndent ?? false,
+        indent: c.indent ?? 0,
+        align: c.align ?? 'left',
+      },
       content: atomInlinesToPM(c.children),
     };
   },
