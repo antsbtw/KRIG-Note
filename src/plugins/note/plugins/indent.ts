@@ -281,6 +281,12 @@ export function indentPlugin(): Plugin {
             // 嵌套失败（如第一项）→ 不做任何事（列表内不支持视觉缩进）
             return true;
           }
+          // textBlock 内、光标不在行首 → 插入两个全角空格（中文段内缩进）
+          if ($from.parent.type.name === 'textBlock' && $from.parentOffset > 0) {
+            const tr = view.state.tr.insertText('　　');
+            view.dispatch(tr);
+            return true;
+          }
           return indentBlock(view);
         }
       },
