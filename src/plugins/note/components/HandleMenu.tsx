@@ -231,6 +231,25 @@ export function HandleMenu({ view }: HandleMenuProps) {
         columns.push(schema.nodes.column.create(null, [schema.nodes.textBlock.create()]));
       }
       newNode = nodeType.create({ columns: colCount }, columns);
+    } else if (item.blockName === 'mathBlock') {
+      // mathBlock 目标是 text*，但 textContent 会把 mathInline atom 通过 leafText
+      // 降级成 `$latex$`（带美元号），塞进 mathBlock 后 KaTeX 拒绝解析，显示红色源码。
+      // 因此单独走一条：遍历源 inline，mathInline 取裸 attrs.latex，text 取 .text。
+      let latex = '';
+      if (sourceIsInlineContainer) {
+        node.content.forEach((child) => {
+          if (child.type.name === 'mathInline') {
+            latex += (child.attrs.latex as string) ?? '';
+          } else if (child.isText) {
+            latex += child.text ?? '';
+          }
+        });
+      } else {
+        latex = node.textContent;
+      }
+      newNode = latex
+        ? nodeType.create(item.attrs ?? null, schema.text(latex))
+        : nodeType.create(item.attrs ?? null);
     } else if (nodeType.spec.content === 'text*' || item.blockName === 'codeBlock') {
       // codeBlock 目标是 text*，只能装纯文本 —— 走 textContent 降维
       const text = node.textContent;
