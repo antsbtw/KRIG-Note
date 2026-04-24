@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import type { EditorView } from 'prosemirror-view';
 import { TextSelection } from 'prosemirror-state';
 import { blockRegistry } from '../registry';
@@ -78,9 +78,13 @@ function getTurnIntoItems() {
     });
 }
 
+const VIEWPORT_PAD = 8;
+
 export function HandleMenu({ view }: HandleMenuProps) {
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [subMenu, setSubMenu] = useState<SubMenu>(null);
+  const [menuPos, setMenuPos] = useState<{ left: number; top: number } | null>(null);
+  const [subPos, setSubPos] = useState<{ left: number; top: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const subMenuRef = useRef<HTMLDivElement>(null);
 
@@ -116,6 +120,45 @@ export function HandleMenu({ view }: HandleMenuProps) {
       if (closeListener) document.removeEventListener('mousedown', closeListener);
     };
   }, [view]);
+
+  // 主菜单边界矫正：coords.top 是 handle 底部；
+  // 下方空间不够就把菜单底贴在 handle 底（向上展开），右侧不够就往左收。
+  useLayoutEffect(() => {
+    if (!menu) { setMenuPos(null); return; }
+    const el = menuRef.current;
+    if (!el) { setMenuPos(menu.coords); return; }
+    const rect = el.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    let { left, top } = menu.coords;
+    if (top + rect.height > vh - VIEWPORT_PAD) top = menu.coords.top - rect.height;
+    if (left + rect.width > vw - VIEWPORT_PAD) left = vw - rect.width - VIEWPORT_PAD;
+    if (top < VIEWPORT_PAD) top = VIEWPORT_PAD;
+    if (left < VIEWPORT_PAD) left = VIEWPORT_PAD;
+    setMenuPos({ left, top });
+  }, [menu]);
+
+  // 子菜单切换时先清位置，避免新子菜单按旧 subPos 渲染一帧导致闪烁。
+  useLayoutEffect(() => { setSubPos(null); }, [subMenu]);
+
+  // 子菜单边界矫正：默认右侧，溢出则翻到左侧；底部溢出则向上收。
+  useLayoutEffect(() => {
+    if (!subMenu || !menuPos) { setSubPos(null); return; }
+    const mainEl = menuRef.current;
+    const subEl = subMenuRef.current;
+    if (!mainEl || !subEl) return;
+    const mainRect = mainEl.getBoundingClientRect();
+    const subRect = subEl.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    let left = mainRect.right + 4;
+    let top = mainRect.top;
+    if (left + subRect.width > vw - VIEWPORT_PAD) left = mainRect.left - subRect.width - 4;
+    if (top + subRect.height > vh - VIEWPORT_PAD) top = vh - subRect.height - VIEWPORT_PAD;
+    if (top < VIEWPORT_PAD) top = VIEWPORT_PAD;
+    if (left < VIEWPORT_PAD) left = VIEWPORT_PAD;
+    setSubPos({ left, top });
+  }, [subMenu, menuPos]);
 
   if (!menu || !view) return null;
 
@@ -293,6 +336,8 @@ export function HandleMenu({ view }: HandleMenuProps) {
   };
 
   // ── 子菜单位置 ──
+  // 初次渲染用主菜单右侧的估算位置让 useLayoutEffect 能测量，
+  // 测量后由 subPos 接管并矫正到视口内。
   const getSubMenuStyle = (): React.CSSProperties => {
     const base: React.CSSProperties = {
       position: 'fixed',
@@ -303,11 +348,14 @@ export function HandleMenu({ view }: HandleMenuProps) {
       padding: '4px',
       boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
     };
-    // 子菜单出现在主菜单右侧
-    if (menuRef.current) {
+    if (subPos) {
+      base.left = subPos.left;
+      base.top = subPos.top;
+    } else if (menuRef.current) {
       const rect = menuRef.current.getBoundingClientRect();
       base.left = rect.right + 4;
       base.top = rect.top;
+      base.visibility = 'hidden';
     }
     return base;
   };
@@ -348,7 +396,13 @@ export function HandleMenu({ view }: HandleMenuProps) {
       <div
         ref={menuRef}
         className="handle-menu"
-        style={{ ...styles.container, left: menu.coords.left, top: menu.coords.top }}
+        style={{
+          ...styles.container,
+          left: menuPos?.left ?? menu.coords.left,
+          top: menuPos?.top ?? menu.coords.top,
+          // 测量完成前先隐藏，避免用户看到位置跳变
+          visibility: menuPos ? 'visible' : 'hidden',
+        }}
         onMouseDown={(e) => e.stopPropagation()}
       >
         {/* Turn Into */}
