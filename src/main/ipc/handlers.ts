@@ -17,6 +17,7 @@ import {
   isRightSlotMode,
 } from '../window/shell';
 import { clampNavSideWidth, getDefaultNavSideWidth } from '../slot/layout';
+import { getSlotLock, setSlotLock } from '../slot/lock';
 import { noteStore } from '../storage/note-store';
 import { activityStore } from '../storage/activity-store';
 import { isDBReady } from '../storage/client';
@@ -143,6 +144,13 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
   // View 查询自己在哪个 slot（用于同步滚动的左主右从仲裁）
   ipcMain.handle(IPC.SLOT_GET_SIDE, (event) => {
     return getSlotBySenderId(event.sender.id);
+  });
+
+  // Slot 位置锁：session 级状态，切断 anchor-sync 发送
+  ipcMain.handle(IPC.SLOT_LOCK_GET, () => getSlotLock());
+  ipcMain.handle(IPC.SLOT_LOCK_SET, (_event, next: boolean) => {
+    setSlotLock(!!next, getMainWindow());
+    return getSlotLock();
   });
 
   // ── View 间消息路由（双工，宽松模式） ──

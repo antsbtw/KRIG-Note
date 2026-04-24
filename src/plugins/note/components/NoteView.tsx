@@ -54,6 +54,10 @@ declare const viewAPI: {
   sendToOtherSlot: (message: any) => void;
   onMessage: (callback: (message: any) => void) => () => void;
   getMyRole: () => Promise<'primary' | 'companion' | null>;
+  // Slot 位置锁
+  getSlotLock: () => Promise<boolean>;
+  setSlotLock: (next: boolean) => Promise<boolean>;
+  onSlotLockChanged: (callback: (locked: boolean) => void) => () => void;
   // AI Sync
   aiExtractionCacheWrite?: (payload: any) => Promise<any>;
 };
@@ -68,6 +72,8 @@ export function NoteView() {
   // is created/opened.
   const [libraryEmpty, setLibraryEmpty] = useState(false);
   const [hasActiveNote, setHasActiveNote] = useState(false);
+  const [slotLocked, setSlotLocked] = useState(false);
+  const slotLockedRef = useRef(false);
   // Step 1（feature/noteview-layer-refactor）：捕获 NoteEditor handle
   const editorHandleRef = useRef<NoteEditorHandle | null>(null);
   // Step 4 修复：handle 就绪前到达的 noteOpenInEditor 需要延迟处理，
@@ -621,6 +627,19 @@ export function NoteView() {
     };
   }, []);
 
+  // ── Slot 位置锁（session 级） ──
+  useEffect(() => {
+    viewAPI.getSlotLock().then((v) => {
+      slotLockedRef.current = v;
+      setSlotLocked(v);
+    });
+    const unsub = viewAPI.onSlotLockChanged((v) => {
+      slotLockedRef.current = v;
+      setSlotLocked(v);
+    });
+    return unsub;
+  }, []);
+
   // ── 锚定同步：eBook↔Note ──
   // 规则：左主右从 — 只有位于 left slot 的 View 发射 anchor-sync，
   // right slot 仅被动跟随。避免编辑对齐时的反射抖动。
@@ -633,8 +652,10 @@ export function NoteView() {
     viewAPI.getMyRole().then((side) => { slotSideRef.current = side; });
 
     // 1) 接收 anchor-sync → 滚动到对应 fromPage（两侧都接收）
+    //    锁定态下接收端也忽略，避免对面老版本/残留消息拖动本侧位置
     const unsubMessage = viewAPI.onMessage((message: any) => {
       if (message?.action !== 'anchor-sync') return;
+      if (slotLockedRef.current) return;
       const { anchorType, pdfPage } = message.payload || {};
       if (anchorType === 'pdf-page' && typeof pdfPage === 'number') {
         const anchors = document.querySelectorAll<HTMLElement>('[data-from-page]');
@@ -658,6 +679,7 @@ export function NoteView() {
     // 2) 滚动时发送 anchor-sync（仅 primary View，且不在被动滚动抑制窗内）
     const handleScroll = () => {
       if (slotSideRef.current !== 'primary') return;
+      if (slotLockedRef.current) return; // 位置锁：切断 left → right 的位置联动
       if (Date.now() < suppressUntil) return;
       if (scrollTimer) clearTimeout(scrollTimer);
       scrollTimer = setTimeout(() => {
@@ -753,6 +775,16 @@ export function NoteView() {
           loadItems={loadNoteList}
           onSelect={handleOpenNote}
         />
+        <button
+          style={{
+            ...styles.toolbarIconBtn,
+            ...(slotLocked ? styles.toolbarIconBtnActive : null),
+          }}
+          onClick={() => viewAPI.setSlotLock(!slotLocked)}
+          title={slotLocked ? '已锁定位置：两侧独立滚动（点击恢复联动）' : '联动中：left 滚动时 right 跟随（点击锁定）'}
+        >
+          🔄
+        </button>
         <SlotToggle />
         <button
           style={styles.closeSlotBtn}
@@ -860,6 +892,10 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '0 8px',
     cursor: 'pointer',
     flexShrink: 0,
+  },
+  toolbarIconBtnActive: {
+    background: '#3a5a9e',
+    borderColor: '#6b8ec6',
   },
   contentWrap: {
     flex: 1,

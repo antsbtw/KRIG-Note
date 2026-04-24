@@ -39,6 +39,21 @@ export function EBookView() {
   const [restorePage, setRestorePage] = useState<number | null>(null);
   const [annotationMode, setAnnotationMode] = useState<'off' | 'rect' | 'underline'>('off');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [slotLocked, setSlotLocked] = useState(false);
+  const slotLockedRef = useRef(false);
+
+  // Slot 位置锁（session 级；锁定时切断 anchor-sync 发送/接收）
+  useEffect(() => {
+    (viewAPI as any).getSlotLock?.().then((v: boolean) => {
+      slotLockedRef.current = v;
+      setSlotLocked(v);
+    });
+    const unsub = (viewAPI as any).onSlotLockChanged?.((v: boolean) => {
+      slotLockedRef.current = v;
+      setSlotLocked(v);
+    });
+    return unsub;
+  }, []);
 
   // FixedPageContent 跳转回调（替代 CustomEvent）
   const gotoPageRef = useRef<((page: number) => void) | null>(null);
@@ -102,6 +117,7 @@ export function EBookView() {
 
   const sendAnchorSync = useCallback((page: number) => {
     if (slotSideRef.current !== 'primary') return;
+    if (slotLockedRef.current) return; // 位置锁：切断 left → right 的位置联动
     if (anchorSyncTimerRef.current) clearTimeout(anchorSyncTimerRef.current);
     anchorSyncTimerRef.current = setTimeout(() => {
       (viewAPI as any).sendToOtherSlot({
@@ -228,6 +244,7 @@ export function EBookView() {
     const unsub = (viewAPI as any).onMessage((message: any) => {
       console.log('[EBookView:anchor] onMessage received:', JSON.stringify(message));
       if (message?.action !== 'anchor-sync') return;
+      if (slotLockedRef.current) return; // 位置锁：接收端也忽略
       const { anchorType, pdfPage } = message.payload || {};
       if (anchorType === 'pdf-page' && typeof pdfPage === 'number' && pdfPage > 0) {
         console.log(`[EBookView:anchor] Jumping to page ${pdfPage}`);
@@ -357,6 +374,8 @@ export function EBookView() {
         onBookmarkToggle={() => toggleBookmark(currentPage)}
         onExtract={handleExtract}
         onCloseSlot={() => (viewAPI as any).closeSelf()}
+        slotLocked={slotLocked}
+        onSlotLockToggle={() => (viewAPI as any).setSlotLock?.(!slotLocked)}
       />
 
       <SearchBar
