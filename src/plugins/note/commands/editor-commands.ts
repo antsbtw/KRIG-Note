@@ -134,13 +134,18 @@ export function deleteBlockAt(view: EditorView, pos: number): boolean {
  * 触发方式：block-selection Delete/Backspace、cut
  */
 export function deleteBlocks(view: EditorView, positions: number[]): void {
+  // 从后往前：删除早期位置不会影响还未处理的较晚位置。
+  // 每步用 tr.mapping 把原 pos 映射到当前 tr.doc 的对应位置，再用 computeCascadeDeleteRange
+  // 计算实际删除范围（若 list/toggle/callout 等容器因此变空，连壳一起删）。
   const sorted = [...positions].sort((a, b) => b - a);
   let tr = view.state.tr;
-  for (const pos of sorted) {
-    const node = tr.doc.nodeAt(pos);
-    if (node) {
-      tr.delete(pos, pos + node.nodeSize);
-    }
+  for (const originalPos of sorted) {
+    const mappedPos = tr.mapping.map(originalPos, 1);
+    // 可能已被上一轮 cascade 吞掉
+    if (!tr.doc.nodeAt(mappedPos)) continue;
+    const range = computeCascadeDeleteRange(tr.doc, mappedPos);
+    if (!range) continue;
+    tr.delete(range.from, range.to);
   }
   if (tr.doc.childCount === 0) {
     tr.insert(0, view.state.schema.nodes.textBlock.create());
