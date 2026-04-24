@@ -545,7 +545,9 @@ function unwrapFromContainer(
   const { state } = view;
   const { $from } = state.selection;
 
+  const containerNode = $from.node(containerDepth);
   const containerStart = $from.before(containerDepth);
+  const containerEnd = $from.after(containerDepth);
   const childStart = $from.before(childDepth);
   const childEnd = $from.after(childDepth);
   const childNode = $from.parent;
@@ -555,16 +557,14 @@ function unwrapFromContainer(
   // 复制当前 textBlock
   const copy = childNode.copy(childNode.content);
 
-  // 从 Container 中删除
-  tr = tr.delete(childStart, childEnd);
-
-  // 检查容器是否变空
-  const updatedContainer = tr.doc.nodeAt(containerStart);
-  if (updatedContainer && updatedContainer.content.size === 0) {
-    // 容器空了 → 替换容器为 textBlock
-    tr = tr.replaceWith(containerStart, containerStart + updatedContainer.nodeSize, copy);
+  // 判断容器是否仅剩此一个子节点（content: 'block+' 删空后 PM 会自动补一个空 block，
+  // 所以必须在删除前判断，不能事后读节点内容大小）
+  if (containerNode.childCount === 1) {
+    // 容器仅此一子 → 整个替换为 textBlock
+    tr = tr.replaceWith(containerStart, containerEnd, copy);
   } else {
-    // 容器还有内容 → 在容器前插入 textBlock
+    // 容器还有其它子节点 → 删掉当前子 + 在容器前插入 textBlock
+    tr = tr.delete(childStart, childEnd);
     tr = tr.insert(containerStart, copy);
   }
 
