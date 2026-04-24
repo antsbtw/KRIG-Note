@@ -181,6 +181,8 @@ export const mathInlineBlock: BlockDef = {
     attrs: { latex: { default: '' } },
     parseDOM: [{ tag: 'span.math-inline' }],
     toDOM() { return ['span', { class: 'math-inline' }]; },
+    // atom 节点无 text 子节点，textBetween/复制成纯文本时会被跳过 → 通过 leafText 暴露源码
+    leafText: (node) => `$${node.attrs.latex as string}$`,
   },
   nodeView: mathInlineNodeView,
   capabilities: {},
