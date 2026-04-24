@@ -189,19 +189,26 @@ export function HandleMenu({ view }: HandleMenuProps) {
     const hasBlockContent = contentExpr.includes('block') || contentExpr.includes('Block');
     const isAtom = blockDef?.nodeSpec.atom;
 
+    // 源是 inline* 容器（paragraph/heading/textBlock）时原样搬运 inline 节点，
+    // 避免 atom（如 mathInline）被 textContent 降级为 `$...$` 字符串。
+    // 源是块容器（callout/blockquote 等）时仍走 textContent —— 嵌套容器互转
+    // 本就是信息压缩，保持既有行为。
+    const sourceIsInlineContainer = node.type.spec.content === 'inline*';
+    const inlineContent = sourceIsInlineContainer
+      ? node.content
+      : (node.textContent ? schema.text(node.textContent) : null);
+
     let newNode;
 
     if (item.blockName === 'textBlock') {
-      // → textBlock: 保留文本内容
-      const text = node.textContent;
-      newNode = text
-        ? schema.nodes.textBlock.create(item.attrs ?? null, schema.text(text))
+      // → textBlock: 保留 inline 内容
+      newNode = inlineContent
+        ? schema.nodes.textBlock.create(item.attrs ?? null, inlineContent)
         : schema.nodes.textBlock.create(item.attrs ?? null);
     } else if (item.blockName === 'taskList') {
       const nowISO = new Date().toISOString();
-      const text = node.textContent;
-      const inner = text
-        ? schema.nodes.textBlock.create(null, schema.text(text))
+      const inner = inlineContent
+        ? schema.nodes.textBlock.create(null, inlineContent)
         : schema.nodes.textBlock.create();
       const taskItem = schema.nodes.taskItem.create({ createdAt: nowISO }, [inner]);
       newNode = nodeType.create(null, [taskItem]);
@@ -216,9 +223,8 @@ export function HandleMenu({ view }: HandleMenuProps) {
     } else if (item.blockName === 'columnList') {
       const colCount = (item.attrs?.columns as number) || 2;
       const columns = [];
-      const text = node.textContent;
-      const firstContent = text
-        ? [schema.nodes.textBlock.create(null, schema.text(text))]
+      const firstContent = inlineContent
+        ? [schema.nodes.textBlock.create(null, inlineContent)]
         : [schema.nodes.textBlock.create()];
       columns.push(schema.nodes.column.create(null, firstContent));
       for (let i = 1; i < colCount; i++) {
@@ -226,7 +232,7 @@ export function HandleMenu({ view }: HandleMenuProps) {
       }
       newNode = nodeType.create({ columns: colCount }, columns);
     } else if (nodeType.spec.content === 'text*' || item.blockName === 'codeBlock') {
-      // codeBlock: 保留文本
+      // codeBlock 目标是 text*，只能装纯文本 —— 走 textContent 降维
       const text = node.textContent;
       newNode = text
         ? nodeType.create(item.attrs ?? null, schema.text(text))
@@ -234,9 +240,8 @@ export function HandleMenu({ view }: HandleMenuProps) {
     } else if (isAtom) {
       newNode = nodeType.create(item.attrs ?? null);
     } else if (isContainer || hasBlockContent) {
-      const text = node.textContent;
-      const inner = text
-        ? schema.nodes.textBlock.create(null, schema.text(text))
+      const inner = inlineContent
+        ? schema.nodes.textBlock.create(null, inlineContent)
         : schema.nodes.textBlock.create();
       newNode = nodeType.create(item.attrs ?? null, [inner]);
     } else {
