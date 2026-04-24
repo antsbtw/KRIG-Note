@@ -5,6 +5,7 @@
  * 智能插入位置：
  * - 当前在空 textBlock → 替换为 image
  * - 否则 → 在当前 block 之后插入
+ * 用 $from.depth 定位当前 block，能正确处理 2column 等嵌套容器。
  */
 
 import { Plugin } from 'prosemirror-state';
@@ -54,8 +55,10 @@ export function pasteMediaPlugin(): Plugin {
           if (!captionNode) return;
           const imageNode = schema.nodes.image.create({ src: dataUrl }, captionNode);
 
-          // 智能插入位置
-          const blockPos = $from.before(1);
+          // 智能插入位置：用 $from.depth 而非硬编码 1，
+          // 这样在 2column 等嵌套容器里也能落到"当前光标所在的那一段/那一列"。
+          const depth = Math.max(1, $from.depth);
+          const blockPos = $from.before(depth);
           const blockNode = state.doc.nodeAt(blockPos);
 
           let tr = state.tr;
