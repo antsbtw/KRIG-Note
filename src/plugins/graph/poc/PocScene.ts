@@ -21,7 +21,9 @@ export class PocScene {
   private hoveredGroup: THREE.Group | null = null;
   onHoverChange?: (id: string | null) => void;
 
-  perfStats = { lastNodeMs: 0, totalNodes: 0, totalSetupMs: 0 };
+  perfStats = { lastNodeMs: 0, totalNodes: 0, totalSetupMs: 0, fps: 0 };
+  private fpsFrames = 0;
+  private fpsLastT = performance.now();
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -60,6 +62,14 @@ export class PocScene {
   private startLoop = () => {
     const tick = () => {
       this.renderer.render(this.scene, this.camera);
+      this.fpsFrames++;
+      const now = performance.now();
+      const dt = now - this.fpsLastT;
+      if (dt >= 500) {
+        this.perfStats.fps = (this.fpsFrames * 1000) / dt;
+        this.fpsFrames = 0;
+        this.fpsLastT = now;
+      }
       this.rafId = requestAnimationFrame(tick);
     };
     tick();

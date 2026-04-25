@@ -1,15 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { PocScene } from './PocScene';
+import { generateNodes } from './sample-generator';
 import type { PocNode } from './types';
 
-const SAMPLE_NODES: PocNode[] = [
-  // 单行西文
+const SHOWCASE_NODES: PocNode[] = [
   {
     id: 'n1',
     position: { x: -360, y: 100 },
     atoms: [{ type: 'textBlock', content: [{ type: 'text', text: 'Hello PoC' }] }],
   },
-  // 文字 + 简单 inline 公式
   {
     id: 'n2',
     position: { x: -120, y: 100 },
@@ -23,13 +22,11 @@ const SAMPLE_NODES: PocNode[] = [
       },
     ],
   },
-  // 中文 + 中英混排
   {
     id: 'n3',
     position: { x: 120, y: 100 },
     atoms: [{ type: 'textBlock', content: [{ type: 'text', text: '中文 mixed 测试 ABC' }] }],
   },
-  // 复杂 inline 公式（开方 + 分数）
   {
     id: 'n4',
     position: { x: 360, y: 100 },
@@ -43,7 +40,6 @@ const SAMPLE_NODES: PocNode[] = [
       },
     ],
   },
-  // 多行 textBlock + display math（重头戏）
   {
     id: 'n5',
     position: { x: -120, y: -80 },
@@ -53,18 +49,21 @@ const SAMPLE_NODES: PocNode[] = [
       { type: 'textBlock', content: [{ type: 'text', text: '当 n→∞ 时收敛于 π²/6' }] },
     ],
   },
-  // 矩阵
   {
     id: 'n6',
     position: { x: 220, y: -80 },
     atoms: [
       { type: 'textBlock', content: [{ type: 'text', text: '矩阵示例：' }] },
-      {
-        type: 'mathBlock',
-        attrs: { tex: '\\begin{pmatrix} a & b \\\\ c & d \\end{pmatrix}' },
-      },
+      { type: 'mathBlock', attrs: { tex: '\\begin{pmatrix} a & b \\\\ c & d \\end{pmatrix}' } },
     ],
   },
+];
+
+const PRESETS: Array<{ label: string; build: () => PocNode[] }> = [
+  { label: '6 (showcase)', build: () => SHOWCASE_NODES },
+  { label: '50', build: () => generateNodes(50) },
+  { label: '100', build: () => generateNodes(100) },
+  { label: '200', build: () => generateNodes(200) },
 ];
 
 export function PocPanel() {
@@ -73,6 +72,8 @@ export function PocPanel() {
   const [stats, setStats] = useState<string>('initializing...');
   const [error, setError] = useState<string | null>(null);
   const [hoverId, setHoverId] = useState<string | null>(null);
+  const [fps, setFps] = useState<number>(0);
+  const [presetIdx, setPresetIdx] = useState(0);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -80,12 +81,16 @@ export function PocPanel() {
     sceneRef.current = scene;
     scene.onHoverChange = (id) => setHoverId(id);
 
+    const nodes = PRESETS[presetIdx].build();
+    setStats(`loading ${nodes.length} nodes...`);
+    setError(null);
+
     scene
-      .loadNodes(SAMPLE_NODES)
+      .loadNodes(nodes)
       .then(() => {
         const { lastNodeMs, totalNodes, totalSetupMs } = scene.perfStats;
         setStats(
-          `loaded ${totalNodes} nodes in ${totalSetupMs.toFixed(1)}ms (last: ${lastNodeMs.toFixed(1)}ms)`,
+          `${totalNodes} nodes · setup ${totalSetupMs.toFixed(0)}ms · avg ${(totalSetupMs / totalNodes).toFixed(1)}ms · last ${lastNodeMs.toFixed(1)}ms`,
         );
       })
       .catch((e: Error) => {
@@ -93,11 +98,16 @@ export function PocPanel() {
         setError(e.message ?? String(e));
       });
 
+    const fpsTimer = window.setInterval(() => {
+      setFps(scene.perfStats.fps);
+    }, 500);
+
     return () => {
+      window.clearInterval(fpsTimer);
       scene.dispose();
       sceneRef.current = null;
     };
-  }, []);
+  }, [presetIdx]);
 
   return (
     <div style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column' }}>
@@ -112,6 +122,7 @@ export function PocPanel() {
           display: 'flex',
           alignItems: 'center',
           gap: 12,
+          flexWrap: 'wrap',
         }}
       >
         <button
@@ -120,24 +131,41 @@ export function PocPanel() {
             url.searchParams.delete('poc');
             window.location.href = url.toString();
           }}
-          style={{
-            background: '#333',
-            color: '#ccc',
-            border: '1px solid #555',
-            padding: '2px 8px',
-            borderRadius: 3,
-            fontFamily: 'inherit',
-            fontSize: 11,
-            cursor: 'pointer',
-          }}
+          style={btnStyle()}
         >
           ← 返回 GraphView
         </button>
-        <span>Graph 3D PoC · {stats}</span>
+        <span style={{ color: '#888' }}>preset:</span>
+        {PRESETS.map((p, i) => (
+          <button
+            key={p.label}
+            onClick={() => setPresetIdx(i)}
+            style={btnStyle(i === presetIdx)}
+          >
+            {p.label}
+          </button>
+        ))}
+        <span style={{ marginLeft: 8 }}>{stats}</span>
+        <span style={{ color: fps >= 55 ? '#7c7' : fps >= 30 ? '#fc7' : '#f77' }}>
+          {fps.toFixed(0)} fps
+        </span>
         {hoverId && <span style={{ color: '#ffaa3b' }}>hover: {hoverId}</span>}
         {error && <span style={{ color: '#f55', marginLeft: 'auto' }}>error: {error}</span>}
       </div>
       <div ref={containerRef} style={{ flex: 1, position: 'relative', overflow: 'hidden' }} />
     </div>
   );
+}
+
+function btnStyle(active = false): React.CSSProperties {
+  return {
+    background: active ? '#3a4a5a' : '#333',
+    color: active ? '#fff' : '#ccc',
+    border: '1px solid ' + (active ? '#5a7090' : '#555'),
+    padding: '2px 8px',
+    borderRadius: 3,
+    fontFamily: 'inherit',
+    fontSize: 11,
+    cursor: 'pointer',
+  };
 }
