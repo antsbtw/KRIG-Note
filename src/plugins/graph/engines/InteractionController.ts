@@ -12,6 +12,9 @@ import type { ViewportController } from './ViewportController';
  * - 单击空白（无拖动）→ 取消选中
  *
  * 所有"产生数据变更"的动作通过回调通知外部（GraphEngine 再走 CommandStack）。
+ *
+ * v1.3 § 3.1：节点是 THREE.Group（含 shape mesh 和 content obj），
+ * raycaster 命中目标是 group.children[0] (shape mesh)。
  */
 
 const EDGE_HANDLE_RATIO = 0.7;  // 距离中心 > radius * 0.7 算边缘（连接点）
@@ -64,8 +67,8 @@ export class InteractionController {
     private camera: THREE.OrthographicCamera,
     private scene: THREE.Scene,
     private viewport: ViewportController,
-    private getNodeMeshes: () => Map<string, THREE.Mesh>,
-    private getNodeRadius: (mesh: THREE.Mesh) => number,
+    private getNodeGroups: () => Map<string, THREE.Group>,
+    private getNodeRadius: (group: THREE.Group) => number,
     private callbacks: InteractionCallbacks,
   ) {
     this.boundMouseDown = this.onMouseDown.bind(this);
@@ -99,18 +102,24 @@ export class InteractionController {
     this.mouse.y = -((screenY - rect.top) / rect.height) * 2 + 1;
     this.raycaster.setFromCamera(this.mouse, this.camera);
 
-    const meshes = Array.from(this.getNodeMeshes().values());
-    const hits = this.raycaster.intersectObjects(meshes, false);
+    // 命中目标 = 每个 group 的第一个 child（shape mesh）
+    const shapeMeshes: THREE.Object3D[] = [];
+    for (const group of this.getNodeGroups().values()) {
+      const shape = group.children[0];
+      if (shape) shapeMeshes.push(shape);
+    }
+    const hits = this.raycaster.intersectObjects(shapeMeshes, false);
     if (hits.length === 0) return null;
-    const top = hits[0].object;
-    return (top.userData?.nodeId as string) ?? null;
+    // 命中的 shape mesh 的 parent 就是 group
+    const group = hits[0].object.parent;
+    return (group?.userData?.nodeId as string) ?? null;
   }
 
   /** 在节点上点击时，命中点距中心 > radius*RATIO 算边缘（用于拖出新边） */
-  private isOnNodeEdge(mesh: THREE.Mesh, worldX: number, worldY: number): boolean {
-    const cx = mesh.position.x;
-    const cy = mesh.position.y;
-    const r = this.getNodeRadius(mesh);
+  private isOnNodeEdge(group: THREE.Group, worldX: number, worldY: number): boolean {
+    const cx = group.position.x;
+    const cy = group.position.y;
+    const r = this.getNodeRadius(group);
     const d = Math.hypot(worldX - cx, worldY - cy);
     return d > r * EDGE_HANDLE_RATIO;
   }
@@ -124,16 +133,16 @@ export class InteractionController {
     e.preventDefault();
     e.stopPropagation();
 
-    const mesh = this.getNodeMeshes().get(nodeId)!;
+    const group = this.getNodeGroups().get(nodeId)!;
     const world = this.viewport.screenToWorld(e.clientX, e.clientY);
 
     this.dragNodeId = nodeId;
     this.dragStartScreen = { x: e.clientX, y: e.clientY };
     this.dragStartWorld = world;
-    this.dragNodeStart = { x: mesh.position.x, y: mesh.position.y };
+    this.dragNodeStart = { x: group.position.x, y: group.position.y };
     this.dragMoved = false;
 
-    if (this.isOnNodeEdge(mesh, world.x, world.y)) {
+    if (this.isOnNodeEdge(group, world.x, world.y)) {
       this.dragMode = 'edge';
       this.domElement.style.cursor = 'crosshair';
     } else {
@@ -185,13 +194,13 @@ export class InteractionController {
       this.setHoverState('none', null);
       return;
     }
-    const mesh = this.getNodeMeshes().get(nodeId);
-    if (!mesh) {
+    const group = this.getNodeGroups().get(nodeId);
+    if (!group) {
       this.setHoverState('none', null);
       return;
     }
     const world = this.viewport.screenToWorld(e.clientX, e.clientY);
-    if (this.isOnNodeEdge(mesh, world.x, world.y)) {
+    if (this.isOnNodeEdge(group, world.x, world.y)) {
       this.setHoverState('node-edge', nodeId);
     } else {
       this.setHoverState('node-center', nodeId);
@@ -212,16 +221,16 @@ export class InteractionController {
 
     // 高亮环：仅在 node-edge 时显示
     if (next === 'node-edge' && nodeId) {
-      const mesh = this.getNodeMeshes().get(nodeId);
-      if (mesh) this.showHoverRing(mesh);
+      const group = this.getNodeGroups().get(nodeId);
+      if (group) this.showHoverRing(group);
     } else {
       this.hideHoverRing();
     }
   }
 
-  private showHoverRing(targetMesh: THREE.Mesh): void {
+  private showHoverRing(targetGroup: THREE.Group): void {
     this.hideHoverRing();
-    const radius = this.getNodeRadius(targetMesh);
+    const radius = this.getNodeRadius(targetGroup);
     // 环：内径 = radius+1，外径 = radius+5（节点边缘外一圈）
     const geo = new THREE.RingGeometry(radius + 1, radius + 5, 48);
     const mat = new THREE.MeshBasicMaterial({
@@ -231,7 +240,7 @@ export class InteractionController {
       side: THREE.DoubleSide,
     });
     const ring = new THREE.Mesh(geo, mat);
-    ring.position.set(targetMesh.position.x, targetMesh.position.y, 0.5);
+    ring.position.set(targetGroup.position.x, targetGroup.position.y, 0.5);
     ring.userData = { kind: 'hover-ring' };
     this.scene.add(ring);
     this.hoverRing = ring;
