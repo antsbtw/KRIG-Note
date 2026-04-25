@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { BasicEngine } from '../engines/BasicEngine';
 import type { GraphNode, GraphEdge, Atom, ChangeEvent } from '../engines/GraphEngine';
-import { ensureAtomLabel, makeTextLabel, extractPlainText } from '../engines/GraphEngine';
+import { ensureAtomLabel } from '../engines/GraphEngine';
+import { openNodeEditor } from './NodeEditorPopup';
 
 // ── DB 持久化形态（v1.2：label 字段是 atom 数组，但兼容 v1.1 的 string） ──
 
@@ -165,9 +166,9 @@ export function GraphView() {
     });
     ro.observe(containerRef.current);
 
-    // 双击 label DOM → 替换成 input → 提交时调 engine.setNodeLabel/setEdgeLabel
-    // spec v1.2 之后 label DOM 内层是 ProseMirror 渲染的 <p> 等节点，
-    // 用 closest 沿父链找带 dataset.kind 的外层容器
+    // 双击 label DOM → 弹出 ProseMirror 编辑器（spec v1.2 § 7.2）
+    // 用户可写任意 Block 类型：textBlock / mathBlock / codeBlock / bulletList 等
+    // 提交时 atom 数组整体写回；底层数据形态 = Atom[]，不丢失非文本内容
     const containerEl = containerRef.current;
     const onDblClick = (e: MouseEvent) => {
       const raw = e.target as HTMLElement | null;
@@ -177,31 +178,41 @@ export function GraphView() {
       const eng = engineRef.current;
       if (!eng) return;
 
-      // 双击 label 进入纯文本编辑模式（v1.2 第一段）。
-      // 提交后用 makeTextLabel 包成 textBlock atom，整体替换原 atom 数组。
-      // 注：这丢失原 atom 数组里的非文本内容（如 mathBlock）。完整 ProseMirror
-      //   编辑器会在 P1 v1.2 第二段加入。
       if (kind === 'node-label' && target.dataset.nodeId) {
         e.preventDefault();
         e.stopPropagation();
         const nid = target.dataset.nodeId;
+        const node = eng.getNodes().find((n) => n.id === nid);
+        if (!node) return;
         eng.setNodeLabelVisible(nid, false);
-        editLabelInPlace(target, target.textContent ?? '', (newText) => {
-          eng.setNodeLabelVisible(nid, true);
-          eng.setNodeLabel(nid, makeTextLabel(newText));
-        }, () => {
-          eng.setNodeLabelVisible(nid, true);
+        openNodeEditor({
+          anchor: target,
+          initial: node.label,
+          onCommit: (next) => {
+            eng.setNodeLabelVisible(nid, true);
+            eng.setNodeLabel(nid, next);
+          },
+          onCancel: () => {
+            eng.setNodeLabelVisible(nid, true);
+          },
         });
       } else if (kind === 'edge-label' && target.dataset.edgeId) {
         e.preventDefault();
         e.stopPropagation();
         const eid = target.dataset.edgeId;
+        const edge = eng.getEdges().find((ed) => ed.id === eid);
+        if (!edge) return;
         eng.setEdgeLabelVisible(eid, false);
-        editLabelInPlace(target, target.textContent ?? '', (newText) => {
-          eng.setEdgeLabelVisible(eid, true);
-          eng.setEdgeLabel(eid, makeTextLabel(newText));
-        }, () => {
-          eng.setEdgeLabelVisible(eid, true);
+        openNodeEditor({
+          anchor: target,
+          initial: edge.label,
+          onCommit: (next) => {
+            eng.setEdgeLabelVisible(eid, true);
+            eng.setEdgeLabel(eid, next);
+          },
+          onCancel: () => {
+            eng.setEdgeLabelVisible(eid, true);
+          },
         });
       }
     };
@@ -387,82 +398,8 @@ async function persistChange(graphId: string, engine: BasicEngine, event: Change
   }
 }
 
-// ── Label inline 编辑 ──
-
-/**
- * 把一个 label DOM 临时替换成 input；blur/Enter 提交、Esc 取消。
- * 注意：CSS2DRenderer 每帧覆盖 label.style.display，所以隐藏 label 不能靠
- * 改 display，要让调用方改 CSS2DObject.visible。这里我们直接把 input 放在
- * label 旁边（label 已被 visible=false 隐藏），不再 try to hide label。
- */
-function editLabelInPlace(
-  labelEl: HTMLElement,
-  initial: string,
-  onCommit: (newText: string) => void,
-  onCancel?: () => void,
-): void {
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.value = initial;
-  // 复制原 label 的样式
-  input.style.cssText = labelEl.style.cssText;
-  input.style.cursor = 'text';
-  input.style.outline = '1px solid #4a90e2';
-  input.style.minWidth = '60px';
-  input.style.font = 'inherit';
-  // 用绝对定位让 input 出现在 label 原位
-  // labelEl 已被 CSS2DRenderer 设 transform 定位；input 作为兄弟节点直接
-  // 复用 labelEl 的 transform 效果有点 hack，更稳的做法是用 fixed + 计算
-  // labelEl 的 boundingClientRect
-  const rect = labelEl.getBoundingClientRect();
-  input.style.position = 'fixed';
-  input.style.left = `${rect.left}px`;
-  input.style.top = `${rect.top}px`;
-  input.style.transform = 'none';
-  input.style.zIndex = '1000';
-
-  document.body.appendChild(input);
-  input.focus();
-  input.select();
-
-  // 点击 input 外部（画布、其他 UI）也算确认。
-  // 用 capture 阶段监听 window，确保 ViewportController 的 e.preventDefault()
-  // 不会阻止我们感知到外部点击。
-  const onOutsideMouseDown = (ev: MouseEvent) => {
-    if (ev.target === input) return;
-    commit();
-  };
-
-  let committed = false;
-  const cleanup = () => {
-    window.removeEventListener('mousedown', onOutsideMouseDown, true);
-    if (input.parentElement) input.parentElement.removeChild(input);
-  };
-  const commit = () => {
-    if (committed) return;
-    committed = true;
-    cleanup();
-    onCommit(input.value);
-  };
-  const cancel = () => {
-    if (committed) return;
-    committed = true;
-    cleanup();
-    onCancel?.();
-  };
-
-  input.addEventListener('blur', commit);
-  input.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
-    else if (ev.key === 'Escape') { ev.preventDefault(); cancel(); }
-  });
-
-  // 注：dblclick 触发后立刻挂监听会被那次的 mouseup 触发误关闭。
-  // 用 setTimeout 延迟到下个事件循环挂监听。
-  setTimeout(() => {
-    if (!committed) window.addEventListener('mousedown', onOutsideMouseDown, true);
-  }, 0);
-}
+// 注：v1.2 之前的 editLabelInPlace（input 框单行编辑）已废弃，
+// 编辑入口统一改为 NodeEditorPopup 的 ProseMirror 弹窗。
 
 // ── UI 组件 ──
 
