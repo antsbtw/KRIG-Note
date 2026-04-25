@@ -166,9 +166,12 @@ export function GraphView() {
     ro.observe(containerRef.current);
 
     // 双击 label DOM → 替换成 input → 提交时调 engine.setNodeLabel/setEdgeLabel
+    // spec v1.2 之后 label DOM 内层是 ProseMirror 渲染的 <p> 等节点，
+    // 用 closest 沿父链找带 dataset.kind 的外层容器
     const containerEl = containerRef.current;
     const onDblClick = (e: MouseEvent) => {
-      const target = e.target as HTMLElement | null;
+      const raw = e.target as HTMLElement | null;
+      const target = raw?.closest('[data-kind]') as HTMLElement | null;
       if (!target?.dataset?.kind) return;
       const kind = target.dataset.kind;
       const eng = engineRef.current;
