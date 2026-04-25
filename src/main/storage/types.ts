@@ -117,4 +117,34 @@ export interface IGraphStore {
   setVariant(id: string, variant: GraphVariant): Promise<void>;
   setHostNote(id: string, hostNoteId: string | null): Promise<void>;
   delete(id: string): Promise<void>;
+
+  // ── 节点/边 CRUD ──
+  loadGraphData(graphId: string): Promise<{ nodes: GraphNodeRecord[]; edges: GraphEdgeRecord[] }>;
+  saveNode(node: GraphNodeRecord): Promise<void>;
+  saveEdge(edge: GraphEdgeRecord): Promise<void>;
+  deleteNode(graphId: string, nodeId: string): Promise<void>;
+  deleteEdge(graphId: string, edgeId: string): Promise<void>;
+}
+
+// ── Graph 节点/边记录（持久化层）──
+
+export interface GraphNodeRecord {
+  id: string;
+  graph_id: string;
+  type: string;
+  label: string;
+  position_x: number;
+  position_y: number;
+  block_ids?: string[];
+  meta?: Record<string, unknown>;
+}
+
+export interface GraphEdgeRecord {
+  id: string;
+  graph_id: string;
+  type?: string;
+  source: string;
+  target: string;
+  label?: string;
+  meta?: Record<string, unknown>;
 }

@@ -27,12 +27,6 @@ export class CommandStack {
     this.redoStack.length = 0;
   }
 
-  /** 不执行 execute，仅入栈（用于"动作已经发生过、只是登记可撤销"的场景，比如交互拖拽完成时） */
-  push(cmd: Command): void {
-    this.undoStack.push(cmd);
-    this.redoStack.length = 0;
-  }
-
   undo(): boolean {
     const cmd = this.undoStack.pop();
     if (!cmd) return false;

@@ -350,6 +350,12 @@ export const IPC = {
   GRAPH_LIST_CHANGED: 'graph:list-changed',  // main → renderer 广播
   GRAPH_SET_ACTIVE: 'graph:set-active',      // navside → main：设置当前 workspace 的 activeGraphId
   GRAPH_ACTIVE_CHANGED: 'graph:active-changed',  // main → renderer：activeGraphId 变化（GraphView/NavSide 监听）
+  // 节点/边 CRUD（GraphView ↔ main）
+  GRAPH_LOAD_DATA: 'graph:load-data',        // GraphView → main：加载某图的 nodes+edges
+  GRAPH_NODE_SAVE: 'graph:node-save',
+  GRAPH_NODE_DELETE: 'graph:node-delete',
+  GRAPH_EDGE_SAVE: 'graph:edge-save',
+  GRAPH_EDGE_DELETE: 'graph:edge-delete',
 
   // Web Translate
   WEB_TRANSLATE_FETCH_ELEMENT_JS: 'web-translate:fetch-element-js',

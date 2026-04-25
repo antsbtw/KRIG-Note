@@ -5,7 +5,7 @@ import { workspaceManager } from '../../../main/workspace/manager';
 import { graphViewStore } from '../../../main/storage/graphview-store';
 import { activityStore } from '../../../main/storage/activity-store';
 import { isDBReady } from '../../../main/storage/client';
-import type { GraphVariant } from '../../../main/storage/types';
+import type { GraphVariant, GraphNodeRecord, GraphEdgeRecord } from '../../../main/storage/types';
 
 export function registerGraphIpcHandlers(ctx: PluginContext): void {
   const getMainWindow = ctx.getMainWindow;
@@ -88,5 +88,32 @@ export function registerGraphIpcHandlers(ctx: PluginContext): void {
     if (!active) return;
     workspaceManager.update(active.id, { activeGraphId: graphId });
     broadcastActiveChanged(graphId);
+  });
+
+  // ── 节点/边 CRUD ──
+
+  ipcMain.handle(IPC.GRAPH_LOAD_DATA, async (_event, graphId: string) => {
+    if (!isDBReady()) return { nodes: [], edges: [] };
+    return graphViewStore.loadGraphData(graphId);
+  });
+
+  ipcMain.handle(IPC.GRAPH_NODE_SAVE, async (_event, node: GraphNodeRecord) => {
+    if (!isDBReady()) return;
+    await graphViewStore.saveNode(node);
+  });
+
+  ipcMain.handle(IPC.GRAPH_NODE_DELETE, async (_event, graphId: string, nodeId: string) => {
+    if (!isDBReady()) return;
+    await graphViewStore.deleteNode(graphId, nodeId);
+  });
+
+  ipcMain.handle(IPC.GRAPH_EDGE_SAVE, async (_event, edge: GraphEdgeRecord) => {
+    if (!isDBReady()) return;
+    await graphViewStore.saveEdge(edge);
+  });
+
+  ipcMain.handle(IPC.GRAPH_EDGE_DELETE, async (_event, graphId: string, edgeId: string) => {
+    if (!isDBReady()) return;
+    await graphViewStore.deleteEdge(graphId, edgeId);
   });
 }

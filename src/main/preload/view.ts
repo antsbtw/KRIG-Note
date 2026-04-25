@@ -87,6 +87,11 @@ contextBridge.exposeInMainWorld('viewAPI', {
     ipcRenderer.on(IPC.GRAPH_ACTIVE_CHANGED, listener);
     return () => ipcRenderer.removeListener(IPC.GRAPH_ACTIVE_CHANGED, listener);
   },
+  graphLoadData: (graphId: string) => ipcRenderer.invoke(IPC.GRAPH_LOAD_DATA, graphId),
+  graphNodeSave: (node: unknown) => ipcRenderer.invoke(IPC.GRAPH_NODE_SAVE, node),
+  graphNodeDelete: (graphId: string, nodeId: string) => ipcRenderer.invoke(IPC.GRAPH_NODE_DELETE, graphId, nodeId),
+  graphEdgeSave: (edge: unknown) => ipcRenderer.invoke(IPC.GRAPH_EDGE_SAVE, edge),
+  graphEdgeDelete: (graphId: string, edgeId: string) => ipcRenderer.invoke(IPC.GRAPH_EDGE_DELETE, graphId, edgeId),
 
   // 文件对话框 + 媒体操作（通用服务）
   fileSaveDialog: (options: { defaultName: string; data: string; filters?: { name: string; extensions: string[] }[] }) =>

@@ -1,33 +1,112 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { BasicEngine } from '../engines/BasicEngine';
-import type { GraphNode, GraphEdge } from '../engines/GraphEngine';
+import type { GraphNode, GraphEdge, ChangeEvent } from '../engines/GraphEngine';
+
+interface GraphNodeRecord {
+  id: string;
+  graph_id: string;
+  type: string;
+  label: string;
+  position_x: number;
+  position_y: number;
+  block_ids?: string[];
+  meta?: Record<string, unknown>;
+}
+
+interface GraphEdgeRecord {
+  id: string;
+  graph_id: string;
+  type?: string;
+  source: string;
+  target: string;
+  label?: string;
+  meta?: Record<string, unknown>;
+}
 
 declare const viewAPI: {
   onRestoreWorkspaceState: (cb: (state: { activeGraphId?: string | null }) => void) => () => void;
   onGraphActiveChanged: (cb: (graphId: string | null) => void) => () => void;
+  graphLoadData: (graphId: string) => Promise<{ nodes: GraphNodeRecord[]; edges: GraphEdgeRecord[] }>;
+  graphNodeSave: (node: GraphNodeRecord) => Promise<void>;
+  graphNodeDelete: (graphId: string, nodeId: string) => Promise<void>;
+  graphEdgeSave: (edge: GraphEdgeRecord) => Promise<void>;
+  graphEdgeDelete: (graphId: string, edgeId: string) => Promise<void>;
 };
 
-// P1 第二段：仍是硬编码假数据（持久化留 P1 第三段）
-const DEMO_NODES: GraphNode[] = [
-  { id: 'A', type: 'concept', label: 'A' },
-  { id: 'B', type: 'concept', label: 'B' },
-  { id: 'C', type: 'concept', label: 'C' },
-  { id: 'D', type: 'concept', label: 'D' },
-];
-const DEMO_EDGES: GraphEdge[] = [
-  { id: 'e1', source: 'A', target: 'B' },
-  { id: 'e2', source: 'B', target: 'C' },
-  { id: 'e3', source: 'C', target: 'D' },
-];
+// ── 转换工具 ──
+
+function recordToNode(r: GraphNodeRecord): GraphNode {
+  return {
+    id: r.id,
+    type: r.type || 'concept',
+    label: r.label || '',
+    position: { x: r.position_x, y: r.position_y },
+  };
+}
+
+function recordToEdge(r: GraphEdgeRecord): GraphEdge {
+  return {
+    id: r.id,
+    source: r.source,
+    target: r.target,
+    label: r.label,
+  };
+}
+
+function nodeToRecord(graphId: string, n: GraphNode): GraphNodeRecord {
+  return {
+    id: n.id,
+    graph_id: graphId,
+    type: n.type,
+    label: n.label,
+    position_x: n.position?.x ?? 0,
+    position_y: n.position?.y ?? 0,
+    block_ids: [],
+    meta: {},
+  };
+}
+
+function edgeToRecord(graphId: string, e: GraphEdge): GraphEdgeRecord {
+  return {
+    id: e.id,
+    graph_id: graphId,
+    source: e.source,
+    target: e.target,
+    label: e.label,
+    meta: {},
+  };
+}
+
+// ── 新图初始种子（首次加载图为空时写入） ──
+
+function seedNodes(): GraphNode[] {
+  return [
+    { id: `n-${Date.now()}-a`, type: 'concept', label: '节点 1', position: { x: -150, y: 0 } },
+    { id: `n-${Date.now()}-b`, type: 'concept', label: '节点 2', position: { x: 0, y: 0 } },
+    { id: `n-${Date.now()}-c`, type: 'concept', label: '节点 3', position: { x: 150, y: 0 } },
+  ];
+}
+
+function seedEdges(nodes: GraphNode[]): GraphEdge[] {
+  return [
+    { id: `e-${Date.now()}-1`, source: nodes[0].id, target: nodes[1].id },
+    { id: `e-${Date.now()}-2`, source: nodes[1].id, target: nodes[2].id },
+  ];
+}
 
 export function GraphView() {
   const [activeGraphId, setActiveGraphId] = useState<string | null>(null);
   const [hasSelection, setHasSelection] = useState(false);
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const engineRef = useRef<BasicEngine | null>(null);
+  /** 每个 graphId 对应的 engine 生命周期 token，避免异步加载结果应用到旧引擎 */
+  const loadTokenRef = useRef(0);
+  /** 引导加载期间不回写（避免把刚 load 的数据再写回） */
+  const loadingRef = useRef(false);
 
   useEffect(() => {
     const unsub1 = viewAPI.onRestoreWorkspaceState((state) => {
@@ -44,17 +123,64 @@ export function GraphView() {
 
     const engine = new BasicEngine();
     engine.mount(containerRef.current);
-    engine.setData(DEMO_NODES.map((n) => ({ ...n })), DEMO_EDGES.map((e) => ({ ...e })));
-    engine.runLayout().catch((err) => console.error('[GraphView] layout failed:', err));
+    engineRef.current = engine;
 
-    // 任何变更后刷新 UI 状态
     const refreshState = () => {
       setHasSelection(engine.getSelected() !== null);
       setCanUndo(engine.canUndo());
       setCanRedo(engine.canRedo());
     };
-    engine.onChange = refreshState;
-    engineRef.current = engine;
+
+    // onChange：每次数据变更都落库
+    engine.onChange = (event: ChangeEvent) => {
+      refreshState();
+      // 引导加载期间不回写（避免把刚 load 的数据又写一遍）
+      if (loadingRef.current) return;
+      void persistChange(activeGraphId, engine, event);
+    };
+
+    // 加载图数据
+    const myToken = ++loadTokenRef.current;
+    loadingRef.current = true;
+    setLoading(true);
+
+    (async () => {
+      const data = await viewAPI.graphLoadData(activeGraphId);
+      if (myToken !== loadTokenRef.current) return;  // 已切到别的图，丢弃
+
+      let nodes: GraphNode[];
+      let edges: GraphEdge[];
+
+      if (data.nodes.length === 0 && data.edges.length === 0) {
+        // 首次打开：写入种子并 load
+        nodes = seedNodes();
+        edges = seedEdges(nodes);
+        await Promise.all([
+          ...nodes.map((n) => viewAPI.graphNodeSave(nodeToRecord(activeGraphId, n))),
+          ...edges.map((e) => viewAPI.graphEdgeSave(edgeToRecord(activeGraphId, e))),
+        ]);
+      } else {
+        nodes = data.nodes.map(recordToNode);
+        edges = data.edges.map(recordToEdge);
+      }
+
+      if (myToken !== loadTokenRef.current) return;
+      engine.setData(nodes, edges);
+      // 已有持久化坐标的节点 → 不跑布局；否则补一次自动布局
+      const hasAllPositions = nodes.every((n) => n.position);
+      if (hasAllPositions) {
+        engine.rerender();
+      } else {
+        await engine.runLayout();
+      }
+      loadingRef.current = false;
+      setLoading(false);
+      refreshState();
+    })().catch((err) => {
+      console.error('[GraphView] load failed:', err);
+      loadingRef.current = false;
+      setLoading(false);
+    });
 
     const ro = new ResizeObserver((entries) => {
       for (const entry of entries) {
@@ -64,20 +190,20 @@ export function GraphView() {
     ro.observe(containerRef.current);
 
     return () => {
+      ++loadTokenRef.current;
       ro.disconnect();
       engine.dispose();
       engineRef.current = null;
     };
-  }, [activeGraphId]);
+  }, [activeGraphId]);  // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 键盘快捷键
+  // 键盘
   useEffect(() => {
     if (!activeGraphId) return;
     const onKey = (e: KeyboardEvent) => {
       const engine = engineRef.current;
       if (!engine) return;
       const meta = e.metaKey || e.ctrlKey;
-
       if (e.key === 'Delete' || e.key === 'Backspace') {
         if (engine.getSelected()) {
           e.preventDefault();
@@ -93,14 +219,11 @@ export function GraphView() {
     return () => window.removeEventListener('keydown', onKey);
   }, [activeGraphId]);
 
-  // 工具栏 actions
   const handleAddNode = useCallback(() => {
     const engine = engineRef.current;
     if (!engine) return;
-    // 在视口中心稍偏右的位置添加（避开已有节点堆叠）
     const offset = engine.getNodes().length * 20;
-    const id = engine.createNodeAt(offset, offset, `N${engine.getNodes().length + 1}`);
-    return id;
+    engine.createNodeAt(offset, offset, `节点 ${engine.getNodes().length + 1}`);
   }, []);
 
   const handleUndo = useCallback(() => engineRef.current?.undo(), []);
@@ -133,7 +256,6 @@ export function GraphView() {
     <div style={{ position: 'relative', width: '100%', height: '100%', background: '#1e1e1e' }}>
       <div ref={containerRef} style={{ position: 'absolute', inset: 0 }} />
 
-      {/* 左上角图标签 */}
       <div
         style={{
           position: 'absolute',
@@ -148,10 +270,9 @@ export function GraphView() {
           userSelect: 'none',
         }}
       >
-        BasicEngine · {activeGraphId}
+        BasicEngine · {activeGraphId}{loading ? ' · 加载中…' : ''}
       </div>
 
-      {/* 工具栏 */}
       <div
         style={{
           position: 'absolute',
@@ -176,7 +297,6 @@ export function GraphView() {
         <ToolbarButton onClick={handleResetView} title="重置视图">⊙</ToolbarButton>
       </div>
 
-      {/* 提示文字 */}
       <div
         style={{
           position: 'absolute',
@@ -194,6 +314,43 @@ export function GraphView() {
     </div>
   );
 }
+
+// ── 持久化派发 ──
+
+async function persistChange(graphId: string, engine: BasicEngine, event: ChangeEvent): Promise<void> {
+  try {
+    switch (event.type) {
+      case 'node-added': {
+        await viewAPI.graphNodeSave(nodeToRecord(graphId, event.node));
+        break;
+      }
+      case 'node-removed': {
+        await viewAPI.graphNodeDelete(graphId, event.nodeId);
+        break;
+      }
+      case 'node-moved': {
+        const node = engine.getNodes().find((n) => n.id === event.nodeId);
+        if (node) await viewAPI.graphNodeSave(nodeToRecord(graphId, node));
+        break;
+      }
+      case 'edge-added': {
+        await viewAPI.graphEdgeSave(edgeToRecord(graphId, event.edge));
+        break;
+      }
+      case 'edge-removed': {
+        await viewAPI.graphEdgeDelete(graphId, event.edgeId);
+        break;
+      }
+      case 'selection':
+        // 选中态不持久化
+        break;
+    }
+  } catch (err) {
+    console.error('[GraphView] persist failed:', event, err);
+  }
+}
+
+// ── UI 组件 ──
 
 function ToolbarButton({
   children,

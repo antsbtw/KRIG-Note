@@ -114,7 +114,10 @@ export abstract class GraphEngine {
         onNodeDragEnd: (id, fromX, fromY, toX, toY) => {
           // 起点和终点几乎相同时不入栈（避免无意义的"移动 0 像素"撤销项）
           if (Math.hypot(toX - fromX, toY - fromY) < 1) return;
-          this.commandStack.push(new MoveNodeCommand(this, id, fromX, fromY, toX, toY));
+          // execute 而非 push：execute 会调 applyNodePosition 触发
+          // onChange('node-moved') 落库；preview 期间 mesh 已就位，
+          // applyNodePosition 内部只是把 nodes[].position 同步并重算边
+          this.commandStack.execute(new MoveNodeCommand(this, id, fromX, fromY, toX, toY));
         },
         onSelect: (id) => this.setSelected(id),
         onEdgeCreate: (sourceId, targetId) => this.addEdgeBySource(sourceId, targetId),
@@ -347,8 +350,8 @@ export abstract class GraphEngine {
 
   // ── 渲染 ──
 
-  /** 把当前 nodes / edges 渲染到 scene（清旧 + 加新） */
-  protected rerender(): void {
+  /** 把当前 nodes / edges 渲染到 scene（清旧 + 加新）。外部加载完数据后可调一次 */
+  rerender(): void {
     for (const mesh of this.nodeMeshes.values()) this.scene.remove(mesh);
     for (const group of this.edgeLines.values()) {
       this.scene.remove(group);

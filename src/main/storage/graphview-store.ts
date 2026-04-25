@@ -1,12 +1,20 @@
 import { getDB } from './client';
-import type { IGraphStore, GraphRecord, GraphListItem, GraphVariant } from './types';
+import type {
+  IGraphStore,
+  GraphRecord,
+  GraphListItem,
+  GraphVariant,
+  GraphNodeRecord,
+  GraphEdgeRecord,
+} from './types';
 
 function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function cleanRecordId(raw: unknown): string {
-  return String(raw).replace(/^graph:⟨?|⟩?$/g, '');
+  // 适配 graph: / graph_node: / graph_edge: 任意表前缀
+  return String(raw).replace(/^[a-z_]+:⟨?|⟩?$/g, '');
 }
 
 const DEFAULT_VARIANT: GraphVariant = 'knowledge';
@@ -112,6 +120,185 @@ export const graphViewStore: IGraphStore = {
   async delete(id: string): Promise<void> {
     const db = getDB();
     if (!db) return;
+    // 级联删除该图的所有节点和边
+    await db.query(`DELETE graph_node WHERE graph_id = $id`, { id });
+    await db.query(`DELETE graph_edge WHERE graph_id = $id`, { id });
     await db.query(`DELETE type::record('graph', $id)`, { id });
+  },
+
+  // ── 节点/边 CRUD ──
+
+  async loadGraphData(graphId: string): Promise<{ nodes: GraphNodeRecord[]; edges: GraphEdgeRecord[] }> {
+    const db = getDB();
+    if (!db) return { nodes: [], edges: [] };
+
+    const [nodeResult, edgeResult] = await Promise.all([
+      db.query<[GraphNodeRecord[]]>(`SELECT * FROM graph_node WHERE graph_id = $id`, { id: graphId }),
+      db.query<[GraphEdgeRecord[]]>(`SELECT * FROM graph_edge WHERE graph_id = $id`, { id: graphId }),
+    ]);
+
+    const nodes = (nodeResult[0] || []).map((r) => ({
+      id: cleanRecordId(r.id),
+      graph_id: r.graph_id,
+      type: r.type || 'concept',
+      label: r.label || '',
+      position_x: r.position_x ?? 0,
+      position_y: r.position_y ?? 0,
+      block_ids: r.block_ids ?? [],
+      meta: r.meta ?? {},
+    }));
+
+    const edges = (edgeResult[0] || []).map((r) => ({
+      id: cleanRecordId(r.id),
+      graph_id: r.graph_id,
+      type: r.type,
+      source: r.source,
+      target: r.target,
+      label: r.label,
+      meta: r.meta ?? {},
+    }));
+
+    return { nodes, edges };
+  },
+
+  async saveNode(node: GraphNodeRecord): Promise<void> {
+    const db = getDB();
+    if (!db) return;
+    // upsert：先尝试更新，不存在则创建
+    const existing = await db.query<[GraphNodeRecord[]]>(
+      `SELECT id FROM type::record('graph_node', $id) LIMIT 1`,
+      { id: node.id },
+    );
+    const exists = (existing[0]?.length ?? 0) > 0;
+
+    if (exists) {
+      await db.query(
+        `UPDATE type::record('graph_node', $id) SET
+          graph_id = $graph_id,
+          type = $type,
+          label = $label,
+          position_x = $position_x,
+          position_y = $position_y,
+          block_ids = $block_ids,
+          meta = $meta`,
+        {
+          id: node.id,
+          graph_id: node.graph_id,
+          type: node.type,
+          label: node.label,
+          position_x: node.position_x,
+          position_y: node.position_y,
+          block_ids: node.block_ids ?? [],
+          meta: node.meta ?? {},
+        },
+      );
+    } else {
+      await db.query(
+        `CREATE graph_node SET
+          id = $id,
+          graph_id = $graph_id,
+          type = $type,
+          label = $label,
+          position_x = $position_x,
+          position_y = $position_y,
+          block_ids = $block_ids,
+          meta = $meta`,
+        {
+          id: node.id,
+          graph_id: node.graph_id,
+          type: node.type,
+          label: node.label,
+          position_x: node.position_x,
+          position_y: node.position_y,
+          block_ids: node.block_ids ?? [],
+          meta: node.meta ?? {},
+        },
+      );
+    }
+    // touch graph.updated_at
+    await db.query(
+      `UPDATE type::record('graph', $id) SET updated_at = $updated_at`,
+      { id: node.graph_id, updated_at: Date.now() },
+    );
+  },
+
+  async saveEdge(edge: GraphEdgeRecord): Promise<void> {
+    const db = getDB();
+    if (!db) return;
+    const existing = await db.query<[GraphEdgeRecord[]]>(
+      `SELECT id FROM type::record('graph_edge', $id) LIMIT 1`,
+      { id: edge.id },
+    );
+    const exists = (existing[0]?.length ?? 0) > 0;
+
+    if (exists) {
+      await db.query(
+        `UPDATE type::record('graph_edge', $id) SET
+          graph_id = $graph_id,
+          type = $type,
+          source = $source,
+          target = $target,
+          label = $label,
+          meta = $meta`,
+        {
+          id: edge.id,
+          graph_id: edge.graph_id,
+          type: edge.type ?? null,
+          source: edge.source,
+          target: edge.target,
+          label: edge.label ?? null,
+          meta: edge.meta ?? {},
+        },
+      );
+    } else {
+      await db.query(
+        `CREATE graph_edge SET
+          id = $id,
+          graph_id = $graph_id,
+          type = $type,
+          source = $source,
+          target = $target,
+          label = $label,
+          meta = $meta`,
+        {
+          id: edge.id,
+          graph_id: edge.graph_id,
+          type: edge.type ?? null,
+          source: edge.source,
+          target: edge.target,
+          label: edge.label ?? null,
+          meta: edge.meta ?? {},
+        },
+      );
+    }
+    await db.query(
+      `UPDATE type::record('graph', $id) SET updated_at = $updated_at`,
+      { id: edge.graph_id, updated_at: Date.now() },
+    );
+  },
+
+  async deleteNode(graphId: string, nodeId: string): Promise<void> {
+    const db = getDB();
+    if (!db) return;
+    // 删节点时同时删它的关联边（无论方向）
+    await db.query(
+      `DELETE graph_edge WHERE graph_id = $gid AND (source = $nid OR target = $nid)`,
+      { gid: graphId, nid: nodeId },
+    );
+    await db.query(`DELETE type::record('graph_node', $id)`, { id: nodeId });
+    await db.query(
+      `UPDATE type::record('graph', $id) SET updated_at = $updated_at`,
+      { id: graphId, updated_at: Date.now() },
+    );
+  },
+
+  async deleteEdge(graphId: string, edgeId: string): Promise<void> {
+    const db = getDB();
+    if (!db) return;
+    await db.query(`DELETE type::record('graph_edge', $id)`, { id: edgeId });
+    await db.query(
+      `UPDATE type::record('graph', $id) SET updated_at = $updated_at`,
+      { id: graphId, updated_at: Date.now() },
+    );
   },
 };
