@@ -2,6 +2,8 @@ import type * as THREE from 'three';
 import type { Atom } from '../../../lib/atom-serializers/svg';
 import type { GraphNode } from '../engines/GraphEngine';
 
+export type HighlightMode = 'default' | 'hover' | 'selected';
+
 /**
  * 形状渲染抽象。
  *
@@ -27,6 +29,11 @@ export interface ShapeRenderer {
   /** 内容应放置的相对坐标（圆下方 / 框中心 / ...） */
   getContentAnchor(mesh: THREE.Object3D): THREE.Vector3;
 
+  /**
+   * 应用高亮态（v1.3 § 7.3）。形状自定义高亮策略（圆改色 / 矩形描边 / 等）。
+   */
+  setHighlight(mesh: THREE.Object3D, mode: HighlightMode): void;
+
   dispose(mesh: THREE.Object3D): void;
 }
 
@@ -48,8 +55,6 @@ export interface ContentRenderer {
 
   dispose(rendered: THREE.Object3D): void;
 }
-
-export type HighlightMode = 'default' | 'hover' | 'selected';
 
 /**
  * 形状库：变种通过实现 ShapeLibrary 提供自己的形状集合。

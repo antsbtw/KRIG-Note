@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { CSS2DRenderer, CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
+import type { Atom } from '../../../lib/atom-serializers/types';
 import { ViewportController } from './ViewportController';
 import { InteractionController } from './InteractionController';
 import { CommandStack, type Command } from './CommandStack';
@@ -18,10 +19,10 @@ import { CommandStack, type Command } from './CommandStack';
 
 // ── 数据模型 ──
 // spec v1.2 § 4.2 / 4.3：label 从 string 升级为 Atom[]，复用 Note 的内容数据形态。
+// v1.3 § 1.2：Atom 类型从 lib 共享层导入（跨视图共享）。
 // Atom 即 ProseMirror node JSON：{ type, content?, attrs?, marks?, text? }
 
-/** Atom = ProseMirror node JSON。直接复用 Note 的 doc_content 元素形态。 */
-export type Atom = unknown;
+export type { Atom };
 
 export interface GraphNode {
   id: string;
