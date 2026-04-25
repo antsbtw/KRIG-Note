@@ -1,8 +1,9 @@
 import * as THREE from 'three';
-import { CSS2DRenderer, CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
+import { CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 import { ViewportController } from './ViewportController';
 import { InteractionController } from './InteractionController';
 import { CommandStack, type Command } from './CommandStack';
+import { NodeContentRenderer } from './NodeContentRenderer';
 
 /**
  * GraphEngine — L5 GraphView 内部的渲染引擎抽象基类
@@ -95,9 +96,8 @@ export abstract class GraphEngine {
 
   protected nodeMeshes = new Map<string, THREE.Mesh>();
   protected edgeLines = new Map<string, THREE.Group>();
-  /** nodeId / edgeId → CSS2DObject 容器（label） */
-  protected nodeLabels = new Map<string, CSS2DObject>();
-  protected edgeLabels = new Map<string, CSS2DObject>();
+  /** spec v1.2 § 7：节点 / 边的 atom 数组渲染器（复用 NoteView blockRegistry schema） */
+  protected contentRenderer = new NodeContentRenderer();
 
   protected nodes: GraphNode[] = [];
   protected edges: GraphEdge[] = [];
@@ -295,14 +295,22 @@ export abstract class GraphEngine {
 
   /** 临时隐藏节点 label（编辑时用，避免和 input 重叠） */
   setNodeLabelVisible(id: string, visible: boolean): void {
-    const obj = this.nodeLabels.get(id);
-    if (obj) obj.visible = visible;
+    this.contentRenderer.setNodeLabelVisible(id, visible);
   }
 
   /** 临时隐藏边 label */
   setEdgeLabelVisible(id: string, visible: boolean): void {
-    const obj = this.edgeLabels.get(id);
-    if (obj) obj.visible = visible;
+    this.contentRenderer.setEdgeLabelVisible(id, visible);
+  }
+
+  /** 获取节点 label DOM（GraphView 双击编辑时用） */
+  getNodeLabelElement(id: string): HTMLElement | null {
+    return this.contentRenderer.getNodeLabelElement(id);
+  }
+
+  /** 获取边 label DOM */
+  getEdgeLabelElement(id: string): HTMLElement | null {
+    return this.contentRenderer.getEdgeLabelElement(id);
   }
 
   undo(): void {
@@ -501,23 +509,18 @@ export abstract class GraphEngine {
     this.onChange?.({ type: 'edge-label-changed', edgeId: id, label });
   }
 
-  /** 刷新节点的内容渲染（label 改了之后调）。P1 v1.2 第一段：纯文本展示 */
+  /** 刷新节点的内容渲染（label 改了之后调）。spec v1.2：完整 atom 数组渲染 */
   protected refreshNodeContent(nodeId: string): void {
     const node = this.nodes.find((n) => n.id === nodeId);
     if (!node) return;
-    const obj = this.nodeLabels.get(nodeId);
-    if (!obj) return;
-    const text = extractPlainText(node.label) || '未命名';
-    obj.element.textContent = text;
+    this.contentRenderer.updateNodeLabel(nodeId, node.label);
   }
 
   /** 刷新边的内容渲染 */
   protected refreshEdgeContent(edgeId: string): void {
     const edge = this.edges.find((e) => e.id === edgeId);
     if (!edge) return;
-    const obj = this.edgeLabels.get(edgeId);
-    if (!obj) return;
-    obj.element.textContent = extractPlainText(edge.label);
+    this.contentRenderer.updateEdgeLabel(edgeId, edge.label);
   }
 
   // ── 渲染 ──
@@ -529,18 +532,9 @@ export abstract class GraphEngine {
       this.scene.remove(group);
       disposeGroup(group);
     }
-    for (const obj of this.nodeLabels.values()) {
-      obj.parent?.remove(obj);
-      obj.element.remove();
-    }
-    for (const obj of this.edgeLabels.values()) {
-      obj.parent?.remove(obj);
-      obj.element.remove();
-    }
+    this.contentRenderer.disposeAll();
     this.nodeMeshes.clear();
     this.edgeLines.clear();
-    this.nodeLabels.clear();
-    this.edgeLabels.clear();
 
     for (const node of this.nodes) {
       const mesh = this.shapeLib.createShape(node);
@@ -550,16 +544,10 @@ export abstract class GraphEngine {
       this.scene.add(mesh);
       this.nodeMeshes.set(node.id, mesh);
 
-      // node label 挂在 mesh 下方
-      // P1 v1.2 第一段：先从 atom 数组提取纯文本作为 label 文字
-      // 后续会接入 NodeContentRenderer 渲染完整 atom 数组
+      // node label 挂在 mesh 下方，用 ProseMirror readonly 渲染完整 atom 数组
       const radius = this.getMeshRadius(mesh);
-      const labelText = extractPlainText(node.label) || '未命名';
-      const labelDom = createNodeLabelDom(node.id, labelText);
-      const labelObj = new CSS2DObject(labelDom);
+      const labelObj = this.contentRenderer.mountNodeLabel(node.id, node.label, mesh);
       labelObj.position.set(0, -radius - 14, 0);   // 节点正下方
-      mesh.add(labelObj);
-      this.nodeLabels.set(node.id, labelObj);
     }
 
     for (const edge of this.edges) {
@@ -570,22 +558,11 @@ export abstract class GraphEngine {
   /** 给定边创建/更新 label CSS2DObject，放到指定位置（弧线中点 / 直线中点） */
   protected attachEdgeLabelAt(
     edgeId: string,
-    label: Atom[] | string,
+    label: Atom[],
     x: number,
     y: number,
   ): void {
-    const old = this.edgeLabels.get(edgeId);
-    if (old) {
-      old.parent?.remove(old);
-      old.element.remove();
-    }
-    // 兼容两种调用：传 Atom[] 或 string（提取纯文本展示）
-    const text = typeof label === 'string' ? label : extractPlainText(label);
-    const dom = createEdgeLabelDom(edgeId, text);
-    const obj = new CSS2DObject(dom);
-    obj.position.set(x, y, 0);
-    this.scene.add(obj);
-    this.edgeLabels.set(edgeId, obj);
+    this.contentRenderer.mountEdgeLabel(edgeId, label, this.scene, x, y);
   }
 
   protected clearScene(): void {
@@ -599,18 +576,9 @@ export abstract class GraphEngine {
       this.scene.remove(group);
       disposeGroup(group);
     }
-    for (const obj of this.nodeLabels.values()) {
-      obj.parent?.remove(obj);
-      obj.element.remove();
-    }
-    for (const obj of this.edgeLabels.values()) {
-      obj.parent?.remove(obj);
-      obj.element.remove();
-    }
+    this.contentRenderer.disposeAll();
     this.nodeMeshes.clear();
     this.edgeLines.clear();
-    this.nodeLabels.clear();
-    this.edgeLabels.clear();
   }
 
   protected startRenderLoop(): void {
@@ -831,53 +799,6 @@ function disposeGroup(group: THREE.Group): void {
   });
 }
 
-// ── Label 渲染辅助 ──
-
-/**
- * 创建节点 label 元素 — 节点正下方的文字 + 透明背景
- * dataset 标注 { kind: 'node-label', id } 供 GraphView 双击 handler 识别
- */
-export function createNodeLabelDom(nodeId: string, label: string): HTMLDivElement {
-  const div = document.createElement('div');
-  div.className = 'krig-graph-node-label';
-  div.dataset.kind = 'node-label';
-  div.dataset.nodeId = nodeId;
-  div.textContent = label;
-  div.style.cssText = `
-    color: #e0e0e0;
-    font-size: 12px;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    padding: 2px 6px;
-    background: rgba(30,30,30,0.7);
-    border-radius: 3px;
-    white-space: nowrap;
-    pointer-events: auto;
-    cursor: text;
-    user-select: none;
-  `;
-  return div;
-}
-
-export function createEdgeLabelDom(edgeId: string, label: string): HTMLDivElement {
-  const div = document.createElement('div');
-  div.className = 'krig-graph-edge-label';
-  div.dataset.kind = 'edge-label';
-  div.dataset.edgeId = edgeId;
-  // 边的 label 默认空字符串显示空 div（便于点中加字），但 textContent 仍写入
-  div.textContent = label;
-  div.style.cssText = `
-    color: #aaa;
-    font-size: 11px;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    padding: 1px 4px;
-    background: rgba(30,30,30,0.6);
-    border-radius: 2px;
-    white-space: nowrap;
-    pointer-events: auto;
-    cursor: text;
-    user-select: none;
-    min-width: 8px;
-    min-height: 12px;
-  `;
-  return div;
-}
+// 注：v1.1 时期的 createNodeLabelDom / createEdgeLabelDom helper 已删除。
+// spec v1.2 § 7：label 渲染统一委托给 NodeContentRenderer（用 ProseMirror
+// readonly view 渲染 atom 数组），样式/dataset 标注由 NodeContentRenderer 内部处理。
