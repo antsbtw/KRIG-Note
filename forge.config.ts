@@ -99,6 +99,10 @@ const config: ForgeConfig = {
           name: 'thought_view',
           config: 'vite.thought.config.mts',
         },
+        {
+          name: 'graph_view',
+          config: 'vite.graph.config.mts',
+        },
       ],
     }),
   ],

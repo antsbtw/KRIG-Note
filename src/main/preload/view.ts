@@ -72,7 +72,7 @@ contextBridge.exposeInMainWorld('viewAPI', {
     ipcRenderer.on(IPC.WORKSPACE_STATE_CHANGED, listener);
     return () => ipcRenderer.removeListener(IPC.WORKSPACE_STATE_CHANGED, listener);
   },
-  onRestoreWorkspaceState: (callback: (state: { activeNoteId: string | null }) => void) => {
+  onRestoreWorkspaceState: (callback: (state: { activeNoteId: string | null; activeGraphId?: string | null }) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, state: any) => callback(state);
     ipcRenderer.on(IPC.RESTORE_WORKSPACE_STATE, listener);
     return () => ipcRenderer.removeListener(IPC.RESTORE_WORKSPACE_STATE, listener);
@@ -82,6 +82,16 @@ contextBridge.exposeInMainWorld('viewAPI', {
     ipcRenderer.on(IPC.LOAD_TEST_DOC, listener);
     return () => ipcRenderer.removeListener(IPC.LOAD_TEST_DOC, listener);
   },
+  onGraphActiveChanged: (callback: (graphId: string | null) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, graphId: string | null) => callback(graphId);
+    ipcRenderer.on(IPC.GRAPH_ACTIVE_CHANGED, listener);
+    return () => ipcRenderer.removeListener(IPC.GRAPH_ACTIVE_CHANGED, listener);
+  },
+  graphLoadData: (graphId: string) => ipcRenderer.invoke(IPC.GRAPH_LOAD_DATA, graphId),
+  graphNodeSave: (node: unknown) => ipcRenderer.invoke(IPC.GRAPH_NODE_SAVE, node),
+  graphNodeDelete: (graphId: string, nodeId: string) => ipcRenderer.invoke(IPC.GRAPH_NODE_DELETE, graphId, nodeId),
+  graphEdgeSave: (edge: unknown) => ipcRenderer.invoke(IPC.GRAPH_EDGE_SAVE, edge),
+  graphEdgeDelete: (graphId: string, edgeId: string) => ipcRenderer.invoke(IPC.GRAPH_EDGE_DELETE, graphId, edgeId),
 
   // 文件对话框 + 媒体操作（通用服务）
   fileSaveDialog: (options: { defaultName: string; data: string; filters?: { name: string; extensions: string[] }[] }) =>

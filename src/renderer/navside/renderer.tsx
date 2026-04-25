@@ -4,11 +4,13 @@ import { registerNavPanel } from './panel-registry';
 import { EBookPanel } from './EBookPanel';
 import { WebPanel } from '../../plugins/web/navside/WebPanel';
 import { AIServicesPanel } from '../../plugins/web/navside/AIServicesPanel';
+import { GraphPanel } from './GraphPanel';
 
 // 插件面板注册
 registerNavPanel('ebook-bookshelf', EBookPanel);
 registerNavPanel('web-bookmarks', WebPanel);
 registerNavPanel('ai-services', AIServicesPanel);
+registerNavPanel('graph-list', GraphPanel);
 
 const root = createRoot(document.getElementById('root')!);
 root.render(<NavSide />);

@@ -110,6 +110,11 @@ export function useNoteOperations(input: NoteOperationsInput) {
       case 'import-ebook':
         window.dispatchEvent(new CustomEvent('ebook:import'));
         break;
+      default:
+        // 走通用注册路径：main 端 navSideRegistry.executeAction 路由到对应 plugin handler
+        navSideAPI.executeAction(actionId).catch((err: unknown) => {
+          console.warn('[NavSide] executeAction failed:', actionId, err);
+        });
     }
   }, [handleCreateFolder, handleCreateNote]);
 

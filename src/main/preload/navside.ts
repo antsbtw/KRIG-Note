@@ -54,7 +54,7 @@ contextBridge.exposeInMainWorld('navSideAPI', {
 
   // Workspace 状态同步
   setExpandedFolders: (folderIds: string[]) => ipcRenderer.invoke(IPC.SET_EXPANDED_FOLDERS, folderIds),
-  onRestoreWorkspaceState: (callback: (state: { activeNoteId: string | null; expandedFolders: string[]; activeBookId?: string | null; ebookExpandedFolders?: string[] }) => void) => {
+  onRestoreWorkspaceState: (callback: (state: { activeNoteId: string | null; expandedFolders: string[]; activeBookId?: string | null; ebookExpandedFolders?: string[]; activeGraphId?: string | null }) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, state: any) => callback(state);
     ipcRenderer.on(IPC.RESTORE_WORKSPACE_STATE, listener);
     return () => ipcRenderer.removeListener(IPC.RESTORE_WORKSPACE_STATE, listener);
@@ -117,4 +117,23 @@ contextBridge.exposeInMainWorld('navSideAPI', {
   webFolderRename: (id: string, title: string) => ipcRenderer.invoke(IPC.WEB_FOLDER_RENAME, id, title),
   webFolderDelete: (id: string) => ipcRenderer.invoke(IPC.WEB_FOLDER_DELETE, id),
   webHistoryList: (limit?: number) => ipcRenderer.invoke(IPC.WEB_HISTORY_LIST, limit),
+
+  // ── Graph (L5) ──
+
+  graphList: () => ipcRenderer.invoke(IPC.GRAPH_LIST),
+  graphCreate: (title?: string, hostNoteId?: string | null) =>
+    ipcRenderer.invoke(IPC.GRAPH_CREATE, title, hostNoteId),
+  graphRename: (id: string, title: string) => ipcRenderer.invoke(IPC.GRAPH_RENAME, id, title),
+  graphDelete: (id: string) => ipcRenderer.invoke(IPC.GRAPH_DELETE, id),
+  graphSetActive: (id: string | null) => ipcRenderer.invoke(IPC.GRAPH_SET_ACTIVE, id),
+  onGraphListChanged: (callback: (list: unknown[]) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, list: unknown[]) => callback(list);
+    ipcRenderer.on(IPC.GRAPH_LIST_CHANGED, listener);
+    return () => ipcRenderer.removeListener(IPC.GRAPH_LIST_CHANGED, listener);
+  },
+  onGraphActiveChanged: (callback: (graphId: string | null) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, graphId: string | null) => callback(graphId);
+    ipcRenderer.on(IPC.GRAPH_ACTIVE_CHANGED, listener);
+    return () => ipcRenderer.removeListener(IPC.GRAPH_ACTIVE_CHANGED, listener);
+  },
 });
