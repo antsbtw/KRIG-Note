@@ -110,6 +110,8 @@ export function GraphView() {
     const engine = new BasicEngine();
     engine.mount(containerRef.current);
     engineRef.current = engine;
+    // 调试：把 engine 暴露到 window 上，方便在 DevTools 里检查 atom 数据
+    (window as any).__graphEngine = engine;
 
     const refreshState = () => {
       setHasSelection(engine.getSelected() !== null);
@@ -215,6 +217,14 @@ export function GraphView() {
   useEffect(() => {
     if (!activeGraphId) return;
     const onKey = (e: KeyboardEvent) => {
+      // 编辑文本时（input / textarea / contenteditable）跳过全局快捷键，
+      // 避免 Backspace 删字符时误删整个节点、⌘Z 撤销字符时误撤销图操作
+      const tgt = e.target as HTMLElement | null;
+      if (tgt) {
+        const tag = tgt.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tgt.isContentEditable) return;
+      }
+
       const engine = engineRef.current;
       if (!engine) return;
       const meta = e.metaKey || e.ctrlKey;
@@ -412,8 +422,17 @@ function editLabelInPlace(
   input.focus();
   input.select();
 
+  // 点击 input 外部（画布、其他 UI）也算确认。
+  // 用 capture 阶段监听 window，确保 ViewportController 的 e.preventDefault()
+  // 不会阻止我们感知到外部点击。
+  const onOutsideMouseDown = (ev: MouseEvent) => {
+    if (ev.target === input) return;
+    commit();
+  };
+
   let committed = false;
   const cleanup = () => {
+    window.removeEventListener('mousedown', onOutsideMouseDown, true);
     if (input.parentElement) input.parentElement.removeChild(input);
   };
   const commit = () => {
@@ -434,6 +453,12 @@ function editLabelInPlace(
     if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
     else if (ev.key === 'Escape') { ev.preventDefault(); cancel(); }
   });
+
+  // 注：dblclick 触发后立刻挂监听会被那次的 mouseup 触发误关闭。
+  // 用 setTimeout 延迟到下个事件循环挂监听。
+  setTimeout(() => {
+    if (!committed) window.addEventListener('mousedown', onOutsideMouseDown, true);
+  }, 0);
 }
 
 // ── UI 组件 ──
