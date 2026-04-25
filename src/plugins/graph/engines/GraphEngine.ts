@@ -247,6 +247,18 @@ export abstract class GraphEngine {
     this.commandStack.execute(new SetEdgeLabelCommand(this, id, oldLabel, label));
   }
 
+  /** 临时隐藏节点 label（编辑时用，避免和 input 重叠） */
+  setNodeLabelVisible(id: string, visible: boolean): void {
+    const obj = this.nodeLabels.get(id);
+    if (obj) obj.visible = visible;
+  }
+
+  /** 临时隐藏边 label */
+  setEdgeLabelVisible(id: string, visible: boolean): void {
+    const obj = this.edgeLabels.get(id);
+    if (obj) obj.visible = visible;
+  }
+
   undo(): void {
     if (this.commandStack.undo()) {
       this.rerender();
@@ -307,9 +319,9 @@ export abstract class GraphEngine {
 
   /** 边创建（拖出新边到目标节点）— 入 Command 栈 */
   protected addEdgeBySource(sourceId: string, targetId: string): void {
-    // 防止自环 + 重复边
+    // 多重图：允许两节点之间多条不同语义的边（夫妻+同事+同学）
+    // 仅禁止自环（节点指向自己），用户用 Cmd+Z 可撤销重复添加
     if (sourceId === targetId) return;
-    if (this.edges.some((e) => e.source === sourceId && e.target === targetId)) return;
     const edge: GraphEdge = {
       id: `e-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       source: sourceId,
@@ -322,24 +334,56 @@ export abstract class GraphEngine {
   protected redrawEdgesFor(nodeId: string): void {
     const affected = this.edges.filter((e) => e.source === nodeId || e.target === nodeId);
     for (const edge of affected) {
-      const oldGroup = this.edgeLines.get(edge.id);
-      if (oldGroup) {
-        this.scene.remove(oldGroup);
-        disposeGroup(oldGroup);
-        this.edgeLines.delete(edge.id);
-      }
-      const sourceMesh = this.nodeMeshes.get(edge.source);
-      const targetMesh = this.nodeMeshes.get(edge.target);
-      if (!sourceMesh || !targetMesh) continue;
-      const radius = Math.min(this.getMeshRadius(sourceMesh), this.getMeshRadius(targetMesh));
-      const group = createEdgeLine(sourceMesh.position, targetMesh.position, radius);
-      group.userData = { edgeId: edge.id };
-      this.scene.add(group);
-      this.edgeLines.set(edge.id, group);
-
-      // 边 label 也要重新定位到新中点
-      this.attachEdgeLabel(edge.id, edge.label ?? '', sourceMesh.position, targetMesh.position);
+      this.redrawEdge(edge);
     }
+  }
+
+  /** 重画单条边（包括 bundle 内同伴边的索引可能未变也照画一次，便于统一逻辑） */
+  protected redrawEdge(edge: GraphEdge): void {
+    const oldGroup = this.edgeLines.get(edge.id);
+    if (oldGroup) {
+      this.scene.remove(oldGroup);
+      disposeGroup(oldGroup);
+      this.edgeLines.delete(edge.id);
+    }
+    const sourceMesh = this.nodeMeshes.get(edge.source);
+    const targetMesh = this.nodeMeshes.get(edge.target);
+    if (!sourceMesh || !targetMesh) return;
+    const radius = Math.min(this.getMeshRadius(sourceMesh), this.getMeshRadius(targetMesh));
+    const { index, total } = this.computeEdgeBundle(edge);
+    const { group, labelPos } = createEdgeLine(
+      sourceMesh.position,
+      targetMesh.position,
+      radius,
+      index,
+      total,
+    );
+    group.userData = { edgeId: edge.id };
+    this.scene.add(group);
+    this.edgeLines.set(edge.id, group);
+
+    // 边 label 在弧线中点（直线时退化为直线中点）
+    this.attachEdgeLabelAt(edge.id, edge.label ?? '', labelPos.x, labelPos.y);
+  }
+
+  /**
+   * 计算同一对节点（无序对）之间的所有边及当前边的索引。
+   * 用于多重图弧线偏移计算。源/目标互换的边也算同一组（视觉上重叠）。
+   *
+   * 排序规则：先按 (source, target) 字典序，再按 edge.id —— 保证两次渲染索引稳定，
+   * 避免每次拖动都重排导致弧线"跳动"。
+   */
+  protected computeEdgeBundle(edge: GraphEdge): { index: number; total: number } {
+    const a = edge.source < edge.target ? edge.source : edge.target;
+    const b = edge.source < edge.target ? edge.target : edge.source;
+    const sameBundle = this.edges
+      .filter((e) => {
+        const ea = e.source < e.target ? e.source : e.target;
+        const eb = e.source < e.target ? e.target : e.source;
+        return ea === a && eb === b;
+      })
+      .sort((x, y) => x.id.localeCompare(y.id));
+    return { index: sameBundle.findIndex((e) => e.id === edge.id), total: sameBundle.length };
   }
 
   /** 给定 mesh，估算它的"半径"（圆/矩形通用近似 — 取边界球半径） */
@@ -451,32 +495,17 @@ export abstract class GraphEngine {
       this.nodeLabels.set(node.id, labelObj);
     }
 
-    const nodeMap = new Map(this.nodes.map((n) => [n.id, n]));
     for (const edge of this.edges) {
-      const sourceMesh = this.nodeMeshes.get(edge.source);
-      const targetMesh = this.nodeMeshes.get(edge.target);
-      if (!sourceMesh || !targetMesh) continue;
-      const targetNode = nodeMap.get(edge.target);
-      const sourceNode = nodeMap.get(edge.source);
-      const targetSize = targetNode ? this.shapeLib.getNodeSize(targetNode.type) : { width: 60, height: 60 };
-      const sourceSize = sourceNode ? this.shapeLib.getNodeSize(sourceNode.type) : { width: 60, height: 60 };
-      const radius = Math.min(targetSize.width, targetSize.height, sourceSize.width, sourceSize.height) / 2;
-      const group = createEdgeLine(sourceMesh.position, targetMesh.position, radius);
-      group.userData = { edgeId: edge.id };
-      this.scene.add(group);
-      this.edgeLines.set(edge.id, group);
-
-      // edge label 在边的中点（取 source/target mesh 位置中点）
-      this.attachEdgeLabel(edge.id, edge.label ?? '', sourceMesh.position, targetMesh.position);
+      this.redrawEdge(edge);
     }
   }
 
-  /** 给定边创建/更新 label CSS2DObject，放到边的中点 */
-  protected attachEdgeLabel(
+  /** 给定边创建/更新 label CSS2DObject，放到指定位置（弧线中点 / 直线中点） */
+  protected attachEdgeLabelAt(
     edgeId: string,
     label: string,
-    from: THREE.Vector3,
-    to: THREE.Vector3,
+    x: number,
+    y: number,
   ): void {
     const old = this.edgeLabels.get(edgeId);
     if (old) {
@@ -485,9 +514,7 @@ export abstract class GraphEngine {
     }
     const dom = createEdgeLabelDom(edgeId, label);
     const obj = new CSS2DObject(dom);
-    const midX = (from.x + to.x) / 2;
-    const midY = (from.y + to.y) / 2;
-    obj.position.set(midX, midY, 0);
+    obj.position.set(x, y, 0);
     this.scene.add(obj);
     this.edgeLabels.set(edgeId, obj);
   }
@@ -612,37 +639,104 @@ class SetEdgeLabelCommand implements Command {
   undo(): void { this.engine._setEdgeLabel(this.edgeId, this.oldLabel); }
 }
 
-// ── 边渲染辅助：直线 + 终点箭头 ──
+// ── 边渲染辅助：直线/弧线 + 终点箭头 ──
 
+/** 同一对节点之间相邻边的法向偏移间距（世界坐标） */
+const EDGE_CURVE_SPACING = 28;
+/** 二次贝塞尔曲线分段数（数值越大越平滑、性能越低） */
+const BEZIER_SEGMENTS = 24;
+
+/**
+ * 计算第 k 条边（共 N 条）的法向偏移系数。
+ * - N=1 → [0]                直线
+ * - N=2 → [-0.5, +0.5]        两侧对称
+ * - N=3 → [-1, 0, +1]
+ * - N=4 → [-1.5, -0.5, +0.5, +1.5]
+ * 通用：k - (N-1)/2
+ */
+function curveOffsetFactor(edgeIndex: number, totalEdges: number): number {
+  return edgeIndex - (totalEdges - 1) / 2;
+}
+
+/**
+ * 创建一条边的渲染（直线或弧线）+ 终点箭头。
+ * 同时返回 label 应放置的位置（弧的中点）。
+ */
 function createEdgeLine(
   from: THREE.Vector3,
   to: THREE.Vector3,
-  nodeRadius = 30,
-): THREE.Group {
+  nodeRadius: number,
+  edgeIndex = 0,
+  totalEdges = 1,
+): { group: THREE.Group; labelPos: { x: number; y: number } } {
   const group = new THREE.Group();
+  const labelPos = { x: 0, y: 0 };
 
   const dx = to.x - from.x;
   const dy = to.y - from.y;
   const len = Math.hypot(dx, dy);
-  if (len < 1) return group;
+  if (len < 1) return { group, labelPos };
 
+  // 单位方向向量与单位法向量
   const ux = dx / len;
   const uy = dy / len;
+  const nx = -uy;  // 法向量（左转 90°）
+  const ny = ux;
 
-  const x1 = from.x + ux * nodeRadius;
-  const y1 = from.y + uy * nodeRadius;
-  const x2 = to.x - ux * nodeRadius;
-  const y2 = to.y - uy * nodeRadius;
+  // 端点退避（不穿入节点圆）
+  const startX = from.x + ux * nodeRadius;
+  const startY = from.y + uy * nodeRadius;
+  const endX = to.x - ux * nodeRadius;
+  const endY = to.y - uy * nodeRadius;
 
-  const geometry = new THREE.BufferGeometry().setFromPoints([
-    new THREE.Vector3(x1, y1, -1),
-    new THREE.Vector3(x2, y2, -1),
-  ]);
-  const material = new THREE.LineBasicMaterial({ color: 0x888888 });
-  const line = new THREE.Line(geometry, material);
-  group.add(line);
+  const offsetFactor = curveOffsetFactor(edgeIndex, totalEdges);
+  const offset = offsetFactor * EDGE_CURVE_SPACING;
 
-  const angle = Math.atan2(dy, dx);
+  let arrowAngle: number;
+  if (Math.abs(offset) < 0.01) {
+    // 直线
+    const geometry = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(startX, startY, -1),
+      new THREE.Vector3(endX, endY, -1),
+    ]);
+    const material = new THREE.LineBasicMaterial({ color: 0x888888 });
+    group.add(new THREE.Line(geometry, material));
+
+    labelPos.x = (startX + endX) / 2;
+    labelPos.y = (startY + endY) / 2;
+    arrowAngle = Math.atan2(dy, dx);
+  } else {
+    // 二次贝塞尔弧线
+    // 控制点 = 直线中点 + 法向偏移
+    const midX = (startX + endX) / 2;
+    const midY = (startY + endY) / 2;
+    const ctrlX = midX + nx * offset;
+    const ctrlY = midY + ny * offset;
+
+    // 采样 BEZIER_SEGMENTS+1 个点
+    const points: THREE.Vector3[] = [];
+    for (let i = 0; i <= BEZIER_SEGMENTS; i++) {
+      const t = i / BEZIER_SEGMENTS;
+      const oneMinusT = 1 - t;
+      const x = oneMinusT * oneMinusT * startX + 2 * oneMinusT * t * ctrlX + t * t * endX;
+      const y = oneMinusT * oneMinusT * startY + 2 * oneMinusT * t * ctrlY + t * t * endY;
+      points.push(new THREE.Vector3(x, y, -1));
+    }
+    const geometry = new THREE.BufferGeometry().setFromPoints(points);
+    const material = new THREE.LineBasicMaterial({ color: 0x888888 });
+    group.add(new THREE.Line(geometry, material));
+
+    // label 位置 = 弧线中点（t=0.5 时的贝塞尔点）
+    labelPos.x = 0.25 * startX + 0.5 * ctrlX + 0.25 * endX;
+    labelPos.y = 0.25 * startY + 0.5 * ctrlY + 0.25 * endY;
+
+    // 箭头方向 = 弧线在终点的切线 = B'(1) = 2 * (end - ctrl)
+    const tangentX = endX - ctrlX;
+    const tangentY = endY - ctrlY;
+    arrowAngle = Math.atan2(tangentY, tangentX);
+  }
+
+  // 箭头（尖端在 endX, endY，沿切线方向）
   const arrowSize = 10;
   const arrowGeo = new THREE.BufferGeometry().setFromPoints([
     new THREE.Vector3(0, 0, 0),
@@ -651,11 +745,11 @@ function createEdgeLine(
   ]);
   const arrowMat = new THREE.MeshBasicMaterial({ color: 0x888888 });
   const arrow = new THREE.Mesh(arrowGeo, arrowMat);
-  arrow.position.set(x2, y2, -0.5);
-  arrow.rotation.z = angle;
+  arrow.position.set(endX, endY, -0.5);
+  arrow.rotation.z = arrowAngle;
   group.add(arrow);
 
-  return group;
+  return { group, labelPos };
 }
 
 function disposeGroup(group: THREE.Group): void {
