@@ -55,7 +55,7 @@ const viewTypeRenderers: Record<ViewType | 'default', ViewTypeRendererConfig> = 
   ebook: { devServerUrl: EBOOK_VIEW_VITE_DEV_SERVER_URL, htmlFile: 'ebook.html',     prodDir: 'ebook_view' },
   web:   { devServerUrl: WEB_VIEW_VITE_DEV_SERVER_URL,   htmlFile: 'web.html',       prodDir: 'web_view',   webPreferences: { webviewTag: true } },
   thought: { devServerUrl: THOUGHT_VIEW_VITE_DEV_SERVER_URL, htmlFile: 'thought.html', prodDir: 'thought_view' },
-  graph: { devServerUrl: DEMO_VIEW_VITE_DEV_SERVER_URL,  htmlFile: 'demo-view.html', prodDir: 'demo_view' },
+  graph: { devServerUrl: GRAPH_VIEW_VITE_DEV_SERVER_URL, htmlFile: 'graph.html',     prodDir: 'graph_view' },
   default: { devServerUrl: DEMO_VIEW_VITE_DEV_SERVER_URL, htmlFile: 'demo-view.html', prodDir: 'demo_view' },
 };
 
@@ -840,3 +840,4 @@ declare const NOTE_VIEW_VITE_DEV_SERVER_URL: string | undefined;
 declare const EBOOK_VIEW_VITE_DEV_SERVER_URL: string | undefined;
 declare const WEB_VIEW_VITE_DEV_SERVER_URL: string | undefined;
 declare const THOUGHT_VIEW_VITE_DEV_SERVER_URL: string | undefined;
+declare const GRAPH_VIEW_VITE_DEV_SERVER_URL: string | undefined;

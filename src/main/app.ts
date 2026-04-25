@@ -19,6 +19,7 @@ import { register as registerNotePlugin } from '../plugins/note/main/register';
 import { register as registerEBookPlugin } from '../plugins/ebook/main/register';
 import { register as registerWebPlugin } from '../plugins/web/main/register';
 import { register as registerThoughtPlugin } from '../plugins/thought/main/register';
+import { register as registerGraphPlugin } from '../plugins/graph/main/register';
 
 /**
  * KRIG Note — 应用入口
@@ -49,6 +50,7 @@ function registerPlugins(): void {
   registerEBookPlugin(ctx);
   registerWebPlugin(ctx);
   registerThoughtPlugin();
+  registerGraphPlugin();
 }
 
 // ── L2 框架菜单注册（View / Window / Help — 不含任何 View 专属逻辑） ──
