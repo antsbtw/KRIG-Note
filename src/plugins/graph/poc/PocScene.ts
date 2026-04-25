@@ -4,6 +4,9 @@ import { SvgGeometryContent } from './contents/SvgGeometryContent';
 import { NodeRenderer } from './NodeRenderer';
 import type { PocNode } from './types';
 
+const NODE_COLOR_DEFAULT = 0x4a90e2;
+const NODE_COLOR_HOVER = 0xffaa3b;
+
 export class PocScene {
   readonly scene = new THREE.Scene();
   readonly camera: THREE.OrthographicCamera;
@@ -12,6 +15,11 @@ export class PocScene {
   private container: HTMLElement;
   private rafId = 0;
   private nodeGroups: THREE.Group[] = [];
+
+  private raycaster = new THREE.Raycaster();
+  private pointer = new THREE.Vector2();
+  private hoveredGroup: THREE.Group | null = null;
+  onHoverChange?: (id: string | null) => void;
 
   perfStats = { lastNodeMs: 0, totalNodes: 0, totalSetupMs: 0 };
 
@@ -32,6 +40,8 @@ export class PocScene {
 
     this.startLoop();
     window.addEventListener('resize', this.handleResize);
+    this.renderer.domElement.addEventListener('mousemove', this.handlePointerMove);
+    this.renderer.domElement.addEventListener('mouseleave', this.handlePointerLeave);
   }
 
   async loadNodes(nodes: PocNode[]): Promise<void> {
@@ -65,9 +75,50 @@ export class PocScene {
     this.renderer.setSize(w, h);
   };
 
+  private handlePointerMove = (e: MouseEvent) => {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    this.pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    this.pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+    this.updateHover();
+  };
+
+  private handlePointerLeave = () => {
+    this.setHovered(null);
+  };
+
+  private updateHover(): void {
+    this.raycaster.setFromCamera(this.pointer, this.camera);
+    // 只命中节点 group 的第一个 child（CircleShape 的圆）
+    const shapeMeshes = this.nodeGroups
+      .map((g) => g.children[0])
+      .filter((c): c is THREE.Mesh => c instanceof THREE.Mesh);
+    const hits = this.raycaster.intersectObjects(shapeMeshes, false);
+    const hitGroup = hits.length > 0 ? (hits[0].object.parent as THREE.Group | null) : null;
+    this.setHovered(hitGroup);
+  }
+
+  private setHovered(group: THREE.Group | null): void {
+    if (group === this.hoveredGroup) return;
+    if (this.hoveredGroup) {
+      const mesh = this.hoveredGroup.children[0] as THREE.Mesh;
+      const mat = mesh.material as THREE.MeshBasicMaterial;
+      mat.color.setHex(NODE_COLOR_DEFAULT);
+    }
+    if (group) {
+      const mesh = group.children[0] as THREE.Mesh;
+      const mat = mesh.material as THREE.MeshBasicMaterial;
+      mat.color.setHex(NODE_COLOR_HOVER);
+    }
+    this.hoveredGroup = group;
+    this.renderer.domElement.style.cursor = group ? 'pointer' : 'default';
+    this.onHoverChange?.((group?.userData.id as string) ?? null);
+  }
+
   dispose(): void {
     cancelAnimationFrame(this.rafId);
     window.removeEventListener('resize', this.handleResize);
+    this.renderer.domElement.removeEventListener('mousemove', this.handlePointerMove);
+    this.renderer.domElement.removeEventListener('mouseleave', this.handlePointerLeave);
     for (const g of this.nodeGroups) this.nodeRenderer.dispose(g);
     this.nodeGroups = [];
     this.renderer.dispose();

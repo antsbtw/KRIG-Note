@@ -72,11 +72,13 @@ export function PocPanel() {
   const sceneRef = useRef<PocScene | null>(null);
   const [stats, setStats] = useState<string>('initializing...');
   const [error, setError] = useState<string | null>(null);
+  const [hoverId, setHoverId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!containerRef.current) return;
     const scene = new PocScene(containerRef.current);
     sceneRef.current = scene;
+    scene.onHoverChange = (id) => setHoverId(id);
 
     scene
       .loadNodes(SAMPLE_NODES)
@@ -132,6 +134,7 @@ export function PocPanel() {
           ← 返回 GraphView
         </button>
         <span>Graph 3D PoC · {stats}</span>
+        {hoverId && <span style={{ color: '#ffaa3b' }}>hover: {hoverId}</span>}
         {error && <span style={{ color: '#f55', marginLeft: 'auto' }}>error: {error}</span>}
       </div>
       <div ref={containerRef} style={{ flex: 1, position: 'relative', overflow: 'hidden' }} />
