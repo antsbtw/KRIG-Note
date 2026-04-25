@@ -2,6 +2,23 @@ import type { ForgeConfig } from '@electron-forge/shared-types';
 import { MakerSquirrel } from '@electron-forge/maker-squirrel';
 import { MakerZIP } from '@electron-forge/maker-zip';
 import { VitePlugin } from '@electron-forge/plugin-vite';
+import { existsSync } from 'node:fs';
+import path from 'node:path';
+
+// 按目标平台/架构挑 surreal 二进制塞进 resources/
+// （electron-forge 通过 --platform / --arch 传入，env var 读不到时取当前机器）
+function surrealBinaryForTarget(): string[] {
+  const platform = process.env.npm_config_platform || process.platform;
+  const arch = process.env.npm_config_arch || process.arch;
+  const key = platform === 'win32' ? 'win32-x64'
+    : platform === 'darwin' ? (arch === 'arm64' ? 'darwin-arm64' : 'darwin-x64')
+    : platform === 'linux' ? 'linux-x64'
+    : null;
+  if (!key) return [];
+  const filename = platform === 'win32' ? 'surreal.exe' : 'surreal';
+  const p = path.resolve(__dirname, 'build', 'surreal', key, filename);
+  return existsSync(p) ? [p] : [];
+}
 
 const config: ForgeConfig = {
   packagerConfig: {
@@ -9,6 +26,7 @@ const config: ForgeConfig = {
     name: 'KRIG Note',
     icon: './build/icon',
     executableName: 'KRIG Note',
+    extraResource: surrealBinaryForTarget(),
   },
   makers: [
     new MakerSquirrel({}),

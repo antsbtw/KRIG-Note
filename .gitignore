@@ -4,3 +4,13 @@ out/
 dist/
 *.log
 .DS_Store
+
+# Bundled SurrealDB binaries (download locally, not committed)
+build/surreal/
+
+# Debug caches (AI extraction traces, browser capability traces, etc.)
+debug/ai-extraction-cache/
+debug/browser-capability-traces/
+
+# Local scratch / tmp drafts
+docs/tmp/

@@ -87,14 +87,15 @@ export function getConnectionInfo() {
 // ── Binary 查找 ──
 
 export function findBinary(): string | null {
+  const exe = process.platform === 'win32' ? 'surreal.exe' : 'surreal';
   const candidates = [
-    // 打包内置
-    path.join(process.resourcesPath || '', 'surreal'),
-    // 用户安装
-    path.join(app.getPath('userData'), 'bin', 'surreal'),
+    // 打包内置（extraResource）
+    path.join(process.resourcesPath || '', exe),
+    // 用户自带
+    path.join(app.getPath('userData'), 'bin', exe),
     // Homebrew (macOS)
     '/opt/homebrew/bin/surreal',
-    // 系统安装
+    // 系统安装 (macOS/Linux)
     '/usr/local/bin/surreal',
   ];
 
