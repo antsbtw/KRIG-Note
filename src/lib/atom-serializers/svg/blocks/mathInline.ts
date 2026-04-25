@@ -38,8 +38,10 @@ export async function renderMathInline(
   const [vbX, vbY, vbW, vbH] = viewBoxMatch[1].split(/\s+/).map(parseFloat);
 
   // 提取根 svg 的内容（去掉 <svg ...> 和 </svg>）
-  const inner = extractInnerSvg(result.svg);
+  // 同时把 currentColor 替换为具体色值，避免 SVGLoader 报警告
+  let inner = extractInnerSvg(result.svg);
   if (!inner) return { svg: '', advance: 0 };
+  inner = inner.replace(/currentColor/g, '#dddddd');
 
   // 缩放：MathJax viewBox 单位是内部坐标，需要缩放到 result.width × result.height
   const scaleX = result.width / vbW;
