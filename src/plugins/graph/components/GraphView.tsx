@@ -195,17 +195,30 @@ export function GraphView() {
       const target = e.target as HTMLElement | null;
       if (!target?.dataset?.kind) return;
       const kind = target.dataset.kind;
+      const eng = engineRef.current;
+      if (!eng) return;
+
       if (kind === 'node-label' && target.dataset.nodeId) {
         e.preventDefault();
         e.stopPropagation();
+        const nid = target.dataset.nodeId;
+        eng.setNodeLabelVisible(nid, false);  // 编辑期间隐藏 label，避免和 input 重叠
         editLabelInPlace(target, target.textContent ?? '', (newText) => {
-          engineRef.current?.setNodeLabel(target.dataset.nodeId!, newText);
+          eng.setNodeLabelVisible(nid, true);
+          eng.setNodeLabel(nid, newText);
+        }, () => {
+          eng.setNodeLabelVisible(nid, true);  // 取消时也要恢复显示
         });
       } else if (kind === 'edge-label' && target.dataset.edgeId) {
         e.preventDefault();
         e.stopPropagation();
+        const eid = target.dataset.edgeId;
+        eng.setEdgeLabelVisible(eid, false);
         editLabelInPlace(target, target.textContent ?? '', (newText) => {
-          engineRef.current?.setEdgeLabel(target.dataset.edgeId!, newText);
+          eng.setEdgeLabelVisible(eid, true);
+          eng.setEdgeLabel(eid, newText);
+        }, () => {
+          eng.setEdgeLabelVisible(eid, true);
         });
       }
     };
@@ -387,33 +400,43 @@ async function persistChange(graphId: string, engine: BasicEngine, event: Change
 
 /**
  * 把一个 label DOM 临时替换成 input；blur/Enter 提交、Esc 取消。
- * commit 通过 onCommit 回调返回新文本（与旧文本相同时也会调用，由调用方决定 noop）。
+ * 注意：CSS2DRenderer 每帧覆盖 label.style.display，所以隐藏 label 不能靠
+ * 改 display，要让调用方改 CSS2DObject.visible。这里我们直接把 input 放在
+ * label 旁边（label 已被 visible=false 隐藏），不再 try to hide label。
  */
 function editLabelInPlace(
   labelEl: HTMLElement,
   initial: string,
   onCommit: (newText: string) => void,
+  onCancel?: () => void,
 ): void {
   const input = document.createElement('input');
   input.type = 'text';
   input.value = initial;
-  // 复制原 label 的样式，仅改成可编辑
+  // 复制原 label 的样式
   input.style.cssText = labelEl.style.cssText;
   input.style.cursor = 'text';
   input.style.outline = '1px solid #4a90e2';
-  input.style.minWidth = '40px';
+  input.style.minWidth = '60px';
   input.style.font = 'inherit';
+  // 用绝对定位让 input 出现在 label 原位
+  // labelEl 已被 CSS2DRenderer 设 transform 定位；input 作为兄弟节点直接
+  // 复用 labelEl 的 transform 效果有点 hack，更稳的做法是用 fixed + 计算
+  // labelEl 的 boundingClientRect
+  const rect = labelEl.getBoundingClientRect();
+  input.style.position = 'fixed';
+  input.style.left = `${rect.left}px`;
+  input.style.top = `${rect.top}px`;
+  input.style.transform = 'none';
+  input.style.zIndex = '1000';
 
-  const originalDisplay = labelEl.style.display;
-  labelEl.style.display = 'none';
-  labelEl.parentElement?.insertBefore(input, labelEl);
+  document.body.appendChild(input);
   input.focus();
   input.select();
 
   let committed = false;
   const cleanup = () => {
     if (input.parentElement) input.parentElement.removeChild(input);
-    labelEl.style.display = originalDisplay;
   };
   const commit = () => {
     if (committed) return;
@@ -425,6 +448,7 @@ function editLabelInPlace(
     if (committed) return;
     committed = true;
     cleanup();
+    onCancel?.();
   };
 
   input.addEventListener('blur', commit);
