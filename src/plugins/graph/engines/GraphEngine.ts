@@ -16,12 +16,17 @@ import { CommandStack, type Command } from './CommandStack';
  * 数据持久化（SurrealDB）由外层 GraphView 通过 onChange 回调对接。
  */
 
-// ── 数据模型（与 SurrealDB schema 对齐，但 P1 阶段暂不接库）──
+// ── 数据模型 ──
+// spec v1.2 § 4.2 / 4.3：label 从 string 升级为 Atom[]，复用 Note 的内容数据形态。
+// Atom 即 ProseMirror node JSON：{ type, content?, attrs?, marks?, text? }
+
+/** Atom = ProseMirror node JSON。直接复用 Note 的 doc_content 元素形态。 */
+export type Atom = unknown;
 
 export interface GraphNode {
   id: string;
   type: string;
-  label: string;
+  label: Atom[];   // atom 数组，默认形态：[{ type: 'textBlock', content: [{ type: 'text', text: '...' }] }]
   position?: { x: number; y: number };
 }
 
@@ -29,7 +34,36 @@ export interface GraphEdge {
   id: string;
   source: string;
   target: string;
-  label?: string;
+  label: Atom[];   // 同 GraphNode.label
+}
+
+// ── Atom 工具函数 ──
+
+/** 创建一个只含纯文本的 textBlock atom（默认节点/边 label 形态） */
+export function makeTextLabel(text: string): Atom[] {
+  if (!text) return [{ type: 'textBlock', content: [] }];
+  return [{ type: 'textBlock', content: [{ type: 'text', text }] }];
+}
+
+/** 从 atom 数组提取纯文本（用于 fallback 显示 / debug） */
+export function extractPlainText(atoms: Atom[] | undefined | null): string {
+  if (!atoms || !Array.isArray(atoms)) return '';
+  const out: string[] = [];
+  function walk(node: any): void {
+    if (!node) return;
+    if (typeof node === 'string') { out.push(node); return; }
+    if (typeof node.text === 'string') out.push(node.text);
+    if (Array.isArray(node.content)) node.content.forEach(walk);
+  }
+  atoms.forEach(walk);
+  return out.join('');
+}
+
+/** 把任意输入归一化为合法 atom 数组。老数据兼容：string → textBlock atom */
+export function ensureAtomLabel(value: unknown): Atom[] {
+  if (Array.isArray(value)) return value as Atom[];
+  if (typeof value === 'string') return makeTextLabel(value);
+  return makeTextLabel('');
 }
 
 // ── 引擎接口 ──
@@ -208,12 +242,12 @@ export abstract class GraphEngine {
   // ── 公开 mutate API（外部调用走 Command） ──
 
   /** 在世界坐标 (x, y) 添加一个节点（自增 id），入 Command 栈 */
-  createNodeAt(x: number, y: number, label?: string): string {
+  createNodeAt(x: number, y: number, labelText?: string): string {
     const id = `n-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const node: GraphNode = {
       id,
       type: 'concept',
-      label: label ?? id,
+      label: makeTextLabel(labelText ?? '新节点'),
       position: { x, y },
     };
     this.commandStack.execute(new AddNodeCommand(this, node));
@@ -231,20 +265,32 @@ export abstract class GraphEngine {
     this.selectedId = null;
   }
 
-  /** 改节点 label，入 Command 栈 */
-  setNodeLabel(id: string, label: string): void {
+  /** 改节点 label（Atom[] 形态），入 Command 栈 */
+  setNodeLabel(id: string, label: Atom[]): void {
     const node = this.nodes.find((n) => n.id === id);
-    if (!node || node.label === label) return;
+    if (!node) return;
+    // 浅比较：JSON 序列化对比足够（atom 数组结构有限）
+    if (JSON.stringify(node.label) === JSON.stringify(label)) return;
     this.commandStack.execute(new SetNodeLabelCommand(this, id, node.label, label));
   }
 
-  /** 改边 label，入 Command 栈 */
-  setEdgeLabel(id: string, label: string): void {
+  /** 便捷方法：用纯文本设置节点 label（封装为 textBlock atom） */
+  setNodeLabelText(id: string, text: string): void {
+    this.setNodeLabel(id, makeTextLabel(text));
+  }
+
+  /** 改边 label（Atom[] 形态），入 Command 栈 */
+  setEdgeLabel(id: string, label: Atom[]): void {
     const edge = this.edges.find((e) => e.id === id);
     if (!edge) return;
-    const oldLabel = edge.label ?? '';
-    if (oldLabel === label) return;
+    const oldLabel = edge.label ?? [];
+    if (JSON.stringify(oldLabel) === JSON.stringify(label)) return;
     this.commandStack.execute(new SetEdgeLabelCommand(this, id, oldLabel, label));
+  }
+
+  /** 便捷方法：用纯文本设置边 label */
+  setEdgeLabelText(id: string, text: string): void {
+    this.setEdgeLabel(id, makeTextLabel(text));
   }
 
   /** 临时隐藏节点 label（编辑时用，避免和 input 重叠） */
@@ -326,6 +372,7 @@ export abstract class GraphEngine {
       id: `e-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       source: sourceId,
       target: targetId,
+      label: makeTextLabel(''),  // 空 label，用户按需双击添加
     };
     this.commandStack.execute(new AddEdgeCommand(this, edge));
   }
@@ -363,7 +410,7 @@ export abstract class GraphEngine {
     this.edgeLines.set(edge.id, group);
 
     // 边 label 在弧线中点（直线时退化为直线中点）
-    this.attachEdgeLabelAt(edge.id, edge.label ?? '', labelPos.x, labelPos.y);
+    this.attachEdgeLabelAt(edge.id, edge.label ?? [], labelPos.x, labelPos.y);
   }
 
   /**
@@ -436,24 +483,41 @@ export abstract class GraphEngine {
   }
 
   /** @internal */
-  _setNodeLabel(id: string, label: string): void {
+  _setNodeLabel(id: string, label: Atom[]): void {
     const node = this.nodes.find((n) => n.id === id);
     if (!node) return;
     node.label = label;
-    // 只更新对应 label DOM，不重渲整个场景
-    const obj = this.nodeLabels.get(id);
-    if (obj) obj.element.textContent = label || '未命名';
+    // 重新渲染该节点的内容容器
+    this.refreshNodeContent(id);
     this.onChange?.({ type: 'node-label-changed', nodeId: id, label });
   }
 
   /** @internal */
-  _setEdgeLabel(id: string, label: string): void {
+  _setEdgeLabel(id: string, label: Atom[]): void {
     const edge = this.edges.find((e) => e.id === id);
     if (!edge) return;
     edge.label = label;
-    const obj = this.edgeLabels.get(id);
-    if (obj) obj.element.textContent = label;
+    this.refreshEdgeContent(id);
     this.onChange?.({ type: 'edge-label-changed', edgeId: id, label });
+  }
+
+  /** 刷新节点的内容渲染（label 改了之后调）。P1 v1.2 第一段：纯文本展示 */
+  protected refreshNodeContent(nodeId: string): void {
+    const node = this.nodes.find((n) => n.id === nodeId);
+    if (!node) return;
+    const obj = this.nodeLabels.get(nodeId);
+    if (!obj) return;
+    const text = extractPlainText(node.label) || '未命名';
+    obj.element.textContent = text;
+  }
+
+  /** 刷新边的内容渲染 */
+  protected refreshEdgeContent(edgeId: string): void {
+    const edge = this.edges.find((e) => e.id === edgeId);
+    if (!edge) return;
+    const obj = this.edgeLabels.get(edgeId);
+    if (!obj) return;
+    obj.element.textContent = extractPlainText(edge.label);
   }
 
   // ── 渲染 ──
@@ -487,8 +551,11 @@ export abstract class GraphEngine {
       this.nodeMeshes.set(node.id, mesh);
 
       // node label 挂在 mesh 下方
+      // P1 v1.2 第一段：先从 atom 数组提取纯文本作为 label 文字
+      // 后续会接入 NodeContentRenderer 渲染完整 atom 数组
       const radius = this.getMeshRadius(mesh);
-      const labelDom = createNodeLabelDom(node.id, node.label || '未命名');
+      const labelText = extractPlainText(node.label) || '未命名';
+      const labelDom = createNodeLabelDom(node.id, labelText);
       const labelObj = new CSS2DObject(labelDom);
       labelObj.position.set(0, -radius - 14, 0);   // 节点正下方
       mesh.add(labelObj);
@@ -503,7 +570,7 @@ export abstract class GraphEngine {
   /** 给定边创建/更新 label CSS2DObject，放到指定位置（弧线中点 / 直线中点） */
   protected attachEdgeLabelAt(
     edgeId: string,
-    label: string,
+    label: Atom[] | string,
     x: number,
     y: number,
   ): void {
@@ -512,7 +579,9 @@ export abstract class GraphEngine {
       old.parent?.remove(old);
       old.element.remove();
     }
-    const dom = createEdgeLabelDom(edgeId, label);
+    // 兼容两种调用：传 Atom[] 或 string（提取纯文本展示）
+    const text = typeof label === 'string' ? label : extractPlainText(label);
+    const dom = createEdgeLabelDom(edgeId, text);
     const obj = new CSS2DObject(dom);
     obj.position.set(x, y, 0);
     this.scene.add(obj);
@@ -560,10 +629,10 @@ export type ChangeEvent =
   | { type: 'node-added'; node: GraphNode }
   | { type: 'node-removed'; nodeId: string }
   | { type: 'node-moved'; nodeId: string; x: number; y: number }
-  | { type: 'node-label-changed'; nodeId: string; label: string }
+  | { type: 'node-label-changed'; nodeId: string; label: Atom[] }
   | { type: 'edge-added'; edge: GraphEdge }
   | { type: 'edge-removed'; edgeId: string }
-  | { type: 'edge-label-changed'; edgeId: string; label: string }
+  | { type: 'edge-label-changed'; edgeId: string; label: Atom[] }
   | { type: 'selection'; selectedId: string | null };
 
 // ── Commands ──
@@ -620,8 +689,8 @@ class SetNodeLabelCommand implements Command {
   constructor(
     private engine: GraphEngine,
     private nodeId: string,
-    private oldLabel: string,
-    private newLabel: string,
+    private oldLabel: Atom[],
+    private newLabel: Atom[],
   ) {}
   execute(): void { this.engine._setNodeLabel(this.nodeId, this.newLabel); }
   undo(): void { this.engine._setNodeLabel(this.nodeId, this.oldLabel); }
@@ -632,8 +701,8 @@ class SetEdgeLabelCommand implements Command {
   constructor(
     private engine: GraphEngine,
     private edgeId: string,
-    private oldLabel: string,
-    private newLabel: string,
+    private oldLabel: Atom[],
+    private newLabel: Atom[],
   ) {}
   execute(): void { this.engine._setEdgeLabel(this.edgeId, this.newLabel); }
   undo(): void { this.engine._setEdgeLabel(this.edgeId, this.oldLabel); }
