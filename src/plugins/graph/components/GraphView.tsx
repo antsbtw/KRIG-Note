@@ -1,15 +1,17 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { BasicEngine } from '../engines/BasicEngine';
-import type { GraphNode, GraphEdge, ChangeEvent } from '../engines/GraphEngine';
+import type { GraphNode, GraphEdge, Atom, ChangeEvent } from '../engines/GraphEngine';
+import { ensureAtomLabel, makeTextLabel, extractPlainText } from '../engines/GraphEngine';
+
+// ── DB 持久化形态（v1.2：label 字段是 atom 数组，但兼容 v1.1 的 string） ──
 
 interface GraphNodeRecord {
   id: string;
   graph_id: string;
   type: string;
-  label: string;
+  label: Atom[] | string;   // v1.2 = Atom[]；旧数据 = string，加载时升级
   position_x: number;
   position_y: number;
-  block_ids?: string[];
   meta?: Record<string, unknown>;
 }
 
@@ -19,7 +21,7 @@ interface GraphEdgeRecord {
   type?: string;
   source: string;
   target: string;
-  label?: string;
+  label?: Atom[] | string;
   meta?: Record<string, unknown>;
 }
 
@@ -33,13 +35,15 @@ declare const viewAPI: {
   graphEdgeDelete: (graphId: string, edgeId: string) => Promise<void>;
 };
 
-// ── 转换工具 ──
+// ── 转换工具：DB 记录 ↔ Engine 数据 ──
+// 关键点：DB label 字段可能是 string（v1.1 老数据）或 Atom[]（v1.2）。
+// ensureAtomLabel 统一升级为 Atom[]。
 
 function recordToNode(r: GraphNodeRecord): GraphNode {
   return {
     id: r.id,
     type: r.type || 'concept',
-    label: r.label || '',
+    label: ensureAtomLabel(r.label),
     position: { x: r.position_x, y: r.position_y },
   };
 }
@@ -49,7 +53,7 @@ function recordToEdge(r: GraphEdgeRecord): GraphEdge {
     id: r.id,
     source: r.source,
     target: r.target,
-    label: r.label,
+    label: ensureAtomLabel(r.label),
   };
 }
 
@@ -58,10 +62,9 @@ function nodeToRecord(graphId: string, n: GraphNode): GraphNodeRecord {
     id: n.id,
     graph_id: graphId,
     type: n.type,
-    label: n.label,
+    label: n.label,   // 直接存 Atom[]（schemaless DB 接受 JSON 数组）
     position_x: n.position?.x ?? 0,
     position_y: n.position?.y ?? 0,
-    block_ids: [],
     meta: {},
   };
 }
@@ -75,23 +78,6 @@ function edgeToRecord(graphId: string, e: GraphEdge): GraphEdgeRecord {
     label: e.label,
     meta: {},
   };
-}
-
-// ── 新图初始种子（首次加载图为空时写入） ──
-
-function seedNodes(): GraphNode[] {
-  return [
-    { id: `n-${Date.now()}-a`, type: 'concept', label: '节点 1', position: { x: -150, y: 0 } },
-    { id: `n-${Date.now()}-b`, type: 'concept', label: '节点 2', position: { x: 0, y: 0 } },
-    { id: `n-${Date.now()}-c`, type: 'concept', label: '节点 3', position: { x: 150, y: 0 } },
-  ];
-}
-
-function seedEdges(nodes: GraphNode[]): GraphEdge[] {
-  return [
-    { id: `e-${Date.now()}-1`, source: nodes[0].id, target: nodes[1].id },
-    { id: `e-${Date.now()}-2`, source: nodes[1].id, target: nodes[2].id },
-  ];
 }
 
 export function GraphView() {
@@ -148,21 +134,9 @@ export function GraphView() {
       const data = await viewAPI.graphLoadData(activeGraphId);
       if (myToken !== loadTokenRef.current) return;  // 已切到别的图，丢弃
 
-      let nodes: GraphNode[];
-      let edges: GraphEdge[];
-
-      if (data.nodes.length === 0 && data.edges.length === 0) {
-        // 首次打开：写入种子并 load
-        nodes = seedNodes();
-        edges = seedEdges(nodes);
-        await Promise.all([
-          ...nodes.map((n) => viewAPI.graphNodeSave(nodeToRecord(activeGraphId, n))),
-          ...edges.map((e) => viewAPI.graphEdgeSave(edgeToRecord(activeGraphId, e))),
-        ]);
-      } else {
-        nodes = data.nodes.map(recordToNode);
-        edges = data.edges.map(recordToEdge);
-      }
+      // 直接消费 DB 数据，新图初始为空白（用户通过 + 节点 / 右键自己创建）
+      const nodes: GraphNode[] = data.nodes.map(recordToNode);
+      const edges: GraphEdge[] = data.edges.map(recordToEdge);
 
       if (myToken !== loadTokenRef.current) return;
       engine.setData(nodes, edges);
@@ -189,9 +163,49 @@ export function GraphView() {
     });
     ro.observe(containerRef.current);
 
+    // 双击 label DOM → 替换成 input → 提交时调 engine.setNodeLabel/setEdgeLabel
+    const containerEl = containerRef.current;
+    const onDblClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (!target?.dataset?.kind) return;
+      const kind = target.dataset.kind;
+      const eng = engineRef.current;
+      if (!eng) return;
+
+      // 双击 label 进入纯文本编辑模式（v1.2 第一段）。
+      // 提交后用 makeTextLabel 包成 textBlock atom，整体替换原 atom 数组。
+      // 注：这丢失原 atom 数组里的非文本内容（如 mathBlock）。完整 ProseMirror
+      //   编辑器会在 P1 v1.2 第二段加入。
+      if (kind === 'node-label' && target.dataset.nodeId) {
+        e.preventDefault();
+        e.stopPropagation();
+        const nid = target.dataset.nodeId;
+        eng.setNodeLabelVisible(nid, false);
+        editLabelInPlace(target, target.textContent ?? '', (newText) => {
+          eng.setNodeLabelVisible(nid, true);
+          eng.setNodeLabel(nid, makeTextLabel(newText));
+        }, () => {
+          eng.setNodeLabelVisible(nid, true);
+        });
+      } else if (kind === 'edge-label' && target.dataset.edgeId) {
+        e.preventDefault();
+        e.stopPropagation();
+        const eid = target.dataset.edgeId;
+        eng.setEdgeLabelVisible(eid, false);
+        editLabelInPlace(target, target.textContent ?? '', (newText) => {
+          eng.setEdgeLabelVisible(eid, true);
+          eng.setEdgeLabel(eid, makeTextLabel(newText));
+        }, () => {
+          eng.setEdgeLabelVisible(eid, true);
+        });
+      }
+    };
+    containerEl.addEventListener('dblclick', onDblClick);
+
     return () => {
       ++loadTokenRef.current;
       ro.disconnect();
+      containerEl.removeEventListener('dblclick', onDblClick);
       engine.dispose();
       engineRef.current = null;
     };
@@ -341,6 +355,16 @@ async function persistChange(graphId: string, engine: BasicEngine, event: Change
         await viewAPI.graphEdgeDelete(graphId, event.edgeId);
         break;
       }
+      case 'node-label-changed': {
+        const node = engine.getNodes().find((n) => n.id === event.nodeId);
+        if (node) await viewAPI.graphNodeSave(nodeToRecord(graphId, node));
+        break;
+      }
+      case 'edge-label-changed': {
+        const edge = engine.getEdges().find((e) => e.id === event.edgeId);
+        if (edge) await viewAPI.graphEdgeSave(edgeToRecord(graphId, edge));
+        break;
+      }
       case 'selection':
         // 选中态不持久化
         break;
@@ -348,6 +372,68 @@ async function persistChange(graphId: string, engine: BasicEngine, event: Change
   } catch (err) {
     console.error('[GraphView] persist failed:', event, err);
   }
+}
+
+// ── Label inline 编辑 ──
+
+/**
+ * 把一个 label DOM 临时替换成 input；blur/Enter 提交、Esc 取消。
+ * 注意：CSS2DRenderer 每帧覆盖 label.style.display，所以隐藏 label 不能靠
+ * 改 display，要让调用方改 CSS2DObject.visible。这里我们直接把 input 放在
+ * label 旁边（label 已被 visible=false 隐藏），不再 try to hide label。
+ */
+function editLabelInPlace(
+  labelEl: HTMLElement,
+  initial: string,
+  onCommit: (newText: string) => void,
+  onCancel?: () => void,
+): void {
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = initial;
+  // 复制原 label 的样式
+  input.style.cssText = labelEl.style.cssText;
+  input.style.cursor = 'text';
+  input.style.outline = '1px solid #4a90e2';
+  input.style.minWidth = '60px';
+  input.style.font = 'inherit';
+  // 用绝对定位让 input 出现在 label 原位
+  // labelEl 已被 CSS2DRenderer 设 transform 定位；input 作为兄弟节点直接
+  // 复用 labelEl 的 transform 效果有点 hack，更稳的做法是用 fixed + 计算
+  // labelEl 的 boundingClientRect
+  const rect = labelEl.getBoundingClientRect();
+  input.style.position = 'fixed';
+  input.style.left = `${rect.left}px`;
+  input.style.top = `${rect.top}px`;
+  input.style.transform = 'none';
+  input.style.zIndex = '1000';
+
+  document.body.appendChild(input);
+  input.focus();
+  input.select();
+
+  let committed = false;
+  const cleanup = () => {
+    if (input.parentElement) input.parentElement.removeChild(input);
+  };
+  const commit = () => {
+    if (committed) return;
+    committed = true;
+    cleanup();
+    onCommit(input.value);
+  };
+  const cancel = () => {
+    if (committed) return;
+    committed = true;
+    cleanup();
+    onCancel?.();
+  };
+
+  input.addEventListener('blur', commit);
+  input.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
+    else if (ev.key === 'Escape') { ev.preventDefault(); cancel(); }
+  });
 }
 
 // ── UI 组件 ──

@@ -17,6 +17,8 @@ declare const navSideAPI: {
   onGraphListChanged: (cb: (list: GraphListItem[]) => void) => () => void;
   onGraphActiveChanged: (cb: (graphId: string | null) => void) => () => void;
   onRestoreWorkspaceState: (cb: (state: { activeGraphId?: string | null }) => void) => () => void;
+  isDBReady: () => Promise<boolean>;
+  onDBReady: (cb: () => void) => () => void;
   closeRightSlot: () => Promise<void>;
 };
 
@@ -36,9 +38,17 @@ export function GraphPanel() {
   const [renameValue, setRenameValue] = useState('');
 
   // 初始拉取列表
+  // 注：GraphPanel mount 时 SurrealDB 可能还没 ready，main 端 GRAPH_LIST handler
+  // 在 db 未 ready 时 return []，所以第一次拉取可能返回空。需要监听 db:ready
+  // 在 db 真正 ready 后重新拉一次。
   useEffect(() => {
-    navSideAPI.graphList().then(setList).catch(() => {});
-    return navSideAPI.onGraphListChanged(setList);
+    const fetchList = () => {
+      navSideAPI.graphList().then(setList).catch(() => {});
+    };
+    fetchList();  // 立刻试一次（db ready 时直接拿到）
+    const unsubDBReady = navSideAPI.onDBReady(fetchList);  // db ready 时再拉一次（兜底）
+    const unsubChanged = navSideAPI.onGraphListChanged(setList);
+    return () => { unsubDBReady(); unsubChanged(); };
   }, []);
 
   // 同步 workspace 的 activeGraphId
