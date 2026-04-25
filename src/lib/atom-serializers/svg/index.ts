@@ -1,9 +1,11 @@
 import type { Atom } from '../../../plugins/graph/poc/types';
 import { renderTextBlock } from './blocks/textBlock';
+import { renderMathBlock } from './blocks/mathBlock';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const VIEWBOX_W = 200;
-const VIEWBOX_H = 60;
+const VIEWBOX_H = 30;
+const FONT_SIZE = 14;
 
 export async function atomsToSvg(atoms: Atom[]): Promise<string> {
   const parts: string[] = [];
@@ -20,6 +22,10 @@ async function renderAtom(atom: Atom, yOffset: number): Promise<{ svg: string; h
   switch (atom.type) {
     case 'textBlock':
       return renderTextBlock(atom, yOffset);
+    case 'mathBlock': {
+      const tex = (atom.attrs?.tex as string) ?? '';
+      return renderMathBlock(tex, FONT_SIZE, yOffset);
+    }
     default:
       return { svg: '', height: 0 };
   }

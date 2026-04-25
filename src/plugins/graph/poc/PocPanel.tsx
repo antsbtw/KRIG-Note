@@ -3,19 +3,16 @@ import { PocScene } from './PocScene';
 import type { PocNode } from './types';
 
 const SAMPLE_NODES: PocNode[] = [
+  // 单行西文
   {
     id: 'n1',
-    position: { x: -200, y: 80 },
-    atoms: [
-      {
-        type: 'textBlock',
-        content: [{ type: 'text', text: 'Hello PoC' }],
-      },
-    ],
+    position: { x: -360, y: 100 },
+    atoms: [{ type: 'textBlock', content: [{ type: 'text', text: 'Hello PoC' }] }],
   },
+  // 文字 + 简单 inline 公式
   {
     id: 'n2',
-    position: { x: 0, y: 80 },
+    position: { x: -120, y: 100 },
     atoms: [
       {
         type: 'textBlock',
@@ -26,13 +23,45 @@ const SAMPLE_NODES: PocNode[] = [
       },
     ],
   },
+  // 中文 + 中英混排
   {
     id: 'n3',
-    position: { x: 200, y: 80 },
+    position: { x: 120, y: 100 },
+    atoms: [{ type: 'textBlock', content: [{ type: 'text', text: '中文 mixed 测试 ABC' }] }],
+  },
+  // 复杂 inline 公式（开方 + 分数）
+  {
+    id: 'n4',
+    position: { x: 360, y: 100 },
     atoms: [
       {
         type: 'textBlock',
-        content: [{ type: 'text', text: '中文测试' }],
+        content: [
+          { type: 'text', text: 'f(x) = ' },
+          { type: 'mathInline', attrs: { tex: '\\sqrt{x^2 + \\frac{1}{x}}' } },
+        ],
+      },
+    ],
+  },
+  // 多行 textBlock + display math（重头戏）
+  {
+    id: 'n5',
+    position: { x: -120, y: -80 },
+    atoms: [
+      { type: 'textBlock', content: [{ type: 'text', text: '巴塞尔级数：' }] },
+      { type: 'mathBlock', attrs: { tex: '\\sum_{i=1}^{n} \\frac{1}{i^2}' } },
+      { type: 'textBlock', content: [{ type: 'text', text: '当 n→∞ 时收敛于 π²/6' }] },
+    ],
+  },
+  // 矩阵
+  {
+    id: 'n6',
+    position: { x: 220, y: -80 },
+    atoms: [
+      { type: 'textBlock', content: [{ type: 'text', text: '矩阵示例：' }] },
+      {
+        type: 'mathBlock',
+        attrs: { tex: '\\begin{pmatrix} a & b \\\\ c & d \\end{pmatrix}' },
       },
     ],
   },
