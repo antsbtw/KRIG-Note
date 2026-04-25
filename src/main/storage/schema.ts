@@ -106,6 +106,13 @@ const SCHEMA_QUERIES = [
   // note → thought 图关系边
   `DEFINE TABLE IF NOT EXISTS thought_of SCHEMALESS;`,
   // 边属性：anchor_type, anchor_pos, created_at
+
+  // ── GraphView 主表 ──
+
+  // graph 表（图主体元数据，节点/边在 P1 阶段补 graph_node / graph_edge 表）
+  `DEFINE TABLE IF NOT EXISTS graph SCHEMALESS;`,
+  `DEFINE INDEX IF NOT EXISTS graph_host_note ON graph FIELDS host_note_id;`,
+  `DEFINE INDEX IF NOT EXISTS graph_updated ON graph FIELDS updated_at;`,
 ];
 
 export async function initSchema(): Promise<void> {

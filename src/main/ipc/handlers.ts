@@ -66,6 +66,7 @@ export function registerIpcHandlers(getMainWindow: () => BaseWindow | null): voi
               expandedFolders: workspace.expandedFolders,
               activeBookId: workspace.activeBookId,
               ebookExpandedFolders: workspace.ebookExpandedFolders,
+              activeGraphId: workspace.activeGraphId,
             });
           }
         }

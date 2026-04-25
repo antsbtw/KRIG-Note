@@ -50,7 +50,7 @@ function registerPlugins(): void {
   registerEBookPlugin(ctx);
   registerWebPlugin(ctx);
   registerThoughtPlugin();
-  registerGraphPlugin();
+  registerGraphPlugin(ctx);
 }
 
 // ── L2 框架菜单注册（View / Window / Help — 不含任何 View 专属逻辑） ──
@@ -205,6 +205,7 @@ app.whenReady().then(() => {
         expandedFolders: ws.expandedFolders ?? [],
         activeBookId: ws.activeBookId ?? null,
         ebookExpandedFolders: ws.ebookExpandedFolders ?? [],
+        activeGraphId: ws.activeGraphId ?? null,
         slotBinding: ws.slotBinding ?? { left: null, right: null },
       });
     }

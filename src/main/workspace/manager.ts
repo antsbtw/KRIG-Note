@@ -30,6 +30,7 @@ class WorkspaceManager {
       expandedFolders: [],
       activeBookId: null,
       ebookExpandedFolders: [],
+      activeGraphId: null,
       slotBinding: {
         left: null,
         right: null,

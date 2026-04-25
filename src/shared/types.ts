@@ -31,6 +31,7 @@ export interface WorkspaceState {
   expandedFolders: string[];          // NavSide 展开的文件夹 ID 列表
   activeBookId: string | null;        // EBookView 当前打开的电子书 ID
   ebookExpandedFolders: string[];     // 书架文件夹展开状态
+  activeGraphId: string | null;       // GraphView 当前打开的图 ID
   slotBinding: {
     left: ViewInstanceId | null;
     right: ViewInstanceId | null;
@@ -339,6 +340,16 @@ export const IPC = {
   THOUGHT_LIST_BY_NOTE: 'thought:list-by-note',
   THOUGHT_RELATE: 'thought:relate',
   THOUGHT_UNRELATE: 'thought:unrelate',
+
+  // Graph (L5)
+  GRAPH_CREATE: 'graph:create',
+  GRAPH_LIST: 'graph:list',
+  GRAPH_LOAD: 'graph:load',
+  GRAPH_RENAME: 'graph:rename',
+  GRAPH_DELETE: 'graph:delete',
+  GRAPH_LIST_CHANGED: 'graph:list-changed',  // main → renderer 广播
+  GRAPH_SET_ACTIVE: 'graph:set-active',      // navside → main：设置当前 workspace 的 activeGraphId
+  GRAPH_ACTIVE_CHANGED: 'graph:active-changed',  // main → renderer：activeGraphId 变化（GraphView/NavSide 监听）
 
   // Web Translate
   WEB_TRANSLATE_FETCH_ELEMENT_JS: 'web-translate:fetch-element-js',
