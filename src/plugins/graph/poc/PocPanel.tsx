@@ -78,10 +78,32 @@ export function PocPanel() {
           fontFamily: 'monospace',
           fontSize: 12,
           borderBottom: '1px solid #333',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
         }}
       >
-        Graph 3D PoC · {stats}
-        {error && <span style={{ color: '#f55', marginLeft: 12 }}>error: {error}</span>}
+        <button
+          onClick={() => {
+            const url = new URL(window.location.href);
+            url.searchParams.delete('poc');
+            window.location.href = url.toString();
+          }}
+          style={{
+            background: '#333',
+            color: '#ccc',
+            border: '1px solid #555',
+            padding: '2px 8px',
+            borderRadius: 3,
+            fontFamily: 'inherit',
+            fontSize: 11,
+            cursor: 'pointer',
+          }}
+        >
+          ← 返回 GraphView
+        </button>
+        <span>Graph 3D PoC · {stats}</span>
+        {error && <span style={{ color: '#f55', marginLeft: 'auto' }}>error: {error}</span>}
       </div>
       <div ref={containerRef} style={{ flex: 1, position: 'relative', overflow: 'hidden' }} />
     </div>

@@ -295,6 +295,17 @@ export function GraphView() {
         <ToolbarButton onClick={handleRedo} disabled={!canRedo} title="重做 (⌘⇧Z)">↷</ToolbarButton>
         <ToolbarSeparator />
         <ToolbarButton onClick={handleResetView} title="重置视图">⊙</ToolbarButton>
+        <ToolbarSeparator />
+        <ToolbarButton
+          onClick={() => {
+            const url = new URL(window.location.href);
+            url.searchParams.set('poc', '1');
+            window.location.href = url.toString();
+          }}
+          title="进入 3D PoC 沙盒（实验性）"
+        >
+          PoC
+        </ToolbarButton>
       </div>
 
       <div
