@@ -189,9 +189,32 @@ export function GraphView() {
     });
     ro.observe(containerRef.current);
 
+    // 双击 label DOM → 替换成 input → 提交时调 engine.setNodeLabel/setEdgeLabel
+    const containerEl = containerRef.current;
+    const onDblClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (!target?.dataset?.kind) return;
+      const kind = target.dataset.kind;
+      if (kind === 'node-label' && target.dataset.nodeId) {
+        e.preventDefault();
+        e.stopPropagation();
+        editLabelInPlace(target, target.textContent ?? '', (newText) => {
+          engineRef.current?.setNodeLabel(target.dataset.nodeId!, newText);
+        });
+      } else if (kind === 'edge-label' && target.dataset.edgeId) {
+        e.preventDefault();
+        e.stopPropagation();
+        editLabelInPlace(target, target.textContent ?? '', (newText) => {
+          engineRef.current?.setEdgeLabel(target.dataset.edgeId!, newText);
+        });
+      }
+    };
+    containerEl.addEventListener('dblclick', onDblClick);
+
     return () => {
       ++loadTokenRef.current;
       ro.disconnect();
+      containerEl.removeEventListener('dblclick', onDblClick);
       engine.dispose();
       engineRef.current = null;
     };
@@ -341,6 +364,16 @@ async function persistChange(graphId: string, engine: BasicEngine, event: Change
         await viewAPI.graphEdgeDelete(graphId, event.edgeId);
         break;
       }
+      case 'node-label-changed': {
+        const node = engine.getNodes().find((n) => n.id === event.nodeId);
+        if (node) await viewAPI.graphNodeSave(nodeToRecord(graphId, node));
+        break;
+      }
+      case 'edge-label-changed': {
+        const edge = engine.getEdges().find((e) => e.id === event.edgeId);
+        if (edge) await viewAPI.graphEdgeSave(edgeToRecord(graphId, edge));
+        break;
+      }
       case 'selection':
         // 选中态不持久化
         break;
@@ -348,6 +381,57 @@ async function persistChange(graphId: string, engine: BasicEngine, event: Change
   } catch (err) {
     console.error('[GraphView] persist failed:', event, err);
   }
+}
+
+// ── Label inline 编辑 ──
+
+/**
+ * 把一个 label DOM 临时替换成 input；blur/Enter 提交、Esc 取消。
+ * commit 通过 onCommit 回调返回新文本（与旧文本相同时也会调用，由调用方决定 noop）。
+ */
+function editLabelInPlace(
+  labelEl: HTMLElement,
+  initial: string,
+  onCommit: (newText: string) => void,
+): void {
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = initial;
+  // 复制原 label 的样式，仅改成可编辑
+  input.style.cssText = labelEl.style.cssText;
+  input.style.cursor = 'text';
+  input.style.outline = '1px solid #4a90e2';
+  input.style.minWidth = '40px';
+  input.style.font = 'inherit';
+
+  const originalDisplay = labelEl.style.display;
+  labelEl.style.display = 'none';
+  labelEl.parentElement?.insertBefore(input, labelEl);
+  input.focus();
+  input.select();
+
+  let committed = false;
+  const cleanup = () => {
+    if (input.parentElement) input.parentElement.removeChild(input);
+    labelEl.style.display = originalDisplay;
+  };
+  const commit = () => {
+    if (committed) return;
+    committed = true;
+    cleanup();
+    onCommit(input.value);
+  };
+  const cancel = () => {
+    if (committed) return;
+    committed = true;
+    cleanup();
+  };
+
+  input.addEventListener('blur', commit);
+  input.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
+    else if (ev.key === 'Escape') { ev.preventDefault(); cancel(); }
+  });
 }
 
 // ── UI 组件 ──

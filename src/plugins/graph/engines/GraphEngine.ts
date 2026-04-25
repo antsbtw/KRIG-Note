@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { CSS2DRenderer, CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 import { ViewportController } from './ViewportController';
 import { InteractionController } from './InteractionController';
 import { CommandStack, type Command } from './CommandStack';
@@ -54,11 +55,15 @@ export abstract class GraphEngine {
   protected scene: THREE.Scene;
   protected camera: THREE.OrthographicCamera;
   protected renderer: THREE.WebGLRenderer;
+  protected css2dRenderer: CSS2DRenderer;
   protected container: HTMLElement | null = null;
   protected animationId: number | null = null;
 
   protected nodeMeshes = new Map<string, THREE.Mesh>();
   protected edgeLines = new Map<string, THREE.Group>();
+  /** nodeId / edgeId → CSS2DObject 容器（label） */
+  protected nodeLabels = new Map<string, CSS2DObject>();
+  protected edgeLabels = new Map<string, CSS2DObject>();
 
   protected nodes: GraphNode[] = [];
   protected edges: GraphEdge[] = [];
@@ -81,6 +86,16 @@ export abstract class GraphEngine {
     this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 1000);
     this.camera.position.set(0, 0, 100);
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+
+    this.css2dRenderer = new CSS2DRenderer();
+    // CSS2DRenderer 的 dom 是 div，需要绝对定位覆盖在 webgl canvas 上，
+    // 但不能拦截鼠标事件（让 wheel/click 正常落到 webgl canvas）
+    const css2dDom = this.css2dRenderer.domElement;
+    css2dDom.style.position = 'absolute';
+    css2dDom.style.top = '0';
+    css2dDom.style.left = '0';
+    css2dDom.style.pointerEvents = 'none';
+
     this.shapeLib = this.getShapeLibrary();
     this.layout = this.getLayoutAlgorithm();
   }
@@ -93,7 +108,10 @@ export abstract class GraphEngine {
 
   mount(container: HTMLElement): void {
     this.container = container;
+    // container 必须 position:relative 让 CSS2DRenderer 的绝对定位生效
+    if (!container.style.position) container.style.position = 'relative';
     container.appendChild(this.renderer.domElement);
+    container.appendChild(this.css2dRenderer.domElement);
     const w = container.clientWidth || 800;
     const h = container.clientHeight || 600;
     this.resize(w, h);
@@ -136,8 +154,13 @@ export abstract class GraphEngine {
     this.viewport?.detach();
     this.clearScene();
     this.renderer.dispose();
-    if (this.container && this.renderer.domElement.parentElement === this.container) {
-      this.container.removeChild(this.renderer.domElement);
+    if (this.container) {
+      if (this.renderer.domElement.parentElement === this.container) {
+        this.container.removeChild(this.renderer.domElement);
+      }
+      if (this.css2dRenderer.domElement.parentElement === this.container) {
+        this.container.removeChild(this.css2dRenderer.domElement);
+      }
     }
     this.container = null;
   }
@@ -151,6 +174,7 @@ export abstract class GraphEngine {
     this.camera.updateProjectionMatrix();
     this.renderer.setPixelRatio(window.devicePixelRatio);
     this.renderer.setSize(width, height);
+    this.css2dRenderer.setSize(width, height);
   }
 
   // ── 数据查询 ──
@@ -205,6 +229,22 @@ export abstract class GraphEngine {
     const relatedEdges = this.edges.filter((e) => e.source === id || e.target === id);
     this.commandStack.execute(new RemoveNodeCommand(this, node, relatedEdges));
     this.selectedId = null;
+  }
+
+  /** 改节点 label，入 Command 栈 */
+  setNodeLabel(id: string, label: string): void {
+    const node = this.nodes.find((n) => n.id === id);
+    if (!node || node.label === label) return;
+    this.commandStack.execute(new SetNodeLabelCommand(this, id, node.label, label));
+  }
+
+  /** 改边 label，入 Command 栈 */
+  setEdgeLabel(id: string, label: string): void {
+    const edge = this.edges.find((e) => e.id === id);
+    if (!edge) return;
+    const oldLabel = edge.label ?? '';
+    if (oldLabel === label) return;
+    this.commandStack.execute(new SetEdgeLabelCommand(this, id, oldLabel, label));
   }
 
   undo(): void {
@@ -296,6 +336,9 @@ export abstract class GraphEngine {
       group.userData = { edgeId: edge.id };
       this.scene.add(group);
       this.edgeLines.set(edge.id, group);
+
+      // 边 label 也要重新定位到新中点
+      this.attachEdgeLabel(edge.id, edge.label ?? '', sourceMesh.position, targetMesh.position);
     }
   }
 
@@ -348,6 +391,27 @@ export abstract class GraphEngine {
     this.onChange?.({ type: 'edge-removed', edgeId });
   }
 
+  /** @internal */
+  _setNodeLabel(id: string, label: string): void {
+    const node = this.nodes.find((n) => n.id === id);
+    if (!node) return;
+    node.label = label;
+    // 只更新对应 label DOM，不重渲整个场景
+    const obj = this.nodeLabels.get(id);
+    if (obj) obj.element.textContent = label || '未命名';
+    this.onChange?.({ type: 'node-label-changed', nodeId: id, label });
+  }
+
+  /** @internal */
+  _setEdgeLabel(id: string, label: string): void {
+    const edge = this.edges.find((e) => e.id === id);
+    if (!edge) return;
+    edge.label = label;
+    const obj = this.edgeLabels.get(id);
+    if (obj) obj.element.textContent = label;
+    this.onChange?.({ type: 'edge-label-changed', edgeId: id, label });
+  }
+
   // ── 渲染 ──
 
   /** 把当前 nodes / edges 渲染到 scene（清旧 + 加新）。外部加载完数据后可调一次 */
@@ -357,8 +421,18 @@ export abstract class GraphEngine {
       this.scene.remove(group);
       disposeGroup(group);
     }
+    for (const obj of this.nodeLabels.values()) {
+      obj.parent?.remove(obj);
+      obj.element.remove();
+    }
+    for (const obj of this.edgeLabels.values()) {
+      obj.parent?.remove(obj);
+      obj.element.remove();
+    }
     this.nodeMeshes.clear();
     this.edgeLines.clear();
+    this.nodeLabels.clear();
+    this.edgeLabels.clear();
 
     for (const node of this.nodes) {
       const mesh = this.shapeLib.createShape(node);
@@ -367,6 +441,14 @@ export abstract class GraphEngine {
       mesh.userData = { nodeId: node.id };
       this.scene.add(mesh);
       this.nodeMeshes.set(node.id, mesh);
+
+      // node label 挂在 mesh 下方
+      const radius = this.getMeshRadius(mesh);
+      const labelDom = createNodeLabelDom(node.id, node.label || '未命名');
+      const labelObj = new CSS2DObject(labelDom);
+      labelObj.position.set(0, -radius - 14, 0);   // 节点正下方
+      mesh.add(labelObj);
+      this.nodeLabels.set(node.id, labelObj);
     }
 
     const nodeMap = new Map(this.nodes.map((n) => [n.id, n]));
@@ -383,7 +465,31 @@ export abstract class GraphEngine {
       group.userData = { edgeId: edge.id };
       this.scene.add(group);
       this.edgeLines.set(edge.id, group);
+
+      // edge label 在边的中点（取 source/target mesh 位置中点）
+      this.attachEdgeLabel(edge.id, edge.label ?? '', sourceMesh.position, targetMesh.position);
     }
+  }
+
+  /** 给定边创建/更新 label CSS2DObject，放到边的中点 */
+  protected attachEdgeLabel(
+    edgeId: string,
+    label: string,
+    from: THREE.Vector3,
+    to: THREE.Vector3,
+  ): void {
+    const old = this.edgeLabels.get(edgeId);
+    if (old) {
+      old.parent?.remove(old);
+      old.element.remove();
+    }
+    const dom = createEdgeLabelDom(edgeId, label);
+    const obj = new CSS2DObject(dom);
+    const midX = (from.x + to.x) / 2;
+    const midY = (from.y + to.y) / 2;
+    obj.position.set(midX, midY, 0);
+    this.scene.add(obj);
+    this.edgeLabels.set(edgeId, obj);
   }
 
   protected clearScene(): void {
@@ -397,13 +503,24 @@ export abstract class GraphEngine {
       this.scene.remove(group);
       disposeGroup(group);
     }
+    for (const obj of this.nodeLabels.values()) {
+      obj.parent?.remove(obj);
+      obj.element.remove();
+    }
+    for (const obj of this.edgeLabels.values()) {
+      obj.parent?.remove(obj);
+      obj.element.remove();
+    }
     this.nodeMeshes.clear();
     this.edgeLines.clear();
+    this.nodeLabels.clear();
+    this.edgeLabels.clear();
   }
 
   protected startRenderLoop(): void {
     const tick = () => {
       this.renderer.render(this.scene, this.camera);
+      this.css2dRenderer.render(this.scene, this.camera);
       this.animationId = requestAnimationFrame(tick);
     };
     tick();
@@ -416,8 +533,10 @@ export type ChangeEvent =
   | { type: 'node-added'; node: GraphNode }
   | { type: 'node-removed'; nodeId: string }
   | { type: 'node-moved'; nodeId: string; x: number; y: number }
+  | { type: 'node-label-changed'; nodeId: string; label: string }
   | { type: 'edge-added'; edge: GraphEdge }
   | { type: 'edge-removed'; edgeId: string }
+  | { type: 'edge-label-changed'; edgeId: string; label: string }
   | { type: 'selection'; selectedId: string | null };
 
 // ── Commands ──
@@ -467,6 +586,30 @@ class MoveNodeCommand implements Command {
   ) {}
   execute(): void { this.engine.applyNodePosition(this.nodeId, this.toX, this.toY); }
   undo(): void { this.engine.applyNodePosition(this.nodeId, this.fromX, this.fromY); }
+}
+
+class SetNodeLabelCommand implements Command {
+  readonly name = 'set-node-label';
+  constructor(
+    private engine: GraphEngine,
+    private nodeId: string,
+    private oldLabel: string,
+    private newLabel: string,
+  ) {}
+  execute(): void { this.engine._setNodeLabel(this.nodeId, this.newLabel); }
+  undo(): void { this.engine._setNodeLabel(this.nodeId, this.oldLabel); }
+}
+
+class SetEdgeLabelCommand implements Command {
+  readonly name = 'set-edge-label';
+  constructor(
+    private engine: GraphEngine,
+    private edgeId: string,
+    private oldLabel: string,
+    private newLabel: string,
+  ) {}
+  execute(): void { this.engine._setEdgeLabel(this.edgeId, this.newLabel); }
+  undo(): void { this.engine._setEdgeLabel(this.edgeId, this.oldLabel); }
 }
 
 // ── 边渲染辅助：直线 + 终点箭头 ──
@@ -523,4 +666,55 @@ function disposeGroup(group: THREE.Group): void {
       else (obj.material as THREE.Material).dispose();
     }
   });
+}
+
+// ── Label 渲染辅助 ──
+
+/**
+ * 创建节点 label 元素 — 节点正下方的文字 + 透明背景
+ * dataset 标注 { kind: 'node-label', id } 供 GraphView 双击 handler 识别
+ */
+export function createNodeLabelDom(nodeId: string, label: string): HTMLDivElement {
+  const div = document.createElement('div');
+  div.className = 'krig-graph-node-label';
+  div.dataset.kind = 'node-label';
+  div.dataset.nodeId = nodeId;
+  div.textContent = label;
+  div.style.cssText = `
+    color: #e0e0e0;
+    font-size: 12px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    padding: 2px 6px;
+    background: rgba(30,30,30,0.7);
+    border-radius: 3px;
+    white-space: nowrap;
+    pointer-events: auto;
+    cursor: text;
+    user-select: none;
+  `;
+  return div;
+}
+
+export function createEdgeLabelDom(edgeId: string, label: string): HTMLDivElement {
+  const div = document.createElement('div');
+  div.className = 'krig-graph-edge-label';
+  div.dataset.kind = 'edge-label';
+  div.dataset.edgeId = edgeId;
+  // 边的 label 默认空字符串显示空 div（便于点中加字），但 textContent 仍写入
+  div.textContent = label;
+  div.style.cssText = `
+    color: #aaa;
+    font-size: 11px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    padding: 1px 4px;
+    background: rgba(30,30,30,0.6);
+    border-radius: 2px;
+    white-space: nowrap;
+    pointer-events: auto;
+    cursor: text;
+    user-select: none;
+    min-width: 8px;
+    min-height: 12px;
+  `;
+  return div;
 }
