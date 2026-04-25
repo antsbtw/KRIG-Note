@@ -552,4 +552,17 @@ v1.1 按方案 A。
 
 ---
 
+## 实施期间发现的架构债
+
+P0 第二段（NavSide GraphPanel 接入）实施时，发现 `useNoteOperations.ts` 的 `handleActionBarClick` 是硬编码 switch — 不走 main 端 `navSideRegistry.executeAction` 通用路径。表面是阻塞 GraphView，根因是早期代码遗留：
+
+- `case 'create-note'` / `case 'create-folder'`：完全不经过 main，直接调本地函数（更早期，那时还没有 navSideRegistry）
+- `case 'create-ebook-folder'` / `case 'import-ebook'`：派发 DOM CustomEvent 绕回 EBookPanel React 组件
+
+**P0 第二段处置**：仅加 `default` 分支走通用 `navSideAPI.executeAction(actionId)` —— 让 GraphView 的 `create-graph` 立刻通，不动 4 条遗留 case 避免回归。
+
+**后续清理任务（不阻塞 GraphView 路线图）**：把 4 条遗留 case 迁移到 `navSideRegistry.registerAction` 注册制（note 两条登记到 `demo-a` workmode，ebook 两条登记到 `demo-b`），删除 hook 里的 case 和 EBookPanel 的 CustomEvent 监听。详见 memory `project_navside_arch_debt.md`。
+
+---
+
 *KRIG Design Spec · GraphView v1.1 Patch · 2026-04-24*
