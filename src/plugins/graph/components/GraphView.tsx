@@ -1,15 +1,17 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { BasicEngine } from '../engines/BasicEngine';
-import type { GraphNode, GraphEdge, ChangeEvent } from '../engines/GraphEngine';
+import type { GraphNode, GraphEdge, Atom, ChangeEvent } from '../engines/GraphEngine';
+import { ensureAtomLabel, makeTextLabel, extractPlainText } from '../engines/GraphEngine';
+
+// ── DB 持久化形态（v1.2：label 字段是 atom 数组，但兼容 v1.1 的 string） ──
 
 interface GraphNodeRecord {
   id: string;
   graph_id: string;
   type: string;
-  label: string;
+  label: Atom[] | string;   // v1.2 = Atom[]；旧数据 = string，加载时升级
   position_x: number;
   position_y: number;
-  block_ids?: string[];
   meta?: Record<string, unknown>;
 }
 
@@ -19,7 +21,7 @@ interface GraphEdgeRecord {
   type?: string;
   source: string;
   target: string;
-  label?: string;
+  label?: Atom[] | string;
   meta?: Record<string, unknown>;
 }
 
@@ -33,13 +35,15 @@ declare const viewAPI: {
   graphEdgeDelete: (graphId: string, edgeId: string) => Promise<void>;
 };
 
-// ── 转换工具 ──
+// ── 转换工具：DB 记录 ↔ Engine 数据 ──
+// 关键点：DB label 字段可能是 string（v1.1 老数据）或 Atom[]（v1.2）。
+// ensureAtomLabel 统一升级为 Atom[]。
 
 function recordToNode(r: GraphNodeRecord): GraphNode {
   return {
     id: r.id,
     type: r.type || 'concept',
-    label: r.label || '',
+    label: ensureAtomLabel(r.label),
     position: { x: r.position_x, y: r.position_y },
   };
 }
@@ -49,7 +53,7 @@ function recordToEdge(r: GraphEdgeRecord): GraphEdge {
     id: r.id,
     source: r.source,
     target: r.target,
-    label: r.label,
+    label: ensureAtomLabel(r.label),
   };
 }
 
@@ -58,10 +62,9 @@ function nodeToRecord(graphId: string, n: GraphNode): GraphNodeRecord {
     id: n.id,
     graph_id: graphId,
     type: n.type,
-    label: n.label,
+    label: n.label,   // 直接存 Atom[]（schemaless DB 接受 JSON 数组）
     position_x: n.position?.x ?? 0,
     position_y: n.position?.y ?? 0,
-    block_ids: [],
     meta: {},
   };
 }
@@ -75,23 +78,6 @@ function edgeToRecord(graphId: string, e: GraphEdge): GraphEdgeRecord {
     label: e.label,
     meta: {},
   };
-}
-
-// ── 新图初始种子（首次加载图为空时写入） ──
-
-function seedNodes(): GraphNode[] {
-  return [
-    { id: `n-${Date.now()}-a`, type: 'concept', label: '节点 1', position: { x: -150, y: 0 } },
-    { id: `n-${Date.now()}-b`, type: 'concept', label: '节点 2', position: { x: 0, y: 0 } },
-    { id: `n-${Date.now()}-c`, type: 'concept', label: '节点 3', position: { x: 150, y: 0 } },
-  ];
-}
-
-function seedEdges(nodes: GraphNode[]): GraphEdge[] {
-  return [
-    { id: `e-${Date.now()}-1`, source: nodes[0].id, target: nodes[1].id },
-    { id: `e-${Date.now()}-2`, source: nodes[1].id, target: nodes[2].id },
-  ];
 }
 
 export function GraphView() {
@@ -148,21 +134,9 @@ export function GraphView() {
       const data = await viewAPI.graphLoadData(activeGraphId);
       if (myToken !== loadTokenRef.current) return;  // 已切到别的图，丢弃
 
-      let nodes: GraphNode[];
-      let edges: GraphEdge[];
-
-      if (data.nodes.length === 0 && data.edges.length === 0) {
-        // 首次打开：写入种子并 load
-        nodes = seedNodes();
-        edges = seedEdges(nodes);
-        await Promise.all([
-          ...nodes.map((n) => viewAPI.graphNodeSave(nodeToRecord(activeGraphId, n))),
-          ...edges.map((e) => viewAPI.graphEdgeSave(edgeToRecord(activeGraphId, e))),
-        ]);
-      } else {
-        nodes = data.nodes.map(recordToNode);
-        edges = data.edges.map(recordToEdge);
-      }
+      // 直接消费 DB 数据，新图初始为空白（用户通过 + 节点 / 右键自己创建）
+      const nodes: GraphNode[] = data.nodes.map(recordToNode);
+      const edges: GraphEdge[] = data.edges.map(recordToEdge);
 
       if (myToken !== loadTokenRef.current) return;
       engine.setData(nodes, edges);
@@ -198,16 +172,20 @@ export function GraphView() {
       const eng = engineRef.current;
       if (!eng) return;
 
+      // 双击 label 进入纯文本编辑模式（v1.2 第一段）。
+      // 提交后用 makeTextLabel 包成 textBlock atom，整体替换原 atom 数组。
+      // 注：这丢失原 atom 数组里的非文本内容（如 mathBlock）。完整 ProseMirror
+      //   编辑器会在 P1 v1.2 第二段加入。
       if (kind === 'node-label' && target.dataset.nodeId) {
         e.preventDefault();
         e.stopPropagation();
         const nid = target.dataset.nodeId;
-        eng.setNodeLabelVisible(nid, false);  // 编辑期间隐藏 label，避免和 input 重叠
+        eng.setNodeLabelVisible(nid, false);
         editLabelInPlace(target, target.textContent ?? '', (newText) => {
           eng.setNodeLabelVisible(nid, true);
-          eng.setNodeLabel(nid, newText);
+          eng.setNodeLabel(nid, makeTextLabel(newText));
         }, () => {
-          eng.setNodeLabelVisible(nid, true);  // 取消时也要恢复显示
+          eng.setNodeLabelVisible(nid, true);
         });
       } else if (kind === 'edge-label' && target.dataset.edgeId) {
         e.preventDefault();
@@ -216,7 +194,7 @@ export function GraphView() {
         eng.setEdgeLabelVisible(eid, false);
         editLabelInPlace(target, target.textContent ?? '', (newText) => {
           eng.setEdgeLabelVisible(eid, true);
-          eng.setEdgeLabel(eid, newText);
+          eng.setEdgeLabel(eid, makeTextLabel(newText));
         }, () => {
           eng.setEdgeLabelVisible(eid, true);
         });
