@@ -73,6 +73,7 @@ export class NodeContentRenderer {
     this.unmountNodeLabel(nodeId);
 
     const div = document.createElement('div');
+    div.className = 'krig-graph-node-label';   // 给 graph.css 选择器用
     div.dataset.kind = 'node-label';
     div.dataset.nodeId = nodeId;
     applyNodeLabelStyle(div);
@@ -121,6 +122,7 @@ export class NodeContentRenderer {
     this.unmountEdgeLabel(edgeId);
 
     const div = document.createElement('div');
+    div.className = 'krig-graph-edge-label';   // 给 graph.css 选择器用
     div.dataset.kind = 'edge-label';
     div.dataset.edgeId = edgeId;
     applyEdgeLabelStyle(div);

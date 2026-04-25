@@ -36,6 +36,8 @@ import type { Atom } from '../engines/GraphEngine';
 
 // 复用 NoteView 的 CSS（block 渲染、SlashMenu 等 UI 样式）
 import '../../note/note.css';
+// 节点 label 的紧凑样式覆盖（避免 note.css 的 .ProseMirror 把 label 撑大）
+import '../graph.css';
 
 /**
  * NodeEditorPopup — 节点 / 边的 ProseMirror 编辑器浮窗（spec v1.2 § 7.2）
