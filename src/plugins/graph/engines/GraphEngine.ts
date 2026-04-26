@@ -8,6 +8,7 @@ import { NodeRenderer } from '../rendering/NodeRenderer';
 import { EdgeRenderer } from '../rendering/EdgeRenderer';
 import { SvgGeometryContent } from '../rendering/contents/SvgGeometryContent';
 import { CircleShape } from '../rendering/shapes/CircleShape';
+import { EditOverlay, type EditTarget } from '../rendering/edit/EditOverlay';
 
 /**
  * GraphEngine — L5 GraphView 内部的渲染引擎抽象基类
@@ -116,6 +117,9 @@ export abstract class GraphEngine {
   /** v1.3 § 3.4：EdgeRenderer 实例 */
   protected edgeRenderer: EdgeRenderer = new EdgeRenderer(GraphEngine.SHARED_CONTENT);
 
+  /** v1.3 § 7：EditOverlay（编辑模式） */
+  protected editOverlay: EditOverlay | null = null;
+
   protected nodes: GraphNode[] = [];
   protected edges: GraphEdge[] = [];
 
@@ -192,8 +196,16 @@ export abstract class GraphEngine {
         onSelect: (id) => this.setSelected(id),
         onEdgeCreate: (sourceId, targetId) => this.addEdgeBySource(sourceId, targetId),
         onHoverChange: (id) => this.applyHoverHighlight(id),
+        onNodeDoubleClick: (id) => this.enterEditMode(id),
+        onEdgeDoubleClick: (id) => this.enterEditModeForEdge(id),
       },
+      () => this.edgeLines,
     );
+
+    // v1.3 § 7：EditOverlay
+    this.editOverlay = new EditOverlay({
+      onExit: (target, atoms) => this.handleEditExit(target, atoms),
+    });
     this.viewport.attach();
     this.interaction.attach();
   }
@@ -203,6 +215,8 @@ export abstract class GraphEngine {
       cancelAnimationFrame(this.animationId);
       this.animationId = null;
     }
+    this.editOverlay?.dispose();
+    this.editOverlay = null;
     this.interaction?.detach();
     this.viewport?.detach();
     this.clearScene();
@@ -324,6 +338,90 @@ export abstract class GraphEngine {
   setEdgeLabelVisible(id: string, visible: boolean): void {
     const obj = this.edgeLabels.get(id);
     if (obj) obj.visible = visible;
+  }
+
+  // ── 编辑模式（v1.3 § 7）──
+
+  /** 双击节点进入编辑态：隐藏 content、浮 EditOverlay */
+  enterEditMode(nodeId: string): void {
+    if (!this.editOverlay) return;
+    const node = this.nodes.find((n) => n.id === nodeId);
+    const group = this.nodeGroups.get(nodeId);
+    if (!node || !group) return;
+
+    // 隐藏 content（保留 shape 圆作背景）
+    this.setNodeLabelVisible(nodeId, false);
+
+    // 节点中心世界坐标 → 屏幕坐标（通过相机投影）
+    const screen = this.worldToScreen(group.position);
+
+    // 浮卡放在节点圆下方（避开圆本身）
+    // worldToScreen 给的是节点圆心；浮卡会用 placement='below' 让顶部对齐
+    // 屏幕坐标 + nodeRadius + 间距
+    this.editOverlay.enter({
+      kind: 'node',
+      id: nodeId,
+      atoms: node.label,
+      screenX: screen.x,
+      screenY: screen.y,
+      anchorOffsetY: this.getGroupRadius(group) + 16,
+    });
+  }
+
+  /** 双击边进入编辑态（v1.3 § 7.2 边 label 编辑入口） */
+  enterEditModeForEdge(edgeId: string): void {
+    if (!this.editOverlay) return;
+    const edge = this.edges.find((e) => e.id === edgeId);
+    if (!edge) return;
+    const sourceGroup = this.nodeGroups.get(edge.source);
+    const targetGroup = this.nodeGroups.get(edge.target);
+    if (!sourceGroup || !targetGroup) return;
+
+    // 隐藏边 label（避免和编辑器重叠）
+    this.setEdgeLabelVisible(edgeId, false);
+
+    // 浮层位置 = 两节点屏幕中点（边曲线的视觉中点附近）
+    const sScreen = this.worldToScreen(sourceGroup.position);
+    const tScreen = this.worldToScreen(targetGroup.position);
+    const screenX = (sScreen.x + tScreen.x) / 2;
+    const screenY = (sScreen.y + tScreen.y) / 2;
+
+    this.editOverlay.enter({
+      kind: 'edge',
+      id: edgeId,
+      atoms: edge.label ?? [],
+      screenX,
+      screenY,
+      // 边浮窗也走 below 模式：浮在中点下方 16px，含指针，与节点视觉一致
+      anchorOffsetY: 16,
+    });
+  }
+
+  /** 世界坐标 → DOM 屏幕坐标（用于浮层定位） */
+  protected worldToScreen(world: THREE.Vector3): { x: number; y: number } {
+    const ndc = world.clone().project(this.camera);
+    const canvas = this.renderer.domElement;
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: ((ndc.x + 1) / 2) * rect.width + rect.left,
+      y: ((1 - ndc.y) / 2) * rect.height + rect.top,
+    };
+  }
+
+  /** EditOverlay 退出回调：commit=true 时把新 atoms 回写并触发 redraw */
+  protected handleEditExit(target: EditTarget, atoms: Atom[] | null): void {
+    // 恢复 content 可见
+    if (target.kind === 'node') {
+      this.setNodeLabelVisible(target.id, true);
+      if (atoms) {
+        this.setNodeLabel(target.id, atoms);
+      }
+    } else if (target.kind === 'edge') {
+      this.setEdgeLabelVisible(target.id, true);
+      if (atoms) {
+        this.setEdgeLabel(target.id, atoms);
+      }
+    }
   }
 
   undo(): void {

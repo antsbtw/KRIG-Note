@@ -33,6 +33,10 @@ export interface InteractionCallbacks {
   onEdgeCreate: (sourceId: string, targetId: string) => void;
   /** hover 状态变化（v1.3 § 7.3）。null 表示离开任何节点 */
   onHoverChange?: (nodeId: string | null) => void;
+  /** 双击节点（v1.3 § 7.2 → enterEditMode） */
+  onNodeDoubleClick?: (nodeId: string) => void;
+  /** 双击边（v1.3 § 7.2 → enterEditMode for edge label） */
+  onEdgeDoubleClick?: (edgeId: string) => void;
 }
 
 type HoverState = 'none' | 'node-center' | 'node-edge';
@@ -63,6 +67,7 @@ export class InteractionController {
   private boundMouseDown: (e: MouseEvent) => void;
   private boundMouseMove: (e: MouseEvent) => void;
   private boundMouseUp: (e: MouseEvent) => void;
+  private boundDoubleClick: (e: MouseEvent) => void;
 
   constructor(
     private domElement: HTMLElement,
@@ -72,16 +77,22 @@ export class InteractionController {
     private getNodeGroups: () => Map<string, THREE.Group>,
     private getNodeRadius: (group: THREE.Group) => number,
     private callbacks: InteractionCallbacks,
+    /** 边 group map 提供器（可选，仅用于 dblclick 拾取边） */
+    private getEdgeGroups?: () => Map<string, THREE.Group>,
   ) {
     this.boundMouseDown = this.onMouseDown.bind(this);
     this.boundMouseMove = this.onMouseMove.bind(this);
     this.boundMouseUp = this.onMouseUp.bind(this);
+    this.boundDoubleClick = this.onDoubleClick.bind(this);
+    // 线段拾取需要更宽容的 threshold（默认 1px 几乎无法命中曲线）
+    this.raycaster.params.Line = { threshold: 8 };
   }
 
   attach(): void {
     this.domElement.addEventListener('mousedown', this.boundMouseDown);
     window.addEventListener('mousemove', this.boundMouseMove);
     window.addEventListener('mouseup', this.boundMouseUp);
+    this.domElement.addEventListener('dblclick', this.boundDoubleClick);
     // 让 viewport 知道：左键按在节点上时不平移，按空白时平移
     this.viewport.shouldAllowLeftPan = (e: MouseEvent) => {
       return this.pickNodeAtScreen(e.clientX, e.clientY) === null;
@@ -92,6 +103,7 @@ export class InteractionController {
     this.domElement.removeEventListener('mousedown', this.boundMouseDown);
     window.removeEventListener('mousemove', this.boundMouseMove);
     window.removeEventListener('mouseup', this.boundMouseUp);
+    this.domElement.removeEventListener('dblclick', this.boundDoubleClick);
     this.removeGhostEdge();
     this.hideHoverRing();
     this.domElement.style.cursor = '';
@@ -304,6 +316,63 @@ export class InteractionController {
   /** 处理画布空白处单击 — 由 GraphEngine 转发（因为 viewport 也吃 mousedown） */
   handleBlankClick(): void {
     this.callbacks.onSelect(null);
+  }
+
+  /**
+   * 双击（v1.3 § 7.2）：
+   * - 优先命中节点 → onNodeDoubleClick（节点遮挡边）
+   * - 没命中节点再命中边 → onEdgeDoubleClick
+   */
+  private onDoubleClick(e: MouseEvent): void {
+    if (e.button !== 0) return;
+    const nodeId = this.pickNodeAtScreen(e.clientX, e.clientY);
+    if (nodeId) {
+      e.preventDefault();
+      e.stopPropagation();
+      this.callbacks.onNodeDoubleClick?.(nodeId);
+      return;
+    }
+    const edgeId = this.pickEdgeAtScreen(e.clientX, e.clientY);
+    if (edgeId) {
+      e.preventDefault();
+      e.stopPropagation();
+      this.callbacks.onEdgeDoubleClick?.(edgeId);
+    }
+  }
+
+  /**
+   * 屏幕坐标 → 命中边 id。raycaster 对 Line 用 threshold 8px 容差，
+   * 让用户即使没精确点中线也能命中。
+   */
+  private pickEdgeAtScreen(screenX: number, screenY: number): string | null {
+    const getEdges = this.getEdgeGroups;
+    if (!getEdges) return null;
+    const rect = this.domElement.getBoundingClientRect();
+    this.mouse.x = ((screenX - rect.left) / rect.width) * 2 - 1;
+    this.mouse.y = -((screenY - rect.top) / rect.height) * 2 + 1;
+    this.raycaster.setFromCamera(this.mouse, this.camera);
+
+    // 命中边的子元素（曲线 + label 几何）
+    const edgeGroups = Array.from(getEdges().values());
+    const targets: THREE.Object3D[] = [];
+    for (const g of edgeGroups) {
+      // 含子树（曲线 + 箭头 + label mesh）
+      g.traverse((obj) => {
+        if (obj !== g) targets.push(obj);
+      });
+    }
+    if (targets.length === 0) return null;
+    const hits = this.raycaster.intersectObjects(targets, false);
+    if (hits.length === 0) return null;
+
+    // 从命中对象向上找到带 edgeId 的祖先（edge group 自己有 userData.edgeId）
+    let obj: THREE.Object3D | null = hits[0].object;
+    while (obj) {
+      const id = obj.userData?.edgeId as string | undefined;
+      if (id) return id;
+      obj = obj.parent;
+    }
+    return null;
   }
 
   // ── 幽灵线 ──

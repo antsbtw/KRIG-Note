@@ -1,0 +1,305 @@
+/* EditOverlay 浮层 CSS（v1.3 § 7） */
+
+/* ── 进入动画 ── */
+
+@keyframes krig-edit-popup-enter {
+  from {
+    opacity: 0;
+    transform-origin: top center;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.krig-edit-popup {
+  animation: krig-edit-popup-enter 130ms ease-out;
+}
+
+/* below 模式（浮卡在节点下方）：顶部加小三角指向节点 */
+.krig-edit-popup--below::before {
+  content: '';
+  position: absolute;
+  top: -8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  border-bottom: 8px solid #4a90e2;
+  /* 蓝边描边再加一层内嵌深底（仿气泡 tooltip） */
+}
+
+.krig-edit-popup--below::after {
+  content: '';
+  position: absolute;
+  top: -6px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-bottom: 7px solid rgba(40, 44, 52, 0.97);
+}
+
+
+
+/* PM mount 内部样式 — 紧凑、深色背景适配 */
+
+.krig-edit-pm-mount {
+  font-size: 14px;
+  line-height: 1.5;
+  color: #e0e0e0;
+  /* 深色背景下用亮色 caret，提高可见度 */
+  caret-color: #88aaff;
+}
+
+/* PM 内 contentEditable 容器（ProseMirror 类） */
+.krig-edit-pm-mount .ProseMirror {
+  outline: none;
+  caret-color: #88aaff;
+  /* PM 官方要求（避免 white-space 警告，保留输入空格/换行） */
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.krig-edit-pm-mount .ProseMirror-focused {
+  outline: none;
+}
+
+.krig-edit-pm-mount p,
+.krig-edit-pm-mount h1,
+.krig-edit-pm-mount h2,
+.krig-edit-pm-mount h3 {
+  margin: 0 0 4px 0;
+  padding: 0;
+  /* 空段也要撑出一行高度，否则光标看不见 */
+  min-height: 1.4em;
+}
+
+.krig-edit-pm-mount p:last-child,
+.krig-edit-pm-mount h1:last-child,
+.krig-edit-pm-mount h2:last-child,
+.krig-edit-pm-mount h3:last-child {
+  margin-bottom: 0;
+}
+
+.krig-edit-pm-mount h1 {
+  font-size: 1.6em;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.krig-edit-pm-mount h2 {
+  font-size: 1.35em;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.krig-edit-pm-mount h3 {
+  font-size: 1.15em;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.krig-edit-pm-mount ul,
+.krig-edit-pm-mount ol {
+  margin: 0 0 4px 0;
+  padding-left: 18px;
+}
+
+.krig-edit-pm-mount ul:last-child,
+.krig-edit-pm-mount ol:last-child {
+  margin-bottom: 0;
+}
+
+.krig-edit-pm-mount li {
+  margin: 0;
+  padding: 0;
+}
+
+.krig-edit-pm-mount strong {
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.krig-edit-pm-mount em {
+  font-style: italic;
+}
+
+.krig-edit-pm-mount u {
+  text-decoration: underline;
+}
+
+.krig-edit-pm-mount code {
+  font-family: 'JetBrains Mono', 'Fira Code', Menlo, monospace;
+  font-size: 0.92em;
+  background: #2c313a;
+  padding: 1px 4px;
+  border-radius: 3px;
+  color: #e0e0e0;
+}
+
+/* ── Math NodeView（v1.3 § 4.3 inline math + block math）── */
+
+.krig-math-inline,
+.krig-math-block {
+  cursor: pointer;
+  position: relative;
+  border-radius: 3px;
+  transition: background 100ms;
+}
+
+.krig-math-inline {
+  display: inline-block;
+  padding: 0 4px;
+  vertical-align: middle;
+}
+
+.krig-math-block {
+  display: block;
+  margin: 6px 0;
+  padding: 6px 8px;
+  text-align: center;
+}
+
+.krig-math-inline:hover,
+.krig-math-block:hover {
+  background: rgba(136, 170, 255, 0.12);
+}
+
+.krig-math-inline.is-selected,
+.krig-math-block.is-selected {
+  background: rgba(74, 144, 226, 0.25);
+  outline: 1px solid rgba(74, 144, 226, 0.6);
+}
+
+/* 空 atom 占位 */
+.krig-math-empty {
+  font-style: italic;
+  color: #88aaff;
+  font-size: 0.85em;
+  padding: 0 2px;
+}
+
+/* KaTeX 在浮卡内的颜色（KaTeX 默认 currentColor） */
+.krig-edit-pm-mount .katex {
+  color: #e0e0e0;
+}
+
+/* ── Inline Toolbar（选中文字浮 mark 按钮）── */
+
+.krig-inline-toolbar {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  background: rgba(20, 22, 28, 0.96);
+  border: 1px solid rgba(74, 144, 226, 0.6);
+  border-radius: 5px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.55);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 12px;
+  color: #e0e0e0;
+  /* 浮在选区起点上方，水平居中 */
+  transform: translate(-50%, -100%);
+  user-select: none;
+}
+
+.krig-inline-toolbar-btn {
+  min-width: 26px;
+  height: 24px;
+  padding: 0 6px;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  color: #ccc;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.krig-inline-toolbar-btn:hover {
+  background: rgba(74, 144, 226, 0.2);
+  color: #fff;
+}
+
+.krig-inline-toolbar-btn.is-active {
+  background: rgba(74, 144, 226, 0.45);
+  color: #fff;
+}
+
+/* 按钮特殊字体（B 加粗、I 斜体、code 等宽） */
+.krig-inline-toolbar-btn[data-id="bold"] { font-weight: 700; }
+.krig-inline-toolbar-btn[data-id="italic"] { font-style: italic; font-family: serif; }
+.krig-inline-toolbar-btn[data-id="underline"] { text-decoration: underline; }
+.krig-inline-toolbar-btn[data-id="code"] {
+  font-family: 'JetBrains Mono', Menlo, monospace;
+  font-size: 11px;
+}
+.krig-inline-toolbar-btn[data-id="mathInline"] {
+  font-family: 'KaTeX_Main', Cambria, 'Times New Roman', serif;
+  font-size: 16px;
+  color: #88aaff;
+}
+
+/* mark 类和 node 类之间加个分隔线 */
+.krig-inline-toolbar-btn[data-id="mathInline"] {
+  margin-left: 4px;
+  border-left: 1px solid #444;
+  padding-left: 8px;
+  border-radius: 0 3px 3px 0;
+}
+
+/* 选区颜色 */
+.krig-edit-pm-mount ::selection {
+  background: rgba(74, 144, 226, 0.4);
+}
+
+/* ── Slash Menu（v1.3 § 7 编辑器辅助 UI）── */
+
+.krig-slash-menu {
+  position: fixed;
+  min-width: 200px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: rgba(30, 33, 39, 0.98);
+  border: 1px solid #4a90e2;
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.55);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 13px;
+  color: #e0e0e0;
+  z-index: 1100;
+  user-select: none;
+}
+
+.krig-slash-menu-item {
+  padding: 6px 10px;
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+.krig-slash-menu-item.is-selected {
+  background: rgba(74, 144, 226, 0.3);
+}
+
+.krig-slash-menu-item:hover {
+  background: rgba(74, 144, 226, 0.2);
+}
+
+.krig-slash-menu-label {
+  font-weight: 500;
+  color: #ffffff;
+}
+
+.krig-slash-menu-desc {
+  font-size: 11px;
+  color: #888;
+  margin-top: 2px;
+}
