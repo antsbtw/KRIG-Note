@@ -14,6 +14,9 @@
 .krig-edit-pm-mount .ProseMirror {
   outline: none;
   caret-color: #88aaff;
+  /* PM 官方要求（避免 white-space 警告，保留输入空格/换行） */
+  white-space: pre-wrap;
+  word-wrap: break-word;
 }
 
 .krig-edit-pm-mount .ProseMirror-focused {
