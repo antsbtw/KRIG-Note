@@ -1,8 +1,12 @@
 import * as THREE from 'three';
-import { CSS2DRenderer, CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
+import { CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
+import type { Atom } from '../../../lib/atom-serializers/types';
 import { ViewportController } from './ViewportController';
 import { InteractionController } from './InteractionController';
 import { CommandStack, type Command } from './CommandStack';
+import { NodeRenderer } from '../rendering/NodeRenderer';
+import { SvgGeometryContent } from '../rendering/contents/SvgGeometryContent';
+import { CircleShape } from '../rendering/shapes/CircleShape';
 
 /**
  * GraphEngine — L5 GraphView 内部的渲染引擎抽象基类
@@ -18,10 +22,10 @@ import { CommandStack, type Command } from './CommandStack';
 
 // ── 数据模型 ──
 // spec v1.2 § 4.2 / 4.3：label 从 string 升级为 Atom[]，复用 Note 的内容数据形态。
+// v1.3 § 1.2：Atom 类型从 lib 共享层导入（跨视图共享）。
 // Atom 即 ProseMirror node JSON：{ type, content?, attrs?, marks?, text? }
 
-/** Atom = ProseMirror node JSON。直接复用 Note 的 doc_content 元素形态。 */
-export type Atom = unknown;
+export type { Atom };
 
 export interface GraphNode {
   id: string;
@@ -93,11 +97,17 @@ export abstract class GraphEngine {
   protected container: HTMLElement | null = null;
   protected animationId: number | null = null;
 
-  protected nodeMeshes = new Map<string, THREE.Mesh>();
+  /** v1.3：节点用 THREE.Group（含 shape mesh + content obj） */
+  protected nodeGroups = new Map<string, THREE.Group>();
   protected edgeLines = new Map<string, THREE.Group>();
-  /** nodeId / edgeId → CSS2DObject 容器（label） */
-  protected nodeLabels = new Map<string, CSS2DObject>();
-  protected edgeLabels = new Map<string, CSS2DObject>();
+  /** edgeId → 边 label 的 SVG 几何 Object3D（v1.3 § 9.4） */
+  protected edgeLabels = new Map<string, THREE.Object3D>();
+
+  /** v1.3：NodeRenderer 实例，懒初始化（异步字体加载在内部完成） */
+  protected nodeRenderer: NodeRenderer = new NodeRenderer(
+    new CircleShape(),
+    new SvgGeometryContent(),
+  );
 
   protected nodes: GraphNode[] = [];
   protected edges: GraphEdge[] = [];
@@ -110,6 +120,7 @@ export abstract class GraphEngine {
   protected commandStack = new CommandStack();
 
   protected selectedId: string | null = null;
+  protected hoveredId: string | null = null;
 
   /** 数据变更回调（外层接 SurrealDB） */
   onChange: ((event: ChangeEvent) => void) | null = null;
@@ -158,8 +169,8 @@ export abstract class GraphEngine {
       this.camera,
       this.scene,
       this.viewport,
-      () => this.nodeMeshes,
-      (mesh) => this.getMeshRadius(mesh),
+      () => this.nodeGroups,
+      (group) => this.getGroupRadius(group),
       {
         onNodeDragStart: () => { /* 拖动 preview，无需特殊处理 */ },
         onNodeDragMove: (id, x, y) => this.previewNodePosition(id, x, y),
@@ -173,6 +184,7 @@ export abstract class GraphEngine {
         },
         onSelect: (id) => this.setSelected(id),
         onEdgeCreate: (sourceId, targetId) => this.addEdgeBySource(sourceId, targetId),
+        onHoverChange: (id) => this.applyHoverHighlight(id),
       },
     );
     this.viewport.attach();
@@ -236,7 +248,7 @@ export abstract class GraphEngine {
       const pos = positions.get(node.id);
       if (pos) node.position = pos;
     }
-    this.rerender();
+    void this.rerender();
   }
 
   // ── 公开 mutate API（外部调用走 Command） ──
@@ -293,10 +305,12 @@ export abstract class GraphEngine {
     this.setEdgeLabel(id, makeTextLabel(text));
   }
 
-  /** 临时隐藏节点 label（编辑时用，避免和 input 重叠） */
+  /** 临时隐藏节点 label（编辑时用，避免和 input 重叠）
+   *  v1.3：操作 group 的 content child（children[1]），shape 不动 */
   setNodeLabelVisible(id: string, visible: boolean): void {
-    const obj = this.nodeLabels.get(id);
-    if (obj) obj.visible = visible;
+    const group = this.nodeGroups.get(id);
+    const content = group?.children[1];
+    if (content) content.visible = visible;
   }
 
   /** 临时隐藏边 label */
@@ -307,14 +321,14 @@ export abstract class GraphEngine {
 
   undo(): void {
     if (this.commandStack.undo()) {
-      this.rerender();
+      void this.rerender();
       this.applySelectionHighlight();
     }
   }
 
   redo(): void {
     if (this.commandStack.redo()) {
-      this.rerender();
+      void this.rerender();
       this.applySelectionHighlight();
     }
   }
@@ -332,20 +346,44 @@ export abstract class GraphEngine {
     this.onChange?.({ type: 'selection', selectedId: id });
   }
 
+  /**
+   * 高亮优先级（v1.3 § 7.3）：selected > hover > default
+   */
   protected applySelectionHighlight(): void {
-    for (const [nodeId, mesh] of this.nodeMeshes) {
-      this.shapeLib.applyHighlight(mesh, nodeId === this.selectedId);
+    for (const [nodeId, group] of this.nodeGroups) {
+      this.nodeRenderer.setHighlight(group, this.computeHighlightMode(nodeId));
     }
+  }
+
+  /** hover 切换：仅刷新涉及到的节点（避免遍历全部） */
+  protected applyHoverHighlight(nodeId: string | null): void {
+    const oldId = this.hoveredId;
+    this.hoveredId = nodeId;
+
+    if (oldId && oldId !== nodeId) {
+      const oldGroup = this.nodeGroups.get(oldId);
+      if (oldGroup) this.nodeRenderer.setHighlight(oldGroup, this.computeHighlightMode(oldId));
+    }
+    if (nodeId) {
+      const newGroup = this.nodeGroups.get(nodeId);
+      if (newGroup) this.nodeRenderer.setHighlight(newGroup, this.computeHighlightMode(nodeId));
+    }
+  }
+
+  private computeHighlightMode(nodeId: string): 'default' | 'hover' | 'selected' {
+    if (nodeId === this.selectedId) return 'selected';
+    if (nodeId === this.hoveredId) return 'hover';
+    return 'default';
   }
 
   // ── 内部：节点拖拽 preview / 边创建 ──
 
-  /** 拖动 preview 期间实时更新 mesh 位置 + 重画相邻边（不入 Command 栈） */
+  /** 拖动 preview 期间实时更新 group 位置 + 重画相邻边（不入 Command 栈） */
   protected previewNodePosition(id: string, x: number, y: number): void {
-    const mesh = this.nodeMeshes.get(id);
-    if (!mesh) return;
-    mesh.position.set(x, y, 0);
-    // 重画相关边（仅 mesh 位置变了，nodes[].position 在 commit 时再写）
+    const group = this.nodeGroups.get(id);
+    if (!group) return;
+    group.position.set(x, y, 0);
+    // 重画相关边（仅 group 位置变了，nodes[].position 在 commit 时再写）
     this.redrawEdgesFor(id);
   }
 
@@ -355,9 +393,9 @@ export abstract class GraphEngine {
     if (node) {
       node.position = { x, y };
     }
-    const mesh = this.nodeMeshes.get(id);
-    if (mesh) {
-      mesh.position.set(x, y, 0);
+    const group = this.nodeGroups.get(id);
+    if (group) {
+      group.position.set(x, y, 0);
     }
     this.redrawEdgesFor(id);
     this.onChange?.({ type: 'node-moved', nodeId: id, x, y });
@@ -385,22 +423,28 @@ export abstract class GraphEngine {
     }
   }
 
-  /** 重画单条边（包括 bundle 内同伴边的索引可能未变也照画一次，便于统一逻辑） */
+  /**
+   * 重画单条边。
+   *
+   * v1.3：边 = group（曲线 + 箭头 + 异步 label SVG 几何）。label 作为 edge group
+   * 的 child 添加；渲染期间无 label，渲染完成后挂上（fire-and-forget）。
+   */
   protected redrawEdge(edge: GraphEdge): void {
     const oldGroup = this.edgeLines.get(edge.id);
     if (oldGroup) {
       this.scene.remove(oldGroup);
       disposeGroup(oldGroup);
       this.edgeLines.delete(edge.id);
+      this.edgeLabels.delete(edge.id);
     }
-    const sourceMesh = this.nodeMeshes.get(edge.source);
-    const targetMesh = this.nodeMeshes.get(edge.target);
-    if (!sourceMesh || !targetMesh) return;
-    const radius = Math.min(this.getMeshRadius(sourceMesh), this.getMeshRadius(targetMesh));
+    const sourceGroup = this.nodeGroups.get(edge.source);
+    const targetGroup = this.nodeGroups.get(edge.target);
+    if (!sourceGroup || !targetGroup) return;
+    const radius = Math.min(this.getGroupRadius(sourceGroup), this.getGroupRadius(targetGroup));
     const { index, total } = this.computeEdgeBundle(edge);
     const { group, labelPos } = createEdgeLine(
-      sourceMesh.position,
-      targetMesh.position,
+      sourceGroup.position,
+      targetGroup.position,
       radius,
       index,
       total,
@@ -409,8 +453,8 @@ export abstract class GraphEngine {
     this.scene.add(group);
     this.edgeLines.set(edge.id, group);
 
-    // 边 label 在弧线中点（直线时退化为直线中点）
-    this.attachEdgeLabelAt(edge.id, edge.label ?? [], labelPos.x, labelPos.y);
+    // 边 label：异步 SVG 几何，挂在 edge group 上
+    void this.attachEdgeLabel(edge.id, edge.label ?? [], labelPos.x, labelPos.y);
   }
 
   /**
@@ -433,14 +477,13 @@ export abstract class GraphEngine {
     return { index: sameBundle.findIndex((e) => e.id === edge.id), total: sameBundle.length };
   }
 
-  /** 给定 mesh，估算它的"半径"（圆/矩形通用近似 — 取边界球半径） */
-  protected getMeshRadius(mesh: THREE.Mesh): number {
-    const node = this.nodes.find((n) => n.id === (mesh.userData?.nodeId as string));
-    if (node) {
-      const size = this.shapeLib.getNodeSize(node.type);
-      return Math.min(size.width, size.height) / 2;
+  /** 给定 group，从 shape mesh 的 userData 读半径（CircleShape 在 createMesh 写入） */
+  protected getGroupRadius(group: THREE.Group): number {
+    const shape = group.children[0];
+    if (shape && typeof shape.userData?.radius === 'number') {
+      return shape.userData.radius as number;
     }
-    return 30;
+    return 24;
   }
 
   // ── Command 内部用的低层增删（不走 Command 栈，外部别直接用） ──
@@ -449,7 +492,7 @@ export abstract class GraphEngine {
   _addNode(node: GraphNode): void {
     if (this.nodes.some((n) => n.id === node.id)) return;
     this.nodes.push(node);
-    this.rerender();
+    void this.rerender();
     this.applySelectionHighlight();
     this.onChange?.({ type: 'node-added', node });
   }
@@ -460,7 +503,7 @@ export abstract class GraphEngine {
     // 同时移除关联边（不发"边删除"事件，由调用方 RemoveNodeCommand 自己管理边的批量增删）
     this.edges = this.edges.filter((e) => e.source !== nodeId && e.target !== nodeId);
     if (this.selectedId === nodeId) this.selectedId = null;
-    this.rerender();
+    void this.rerender();
     this.applySelectionHighlight();
     this.onChange?.({ type: 'node-removed', nodeId });
   }
@@ -469,7 +512,7 @@ export abstract class GraphEngine {
   _addEdge(edge: GraphEdge): void {
     if (this.edges.some((e) => e.id === edge.id)) return;
     this.edges.push(edge);
-    this.rerender();
+    void this.rerender();
     this.applySelectionHighlight();
     this.onChange?.({ type: 'edge-added', edge });
   }
@@ -477,7 +520,7 @@ export abstract class GraphEngine {
   /** @internal */
   _removeEdge(edgeId: string): void {
     this.edges = this.edges.filter((e) => e.id !== edgeId);
-    this.rerender();
+    void this.rerender();
     this.applySelectionHighlight();
     this.onChange?.({ type: 'edge-removed', edgeId });
   }
@@ -501,115 +544,134 @@ export abstract class GraphEngine {
     this.onChange?.({ type: 'edge-label-changed', edgeId: id, label });
   }
 
-  /** 刷新节点的内容渲染（label 改了之后调）。P1 v1.2 第一段：纯文本展示 */
+  /** 刷新节点的内容渲染（label 改了之后调）。v1.3：走 NodeRenderer.updateContent */
   protected refreshNodeContent(nodeId: string): void {
     const node = this.nodes.find((n) => n.id === nodeId);
     if (!node) return;
-    const obj = this.nodeLabels.get(nodeId);
-    if (!obj) return;
-    const text = extractPlainText(node.label) || '未命名';
-    obj.element.textContent = text;
+    const group = this.nodeGroups.get(nodeId);
+    if (!group) return;
+    void this.nodeRenderer.updateContent(group, node.label);
   }
 
-  /** 刷新边的内容渲染 */
+  /** 刷新边的内容渲染（label 改了之后调）。v1.3：直接重画整条边 */
   protected refreshEdgeContent(edgeId: string): void {
     const edge = this.edges.find((e) => e.id === edgeId);
     if (!edge) return;
-    const obj = this.edgeLabels.get(edgeId);
-    if (!obj) return;
-    obj.element.textContent = extractPlainText(edge.label);
+    this.redrawEdge(edge);
   }
 
   // ── 渲染 ──
 
-  /** 把当前 nodes / edges 渲染到 scene（清旧 + 加新）。外部加载完数据后可调一次 */
-  rerender(): void {
-    for (const mesh of this.nodeMeshes.values()) this.scene.remove(mesh);
+  /**
+   * 把当前 nodes / edges 渲染到 scene（清旧 + 加新）。外部加载完数据后可调一次。
+   *
+   * v1.3：节点走 NodeRenderer（异步，含 SVG 序列化 + 字体加载）。
+   * 整个方法返回 Promise；同步调用方用 `void this.rerender()` 不阻塞 UI。
+   * 节点会按顺序异步出现（首批可能延迟 ~100ms 因为字体冷加载）。
+   */
+  async rerender(): Promise<void> {
+    // 用本地令牌避免重入导致旧 rerender 的节点出现在新场景里
+    const token = ++this.rerenderToken;
+
+    for (const group of this.nodeGroups.values()) {
+      this.scene.remove(group);
+      this.nodeRenderer.dispose(group);
+    }
     for (const group of this.edgeLines.values()) {
       this.scene.remove(group);
       disposeGroup(group);
     }
-    for (const obj of this.nodeLabels.values()) {
-      obj.parent?.remove(obj);
-      obj.element.remove();
-    }
+    // edge labels 是 edge group 的 child，disposeGroup 会一起 dispose 几何；
+    // 但 SvgGeometryContent 的 material 走 SVGLoader 创建，需要单独清
     for (const obj of this.edgeLabels.values()) {
-      obj.parent?.remove(obj);
-      obj.element.remove();
+      this.nodeRenderer.disposeContent(obj);
     }
-    this.nodeMeshes.clear();
+    this.nodeGroups.clear();
     this.edgeLines.clear();
-    this.nodeLabels.clear();
     this.edgeLabels.clear();
 
-    for (const node of this.nodes) {
-      const mesh = this.shapeLib.createShape(node);
-      const pos = node.position ?? { x: 0, y: 0 };
-      mesh.position.set(pos.x, pos.y, 0);
-      mesh.userData = { nodeId: node.id };
-      this.scene.add(mesh);
-      this.nodeMeshes.set(node.id, mesh);
+    // 节点：异步并行创建（保留顺序需求时改 for-await）
+    const nodeJobs = this.nodes.map(async (node) => {
+      const group = await this.nodeRenderer.createNode(node);
+      if (token !== this.rerenderToken) {
+        // 已被新 rerender 替代，丢弃
+        this.nodeRenderer.dispose(group);
+        return;
+      }
+      group.userData.nodeId = node.id;
+      this.scene.add(group);
+      this.nodeGroups.set(node.id, group);
+    });
+    await Promise.all(nodeJobs);
+    if (token !== this.rerenderToken) return;
 
-      // node label 挂在 mesh 下方
-      // P1 v1.2 第一段：先从 atom 数组提取纯文本作为 label 文字
-      // 后续会接入 NodeContentRenderer 渲染完整 atom 数组
-      const radius = this.getMeshRadius(mesh);
-      const labelText = extractPlainText(node.label) || '未命名';
-      const labelDom = createNodeLabelDom(node.id, labelText);
-      const labelObj = new CSS2DObject(labelDom);
-      labelObj.position.set(0, -radius - 14, 0);   // 节点正下方
-      mesh.add(labelObj);
-      this.nodeLabels.set(node.id, labelObj);
-    }
-
+    // 边：依赖节点位置，节点全部到位后画
     for (const edge of this.edges) {
       this.redrawEdge(edge);
     }
   }
 
-  /** 给定边创建/更新 label CSS2DObject，放到指定位置（弧线中点 / 直线中点） */
-  protected attachEdgeLabelAt(
+  /** rerender 重入令牌（避免异步节点创建的并发问题） */
+  private rerenderToken = 0;
+
+  /**
+   * 边 label：用 SvgGeometryContent 渲染 atoms，挂到 edge group 上的 (x, y)。
+   * v1.3 § 9.4：复用节点的 ContentRenderer，统一管线。
+   *
+   * 异步：rerender / redrawEdge 期间 fire-and-forget。token 校验避免拖动导致
+   * 旧 label 出现在新 edge 上。
+   */
+  protected async attachEdgeLabel(
     edgeId: string,
-    label: Atom[] | string,
+    label: Atom[],
     x: number,
     y: number,
-  ): void {
+  ): Promise<void> {
+    // dispose 旧的 label（如果存在）
     const old = this.edgeLabels.get(edgeId);
     if (old) {
       old.parent?.remove(old);
-      old.element.remove();
+      this.nodeRenderer.disposeContent(old);
     }
-    // 兼容两种调用：传 Atom[] 或 string（提取纯文本展示）
-    const text = typeof label === 'string' ? label : extractPlainText(label);
-    const dom = createEdgeLabelDom(edgeId, text);
-    const obj = new CSS2DObject(dom);
-    obj.position.set(x, y, 0);
-    this.scene.add(obj);
+
+    // 空 label 不渲染（避免空 SVG）
+    if (!label || label.length === 0 || extractPlainText(label).trim() === '') {
+      this.edgeLabels.delete(edgeId);
+      return;
+    }
+
+    const obj = await this.nodeRenderer.renderContent(label);
+
+    // redrawEdge 已经把 edge group 替换了；用 edgeId 重新查
+    const edgeGroup = this.edgeLines.get(edgeId);
+    if (!edgeGroup) {
+      this.nodeRenderer.disposeContent(obj);
+      return;
+    }
+
+    // 边 label 用更小的字号（看起来比节点 label 小一圈），但当前 SVG 序列化器
+    // 字号是固定的；这里通过 scale 缩小到 ~0.85
+    obj.scale.multiplyScalar(0.85);
+    obj.position.set(x, y, 0.5);
+
+    edgeGroup.add(obj);
     this.edgeLabels.set(edgeId, obj);
   }
 
   protected clearScene(): void {
-    for (const mesh of this.nodeMeshes.values()) {
-      this.scene.remove(mesh);
-      mesh.geometry.dispose();
-      if (Array.isArray(mesh.material)) mesh.material.forEach((m) => m.dispose());
-      else mesh.material.dispose();
+    for (const group of this.nodeGroups.values()) {
+      this.scene.remove(group);
+      this.nodeRenderer.dispose(group);
     }
     for (const group of this.edgeLines.values()) {
       this.scene.remove(group);
       disposeGroup(group);
     }
-    for (const obj of this.nodeLabels.values()) {
-      obj.parent?.remove(obj);
-      obj.element.remove();
-    }
     for (const obj of this.edgeLabels.values()) {
-      obj.parent?.remove(obj);
-      obj.element.remove();
+      this.nodeRenderer.disposeContent(obj);
     }
-    this.nodeMeshes.clear();
+    this.nodeGroups.clear();
     this.edgeLines.clear();
-    this.nodeLabels.clear();
     this.edgeLabels.clear();
   }
 
@@ -831,53 +893,5 @@ function disposeGroup(group: THREE.Group): void {
   });
 }
 
-// ── Label 渲染辅助 ──
-
-/**
- * 创建节点 label 元素 — 节点正下方的文字 + 透明背景
- * dataset 标注 { kind: 'node-label', id } 供 GraphView 双击 handler 识别
- */
-export function createNodeLabelDom(nodeId: string, label: string): HTMLDivElement {
-  const div = document.createElement('div');
-  div.className = 'krig-graph-node-label';
-  div.dataset.kind = 'node-label';
-  div.dataset.nodeId = nodeId;
-  div.textContent = label;
-  div.style.cssText = `
-    color: #e0e0e0;
-    font-size: 12px;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    padding: 2px 6px;
-    background: rgba(30,30,30,0.7);
-    border-radius: 3px;
-    white-space: nowrap;
-    pointer-events: auto;
-    cursor: text;
-    user-select: none;
-  `;
-  return div;
-}
-
-export function createEdgeLabelDom(edgeId: string, label: string): HTMLDivElement {
-  const div = document.createElement('div');
-  div.className = 'krig-graph-edge-label';
-  div.dataset.kind = 'edge-label';
-  div.dataset.edgeId = edgeId;
-  // 边的 label 默认空字符串显示空 div（便于点中加字），但 textContent 仍写入
-  div.textContent = label;
-  div.style.cssText = `
-    color: #aaa;
-    font-size: 11px;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    padding: 1px 4px;
-    background: rgba(30,30,30,0.6);
-    border-radius: 2px;
-    white-space: nowrap;
-    pointer-events: auto;
-    cursor: text;
-    user-select: none;
-    min-width: 8px;
-    min-height: 12px;
-  `;
-  return div;
-}
+// v1.3：节点 / 边 label 都改走 NodeRenderer.renderContent → SVG 几何，
+// CSS2DRenderer 仅保留作 Phase 3 EditOverlay 浮层渲染器（当前空闲）。
