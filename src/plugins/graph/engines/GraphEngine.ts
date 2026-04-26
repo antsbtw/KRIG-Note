@@ -668,6 +668,17 @@ export abstract class GraphEngine {
    * 排序规则：先按 (source, target) 字典序，再按 edge.id —— 保证两次渲染索引稳定，
    * 避免每次拖动都重排导致弧线"跳动"。
    */
+  /**
+   * 计算同一对节点（无序对）之间的所有边及当前边的索引。
+   *
+   * 关键：A→B 和 B→A 视为同一无序对（曲线视觉占位重叠），但**反向边的法向量
+   * 也是反的**。EdgeRenderer 的 curveOffsetFactor 对反向边输入 -k 才能让弧
+   * 落到对侧。
+   *
+   * 实施：bundle 包含所有同对边，按 id 稳定排序。返回 effectiveIndex 已对
+   * 反向边取负偏移系数（反向边 effectiveIndex = - rawIndex + (total-1)/2 * 2
+   * = (total-1) - rawIndex）。
+   */
   protected computeEdgeBundle(edge: GraphEdge): { index: number; total: number } {
     const a = edge.source < edge.target ? edge.source : edge.target;
     const b = edge.source < edge.target ? edge.target : edge.source;
@@ -678,7 +689,15 @@ export abstract class GraphEngine {
         return ea === a && eb === b;
       })
       .sort((x, y) => x.id.localeCompare(y.id));
-    return { index: sameBundle.findIndex((e) => e.id === edge.id), total: sameBundle.length };
+    const total = sameBundle.length;
+    const rawIndex = sameBundle.findIndex((e) => e.id === edge.id);
+    // bundle 主方向 = source 字典序较小的方向 (a→b)
+    // 当前边方向：edge.source === a 即同向，否则反向
+    const isForward = edge.source === a;
+    // 反向边镜像 index 让 curveOffsetFactor(idx, total) 返回相反符号
+    // 公式：mirroredIdx = (total - 1) - rawIndex
+    const index = isForward ? rawIndex : (total - 1) - rawIndex;
+    return { index, total };
   }
 
   /** 给定 group，从 shape mesh 的 userData 读半径（CircleShape 在 createMesh 写入） */
