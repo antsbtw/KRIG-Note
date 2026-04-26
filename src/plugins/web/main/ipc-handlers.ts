@@ -1122,24 +1122,40 @@ export function registerWebIpcHandlers(ctx: PluginContext): void {
   });
   // ── Web 书签 ──
 
+  // 广播书签 / 文件夹列表变更（NavSide WebPanel 监听 refetch）
+  function broadcastWebBookmarkChanged(): void {
+    const win = getMainWindow();
+    if (!win) return;
+    for (const view of win.contentView.children) {
+      if ('webContents' in view) {
+        (view as any).webContents.send(IPC.WEB_BOOKMARK_CHANGED);
+      }
+    }
+  }
+
   ipcMain.handle(IPC.WEB_BOOKMARK_LIST, async () => {
     return webBookmarkStore.list();
   });
 
   ipcMain.handle(IPC.WEB_BOOKMARK_ADD, async (_event, url: string, title: string, favicon?: string) => {
-    return webBookmarkStore.add(url, title, favicon);
+    const result = await webBookmarkStore.add(url, title, favicon);
+    broadcastWebBookmarkChanged();
+    return result;
   });
 
   ipcMain.handle(IPC.WEB_BOOKMARK_REMOVE, async (_event, id: string) => {
     await webBookmarkStore.remove(id);
+    broadcastWebBookmarkChanged();
   });
 
   ipcMain.handle(IPC.WEB_BOOKMARK_UPDATE, async (_event, id: string, fields: { title?: string; url?: string; favicon?: string }) => {
     await webBookmarkStore.update(id, fields);
+    broadcastWebBookmarkChanged();
   });
 
   ipcMain.handle(IPC.WEB_BOOKMARK_MOVE, async (_event, id: string, folderId: string | null) => {
     await webBookmarkStore.move(id, folderId);
+    broadcastWebBookmarkChanged();
   });
 
   ipcMain.handle('web:bookmark-find-by-url', async (_event, url: string) => {
@@ -1147,16 +1163,25 @@ export function registerWebIpcHandlers(ctx: PluginContext): void {
   });
 
   // Web 书签文件夹
-  ipcMain.handle(IPC.WEB_FOLDER_CREATE, async (_event, title: string) => {
-    return webBookmarkStore.folderCreate(title);
+  ipcMain.handle(IPC.WEB_FOLDER_CREATE, async (_event, title: string, parentId?: string | null) => {
+    const folder = await webBookmarkStore.folderCreate(title, parentId);
+    broadcastWebBookmarkChanged();
+    return folder;
   });
 
   ipcMain.handle(IPC.WEB_FOLDER_RENAME, async (_event, id: string, title: string) => {
     await webBookmarkStore.folderRename(id, title);
+    broadcastWebBookmarkChanged();
   });
 
   ipcMain.handle(IPC.WEB_FOLDER_DELETE, async (_event, id: string) => {
     await webBookmarkStore.folderDelete(id);
+    broadcastWebBookmarkChanged();
+  });
+
+  ipcMain.handle(IPC.WEB_FOLDER_MOVE, async (_event, id: string, parentId: string | null) => {
+    await webBookmarkStore.folderMove(id, parentId);
+    broadcastWebBookmarkChanged();
   });
 
   ipcMain.handle(IPC.WEB_FOLDER_LIST, async () => {

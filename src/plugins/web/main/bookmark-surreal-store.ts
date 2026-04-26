@@ -158,6 +158,32 @@ export const bookmarkSurrealStore = {
     );
   },
 
+  async folderMove(id: string, parentId: string | null): Promise<void> {
+    const db = getDB();
+    if (!db) return;
+    // 防环：不允许把 folder 移到自己的子树下
+    if (parentId) {
+      let cursor: string | null = parentId;
+      const visited = new Set<string>();
+      while (cursor !== null) {
+        const cur: string = cursor;
+        if (cur === id) return; // 形成环 — 静默忽略
+        if (visited.has(cur)) break;
+        visited.add(cur);
+        const result = await db.query<[any[]]>(
+          `SELECT parent_id FROM type::record('bookmark_folder', $cur)`,
+          { cur },
+        );
+        const row: any = result[0]?.[0];
+        cursor = (row?.parent_id ?? null) as string | null;
+      }
+    }
+    await db.query(
+      `UPDATE type::record('bookmark_folder', $id) SET parent_id = $parent_id`,
+      { id, parent_id: parentId },
+    );
+  },
+
   async folderDelete(id: string): Promise<void> {
     const db = getDB();
     if (!db) return;

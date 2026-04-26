@@ -28,6 +28,9 @@ export interface NavSideActiveState {
   // ── Graph 业务状态（v1.4 M3 启用）──
   activeGraphId: string | null;
   graphExpandedFolders: string[];
+
+  // ── Web 业务状态（v1.4 M5 启用，内存态，不持久化）──
+  webExpandedFolders: string[];
 }
 
 const INITIAL_STATE: NavSideActiveState = {
@@ -38,6 +41,7 @@ const INITIAL_STATE: NavSideActiveState = {
   ebookExpandedFolders: [],
   activeGraphId: null,
   graphExpandedFolders: [],
+  webExpandedFolders: [],
 };
 
 type Listener = () => void;
@@ -92,6 +96,7 @@ class ActiveStateStore {
         ebookExpandedFolders: a.ebookExpandedFolders ?? [],
         activeGraphId: a.activeGraphId ?? null,
         graphExpandedFolders: a.graphExpandedFolders ?? [],
+        webExpandedFolders: [],
       });
     });
 
@@ -195,6 +200,9 @@ class ActiveStateStore {
   }
   setGraphExpandedFoldersLocal(folders: string[]): void {
     this.merge({ graphExpandedFolders: folders });
+  }
+  setWebExpandedFoldersLocal(folders: string[]): void {
+    this.merge({ webExpandedFolders: folders });
   }
 }
 

@@ -316,12 +316,14 @@ export const IPC = {
   WEB_BOOKMARK_REMOVE: 'web:bookmark-remove',
   WEB_BOOKMARK_UPDATE: 'web:bookmark-update',
   WEB_BOOKMARK_MOVE: 'web:bookmark-move',
+  WEB_BOOKMARK_CHANGED: 'web:bookmark-changed',     // 主进程广播：书签 / 文件夹列表变更（NavSide WebPanel 监听）
 
   // Web 书签文件夹
   WEB_FOLDER_CREATE: 'web:folder-create',
   WEB_FOLDER_RENAME: 'web:folder-rename',
   WEB_FOLDER_DELETE: 'web:folder-delete',
   WEB_FOLDER_LIST: 'web:folder-list',
+  WEB_FOLDER_MOVE: 'web:folder-move',
 
   // Web 浏览历史
   WEB_HISTORY_ADD: 'web:history-add',

@@ -112,11 +112,23 @@ contextBridge.exposeInMainWorld('navSideAPI', {
 
   webBookmarkList: () => ipcRenderer.invoke(IPC.WEB_BOOKMARK_LIST),
   webBookmarkRemove: (id: string) => ipcRenderer.invoke(IPC.WEB_BOOKMARK_REMOVE, id),
-  webFolderCreate: (title: string) => ipcRenderer.invoke(IPC.WEB_FOLDER_CREATE, title),
+  webBookmarkUpdate: (id: string, fields: { title?: string; url?: string; favicon?: string }) =>
+    ipcRenderer.invoke(IPC.WEB_BOOKMARK_UPDATE, id, fields),
+  webBookmarkMove: (id: string, folderId: string | null) =>
+    ipcRenderer.invoke(IPC.WEB_BOOKMARK_MOVE, id, folderId),
+  webFolderCreate: (title: string, parentId?: string | null) =>
+    ipcRenderer.invoke(IPC.WEB_FOLDER_CREATE, title, parentId),
   webFolderList: () => ipcRenderer.invoke(IPC.WEB_FOLDER_LIST),
   webFolderRename: (id: string, title: string) => ipcRenderer.invoke(IPC.WEB_FOLDER_RENAME, id, title),
   webFolderDelete: (id: string) => ipcRenderer.invoke(IPC.WEB_FOLDER_DELETE, id),
+  webFolderMove: (id: string, parentId: string | null) =>
+    ipcRenderer.invoke(IPC.WEB_FOLDER_MOVE, id, parentId),
   webHistoryList: (limit?: number) => ipcRenderer.invoke(IPC.WEB_HISTORY_LIST, limit),
+  onWebBookmarkChanged: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on(IPC.WEB_BOOKMARK_CHANGED, listener);
+    return () => ipcRenderer.removeListener(IPC.WEB_BOOKMARK_CHANGED, listener);
+  },
 
   // ── Graph (L5) ──
 
