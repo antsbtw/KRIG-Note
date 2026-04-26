@@ -113,6 +113,8 @@ const SCHEMA_QUERIES = [
   `DEFINE TABLE IF NOT EXISTS graph SCHEMALESS;`,
   `DEFINE INDEX IF NOT EXISTS graph_host_note ON graph FIELDS host_note_id;`,
   `DEFINE INDEX IF NOT EXISTS graph_updated ON graph FIELDS updated_at;`,
+  // v1.4 NavSide 重构：graph 加 folder_id 字段（schemaless 自动支持，索引加速查询）
+  `DEFINE INDEX IF NOT EXISTS graph_folder_id ON graph FIELDS folder_id;`,
 
   // graph_node 表（节点）
   `DEFINE TABLE IF NOT EXISTS graph_node SCHEMALESS;`,
@@ -123,6 +125,11 @@ const SCHEMA_QUERIES = [
   `DEFINE INDEX IF NOT EXISTS graph_edge_graph ON graph_edge FIELDS graph_id;`,
   `DEFINE INDEX IF NOT EXISTS graph_edge_source ON graph_edge FIELDS source`,
   `DEFINE INDEX IF NOT EXISTS graph_edge_target ON graph_edge FIELDS target`,
+
+  // graph_folder 表（图谱文件夹，v1.4 NavSide 重构）
+  `DEFINE TABLE IF NOT EXISTS graph_folder SCHEMALESS;`,
+  `DEFINE INDEX IF NOT EXISTS graph_folder_parent ON graph_folder FIELDS parent_id;`,
+  `DEFINE INDEX IF NOT EXISTS graph_folder_sort ON graph_folder FIELDS sort_order;`,
 ];
 
 export async function initSchema(): Promise<void> {
