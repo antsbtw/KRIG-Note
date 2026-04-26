@@ -234,7 +234,7 @@ interface Substance {
 #### 1.3.3 注册表 API
 
 ```typescript
-// src/plugins/graph/renderer/substance/registry.ts
+// src/plugins/graph/substance/registry.ts
 
 class SubstanceLibrary {
   register(substance: Substance): void;
@@ -880,7 +880,7 @@ GRAPH_SET_ACTIVE_LAYOUT: 'graph:set-active-layout',
 
 ### 7.3 新增 Substance Library
 
-`src/plugins/graph/renderer/substance/`（新目录）：
+`src/plugins/graph/substance/`（新目录）：
 - `types.ts` — `Substance` 接口
 - `registry.ts` — `SubstanceLibrary` 类
 - `built-in/krig-software-domain.ts` — KRIG 自身领域物质（10 个）
@@ -901,18 +901,18 @@ GRAPH_SET_ACTIVE_LAYOUT: 'graph:set-active-layout',
 
 ### 7.6 新增布局引擎
 
-`src/plugins/graph/renderer/layout/`（新目录）：见原 spec 7.5 描述。
+`src/plugins/graph/layout/`（新目录）：见原 spec 7.5 描述。
 
 ---
 
 ## 8. 文件清单
 
 **新增（substance / library 相关）**：
-- `src/plugins/graph/renderer/substance/types.ts`
-- `src/plugins/graph/renderer/substance/registry.ts`
-- `src/plugins/graph/renderer/substance/built-in/krig-software-domain.ts`
-- `src/plugins/graph/renderer/substance/built-in/relations.ts`
-- `src/plugins/graph/renderer/substance/index.ts`
+- `src/plugins/graph/substance/types.ts`
+- `src/plugins/graph/substance/registry.ts`
+- `src/plugins/graph/substance/built-in/krig-software-domain.ts`
+- `src/plugins/graph/substance/built-in/relations.ts`
+- `src/plugins/graph/substance/index.ts`
 
 **新增（数据层 / 解析 / 布局）**：
 - `src/main/storage/graph-store.ts`（重命名自 graphview-store.ts）
@@ -922,12 +922,12 @@ GRAPH_SET_ACTIVE_LAYOUT: 'graph:set-active-layout',
 - `src/plugins/graph/main/import/parser.ts`
 - `src/plugins/graph/main/import/handler.ts`
 - `src/plugins/graph/main/import/registries.ts`
-- `src/plugins/graph/renderer/layout/types.ts`
-- `src/plugins/graph/renderer/layout/force.ts`
-- `src/plugins/graph/renderer/layout/grid.ts`
-- `src/plugins/graph/renderer/layout/manual.ts`
-- `src/plugins/graph/renderer/layout/registry.ts`
-- `src/plugins/graph/renderer/layout/index.ts`
+- `src/plugins/graph/layout/types.ts`
+- `src/plugins/graph/layout/force.ts`
+- `src/plugins/graph/layout/grid.ts`
+- `src/plugins/graph/layout/manual.ts`
+- `src/plugins/graph/layout/registry.ts`
+- `src/plugins/graph/layout/index.ts`
 - `docs/graph/samples/KRIG-Note-Concept.md`（升级到新语法）
 
 **修改**：

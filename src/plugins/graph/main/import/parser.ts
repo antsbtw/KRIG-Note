@@ -5,7 +5,7 @@
  *
  * D4-D5 阶段实现实际算法。本文件 D1 仅占位。
  */
-import type { GeometryKind } from '../../rendering/substance/types';
+import type { GeometryKind } from '../../substance/types';
 import type { IntensionValueKind } from './registries';
 
 export interface ParsedMeta {
