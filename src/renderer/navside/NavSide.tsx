@@ -31,8 +31,13 @@ export function NavSide() {
     void navSideAPI.switchWorkMode(id);
   };
 
-  const handleActionBarClick = (actionId: string) => {
-    // 转发给当前 contentType 对应的插件（通过 executeAction IPC 路由到 plugin handler）
+  const handleActionBarClick = (actionId: string, target: HTMLElement) => {
+    // Graph 工作模式下：'+ 新建' 走 VariantPicker（不直接 executeAction）
+    if (ws.registration?.contentType === 'graph-list' && actionId === 'create-graph') {
+      window.dispatchEvent(new CustomEvent('graph:variant-picker:open', { detail: target }));
+      return;
+    }
+    // 其他：通过 executeAction IPC 路由到 plugin handler
     void navSideAPI.executeAction(actionId).catch((err: unknown) => {
       console.warn('[NavSide] executeAction failed:', actionId, err);
     });
@@ -75,7 +80,7 @@ export function NavSide() {
             <button
               key={action.id}
               style={styles.actionButton}
-              onClick={() => handleActionBarClick(action.id)}
+              onClick={(e) => handleActionBarClick(action.id, e.currentTarget)}
             >
               {action.label}
             </button>

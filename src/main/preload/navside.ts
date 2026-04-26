@@ -121,11 +121,13 @@ contextBridge.exposeInMainWorld('navSideAPI', {
   // ── Graph (L5) ──
 
   graphList: () => ipcRenderer.invoke(IPC.GRAPH_LIST),
-  graphCreate: (title?: string, hostNoteId?: string | null) =>
-    ipcRenderer.invoke(IPC.GRAPH_CREATE, title, hostNoteId),
+  graphCreate: (title?: string, hostNoteId?: string | null, variant?: string, folderId?: string | null) =>
+    ipcRenderer.invoke(IPC.GRAPH_CREATE, title, hostNoteId, variant, folderId),
   graphRename: (id: string, title: string) => ipcRenderer.invoke(IPC.GRAPH_RENAME, id, title),
   graphDelete: (id: string) => ipcRenderer.invoke(IPC.GRAPH_DELETE, id),
   graphSetActive: (id: string | null) => ipcRenderer.invoke(IPC.GRAPH_SET_ACTIVE, id),
+  graphMoveToFolder: (id: string, folderId: string | null) =>
+    ipcRenderer.invoke(IPC.GRAPH_MOVE_TO_FOLDER, id, folderId),
   onGraphListChanged: (callback: (list: unknown[]) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, list: unknown[]) => callback(list);
     ipcRenderer.on(IPC.GRAPH_LIST_CHANGED, listener);
@@ -135,5 +137,21 @@ contextBridge.exposeInMainWorld('navSideAPI', {
     const listener = (_event: Electron.IpcRendererEvent, graphId: string | null) => callback(graphId);
     ipcRenderer.on(IPC.GRAPH_ACTIVE_CHANGED, listener);
     return () => ipcRenderer.removeListener(IPC.GRAPH_ACTIVE_CHANGED, listener);
+  },
+
+  // ── Graph Folder (v1.4) ──
+
+  graphFolderList: () => ipcRenderer.invoke(IPC.GRAPH_FOLDER_LIST),
+  graphFolderCreate: (title: string, parentId?: string | null) =>
+    ipcRenderer.invoke(IPC.GRAPH_FOLDER_CREATE, title, parentId),
+  graphFolderRename: (id: string, title: string) =>
+    ipcRenderer.invoke(IPC.GRAPH_FOLDER_RENAME, id, title),
+  graphFolderDelete: (id: string) => ipcRenderer.invoke(IPC.GRAPH_FOLDER_DELETE, id),
+  graphFolderMove: (id: string, parentId: string | null) =>
+    ipcRenderer.invoke(IPC.GRAPH_FOLDER_MOVE, id, parentId),
+  onGraphFolderListChanged: (callback: (list: unknown[]) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, list: unknown[]) => callback(list);
+    ipcRenderer.on(IPC.GRAPH_FOLDER_LIST_CHANGED, listener);
+    return () => ipcRenderer.removeListener(IPC.GRAPH_FOLDER_LIST_CHANGED, listener);
   },
 });

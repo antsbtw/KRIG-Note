@@ -3,6 +3,7 @@ import { IPC } from '../../../shared/types';
 import type { PluginContext } from '../../../shared/plugin-types';
 import { workspaceManager } from '../../../main/workspace/manager';
 import { graphViewStore } from '../../../main/storage/graphview-store';
+import { graphFolderStore } from '../../../main/storage/graph-folder-store';
 import { activityStore } from '../../../main/storage/activity-store';
 import { isDBReady } from '../../../main/storage/client';
 import type { GraphVariant, GraphNodeRecord, GraphEdgeRecord } from '../../../main/storage/types';
@@ -34,10 +35,16 @@ export function registerGraphIpcHandlers(ctx: PluginContext): void {
     }
   }
 
-  ipcMain.handle(IPC.GRAPH_CREATE, async (_event, title?: string, hostNoteId?: string | null, variant?: GraphVariant) => {
+  ipcMain.handle(IPC.GRAPH_CREATE, async (_event, title?: string, hostNoteId?: string | null, variant?: GraphVariant, folderId?: string | null) => {
     if (!isDBReady()) return null;
     const record = await graphViewStore.create(title, hostNoteId ?? null, variant);
     activityStore.log('graph.create', record.id);
+
+    // 把新图放到指定 folder（v1.4 NavSide）
+    if (folderId !== undefined && folderId !== null) {
+      await graphViewStore.moveToFolder(record.id, folderId);
+      record.folder_id = folderId;
+    }
 
     // 自动激活新建的图
     const active = workspaceManager.getActive();
@@ -88,6 +95,60 @@ export function registerGraphIpcHandlers(ctx: PluginContext): void {
     if (!active) return;
     workspaceManager.update(active.id, { activeGraphId: graphId });
     broadcastActiveChanged(graphId);
+  });
+
+  ipcMain.handle(IPC.GRAPH_MOVE_TO_FOLDER, async (_event, id: string, folderId: string | null) => {
+    if (!isDBReady()) return;
+    await graphViewStore.moveToFolder(id, folderId);
+    broadcastList();
+  });
+
+  // ── Graph Folder CRUD（v1.4 NavSide 重构）──
+
+  function broadcastFolderList(): void {
+    const win = getMainWindow();
+    if (!win) return;
+    graphFolderStore.list().then((list) => {
+      for (const view of win.contentView.children) {
+        if ('webContents' in view) {
+          (view as any).webContents.send(IPC.GRAPH_FOLDER_LIST_CHANGED, list);
+        }
+      }
+    }).catch((err) => {
+      console.warn('[Graph IPC] Failed to broadcast graph folder list:', err);
+    });
+  }
+
+  ipcMain.handle(IPC.GRAPH_FOLDER_LIST, async () => {
+    if (!isDBReady()) return [];
+    return graphFolderStore.list();
+  });
+
+  ipcMain.handle(IPC.GRAPH_FOLDER_CREATE, async (_event, title: string, parentId?: string | null) => {
+    if (!isDBReady()) return null;
+    const record = await graphFolderStore.create(title, parentId ?? null);
+    broadcastFolderList();
+    return record;
+  });
+
+  ipcMain.handle(IPC.GRAPH_FOLDER_RENAME, async (_event, id: string, title: string) => {
+    if (!isDBReady()) return;
+    await graphFolderStore.rename(id, title);
+    broadcastFolderList();
+  });
+
+  ipcMain.handle(IPC.GRAPH_FOLDER_DELETE, async (_event, id: string) => {
+    if (!isDBReady()) return;
+    await graphFolderStore.delete(id);
+    // 子图归到根（store 已处理），需要广播 graph 列表也变了
+    broadcastFolderList();
+    broadcastList();
+  });
+
+  ipcMain.handle(IPC.GRAPH_FOLDER_MOVE, async (_event, id: string, parentId: string | null) => {
+    if (!isDBReady()) return;
+    await graphFolderStore.move(id, parentId);
+    broadcastFolderList();
   });
 
   // ── 节点/边 CRUD ──

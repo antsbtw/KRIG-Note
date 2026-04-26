@@ -78,7 +78,7 @@ export const graphViewStore: IGraphStore = {
     if (!db) return [];
 
     const result = await db.query<[GraphListItem[]]>(
-      `SELECT id, title, variant, host_note_id, updated_at FROM graph ORDER BY updated_at DESC`,
+      `SELECT id, title, variant, host_note_id, folder_id, updated_at FROM graph ORDER BY updated_at DESC`,
     );
     const rows = result[0] || [];
     return rows.map((r) => ({
@@ -86,6 +86,7 @@ export const graphViewStore: IGraphStore = {
       title: r.title || '未命名图谱',
       variant: (r.variant as GraphVariant) || DEFAULT_VARIANT,
       host_note_id: r.host_note_id ?? null,
+      folder_id: r.folder_id ?? null,
       updated_at: r.updated_at || 0,
     }));
   },
@@ -114,6 +115,15 @@ export const graphViewStore: IGraphStore = {
     await db.query(
       `UPDATE type::record('graph', $id) SET host_note_id = $host_note_id, updated_at = $updated_at`,
       { id, host_note_id: hostNoteId, updated_at: Date.now() },
+    );
+  },
+
+  async moveToFolder(id: string, folderId: string | null): Promise<void> {
+    const db = getDB();
+    if (!db) return;
+    await db.query(
+      `UPDATE type::record('graph', $id) SET folder_id = $folder_id, updated_at = $updated_at`,
+      { id, folder_id: folderId, updated_at: Date.now() },
     );
   },
 

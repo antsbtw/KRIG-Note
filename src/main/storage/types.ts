@@ -96,6 +96,9 @@ export interface GraphRecord {
   title: string;
   variant: GraphVariant;
   host_note_id: string | null;
+  /** v1.4 NavSide 重构：folder_id 用于 graph_folder 树组织。null = 根目录。
+   *  schemaless：旧数据自动 null（无字段视为 null） */
+  folder_id?: string | null;
   created_at: number;
   updated_at: number;
   meta?: Record<string, unknown>;
@@ -106,6 +109,7 @@ export interface GraphListItem {
   title: string;
   variant: GraphVariant;
   host_note_id: string | null;
+  folder_id?: string | null;
   updated_at: number;
 }
 
@@ -116,6 +120,8 @@ export interface IGraphStore {
   rename(id: string, title: string): Promise<void>;
   setVariant(id: string, variant: GraphVariant): Promise<void>;
   setHostNote(id: string, hostNoteId: string | null): Promise<void>;
+  /** v1.4：将图移动到指定 folder（null = 根目录） */
+  moveToFolder(id: string, folderId: string | null): Promise<void>;
   delete(id: string): Promise<void>;
 
   // ── 节点/边 CRUD ──
