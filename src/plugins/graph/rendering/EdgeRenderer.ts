@@ -64,7 +64,12 @@ export class EdgeRenderer {
     if (opts.label && opts.label.length > 0 && extractText(opts.label) !== '') {
       const labelObj = await this.content.render(opts.label);
       labelObj.scale.multiplyScalar(EDGE_LABEL_SCALE);
-      labelObj.position.set(geometry.labelX, geometry.labelY, 0.5);
+      // 居中对齐：先放原点测 bbox，再让 (labelX, labelY) 落在 bbox 中心
+      labelObj.position.set(0, 0, 0.5);
+      const bbox = this.content.getBBox(labelObj);
+      const cx = (bbox.min.x + bbox.max.x) / 2;
+      const cy = (bbox.min.y + bbox.max.y) / 2;
+      labelObj.position.set(geometry.labelX - cx, geometry.labelY - cy, 0.5);
       group.add(labelObj);
     }
 
