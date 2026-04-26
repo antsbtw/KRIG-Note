@@ -1,17 +1,14 @@
 /**
- * WebPanel — Web 工作模式的 NavSide 内容面板（v1.4 NavSide 重构 M5）。
+ * NotePanel — Note 工作模式的 NavSide 内容面板（v1.4 NavSide 重构）。
  *
- * 消费 FolderTree + useWebOperations，向 Note 看齐：
- * - 嵌套文件夹 + 拖拽 + 重命名 + 右键菜单
- * - 书签 icon 优先 favicon，缺省 🌐
- *
- * 注意：NavSide 不负责"添加书签"——加书签由 WebView 内的⭐流程触发。
+ * 消费 FolderTree + useNoteOperations，零业务逻辑硬编码进框架。
+ * NavSide.tsx 通过 panel-registry.getNavPanel('note-list') 拿到本组件渲染。
  */
 import { useEffect, useMemo } from 'react';
 import { FolderTree } from '../../../renderer/navside/components/FolderTree';
 import type { ItemNode } from '../../../renderer/navside/components/FolderTree';
-import { useWebOperations } from './useWebOperations';
-import type { WebBookmark } from './useWebSync';
+import { useNoteOperations } from './useNoteOperations';
+import type { NoteListItem } from './useNoteSync';
 
 function relativeTime(ts: number): string {
   const diff = Date.now() - ts;
@@ -27,35 +24,22 @@ function relativeTime(ts: number): string {
   return new Date(ts).toLocaleDateString();
 }
 
-function FaviconIcon({ url, fallback }: { url?: string; fallback: string }) {
-  if (!url) return <span>{fallback}</span>;
-  return (
-    <img
-      src={url}
-      style={{ width: 14, height: 14, display: 'inline-block', verticalAlign: 'middle' }}
-      onError={(e) => {
-        // favicon 加载失败回退到 emoji
-        (e.currentTarget as HTMLImageElement).style.display = 'none';
-        const sib = (e.currentTarget.nextSibling as HTMLElement | null);
-        if (sib) sib.style.display = 'inline';
-      }}
-      alt=""
-    />
-  );
+interface NotePanelProps {
+  /** 框架透传：当前 db 是否就绪 */
+  dbReady?: boolean;
 }
 
-export function WebPanel() {
-  const ops = useWebOperations();
+export function NotePanel(_props: NotePanelProps) {
+  const ops = useNoteOperations();
 
   // 监听 NavSide ActionBar 点击（v1.4 plugin 自治模式）
   useEffect(() => {
     const handler = (e: Event) => {
       const ev = e as CustomEvent<{ contentType: string; actionId: string }>;
-      if (ev.detail.contentType !== 'web-bookmarks') return;
+      if (ev.detail.contentType !== 'note-list') return;
       switch (ev.detail.actionId) {
-        case 'create-web-folder':
-          ops.handleCreateFolder();
-          break;
+        case 'create-note': ops.handleCreateNote(); break;
+        case 'create-folder': ops.handleCreateFolder(); break;
       }
     };
     window.addEventListener('navside:action', handler as EventListener);
@@ -64,11 +48,11 @@ export function WebPanel() {
 
   const itemMeta = useMemo(
     () => (item: ItemNode) => {
-      const bk = item.payload as WebBookmark;
+      const note = item.payload as NoteListItem;
       return {
-        icon: <FaviconIcon url={bk.favicon} fallback="🌐" />,
-        title: bk.title || bk.url,
-        rightHint: relativeTime(bk.createdAt),
+        icon: '📄',
+        title: note.title || '未命名',
+        rightHint: relativeTime(note.updated_at),
       };
     },
     [],
@@ -92,7 +76,7 @@ export function WebPanel() {
       onRenamingChange={ops.setRenameValue}
       onRenameCommit={ops.commitRename}
       onRenameCancel={ops.cancelRename}
-      emptyText="还没有书签。在网页页面里点⭐添加。"
+      emptyText="暂无笔记"
     />
   );
 }

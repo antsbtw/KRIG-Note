@@ -316,12 +316,14 @@ export const IPC = {
   WEB_BOOKMARK_REMOVE: 'web:bookmark-remove',
   WEB_BOOKMARK_UPDATE: 'web:bookmark-update',
   WEB_BOOKMARK_MOVE: 'web:bookmark-move',
+  WEB_BOOKMARK_CHANGED: 'web:bookmark-changed',     // 主进程广播：书签 / 文件夹列表变更（NavSide WebPanel 监听）
 
   // Web 书签文件夹
   WEB_FOLDER_CREATE: 'web:folder-create',
   WEB_FOLDER_RENAME: 'web:folder-rename',
   WEB_FOLDER_DELETE: 'web:folder-delete',
   WEB_FOLDER_LIST: 'web:folder-list',
+  WEB_FOLDER_MOVE: 'web:folder-move',
 
   // Web 浏览历史
   WEB_HISTORY_ADD: 'web:history-add',
@@ -350,6 +352,14 @@ export const IPC = {
   GRAPH_LIST_CHANGED: 'graph:list-changed',  // main → renderer 广播
   GRAPH_SET_ACTIVE: 'graph:set-active',      // navside → main：设置当前 workspace 的 activeGraphId
   GRAPH_ACTIVE_CHANGED: 'graph:active-changed',  // main → renderer：activeGraphId 变化（GraphView/NavSide 监听）
+  GRAPH_MOVE_TO_FOLDER: 'graph:move-to-folder',  // v1.4: 把图移动到指定 folder（null = 根）
+  // Graph Folder (v1.4 NavSide 重构)
+  GRAPH_FOLDER_LIST: 'graph-folder:list',
+  GRAPH_FOLDER_CREATE: 'graph-folder:create',
+  GRAPH_FOLDER_RENAME: 'graph-folder:rename',
+  GRAPH_FOLDER_DELETE: 'graph-folder:delete',
+  GRAPH_FOLDER_MOVE: 'graph-folder:move',
+  GRAPH_FOLDER_LIST_CHANGED: 'graph-folder:list-changed',  // main → renderer 广播
   // 节点/边 CRUD（GraphView ↔ main）
   GRAPH_LOAD_DATA: 'graph:load-data',        // GraphView → main：加载某图的 nodes+edges
   GRAPH_NODE_SAVE: 'graph:node-save',

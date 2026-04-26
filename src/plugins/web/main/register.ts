@@ -89,7 +89,6 @@ export function register(ctx: PluginContext): void {
     workModeId: 'demo-c',
     actionBar: { title: '网页', actions: [
       { id: 'create-web-folder', label: '+ 文件夹' },
-      { id: 'add-web-bookmark', label: '+ 书签' },
     ]},
     contentType: 'web-bookmarks',
   });

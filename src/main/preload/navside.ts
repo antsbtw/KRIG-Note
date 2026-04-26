@@ -112,20 +112,34 @@ contextBridge.exposeInMainWorld('navSideAPI', {
 
   webBookmarkList: () => ipcRenderer.invoke(IPC.WEB_BOOKMARK_LIST),
   webBookmarkRemove: (id: string) => ipcRenderer.invoke(IPC.WEB_BOOKMARK_REMOVE, id),
-  webFolderCreate: (title: string) => ipcRenderer.invoke(IPC.WEB_FOLDER_CREATE, title),
+  webBookmarkUpdate: (id: string, fields: { title?: string; url?: string; favicon?: string }) =>
+    ipcRenderer.invoke(IPC.WEB_BOOKMARK_UPDATE, id, fields),
+  webBookmarkMove: (id: string, folderId: string | null) =>
+    ipcRenderer.invoke(IPC.WEB_BOOKMARK_MOVE, id, folderId),
+  webFolderCreate: (title: string, parentId?: string | null) =>
+    ipcRenderer.invoke(IPC.WEB_FOLDER_CREATE, title, parentId),
   webFolderList: () => ipcRenderer.invoke(IPC.WEB_FOLDER_LIST),
   webFolderRename: (id: string, title: string) => ipcRenderer.invoke(IPC.WEB_FOLDER_RENAME, id, title),
   webFolderDelete: (id: string) => ipcRenderer.invoke(IPC.WEB_FOLDER_DELETE, id),
+  webFolderMove: (id: string, parentId: string | null) =>
+    ipcRenderer.invoke(IPC.WEB_FOLDER_MOVE, id, parentId),
   webHistoryList: (limit?: number) => ipcRenderer.invoke(IPC.WEB_HISTORY_LIST, limit),
+  onWebBookmarkChanged: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on(IPC.WEB_BOOKMARK_CHANGED, listener);
+    return () => ipcRenderer.removeListener(IPC.WEB_BOOKMARK_CHANGED, listener);
+  },
 
   // ── Graph (L5) ──
 
   graphList: () => ipcRenderer.invoke(IPC.GRAPH_LIST),
-  graphCreate: (title?: string, hostNoteId?: string | null) =>
-    ipcRenderer.invoke(IPC.GRAPH_CREATE, title, hostNoteId),
+  graphCreate: (title?: string, hostNoteId?: string | null, variant?: string, folderId?: string | null) =>
+    ipcRenderer.invoke(IPC.GRAPH_CREATE, title, hostNoteId, variant, folderId),
   graphRename: (id: string, title: string) => ipcRenderer.invoke(IPC.GRAPH_RENAME, id, title),
   graphDelete: (id: string) => ipcRenderer.invoke(IPC.GRAPH_DELETE, id),
   graphSetActive: (id: string | null) => ipcRenderer.invoke(IPC.GRAPH_SET_ACTIVE, id),
+  graphMoveToFolder: (id: string, folderId: string | null) =>
+    ipcRenderer.invoke(IPC.GRAPH_MOVE_TO_FOLDER, id, folderId),
   onGraphListChanged: (callback: (list: unknown[]) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, list: unknown[]) => callback(list);
     ipcRenderer.on(IPC.GRAPH_LIST_CHANGED, listener);
@@ -135,5 +149,21 @@ contextBridge.exposeInMainWorld('navSideAPI', {
     const listener = (_event: Electron.IpcRendererEvent, graphId: string | null) => callback(graphId);
     ipcRenderer.on(IPC.GRAPH_ACTIVE_CHANGED, listener);
     return () => ipcRenderer.removeListener(IPC.GRAPH_ACTIVE_CHANGED, listener);
+  },
+
+  // ── Graph Folder (v1.4) ──
+
+  graphFolderList: () => ipcRenderer.invoke(IPC.GRAPH_FOLDER_LIST),
+  graphFolderCreate: (title: string, parentId?: string | null) =>
+    ipcRenderer.invoke(IPC.GRAPH_FOLDER_CREATE, title, parentId),
+  graphFolderRename: (id: string, title: string) =>
+    ipcRenderer.invoke(IPC.GRAPH_FOLDER_RENAME, id, title),
+  graphFolderDelete: (id: string) => ipcRenderer.invoke(IPC.GRAPH_FOLDER_DELETE, id),
+  graphFolderMove: (id: string, parentId: string | null) =>
+    ipcRenderer.invoke(IPC.GRAPH_FOLDER_MOVE, id, parentId),
+  onGraphFolderListChanged: (callback: (list: unknown[]) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, list: unknown[]) => callback(list);
+    ipcRenderer.on(IPC.GRAPH_FOLDER_LIST_CHANGED, listener);
+    return () => ipcRenderer.removeListener(IPC.GRAPH_FOLDER_LIST_CHANGED, listener);
   },
 });
