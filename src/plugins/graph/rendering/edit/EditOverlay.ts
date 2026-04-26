@@ -124,10 +124,12 @@ export class EditOverlay {
     this.editor = new GraphEditor(pmMount, target.atoms);
 
     // popup 级 keydown - capture 阶段：拦截 Esc / Cmd+Enter（先于 PM keymap）
+    // 如果编辑器内有浮窗（slash menu 等）激活，Esc 应交给浮窗自己关，不退出编辑器
     popup.addEventListener(
       'keydown',
       (e) => {
         if (e.key === 'Escape') {
+          if (this.editor?.hasOpenPopover()) return;  // 让 slash menu / math popover 拿到
           e.preventDefault();
           e.stopPropagation();
           this.exit(false);

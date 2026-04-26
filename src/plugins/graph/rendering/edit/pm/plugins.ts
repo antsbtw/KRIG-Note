@@ -15,6 +15,7 @@ import {
 import { splitListItem, liftListItem, sinkListItem } from 'prosemirror-schema-list';
 import type { Plugin } from 'prosemirror-state';
 import { graphSchema } from './schema';
+import { buildSlashMenuPlugin } from './slash-menu';
 
 /**
  * 通用 PM 插件集合（v1.3 § 4.3 mark 优先级）。
@@ -46,6 +47,10 @@ export function buildGraphPmPlugins(): Plugin[] {
 
   return [
     history(),
+
+    // Slash menu 必须在 keymap 之前：handleKeyDown 优先级靠前，这样
+    // 菜单激活时 ↑↓ Enter Esc 不会被 keymap 提前消费
+    buildSlashMenuPlugin(),
 
     inputRules({
       rules: [

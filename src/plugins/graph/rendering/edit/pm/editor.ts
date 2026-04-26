@@ -4,6 +4,7 @@ import type { Atom } from '../../../engines/GraphEngine';
 import { graphSchema } from './schema';
 import { buildGraphPmPlugins } from './plugins';
 import { pmDocToAtoms, atomsToPmDoc } from './atom-bridge';
+import { slashMenuKey } from './slash-menu';
 
 /**
  * GraphEditor：薄包装 PM EditorView。
@@ -42,6 +43,13 @@ export class GraphEditor {
   getAtoms(): Atom[] {
     if (!this.view) return [];
     return pmDocToAtoms(this.view.state.doc);
+  }
+
+  /** 当前是否有内嵌浮窗（slash menu / math popover）激活 */
+  hasOpenPopover(): boolean {
+    if (!this.view) return false;
+    const slashState = slashMenuKey.getState(this.view.state);
+    return !!slashState?.active;
   }
 
   focus(): void {
