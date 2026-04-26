@@ -8,6 +8,7 @@ import { NodeRenderer } from '../rendering/NodeRenderer';
 import { EdgeRenderer } from '../rendering/EdgeRenderer';
 import { SvgGeometryContent } from '../rendering/contents/SvgGeometryContent';
 import { CircleShape } from '../rendering/shapes/CircleShape';
+import { EditOverlay, type EditTarget } from '../rendering/edit/EditOverlay';
 
 /**
  * GraphEngine — L5 GraphView 内部的渲染引擎抽象基类
@@ -116,6 +117,9 @@ export abstract class GraphEngine {
   /** v1.3 § 3.4：EdgeRenderer 实例 */
   protected edgeRenderer: EdgeRenderer = new EdgeRenderer(GraphEngine.SHARED_CONTENT);
 
+  /** v1.3 § 7：EditOverlay（编辑模式） */
+  protected editOverlay: EditOverlay | null = null;
+
   protected nodes: GraphNode[] = [];
   protected edges: GraphEdge[] = [];
 
@@ -192,8 +196,14 @@ export abstract class GraphEngine {
         onSelect: (id) => this.setSelected(id),
         onEdgeCreate: (sourceId, targetId) => this.addEdgeBySource(sourceId, targetId),
         onHoverChange: (id) => this.applyHoverHighlight(id),
+        onNodeDoubleClick: (id) => this.enterEditMode(id),
       },
     );
+
+    // v1.3 § 7：EditOverlay
+    this.editOverlay = new EditOverlay(this.scene, {
+      onExit: (target, atoms) => this.handleEditExit(target, atoms),
+    });
     this.viewport.attach();
     this.interaction.attach();
   }
@@ -203,6 +213,8 @@ export abstract class GraphEngine {
       cancelAnimationFrame(this.animationId);
       this.animationId = null;
     }
+    this.editOverlay?.dispose();
+    this.editOverlay = null;
     this.interaction?.detach();
     this.viewport?.detach();
     this.clearScene();
@@ -324,6 +336,45 @@ export abstract class GraphEngine {
   setEdgeLabelVisible(id: string, visible: boolean): void {
     const obj = this.edgeLabels.get(id);
     if (obj) obj.visible = visible;
+  }
+
+  // ── 编辑模式（v1.3 § 7）──
+
+  /** 双击节点进入编辑态：隐藏 content、浮 EditOverlay */
+  enterEditMode(nodeId: string): void {
+    if (!this.editOverlay) return;
+    const node = this.nodes.find((n) => n.id === nodeId);
+    const group = this.nodeGroups.get(nodeId);
+    if (!node || !group) return;
+
+    // 隐藏 content（保留 shape 圆作背景）
+    this.setNodeLabelVisible(nodeId, false);
+
+    // 浮层位置 = 节点中心
+    const worldPos = group.position.clone();
+
+    this.editOverlay.enter({
+      kind: 'node',
+      id: nodeId,
+      atoms: node.label,
+      worldPos,
+    });
+  }
+
+  /** EditOverlay 退出回调：commit=true 时把新 atoms 回写并触发 redraw */
+  protected handleEditExit(target: EditTarget, atoms: Atom[] | null): void {
+    // 恢复 content 可见
+    if (target.kind === 'node') {
+      this.setNodeLabelVisible(target.id, true);
+      if (atoms) {
+        this.setNodeLabel(target.id, atoms);
+      }
+    } else if (target.kind === 'edge') {
+      this.setEdgeLabelVisible(target.id, true);
+      if (atoms) {
+        this.setEdgeLabel(target.id, atoms);
+      }
+    }
   }
 
   undo(): void {

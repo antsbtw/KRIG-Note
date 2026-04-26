@@ -33,6 +33,8 @@ export interface InteractionCallbacks {
   onEdgeCreate: (sourceId: string, targetId: string) => void;
   /** hover 状态变化（v1.3 § 7.3）。null 表示离开任何节点 */
   onHoverChange?: (nodeId: string | null) => void;
+  /** 双击节点（v1.3 § 7.2 → enterEditMode） */
+  onNodeDoubleClick?: (nodeId: string) => void;
 }
 
 type HoverState = 'none' | 'node-center' | 'node-edge';
@@ -63,6 +65,7 @@ export class InteractionController {
   private boundMouseDown: (e: MouseEvent) => void;
   private boundMouseMove: (e: MouseEvent) => void;
   private boundMouseUp: (e: MouseEvent) => void;
+  private boundDoubleClick: (e: MouseEvent) => void;
 
   constructor(
     private domElement: HTMLElement,
@@ -76,12 +79,14 @@ export class InteractionController {
     this.boundMouseDown = this.onMouseDown.bind(this);
     this.boundMouseMove = this.onMouseMove.bind(this);
     this.boundMouseUp = this.onMouseUp.bind(this);
+    this.boundDoubleClick = this.onDoubleClick.bind(this);
   }
 
   attach(): void {
     this.domElement.addEventListener('mousedown', this.boundMouseDown);
     window.addEventListener('mousemove', this.boundMouseMove);
     window.addEventListener('mouseup', this.boundMouseUp);
+    this.domElement.addEventListener('dblclick', this.boundDoubleClick);
     // 让 viewport 知道：左键按在节点上时不平移，按空白时平移
     this.viewport.shouldAllowLeftPan = (e: MouseEvent) => {
       return this.pickNodeAtScreen(e.clientX, e.clientY) === null;
@@ -92,6 +97,7 @@ export class InteractionController {
     this.domElement.removeEventListener('mousedown', this.boundMouseDown);
     window.removeEventListener('mousemove', this.boundMouseMove);
     window.removeEventListener('mouseup', this.boundMouseUp);
+    this.domElement.removeEventListener('dblclick', this.boundDoubleClick);
     this.removeGhostEdge();
     this.hideHoverRing();
     this.domElement.style.cursor = '';
@@ -304,6 +310,16 @@ export class InteractionController {
   /** 处理画布空白处单击 — 由 GraphEngine 转发（因为 viewport 也吃 mousedown） */
   handleBlankClick(): void {
     this.callbacks.onSelect(null);
+  }
+
+  /** 双击：命中节点时触发 onNodeDoubleClick（v1.3 § 7.2） */
+  private onDoubleClick(e: MouseEvent): void {
+    if (e.button !== 0) return;
+    const nodeId = this.pickNodeAtScreen(e.clientX, e.clientY);
+    if (!nodeId) return;
+    e.preventDefault();
+    e.stopPropagation();
+    this.callbacks.onNodeDoubleClick?.(nodeId);
   }
 
   // ── 幽灵线 ──
