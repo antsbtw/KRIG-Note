@@ -353,12 +353,16 @@ export abstract class GraphEngine {
     // 节点中心世界坐标 → 屏幕坐标（通过相机投影）
     const screen = this.worldToScreen(group.position);
 
+    // 浮卡放在节点圆下方（避开圆本身）
+    // worldToScreen 给的是节点圆心；浮卡会用 placement='below' 让顶部对齐
+    // 屏幕坐标 + nodeRadius + 间距
     this.editOverlay.enter({
       kind: 'node',
       id: nodeId,
       atoms: node.label,
       screenX: screen.x,
       screenY: screen.y,
+      anchorOffsetY: this.getGroupRadius(group) + 16,
     });
   }
 

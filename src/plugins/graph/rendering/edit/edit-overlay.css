@@ -1,5 +1,51 @@
 /* EditOverlay 浮层 CSS（v1.3 § 7） */
 
+/* ── 进入动画 ── */
+
+@keyframes krig-edit-popup-enter {
+  from {
+    opacity: 0;
+    transform-origin: top center;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.krig-edit-popup {
+  animation: krig-edit-popup-enter 130ms ease-out;
+}
+
+/* below 模式（浮卡在节点下方）：顶部加小三角指向节点 */
+.krig-edit-popup--below::before {
+  content: '';
+  position: absolute;
+  top: -8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  border-bottom: 8px solid #4a90e2;
+  /* 蓝边描边再加一层内嵌深底（仿气泡 tooltip） */
+}
+
+.krig-edit-popup--below::after {
+  content: '';
+  position: absolute;
+  top: -6px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-bottom: 7px solid rgba(40, 44, 52, 0.97);
+}
+
+
+
 /* PM mount 内部样式 — 紧凑、深色背景适配 */
 
 .krig-edit-pm-mount {

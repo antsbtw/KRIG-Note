@@ -29,9 +29,14 @@ export interface EditTarget {
   kind: 'node' | 'edge';
   id: string;
   atoms: Atom[];
-  /** 浮层屏幕坐标（GraphEngine 已做世界 → 屏幕变换） */
+  /** 锚点屏幕坐标（节点圆心 / 边 label 中心） */
   screenX: number;
   screenY: number;
+  /**
+   * 浮卡相对锚点的 Y 偏移（用于避开节点圆）。
+   * 浮卡顶部 = screenY + anchorOffsetY。默认 0（顶部对齐锚点）。
+   */
+  anchorOffsetY?: number;
 }
 
 export interface EditOverlayCallbacks {
@@ -78,19 +83,22 @@ export class EditOverlay {
     this.backdrop = backdrop;
 
     // popup：绝对定位到屏幕坐标
+    // 节点编辑时 anchorOffsetY > 0 → 浮卡放节点下方；不设时仍居中（边 label 等）
+    const offsetY = target.anchorOffsetY ?? 0;
     const popup = document.createElement('div');
     popup.className = 'krig-edit-popup';
+    if (offsetY > 0) popup.classList.add('krig-edit-popup--below');
     popup.style.cssText = `
       position: absolute;
       left: ${target.screenX}px;
-      top: ${target.screenY}px;
+      top: ${target.screenY + offsetY}px;
       width: 300px;
       padding: 8px 10px;
       background: rgba(40, 44, 52, 0.97);
       border: 1px solid #4a90e2;
       border-radius: 8px;
       box-shadow: 0 6px 20px rgba(0, 0, 0, 0.55);
-      transform: translate(-50%, -50%);
+      ${offsetY > 0 ? 'transform: translate(-50%, 0);' : 'transform: translate(-50%, -50%);'}
       color: #e0e0e0;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       font-size: 14px;
