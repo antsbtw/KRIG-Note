@@ -197,7 +197,9 @@ export abstract class GraphEngine {
         onEdgeCreate: (sourceId, targetId) => this.addEdgeBySource(sourceId, targetId),
         onHoverChange: (id) => this.applyHoverHighlight(id),
         onNodeDoubleClick: (id) => this.enterEditMode(id),
+        onEdgeDoubleClick: (id) => this.enterEditModeForEdge(id),
       },
+      () => this.edgeLines,
     );
 
     // v1.3 § 7：EditOverlay
@@ -363,6 +365,34 @@ export abstract class GraphEngine {
       screenX: screen.x,
       screenY: screen.y,
       anchorOffsetY: this.getGroupRadius(group) + 16,
+    });
+  }
+
+  /** 双击边进入编辑态（v1.3 § 7.2 边 label 编辑入口） */
+  enterEditModeForEdge(edgeId: string): void {
+    if (!this.editOverlay) return;
+    const edge = this.edges.find((e) => e.id === edgeId);
+    if (!edge) return;
+    const sourceGroup = this.nodeGroups.get(edge.source);
+    const targetGroup = this.nodeGroups.get(edge.target);
+    if (!sourceGroup || !targetGroup) return;
+
+    // 隐藏边 label（避免和编辑器重叠）
+    this.setEdgeLabelVisible(edgeId, false);
+
+    // 浮层位置 = 两节点屏幕中点（边曲线的视觉中点附近）
+    const sScreen = this.worldToScreen(sourceGroup.position);
+    const tScreen = this.worldToScreen(targetGroup.position);
+    const screenX = (sScreen.x + tScreen.x) / 2;
+    const screenY = (sScreen.y + tScreen.y) / 2;
+
+    this.editOverlay.enter({
+      kind: 'edge',
+      id: edgeId,
+      atoms: edge.label ?? [],
+      screenX,
+      screenY,
+      anchorOffsetY: 0, // 边没有"圆下方"概念，直接用中点
     });
   }
 
