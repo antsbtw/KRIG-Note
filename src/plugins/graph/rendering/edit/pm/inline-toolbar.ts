@@ -14,20 +14,56 @@ import { graphSchema } from './schema';
 
 export const inlineToolbarKey = new PluginKey('graphInlineToolbar');
 
-interface ToolbarItem {
-  id: string;
-  label: string;
-  title: string;
-  markType: MarkType;
-}
+/**
+ * 工具栏项分两类：
+ *
+ * - mark 类（B / I / U / code）：toggleMark 应用到选区
+ * - 节点类（math）：替换选区为新 atom 节点（光标位置插入）
+ */
+type ToolbarItem =
+  | {
+      kind: 'mark';
+      id: string;
+      label: string;
+      title: string;
+      markType: MarkType;
+    }
+  | {
+      kind: 'node';
+      id: string;
+      label: string;
+      title: string;
+      /** 在 selection 位置 dispatch 插入节点 + autoEdit 触发 popover */
+      insert: (view: EditorView) => void;
+    };
 
 function buildItems(): ToolbarItem[] {
   const m = graphSchema.marks;
+  const n = graphSchema.nodes;
   return [
-    { id: 'bold', label: 'B', title: 'Bold (⌘B)', markType: m.bold },
-    { id: 'italic', label: 'I', title: 'Italic (⌘I)', markType: m.italic },
-    { id: 'underline', label: 'U', title: 'Underline (⌘U)', markType: m.underline },
-    { id: 'code', label: '<>', title: 'Code (⌘E)', markType: m.code },
+    { kind: 'mark', id: 'bold', label: 'B', title: 'Bold (⌘B)', markType: m.bold },
+    { kind: 'mark', id: 'italic', label: 'I', title: 'Italic (⌘I)', markType: m.italic },
+    { kind: 'mark', id: 'underline', label: 'U', title: 'Underline (⌘U)', markType: m.underline },
+    { kind: 'mark', id: 'code', label: '<>', title: 'Code (⌘E)', markType: m.code },
+    {
+      kind: 'node',
+      id: 'mathInline',
+      label: '∑',
+      title: 'Math inline',
+      insert: (view) => {
+        const { tr } = view.state;
+        const node = n.mathInline.create({ tex: '' });
+        const insertPos = view.state.selection.from;
+        tr.replaceSelectionWith(node);
+        view.dispatch(tr);
+        view.focus();
+        // 下一帧触发 NodeView click 打开 popover
+        requestAnimationFrame(() => {
+          const dom = view.nodeDOM(insertPos);
+          if (dom instanceof HTMLElement) dom.click();
+        });
+      },
+    },
   ];
 }
 
@@ -68,9 +104,13 @@ export function buildInlineToolbarPlugin(options: ToolbarOptions = {}): Plugin {
         btn.addEventListener('click', (e) => {
           e.preventDefault();
           e.stopPropagation();
-          const cmd = toggleMark(item.markType);
-          cmd(view.state, view.dispatch);
-          view.focus();
+          if (item.kind === 'mark') {
+            const cmd = toggleMark(item.markType);
+            cmd(view.state, view.dispatch);
+            view.focus();
+          } else {
+            item.insert(view);
+          }
         });
         toolbarEl.appendChild(btn);
         return btn;
@@ -99,10 +139,11 @@ export function buildInlineToolbarPlugin(options: ToolbarOptions = {}): Plugin {
           return;
         }
 
-        // 更新按钮激活态
+        // 更新按钮激活态（仅 mark 类）
         items.forEach((item, i) => {
-          const active = markActive(state, item.markType);
-          buttons[i].classList.toggle('is-active', active);
+          if (item.kind === 'mark') {
+            buttons[i].classList.toggle('is-active', markActive(state, item.markType));
+          }
         });
 
         // 定位：选区起点上方

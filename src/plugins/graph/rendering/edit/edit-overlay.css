@@ -242,6 +242,19 @@
   font-family: 'JetBrains Mono', Menlo, monospace;
   font-size: 11px;
 }
+.krig-inline-toolbar-btn[data-id="mathInline"] {
+  font-family: 'KaTeX_Main', Cambria, 'Times New Roman', serif;
+  font-size: 16px;
+  color: #88aaff;
+}
+
+/* mark 类和 node 类之间加个分隔线 */
+.krig-inline-toolbar-btn[data-id="mathInline"] {
+  margin-left: 4px;
+  border-left: 1px solid #444;
+  padding-left: 8px;
+  border-radius: 0 3px 3px 0;
+}
 
 /* 选区颜色 */
 .krig-edit-pm-mount ::selection {
