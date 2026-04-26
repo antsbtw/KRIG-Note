@@ -7,7 +7,9 @@ const EDGE_COLOR_HOVER = 0xffaa3b;
 const EDGE_COLOR_SELECTED = 0x55cc88;
 const EDGE_LABEL_SCALE = 0.85;
 
-const EDGE_CURVE_SPACING = 28;
+const EDGE_CURVE_SPACING = 32;
+/** 多重图 label 沿法向外推系数（label 沿弧形展开方向额外推开，避免重叠） */
+const EDGE_LABEL_PUSH = 12;
 const BEZIER_SEGMENTS = 24;
 const ARROW_SIZE = 10;
 
@@ -198,13 +200,20 @@ export class EdgeRenderer {
       points.push(new THREE.Vector3(x, y, -1));
     }
 
+    // label 沿法向再按 offsetFactor 比例外推：
+    // - 单条直线 offsetFactor=0，无外推
+    // - 多重图同向 N 条，offsetFactor 跨度大 → label 锚点沿法向展开
+    //   既区分各 label 视觉位置，又自然远离主线
+    // 外推距离 = offsetFactor × EDGE_LABEL_PUSH，叠加到弧顶位置
+    const baseLabelX = 0.25 * startX + 0.5 * ctrlX + 0.25 * endX;
+    const baseLabelY = 0.25 * startY + 0.5 * ctrlY + 0.25 * endY;
     return {
       points,
       endX,
       endY,
       arrowAngle: Math.atan2(endY - ctrlY, endX - ctrlX),
-      labelX: 0.25 * startX + 0.5 * ctrlX + 0.25 * endX,
-      labelY: 0.25 * startY + 0.5 * ctrlY + 0.25 * endY,
+      labelX: baseLabelX + nx * EDGE_LABEL_PUSH * offsetFactor,
+      labelY: baseLabelY + ny * EDGE_LABEL_PUSH * offsetFactor,
     };
   }
 
