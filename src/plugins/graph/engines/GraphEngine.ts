@@ -120,6 +120,7 @@ export abstract class GraphEngine {
   protected commandStack = new CommandStack();
 
   protected selectedId: string | null = null;
+  protected hoveredId: string | null = null;
 
   /** 数据变更回调（外层接 SurrealDB） */
   onChange: ((event: ChangeEvent) => void) | null = null;
@@ -183,6 +184,7 @@ export abstract class GraphEngine {
         },
         onSelect: (id) => this.setSelected(id),
         onEdgeCreate: (sourceId, targetId) => this.addEdgeBySource(sourceId, targetId),
+        onHoverChange: (id) => this.applyHoverHighlight(id),
       },
     );
     this.viewport.attach();
@@ -344,10 +346,34 @@ export abstract class GraphEngine {
     this.onChange?.({ type: 'selection', selectedId: id });
   }
 
+  /**
+   * 高亮优先级（v1.3 § 7.3）：selected > hover > default
+   */
   protected applySelectionHighlight(): void {
     for (const [nodeId, group] of this.nodeGroups) {
-      this.nodeRenderer.setHighlight(group, nodeId === this.selectedId ? 'selected' : 'default');
+      this.nodeRenderer.setHighlight(group, this.computeHighlightMode(nodeId));
     }
+  }
+
+  /** hover 切换：仅刷新涉及到的节点（避免遍历全部） */
+  protected applyHoverHighlight(nodeId: string | null): void {
+    const oldId = this.hoveredId;
+    this.hoveredId = nodeId;
+
+    if (oldId && oldId !== nodeId) {
+      const oldGroup = this.nodeGroups.get(oldId);
+      if (oldGroup) this.nodeRenderer.setHighlight(oldGroup, this.computeHighlightMode(oldId));
+    }
+    if (nodeId) {
+      const newGroup = this.nodeGroups.get(nodeId);
+      if (newGroup) this.nodeRenderer.setHighlight(newGroup, this.computeHighlightMode(nodeId));
+    }
+  }
+
+  private computeHighlightMode(nodeId: string): 'default' | 'hover' | 'selected' {
+    if (nodeId === this.selectedId) return 'selected';
+    if (nodeId === this.hoveredId) return 'hover';
+    return 'default';
   }
 
   // ── 内部：节点拖拽 preview / 边创建 ──

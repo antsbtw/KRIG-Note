@@ -31,6 +31,8 @@ export interface InteractionCallbacks {
   onSelect: (nodeId: string | null) => void;
   /** 拖出新边并落在目标节点上（入 CommandStack） */
   onEdgeCreate: (sourceId: string, targetId: string) => void;
+  /** hover 状态变化（v1.3 § 7.3）。null 表示离开任何节点 */
+  onHoverChange?: (nodeId: string | null) => void;
 }
 
 type HoverState = 'none' | 'node-center' | 'node-edge';
@@ -211,6 +213,7 @@ export class InteractionController {
   private setHoverState(next: HoverState, nodeId: string | null): void {
     if (next === this.hoverState && nodeId === this.hoverNodeId) return;
 
+    const oldNodeId = this.hoverNodeId;
     this.hoverState = next;
     this.hoverNodeId = nodeId;
 
@@ -225,6 +228,11 @@ export class InteractionController {
       if (group) this.showHoverRing(group);
     } else {
       this.hideHoverRing();
+    }
+
+    // hover 节点变化通知（用于上层切换 nodeRenderer.setHighlight）
+    if (oldNodeId !== nodeId) {
+      this.callbacks.onHoverChange?.(nodeId);
     }
   }
 
