@@ -95,6 +95,19 @@ export interface FolderTreeProps {
   /** 键盘动作（Delete / Enter / 方向键 + 焦点节点） */
   onKeyAction?: (action: KeyAction, target: TreeNode) => void;
 
+  /**
+   * 受控的重命名状态。
+   * 当 renamingId === node.id 时，FolderTree 在该节点 title 位置渲染受控 input。
+   * 业务通过 onRenamingChange 更新值，onRenameCommit/Cancel 处理提交/取消。
+   *
+   * 这是 v1.4 框架内置的重命名通用 UI（不是业务逃生口；是横向能力）。
+   */
+  renamingId?: string | null;
+  renamingValue?: string;
+  onRenamingChange?: (value: string) => void;
+  onRenameCommit?: (id: string) => void;
+  onRenameCancel?: () => void;
+
   /** 空态文字（默认 "暂无内容"） */
   emptyText?: string;
 }

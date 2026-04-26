@@ -34,6 +34,11 @@ export function FolderTree({
   draggable = false,
   onDrop,
   onKeyAction,
+  renamingId,
+  renamingValue = '',
+  onRenamingChange,
+  onRenameCommit,
+  onRenameCancel,
   emptyText = '暂无内容',
 }: FolderTreeProps) {
   // ── hover / 拖拽状态 ──
@@ -265,6 +270,20 @@ export function FolderTree({
             : {}),
         };
 
+        const isRenaming = renamingId === node.id;
+        const titleSlot = isRenaming ? (
+          <RenameInput
+            value={renamingValue}
+            onChange={onRenamingChange ?? (() => {})}
+            onCommit={() => onRenameCommit?.(node.id)}
+            onCancel={() => onRenameCancel?.()}
+          />
+        ) : (
+          <span style={styles.title}>
+            {node.kind === 'folder' ? node.title : itemMeta(node).title}
+          </span>
+        );
+
         if (node.kind === 'folder') {
           return (
             <div key={node.id} style={rowStyle} {...handlers}>
@@ -276,7 +295,7 @@ export function FolderTree({
                 {node.expanded ? '▾' : '▸'}
               </span>
               <span style={styles.icon}>📁</span>
-              <span style={styles.title}>{node.title}</span>
+              {titleSlot}
             </div>
           );
         }
@@ -287,8 +306,8 @@ export function FolderTree({
           <div key={node.id} style={rowStyle} {...handlers}>
             <span style={styles.caret}></span>
             <span style={styles.icon}>{meta.icon}</span>
-            <span style={styles.title}>{meta.title}</span>
-            {meta.rightHint && <span style={styles.rightHint}>{meta.rightHint}</span>}
+            {titleSlot}
+            {!isRenaming && meta.rightHint && <span style={styles.rightHint}>{meta.rightHint}</span>}
           </div>
         );
       })}
@@ -299,3 +318,58 @@ export function FolderTree({
 
 // 兼容 ItemNode 单独 import 场景（其他模块可能用）
 export type { TreeNode, FolderNode, ItemNode };
+
+// ── 重命名内联输入 ──
+
+function RenameInput({
+  value,
+  onChange,
+  onCommit,
+  onCancel,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  onCommit: () => void;
+  onCancel: () => void;
+}) {
+  // 挂载时自动 focus + 全选
+  const inputRef = useCallback((el: HTMLInputElement | null) => {
+    if (el) {
+      el.focus();
+      el.select();
+    }
+  }, []);
+
+  return (
+    <input
+      ref={inputRef}
+      style={{
+        ...styles.title,
+        background: 'rgba(74, 144, 226, 0.15)',
+        border: '1px solid #4a90e2',
+        borderRadius: 3,
+        color: '#fff',
+        outline: 'none',
+        padding: '0 4px',
+        fontSize: 13,
+        fontFamily: 'inherit',
+        minWidth: 0,
+      }}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          onCommit();
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          onCancel();
+        }
+      }}
+      onBlur={onCommit}
+      onClick={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+    />
+  );
+}
