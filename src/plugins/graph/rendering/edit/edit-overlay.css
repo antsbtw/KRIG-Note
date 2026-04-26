@@ -142,39 +142,51 @@
   color: #e0e0e0;
 }
 
-/* mathBlock / mathInline 占位（Phase 3.4 NodeView 接入后再换） */
-.krig-edit-pm-mount [data-math-block],
-.krig-edit-pm-mount [data-math-inline] {
-  display: inline-block;
-  padding: 1px 6px;
-  background: rgba(136, 170, 255, 0.12);
-  border: 1px dashed rgba(136, 170, 255, 0.4);
+/* ── Math NodeView（v1.3 § 4.3 inline math + block math）── */
+
+.krig-math-inline,
+.krig-math-block {
+  cursor: pointer;
+  position: relative;
   border-radius: 3px;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 0.88em;
-  color: #88aaff;
+  transition: background 100ms;
 }
 
-.krig-edit-pm-mount [data-math-block] {
+.krig-math-inline {
+  display: inline-block;
+  padding: 0 4px;
+  vertical-align: middle;
+}
+
+.krig-math-block {
   display: block;
-  margin: 4px 0;
-  padding: 4px 8px;
+  margin: 6px 0;
+  padding: 6px 8px;
+  text-align: center;
 }
 
-.krig-edit-pm-mount [data-math-block]::before {
-  content: 'math: ';
-  opacity: 0.6;
+.krig-math-inline:hover,
+.krig-math-block:hover {
+  background: rgba(136, 170, 255, 0.12);
+}
+
+.krig-math-inline.is-selected,
+.krig-math-block.is-selected {
+  background: rgba(74, 144, 226, 0.25);
+  outline: 1px solid rgba(74, 144, 226, 0.6);
+}
+
+/* 空 atom 占位 */
+.krig-math-empty {
+  font-style: italic;
+  color: #88aaff;
   font-size: 0.85em;
+  padding: 0 2px;
 }
 
-.krig-edit-pm-mount [data-math-inline]::before {
-  content: '$';
-  opacity: 0.6;
-}
-
-.krig-edit-pm-mount [data-math-inline]::after {
-  content: '$';
-  opacity: 0.6;
+/* KaTeX 在浮卡内的颜色（KaTeX 默认 currentColor） */
+.krig-edit-pm-mount .katex {
+  color: #e0e0e0;
 }
 
 /* 选区颜色 */

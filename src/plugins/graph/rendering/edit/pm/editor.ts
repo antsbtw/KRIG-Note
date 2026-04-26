@@ -5,6 +5,8 @@ import { graphSchema } from './schema';
 import { buildGraphPmPlugins } from './plugins';
 import { pmDocToAtoms, atomsToPmDoc } from './atom-bridge';
 import { slashMenuKey } from './slash-menu';
+import { MathInlineNodeView, MathBlockNodeView } from './nodeviews';
+import { isMathPopoverOpen, closeMathPopover } from './math-popover';
 
 /**
  * GraphEditor：薄包装 PM EditorView。
@@ -31,10 +33,13 @@ export class GraphEditor {
 
     this.view = new EditorView(mount, {
       state,
-      // 默认 contentEditable + spellcheck 关闭（节点 label 通常不需要拼写检查）
       attributes: {
         spellcheck: 'false',
         translate: 'no',
+      },
+      nodeViews: {
+        mathInline: (node, view, getPos) => new MathInlineNodeView(node, view, getPos),
+        mathBlock: (node, view, getPos) => new MathBlockNodeView(node, view, getPos),
       },
     });
   }
@@ -48,8 +53,14 @@ export class GraphEditor {
   /** 当前是否有内嵌浮窗（slash menu / math popover）激活 */
   hasOpenPopover(): boolean {
     if (!this.view) return false;
+    if (isMathPopoverOpen()) return true;
     const slashState = slashMenuKey.getState(this.view.state);
     return !!slashState?.active;
+  }
+
+  /** 销毁前关掉所有内嵌浮窗（避免泄漏） */
+  closePopovers(): void {
+    if (isMathPopoverOpen()) closeMathPopover(false);
   }
 
   focus(): void {
@@ -57,6 +68,7 @@ export class GraphEditor {
   }
 
   destroy(): void {
+    this.closePopovers();
     this.view?.destroy();
     this.view = null;
   }
