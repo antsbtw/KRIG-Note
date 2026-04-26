@@ -1,11 +1,91 @@
 /**
- * KRIG 软件领域内置物质包。
+ * KRIG 软件领域内置物质包（v1）。
  *
- * v1 内置 10 个 Point/Surface 类物质，覆盖 KRIG-Note-Concept.md 样本所需。
- * D3 阶段填充实际 visual 参数。
+ * 5 个 Point/Surface 类物质，覆盖 KRIG-Note-Concept.md 样本的所有节点：
+ *   - krig-layer            L0-L5 应用层级（Application / Window / Shell / Workspace / Slot / View）
+ *   - krig-shell-component  Shell 内组件（WorkspaceBar / NavSidebar / WorkspaceArea / Overlays）
+ *   - krig-view             5 种 View 类型（NoteView / EBookView / WebView / ThoughtView / GraphView）
+ *   - krig-concept          跨层抽象概念（LayoutMode / ViewType / NavMode / IPC ...）
+ *   - krig-grouping         概念集群（Surface 类）
+ *
+ * 视觉风格说明：
+ *   - layer: 六边形 + 深色 + 大字号 + 粗边框（"层级"的厚重感）
+ *   - shell-component: 圆角矩形 + 蓝灰 + 中等大小（"组件"的容器感）
+ *   - view: 圆 + 蓝色 + 白字（"视图"的活跃感）
+ *   - concept: 圆 + 灰色 + 浅文字（"概念"的抽象感）
+ *   - grouping: 半透明灰底 + 虚线边（"圈起来"的集合感）
  */
 import { substanceLibrary } from '../registry';
 
-// D3: 实际填充 10 个物质（krig-layer / krig-shell-component / krig-view / krig-concept / krig-grouping ...）
-// 当前 D1 只占位
-void substanceLibrary;
+// ── L0-L5 应用层级（最高抽象，画图时位居核心位置） ──
+substanceLibrary.register({
+  id: 'krig-layer',
+  label: 'KRIG 层级',
+  description: 'L0-L5 应用结构层级（Application / Window / Shell / Workspace / Slot / View）',
+  applies_to_kinds: ['point'],
+  visual: {
+    shape: 'hexagon',
+    fill: { color: '#1a1a1a', opacity: 0.92 },
+    border: { color: '#888', width: 3, style: 'solid' },
+    text: { color: '#ffffff', size: 16, weight: 600 },
+    size: { width: 84, height: 84 },
+  },
+});
+
+// ── Shell 内组件 ──
+substanceLibrary.register({
+  id: 'krig-shell-component',
+  label: 'Shell 组件',
+  description: 'Shell 骨架内的组件（WorkspaceBar / NavSidebar / WorkspaceArea / Overlays）',
+  applies_to_kinds: ['point'],
+  visual: {
+    shape: 'rounded-rect',
+    fill: { color: '#2a4a6a', opacity: 0.9 },
+    border: { color: '#4a7aaa', width: 2, style: 'solid' },
+    text: { color: '#e8eaed', size: 13, weight: 500 },
+    size: { width: 100, height: 56 },
+  },
+});
+
+// ── 5 种 View 类型 ──
+substanceLibrary.register({
+  id: 'krig-view',
+  label: 'KRIG View',
+  description: '内容视图（NoteView / EBookView / WebView / ThoughtView / GraphView）',
+  applies_to_kinds: ['point'],
+  visual: {
+    shape: 'circle',
+    fill: { color: '#3b82f6', opacity: 0.92 },
+    border: { color: '#60a5fa', width: 2, style: 'solid' },
+    text: { color: '#ffffff', size: 13, weight: 500 },
+    size: { width: 72, height: 72 },
+  },
+});
+
+// ── 跨层抽象概念 ──
+substanceLibrary.register({
+  id: 'krig-concept',
+  label: '抽象概念',
+  description: '跨层抽象（LayoutMode / ViewType / NavMode / ApplicationMenu / IPC ...）',
+  applies_to_kinds: ['point'],
+  visual: {
+    shape: 'circle',
+    fill: { color: '#666', opacity: 0.85 },
+    border: { color: '#999', width: 1, style: 'dashed' },
+    text: { color: '#ddd', size: 12, weight: 400 },
+    size: { width: 60, height: 60 },
+  },
+});
+
+// ── 概念集群（Surface） ──
+substanceLibrary.register({
+  id: 'krig-grouping',
+  label: '概念集群',
+  description: '把多个相关概念围成集合（如"View 类型族"包含 5 种 View）',
+  applies_to_kinds: ['surface'],
+  visual: {
+    fill: { color: '#444', opacity: 0.15 },
+    border: { color: '#888', width: 2, style: 'dashed' },
+    text: { color: '#aaa', size: 11, weight: 400 },
+  },
+});
