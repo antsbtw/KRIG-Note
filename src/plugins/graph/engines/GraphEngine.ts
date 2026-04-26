@@ -392,7 +392,8 @@ export abstract class GraphEngine {
       atoms: edge.label ?? [],
       screenX,
       screenY,
-      anchorOffsetY: 0, // 边没有"圆下方"概念，直接用中点
+      // 边浮窗也走 below 模式：浮在中点下方 16px，含指针，与节点视觉一致
+      anchorOffsetY: 16,
     });
   }
 
