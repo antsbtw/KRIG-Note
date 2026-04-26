@@ -15,6 +15,11 @@ import { AllPackages } from 'mathjax-full/js/input/tex/AllPackages.js';
 
 let mjxDocument: ReturnType<typeof mathjax.document> | null = null;
 let mjxAdaptor: ReturnType<typeof browserAdaptor> | null = null;
+let mjxInitMs = 0;
+
+export function getMathjaxInitMs(): number {
+  return mjxInitMs;
+}
 
 function ensureInit(): void {
   if (mjxDocument) return;
@@ -30,8 +35,8 @@ function ensureInit(): void {
   mjxDocument = mathjax.document('', { InputJax: tex, OutputJax: svg });
   mjxAdaptor = adaptor;
 
-  const dt = performance.now() - t0;
-  console.info(`[mathjax-svg] initialized in ${dt.toFixed(1)}ms`);
+  mjxInitMs = performance.now() - t0;
+  console.info(`[mathjax-svg] initialized in ${mjxInitMs.toFixed(1)}ms`);
 }
 
 export interface TexRenderResult {

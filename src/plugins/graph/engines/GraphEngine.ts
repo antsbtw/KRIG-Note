@@ -89,6 +89,21 @@ export interface LayoutAlgo {
   ): Promise<Map<string, { x: number; y: number }>>;
 }
 
+/**
+ * v1.3 § 10.2：渲染层运行时性能数据。
+ * GraphEngine.getPerfStats() 暴露给 PerfPanel / 退化策略读取。
+ */
+export interface PerfStats {
+  /** 最后一次单节点创建耗时（ms） */
+  lastNodeMs: number;
+  /** 当前场景中节点数 */
+  totalNodes: number;
+  /** 最后一次全场 rerender 累计耗时（ms） */
+  totalSetupMs: number;
+  /** 当前 fps（500ms 滑动窗口） */
+  fps: number;
+}
+
 // ── 基类 ──
 
 export abstract class GraphEngine {
@@ -132,6 +147,17 @@ export abstract class GraphEngine {
 
   protected selectedId: string | null = null;
   protected hoveredId: string | null = null;
+
+  /** v1.3 § 10.2：性能监控数据（PerfPanel 读取 / 退化策略读取） */
+  protected perfStats: PerfStats = {
+    lastNodeMs: 0,
+    totalNodes: 0,
+    totalSetupMs: 0,
+    fps: 0,
+  };
+  /** fps 采样窗口 */
+  private fpsFrames = 0;
+  private fpsLastT = performance.now();
 
   /** 数据变更回调（外层接 SurrealDB） */
   onChange: ((event: ChangeEvent) => void) | null = null;
@@ -705,6 +731,7 @@ export abstract class GraphEngine {
   async rerender(): Promise<void> {
     // 用本地令牌避免重入导致旧 rerender 的节点出现在新场景里
     const token = ++this.rerenderToken;
+    const setupT0 = performance.now();
 
     for (const group of this.nodeGroups.values()) {
       this.scene.remove(group);
@@ -720,6 +747,7 @@ export abstract class GraphEngine {
 
     // 节点：异步并行创建（保留顺序需求时改 for-await）
     const nodeJobs = this.nodes.map(async (node) => {
+      const tNode = performance.now();
       const group = await this.nodeRenderer.createNode(node);
       if (token !== this.rerenderToken) {
         // 已被新 rerender 替代，丢弃
@@ -729,6 +757,7 @@ export abstract class GraphEngine {
       group.userData.nodeId = node.id;
       this.scene.add(group);
       this.nodeGroups.set(node.id, group);
+      this.perfStats.lastNodeMs = performance.now() - tNode;
     });
     await Promise.all(nodeJobs);
     if (token !== this.rerenderToken) return;
@@ -737,6 +766,9 @@ export abstract class GraphEngine {
     for (const edge of this.edges) {
       this.redrawEdge(edge);
     }
+
+    this.perfStats.totalNodes = this.nodes.length;
+    this.perfStats.totalSetupMs = performance.now() - setupT0;
   }
 
   /** rerender 重入令牌（避免异步节点创建的并发问题） */
@@ -760,9 +792,25 @@ export abstract class GraphEngine {
     const tick = () => {
       this.renderer.render(this.scene, this.camera);
       this.css2dRenderer.render(this.scene, this.camera);
+
+      // fps 采样：500ms 滑动窗口
+      this.fpsFrames++;
+      const now = performance.now();
+      const dt = now - this.fpsLastT;
+      if (dt >= 500) {
+        this.perfStats.fps = (this.fpsFrames * 1000) / dt;
+        this.fpsFrames = 0;
+        this.fpsLastT = now;
+      }
+
       this.animationId = requestAnimationFrame(tick);
     };
     tick();
+  }
+
+  /** v1.3 § 10.2：取当前 perfStats 快照 */
+  getPerfStats(): PerfStats {
+    return { ...this.perfStats };
   }
 }
 
