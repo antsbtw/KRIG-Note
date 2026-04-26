@@ -153,6 +153,8 @@ export class EditOverlay {
     let atoms: Atom[] | null = null;
     if (commit && this.editor) {
       atoms = this.editor.getAtoms();
+      // 调试：观察 PM 实际输出（Phase 3.2 验收期间临时打印，验收后删除）
+      console.log('[EditOverlay] commit atoms =', JSON.stringify(atoms));
     }
 
     this.unmount();

@@ -6,6 +6,18 @@
   font-size: 14px;
   line-height: 1.5;
   color: #e0e0e0;
+  /* 深色背景下用亮色 caret，提高可见度 */
+  caret-color: #88aaff;
+}
+
+/* PM 内 contentEditable 容器（ProseMirror 类） */
+.krig-edit-pm-mount .ProseMirror {
+  outline: none;
+  caret-color: #88aaff;
+}
+
+.krig-edit-pm-mount .ProseMirror-focused {
+  outline: none;
 }
 
 .krig-edit-pm-mount p,
@@ -14,6 +26,8 @@
 .krig-edit-pm-mount h3 {
   margin: 0 0 4px 0;
   padding: 0;
+  /* 空段也要撑出一行高度，否则光标看不见 */
+  min-height: 1.4em;
 }
 
 .krig-edit-pm-mount p:last-child,
