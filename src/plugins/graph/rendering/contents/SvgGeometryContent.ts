@@ -123,16 +123,16 @@ export class SvgGeometryContent implements ContentRenderer {
   }
 
   /**
-   * L3 不缓存：dispose 时只移除 mesh 自身，**不 dispose geometry / material**
-   * （它们由 L2 缓存共享管理，被 LRU 淘汰时统一 dispose）。
+   * L3 不缓存：dispose 时只把 rendered 从其 parent 上摘下，**不 dispose
+   * geometry / material**（它们由 L2 缓存共享管理，被 LRU 淘汰时统一 dispose）。
+   *
+   * 注：早期实现 traverse + parent.remove(obj) 会在 traversal 中改 children
+   * 数组导致索引越界（Cannot read 'traverse' of undefined）。这里只摘 rendered
+   * 自身即可，内部 mesh 是 rendered 的 child，没有外部引用，rendered 被 GC 时
+   * 一起回收。
    */
   dispose(rendered: THREE.Object3D): void {
-    rendered.traverse((obj) => {
-      if (obj instanceof THREE.Mesh) {
-        // 不 dispose geometry/material：它们是 L2 共享资源
-        obj.parent?.remove(obj);
-      }
-    });
+    rendered.parent?.remove(rendered);
   }
 
   /** 序列化器失败时的兜底：用纯文字提取生成简单 SVG */
