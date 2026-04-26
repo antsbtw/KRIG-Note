@@ -13,7 +13,6 @@
 import { useState } from 'react';
 import { getNavPanel } from './panel-registry';
 import { useWorkspaceSync } from './hooks/useWorkspaceSync';
-import { activeStateStore } from './store/active-state-store';
 import { styles } from './navside-styles';
 
 declare const navSideAPI: {
@@ -117,15 +116,7 @@ export function NavSide() {
             </div>
           );
         }
-        return (
-          <PanelComponent
-            dbReady={ws.dbReady}
-            // 兼容旧插件 props（EBook 等暂时还在用，M4 重构后清理）
-            activeBookId={null}
-            initialExpandedFolders={[]}
-            onActiveBookChange={(id: string | null) => activeStateStore.setActiveBookIdLocal(id)}
-          />
-        );
+        return <PanelComponent dbReady={ws.dbReady} />;
       })() : (
         <div style={styles.placeholder}>请选择工作模式</div>
       )}
