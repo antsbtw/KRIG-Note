@@ -1,30 +1,34 @@
-import * as THREE from 'three';
-import { CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 import type { Atom } from '../../engines/GraphEngine';
 
 /**
  * EditOverlay：节点 / 边的编辑浮层管理（v1.3 spec § 7）。
  *
  * 显示态 = 节点 SVG 几何 mesh；编辑态 = DOM PM 编辑器浮层覆盖在节点位置。
- * 浮层用 CSS2DObject 锚定到 3D 场景中的目标位置（节点圆心），随相机变换平移。
  *
  * 当前实现（Phase 3.1）：仅 textarea 占位，PM schema/UI 在 Phase 3.2-3.4 接入。
+ *
+ * DOM 结构：
+ *   document.body
+ *     └── backdrop (fixed inset:0, z-index:1000)
+ *           └── popup (absolute, 绝对定位到屏幕坐标)
+ *                 └── textarea
+ *
+ * 事件流：
+ *   - 点 textarea / popup 内部 → 不冒泡到 backdrop（stopPropagation）
+ *   - 点 backdrop 空白 → 触发 exit(true)
  *
  * 生命周期：
  *   enter(target) → mountPopup → focus
  *   exit(commit) → 提取 atoms → 销毁 popup
- *
- * 调用方（GraphEngine）负责：
- *   - 隐藏目标节点 content visibility
- *   - 提交时调 setNodeLabel(id, atoms) → 触发 redraw
  */
 
 export interface EditTarget {
   kind: 'node' | 'edge';
   id: string;
   atoms: Atom[];
-  /** 浮层挂载的位置（世界坐标）：节点为节点中心，边为 label 中心 */
-  worldPos: THREE.Vector3;
+  /** 浮层屏幕坐标（GraphEngine 已做世界 → 屏幕变换） */
+  screenX: number;
+  screenY: number;
 }
 
 export interface EditOverlayCallbacks {
@@ -34,14 +38,10 @@ export interface EditOverlayCallbacks {
 
 export class EditOverlay {
   private active: EditTarget | null = null;
-  private cssObj: CSS2DObject | null = null;
   private textarea: HTMLTextAreaElement | null = null;
   private backdrop: HTMLDivElement | null = null;
 
-  constructor(
-    private scene: THREE.Scene,
-    private callbacks: EditOverlayCallbacks,
-  ) {}
+  constructor(private callbacks: EditOverlayCallbacks) {}
 
   isActive(): boolean {
     return this.active !== null;
@@ -58,7 +58,7 @@ export class EditOverlay {
     this.active = target;
     const initialText = extractPlainText(target.atoms);
 
-    // 全屏 backdrop：点击 backdrop 提交并退出（解决"画布点击不触发 blur"问题）
+    // 全屏 backdrop：点击 backdrop 提交并退出
     const backdrop = document.createElement('div');
     backdrop.className = 'krig-edit-backdrop';
     backdrop.style.cssText = `
@@ -69,28 +69,30 @@ export class EditOverlay {
       pointer-events: auto;
     `;
     backdrop.addEventListener('mousedown', (e) => {
-      // 只响应点在 backdrop 自身的 mousedown（不响应冒泡上来的 popup 内点击）
+      // e.target === backdrop 才退出（popup 内的 mousedown 都 stopPropagation 了）
       if (e.target === backdrop) {
         this.exit(true);
       }
     });
-    document.body.appendChild(backdrop);
     this.backdrop = backdrop;
 
-    const root = document.createElement('div');
-    root.className = 'krig-edit-popup';
-    root.style.cssText = `
+    // popup：绝对定位到屏幕坐标
+    const popup = document.createElement('div');
+    popup.className = 'krig-edit-popup';
+    popup.style.cssText = `
+      position: absolute;
+      left: ${target.screenX}px;
+      top: ${target.screenY}px;
       width: 280px;
       padding: 8px;
       background: rgba(40, 44, 52, 0.95);
       border: 1px solid #4a90e2;
       border-radius: 8px;
       box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
-      pointer-events: auto;
       transform: translate(-50%, -50%);
     `;
-    // popup 内的 mousedown 不冒泡到 backdrop（避免点击 popup 内部触发退出）
-    root.addEventListener('mousedown', (e) => e.stopPropagation());
+    // popup 内任何 mousedown 都不冒泡到 backdrop（保留对编辑器内部正常的 click/select 行为）
+    popup.addEventListener('mousedown', (e) => e.stopPropagation());
 
     const textarea = document.createElement('textarea');
     textarea.value = initialText;
@@ -107,32 +109,31 @@ export class EditOverlay {
       font-size: 14px;
       line-height: 1.4;
       resize: none;
+      box-sizing: border-box;
     `;
     textarea.placeholder = 'Type label...';
-    root.appendChild(textarea);
+    popup.appendChild(textarea);
 
-    // 键盘事件（在 textarea + popup 内 stopPropagation 防止冒泡到 GraphView 全局快捷键）
+    // 键盘事件
     textarea.addEventListener('keydown', (e) => {
       e.stopPropagation();
       if (e.key === 'Escape') {
         e.preventDefault();
         this.exit(false);
-      } else if (e.key === 'Enter' && !e.shiftKey) {
-        // Enter 提交，Shift+Enter 换行
-        e.preventDefault();
-        this.exit(true);
+        return;
       }
-      // Cmd+Enter / Ctrl+Enter 也提交（多行场景）
-      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      // Enter 提交，Shift+Enter 换行；Cmd+Enter 也提交（多行场景）
+      if (e.key === 'Enter') {
+        if (e.shiftKey && !e.metaKey && !e.ctrlKey) return; // 换行
         e.preventDefault();
         this.exit(true);
       }
     });
 
+    backdrop.appendChild(popup);
+    document.body.appendChild(backdrop);
+
     this.textarea = textarea;
-    this.cssObj = new CSS2DObject(root);
-    this.cssObj.position.copy(target.worldPos);
-    this.scene.add(this.cssObj);
 
     // autofocus + 全选
     setTimeout(() => {
@@ -160,11 +161,6 @@ export class EditOverlay {
 
   /** 销毁浮层资源 */
   private unmount(): void {
-    if (this.cssObj) {
-      this.cssObj.parent?.remove(this.cssObj);
-      this.cssObj.element.remove();
-      this.cssObj = null;
-    }
     if (this.backdrop) {
       this.backdrop.remove();
       this.backdrop = null;

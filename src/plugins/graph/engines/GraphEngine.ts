@@ -201,7 +201,7 @@ export abstract class GraphEngine {
     );
 
     // v1.3 § 7：EditOverlay
-    this.editOverlay = new EditOverlay(this.scene, {
+    this.editOverlay = new EditOverlay({
       onExit: (target, atoms) => this.handleEditExit(target, atoms),
     });
     this.viewport.attach();
@@ -350,15 +350,27 @@ export abstract class GraphEngine {
     // 隐藏 content（保留 shape 圆作背景）
     this.setNodeLabelVisible(nodeId, false);
 
-    // 浮层位置 = 节点中心
-    const worldPos = group.position.clone();
+    // 节点中心世界坐标 → 屏幕坐标（通过相机投影）
+    const screen = this.worldToScreen(group.position);
 
     this.editOverlay.enter({
       kind: 'node',
       id: nodeId,
       atoms: node.label,
-      worldPos,
+      screenX: screen.x,
+      screenY: screen.y,
     });
+  }
+
+  /** 世界坐标 → DOM 屏幕坐标（用于浮层定位） */
+  protected worldToScreen(world: THREE.Vector3): { x: number; y: number } {
+    const ndc = world.clone().project(this.camera);
+    const canvas = this.renderer.domElement;
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: ((ndc.x + 1) / 2) * rect.width + rect.left,
+      y: ((1 - ndc.y) / 2) * rect.height + rect.top,
+    };
   }
 
   /** EditOverlay 退出回调：commit=true 时把新 atoms 回写并触发 redraw */
