@@ -22,9 +22,10 @@ export function register(ctx: PluginContext): void {
   navSideRegistry.register({
     workModeId: GRAPH_WORKMODE_ID,
     actionBar: {
-      title: '图谱',
+      title: '图谱目录',
       actions: [
-        { id: 'create-graph', label: '+ 新建' },
+        { id: 'create-folder', label: '+ 文件夹' },
+        { id: 'create-graph', label: '+ 图谱' },
       ],
     },
     contentType: 'graph-list',

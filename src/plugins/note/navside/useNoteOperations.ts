@@ -403,6 +403,9 @@ export function useNoteOperations() {
     // 框架转发
     handleSwitchMode,
     handleActionBarClick,
+    // 创建（直接暴露给 Panel 监听 navside:action 事件用）
+    handleCreateNote,
+    handleCreateFolder,
     // 状态查询（NavSide.tsx 可能用）
     activeNoteId,
     folderSortMap,

@@ -32,15 +32,14 @@ export function NavSide() {
   };
 
   const handleActionBarClick = (actionId: string, target: HTMLElement) => {
-    // Graph 工作模式下：'+ 新建' 走 VariantPicker（不直接 executeAction）
-    if (ws.registration?.contentType === 'graph-list' && actionId === 'create-graph') {
-      window.dispatchEvent(new CustomEvent('graph:variant-picker:open', { detail: target }));
-      return;
-    }
-    // 其他：通过 executeAction IPC 路由到 plugin handler
-    void navSideAPI.executeAction(actionId).catch((err: unknown) => {
-      console.warn('[NavSide] executeAction failed:', actionId, err);
-    });
+    // 派发统一的 navside:action 事件，让当前 contentType 对应的 Panel 自己处理
+    // （Plugin 自治原则：NavSide 框架不知道任何业务动作语义）
+    const contentType = ws.registration?.contentType;
+    window.dispatchEvent(
+      new CustomEvent('navside:action', {
+        detail: { contentType, actionId, target },
+      }),
+    );
   };
 
   return (

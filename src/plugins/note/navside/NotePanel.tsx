@@ -4,7 +4,7 @@
  * 消费 FolderTree + useNoteOperations，零业务逻辑硬编码进框架。
  * NavSide.tsx 通过 panel-registry.getNavPanel('note-list') 拿到本组件渲染。
  */
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { FolderTree } from '../../../renderer/navside/components/FolderTree';
 import type { ItemNode } from '../../../renderer/navside/components/FolderTree';
 import { useNoteOperations } from './useNoteOperations';
@@ -31,6 +31,20 @@ interface NotePanelProps {
 
 export function NotePanel(_props: NotePanelProps) {
   const ops = useNoteOperations();
+
+  // 监听 NavSide ActionBar 点击（v1.4 plugin 自治模式）
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const ev = e as CustomEvent<{ contentType: string; actionId: string }>;
+      if (ev.detail.contentType !== 'note-list') return;
+      switch (ev.detail.actionId) {
+        case 'create-note': ops.handleCreateNote(); break;
+        case 'create-folder': ops.handleCreateFolder(); break;
+      }
+    };
+    window.addEventListener('navside:action', handler as EventListener);
+    return () => window.removeEventListener('navside:action', handler as EventListener);
+  }, [ops]);
 
   const itemMeta = useMemo(
     () => (item: ItemNode) => {

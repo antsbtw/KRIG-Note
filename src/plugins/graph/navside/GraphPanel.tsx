@@ -11,7 +11,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { FolderTree } from '../../../renderer/navside/components/FolderTree';
 import type { ItemNode } from '../../../renderer/navside/components/FolderTree';
-import { useGraphOperations, AVAILABLE_VARIANTS, type VariantId } from './useGraphOperations';
+import { useGraphOperations, type VariantId } from './useGraphOperations';
 import { VariantPicker } from './VariantPicker';
 import type { GraphListItem } from './useGraphSync';
 
@@ -32,23 +32,27 @@ function relativeTime(ts: number): string {
 export function GraphPanel() {
   const ops = useGraphOperations();
 
-  // VariantPicker 浮层状态
+  // VariantPicker 浮层状态：点 "+ 图谱" 时弹出选 variant
   const [pickerAnchor, setPickerAnchor] = useState<HTMLElement | null>(null);
 
-  // 监听 ActionBar 创建按钮（NavSide 转发的 'create-graph' executeAction）
-  // 实际上 v1.4 重构后 ActionBar 的 "+ 新建" 直接通过自定义 DOM 事件触发本组件
-  // 因为 ActionBar 不知道 variant 概念。
-  // 暂时方案：监听 click 事件 dispatch 给 NavSide 时 ActionBar 走默认 executeAction，
-  // 我们在 NavSide 重写 ActionBar 渲染时注入回调（M3 这一步）。
-  // 为了让 v1.3 行为继续工作，这里也监听 'graph:variant-picker:open' 事件作为入口。
+  // 监听 NavSide ActionBar 点击（v1.4 plugin 自治模式）
   useEffect(() => {
     const handler = (e: Event) => {
-      const ev = e as CustomEvent<HTMLElement>;
-      setPickerAnchor(ev.detail);
+      const ev = e as CustomEvent<{ contentType: string; actionId: string; target: HTMLElement }>;
+      if (ev.detail.contentType !== 'graph-list') return;
+      switch (ev.detail.actionId) {
+        case 'create-folder':
+          ops.handleCreateFolder();
+          break;
+        case 'create-graph':
+          // "+ 图谱" 仍弹 VariantPicker 选 variant
+          setPickerAnchor(ev.detail.target);
+          break;
+      }
     };
-    window.addEventListener('graph:variant-picker:open', handler as EventListener);
-    return () => window.removeEventListener('graph:variant-picker:open', handler as EventListener);
-  }, []);
+    window.addEventListener('navside:action', handler as EventListener);
+    return () => window.removeEventListener('navside:action', handler as EventListener);
+  }, [ops]);
 
   const itemMeta = useMemo(
     () => (item: ItemNode) => {
@@ -65,10 +69,6 @@ export function GraphPanel() {
   const handlePickVariant = (variant: VariantId) => {
     ops.handleCreateGraph(variant, null);
   };
-
-  // 暂时也支持顶部按钮：如果 NavSide 暴露了挂载点（M3 后续完成），
-  // 这里渲染 inline picker；否则不渲染（用户走右键创建）
-  void AVAILABLE_VARIANTS;
 
   return (
     <>
