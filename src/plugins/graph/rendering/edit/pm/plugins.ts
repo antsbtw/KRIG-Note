@@ -16,6 +16,7 @@ import { splitListItem, liftListItem, sinkListItem } from 'prosemirror-schema-li
 import type { Plugin } from 'prosemirror-state';
 import { graphSchema } from './schema';
 import { buildSlashMenuPlugin } from './slash-menu';
+import { buildInlineToolbarPlugin } from './inline-toolbar';
 
 /**
  * 通用 PM 插件集合（v1.3 § 4.3 mark 优先级）。
@@ -103,5 +104,8 @@ export function buildGraphPmPlugins(): Plugin[] {
     }),
 
     keymap(baseKeymap),
+
+    // Inline toolbar（选中文字时浮 mark 按钮）
+    buildInlineToolbarPlugin(),
   ];
 }
