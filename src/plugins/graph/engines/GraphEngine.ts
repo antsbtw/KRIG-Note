@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CSS2DRenderer, CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
+import { CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 import type { Atom } from '../../../lib/atom-serializers/types';
 import { ViewportController } from './ViewportController';
 import { InteractionController } from './InteractionController';
@@ -100,8 +100,8 @@ export abstract class GraphEngine {
   /** v1.3：节点用 THREE.Group（含 shape mesh + content obj） */
   protected nodeGroups = new Map<string, THREE.Group>();
   protected edgeLines = new Map<string, THREE.Group>();
-  /** edgeId → CSS2DObject 容器（边 label，Phase 1.4d 待迁移） */
-  protected edgeLabels = new Map<string, CSS2DObject>();
+  /** edgeId → 边 label 的 SVG 几何 Object3D（v1.3 § 9.4） */
+  protected edgeLabels = new Map<string, THREE.Object3D>();
 
   /** v1.3：NodeRenderer 实例，懒初始化（异步字体加载在内部完成） */
   protected nodeRenderer: NodeRenderer = new NodeRenderer(
@@ -397,13 +397,19 @@ export abstract class GraphEngine {
     }
   }
 
-  /** 重画单条边（包括 bundle 内同伴边的索引可能未变也照画一次，便于统一逻辑） */
+  /**
+   * 重画单条边。
+   *
+   * v1.3：边 = group（曲线 + 箭头 + 异步 label SVG 几何）。label 作为 edge group
+   * 的 child 添加；渲染期间无 label，渲染完成后挂上（fire-and-forget）。
+   */
   protected redrawEdge(edge: GraphEdge): void {
     const oldGroup = this.edgeLines.get(edge.id);
     if (oldGroup) {
       this.scene.remove(oldGroup);
       disposeGroup(oldGroup);
       this.edgeLines.delete(edge.id);
+      this.edgeLabels.delete(edge.id);
     }
     const sourceGroup = this.nodeGroups.get(edge.source);
     const targetGroup = this.nodeGroups.get(edge.target);
@@ -421,8 +427,8 @@ export abstract class GraphEngine {
     this.scene.add(group);
     this.edgeLines.set(edge.id, group);
 
-    // 边 label 在弧线中点（直线时退化为直线中点）
-    this.attachEdgeLabelAt(edge.id, edge.label ?? [], labelPos.x, labelPos.y);
+    // 边 label：异步 SVG 几何，挂在 edge group 上
+    void this.attachEdgeLabel(edge.id, edge.label ?? [], labelPos.x, labelPos.y);
   }
 
   /**
@@ -521,13 +527,11 @@ export abstract class GraphEngine {
     void this.nodeRenderer.updateContent(group, node.label);
   }
 
-  /** 刷新边的内容渲染 */
+  /** 刷新边的内容渲染（label 改了之后调）。v1.3：直接重画整条边 */
   protected refreshEdgeContent(edgeId: string): void {
     const edge = this.edges.find((e) => e.id === edgeId);
     if (!edge) return;
-    const obj = this.edgeLabels.get(edgeId);
-    if (!obj) return;
-    obj.element.textContent = extractPlainText(edge.label);
+    this.redrawEdge(edge);
   }
 
   // ── 渲染 ──
@@ -551,9 +555,10 @@ export abstract class GraphEngine {
       this.scene.remove(group);
       disposeGroup(group);
     }
+    // edge labels 是 edge group 的 child，disposeGroup 会一起 dispose 几何；
+    // 但 SvgGeometryContent 的 material 走 SVGLoader 创建，需要单独清
     for (const obj of this.edgeLabels.values()) {
-      obj.parent?.remove(obj);
-      obj.element.remove();
+      this.nodeRenderer.disposeContent(obj);
     }
     this.nodeGroups.clear();
     this.edgeLines.clear();
@@ -583,24 +588,47 @@ export abstract class GraphEngine {
   /** rerender 重入令牌（避免异步节点创建的并发问题） */
   private rerenderToken = 0;
 
-  /** 给定边创建/更新 label CSS2DObject，放到指定位置（弧线中点 / 直线中点） */
-  protected attachEdgeLabelAt(
+  /**
+   * 边 label：用 SvgGeometryContent 渲染 atoms，挂到 edge group 上的 (x, y)。
+   * v1.3 § 9.4：复用节点的 ContentRenderer，统一管线。
+   *
+   * 异步：rerender / redrawEdge 期间 fire-and-forget。token 校验避免拖动导致
+   * 旧 label 出现在新 edge 上。
+   */
+  protected async attachEdgeLabel(
     edgeId: string,
-    label: Atom[] | string,
+    label: Atom[],
     x: number,
     y: number,
-  ): void {
+  ): Promise<void> {
+    // dispose 旧的 label（如果存在）
     const old = this.edgeLabels.get(edgeId);
     if (old) {
       old.parent?.remove(old);
-      old.element.remove();
+      this.nodeRenderer.disposeContent(old);
     }
-    // 兼容两种调用：传 Atom[] 或 string（提取纯文本展示）
-    const text = typeof label === 'string' ? label : extractPlainText(label);
-    const dom = createEdgeLabelDom(edgeId, text);
-    const obj = new CSS2DObject(dom);
-    obj.position.set(x, y, 0);
-    this.scene.add(obj);
+
+    // 空 label 不渲染（避免空 SVG）
+    if (!label || label.length === 0 || extractPlainText(label).trim() === '') {
+      this.edgeLabels.delete(edgeId);
+      return;
+    }
+
+    const obj = await this.nodeRenderer.renderContent(label);
+
+    // redrawEdge 已经把 edge group 替换了；用 edgeId 重新查
+    const edgeGroup = this.edgeLines.get(edgeId);
+    if (!edgeGroup) {
+      this.nodeRenderer.disposeContent(obj);
+      return;
+    }
+
+    // 边 label 用更小的字号（看起来比节点 label 小一圈），但当前 SVG 序列化器
+    // 字号是固定的；这里通过 scale 缩小到 ~0.85
+    obj.scale.multiplyScalar(0.85);
+    obj.position.set(x, y, 0.5);
+
+    edgeGroup.add(obj);
     this.edgeLabels.set(edgeId, obj);
   }
 
@@ -614,8 +642,7 @@ export abstract class GraphEngine {
       disposeGroup(group);
     }
     for (const obj of this.edgeLabels.values()) {
-      obj.parent?.remove(obj);
-      obj.element.remove();
+      this.nodeRenderer.disposeContent(obj);
     }
     this.nodeGroups.clear();
     this.edgeLines.clear();
@@ -840,31 +867,5 @@ function disposeGroup(group: THREE.Group): void {
   });
 }
 
-// ── Label 渲染辅助 ──
-//
-// v1.3：节点 label 改走 NodeRenderer + SvgGeometryContent，不再需要 DOM 渲染。
-// 边 label 仍保留 CSS2DObject 路径（Phase 1.4d 待迁移）。
-
-export function createEdgeLabelDom(edgeId: string, label: string): HTMLDivElement {
-  const div = document.createElement('div');
-  div.className = 'krig-graph-edge-label';
-  div.dataset.kind = 'edge-label';
-  div.dataset.edgeId = edgeId;
-  // 边的 label 默认空字符串显示空 div（便于点中加字），但 textContent 仍写入
-  div.textContent = label;
-  div.style.cssText = `
-    color: #aaa;
-    font-size: 11px;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    padding: 1px 4px;
-    background: rgba(30,30,30,0.6);
-    border-radius: 2px;
-    white-space: nowrap;
-    pointer-events: auto;
-    cursor: text;
-    user-select: none;
-    min-width: 8px;
-    min-height: 12px;
-  `;
-  return div;
-}
+// v1.3：节点 / 边 label 都改走 NodeRenderer.renderContent → SVG 几何，
+// CSS2DRenderer 仅保留作 Phase 3 EditOverlay 浮层渲染器（当前空闲）。

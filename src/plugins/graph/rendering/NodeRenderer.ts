@@ -69,6 +69,18 @@ export class NodeRenderer {
     if (shapeMesh) this.shape.setHighlight(shapeMesh, mode);
   }
 
+  /**
+   * 暴露 ContentRenderer 给 EdgeRenderer / EditOverlay 等需要单独渲染内容
+   * 但不需要包形状的场景使用（v1.3 § 9.4 边 label）。
+   */
+  renderContent(atoms: Atom[]): Promise<THREE.Object3D> {
+    return this.content.render(atoms);
+  }
+
+  disposeContent(rendered: THREE.Object3D): void {
+    this.content.dispose(rendered);
+  }
+
   dispose(group: THREE.Group): void {
     const [shapeMesh, contentObj] = group.children;
     if (shapeMesh) this.shape.dispose(shapeMesh);
