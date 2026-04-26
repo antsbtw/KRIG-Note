@@ -49,19 +49,18 @@ function buildItems(): ToolbarItem[] {
       kind: 'node',
       id: 'mathInline',
       label: '∑',
-      title: 'Math inline',
+      title: 'Math inline (selection → tex)',
       insert: (view) => {
-        const { tr } = view.state;
-        const node = n.mathInline.create({ tex: '' });
-        const insertPos = view.state.selection.from;
-        tr.replaceSelectionWith(node);
+        const { state } = view;
+        const { from, to, empty } = state.selection;
+        // 选区文字直接做 tex；空选区不动作（用户可走 slash menu 插空公式）
+        if (empty) return;
+        const tex = state.doc.textBetween(from, to, ' ', ' ').trim();
+        if (!tex) return;
+        const node = n.mathInline.create({ tex });
+        const tr = state.tr.replaceSelectionWith(node);
         view.dispatch(tr);
         view.focus();
-        // 下一帧触发 NodeView click 打开 popover
-        requestAnimationFrame(() => {
-          const dom = view.nodeDOM(insertPos);
-          if (dom instanceof HTMLElement) dom.click();
-        });
       },
     },
   ];
