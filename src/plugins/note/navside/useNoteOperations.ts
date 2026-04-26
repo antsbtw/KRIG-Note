@@ -397,6 +397,7 @@ export function useNoteOperations() {
     renamingId,
     renameValue,
     setRenameValue,
+    startRename,
     commitRename,
     cancelRename,
     // 框架转发

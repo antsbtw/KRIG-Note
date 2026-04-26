@@ -85,6 +85,10 @@ export function FolderTree({
     } else {
       // 单选
       onSelectChange(new Set([node.id]));
+      // folder 单击同时切换展开/折叠（与 Note v1.3 一致 UX）
+      if (node.kind === 'folder') {
+        onFolderToggle(node.id, !node.expanded);
+      }
     }
 
     if (node.kind === 'item') onItemClick?.(node, e);
@@ -97,9 +101,11 @@ export function FolderTree({
   };
 
   // ── 双击 ──
+  // v1.4: 双击进入重命名（item / folder 同等待遇）。
+  // folder 展开/折叠通过 caret 单击 / ←→ 键 / 单击 row 不展开（避免与单击选中冲突）。
   const handleDoubleClick = (node: TreeNode) => {
     if (node.kind === 'item') onItemDoubleClick?.(node);
-    else onFolderToggle(node.id, !node.expanded);
+    else onKeyAction?.('rename', node);
   };
 
   // ── 右键菜单 ──
@@ -285,6 +291,8 @@ export function FolderTree({
         );
 
         if (node.kind === 'folder') {
+          // 拖动时 folder 暂时切到"打开"状态作为 drop hint
+          const showOpen = node.expanded || isDropTarget;
           return (
             <div key={node.id} style={rowStyle} {...handlers}>
               <span
@@ -292,9 +300,9 @@ export function FolderTree({
                 onClick={(e) => handleCaretClick(node, e)}
                 title={node.expanded ? '折叠' : '展开'}
               >
-                {node.expanded ? '▾' : '▸'}
+                {node.expanded ? '▼' : '▶'}
               </span>
-              <span style={styles.icon}>📁</span>
+              <span style={styles.icon}>{showOpen ? '📂' : '📁'}</span>
               {titleSlot}
             </div>
           );

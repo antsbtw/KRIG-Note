@@ -52,6 +52,7 @@ export function NotePanel(_props: NotePanelProps) {
       onFolderToggle={ops.handleFolderToggle}
       itemMeta={itemMeta}
       onItemClick={(item) => ops.handleItemClick(item)}
+      onItemDoubleClick={(item) => ops.startRename(item.id)}
       contextMenu={(target) => ops.buildContextMenu(target)}
       draggable
       onDrop={ops.handleDrop}
