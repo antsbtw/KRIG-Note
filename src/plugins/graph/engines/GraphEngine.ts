@@ -9,6 +9,10 @@ import { EdgeRenderer } from '../rendering/EdgeRenderer';
 import { SvgGeometryContent } from '../rendering/contents/SvgGeometryContent';
 import { CircleShape } from '../rendering/shapes/CircleShape';
 import { EditOverlay, type EditTarget } from '../rendering/edit/EditOverlay';
+import { loadPerfConfig, savePerfConfig, type PerfConfig } from '../perf/PerfConfig';
+import { autoTune } from '../perf/AutoTuner';
+import { AdaptivePolicy, type AdaptiveState } from '../perf/AdaptivePolicy';
+import { SessionRecorder, appendHistory } from '../perf/PerfHistory';
 
 /**
  * GraphEngine — L5 GraphView 内部的渲染引擎抽象基类
@@ -162,6 +166,12 @@ export abstract class GraphEngine {
   private fpsFrames = 0;
   private fpsLastT = performance.now();
 
+  /** v1.3 § 10.3：自适应配置 + 退化策略 + 历史记录 */
+  private perfConfig: PerfConfig;
+  private adaptivePolicy: AdaptivePolicy;
+  private sessionRecorder = new SessionRecorder();
+  private adaptiveState: AdaptiveState = { hoverPaused: false, lodEnabled: false };
+
   /** 数据变更回调（外层接 SurrealDB） */
   onChange: ((event: ChangeEvent) => void) | null = null;
 
@@ -171,6 +181,28 @@ export abstract class GraphEngine {
     this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 1000);
     this.camera.position.set(0, 0, 100);
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+
+    // 加载 PerfConfig + AutoTuner 调整（v1.3 § 10.3）
+    const loaded = loadPerfConfig();
+    const tuned = autoTune(loaded);
+    if (tuned.result.applied) {
+      console.info('[perf] auto-tuned thresholds:', tuned.result.reason);
+      savePerfConfig(tuned.config);
+    }
+    this.perfConfig = tuned.config;
+    this.adaptivePolicy = new AdaptivePolicy(() => this.perfConfig, {
+      onStateChange: (s) => { this.adaptiveState = s; },
+      onHoverPauseChange: (paused) => {
+        this.interaction?.setHoverPaused(paused);
+        this.sessionRecorder.recordDegradation();
+      },
+      onLodChange: (enabled) => {
+        // LOD 启用时，下次 rerender 会按新 lodNodeCount 决定是否 skip content
+        // 当前仅记录状态，不强制立即 rerender（避免抖动）
+        console.info(`[perf] LOD ${enabled ? 'enabled' : 'disabled'}`);
+        if (enabled) this.sessionRecorder.recordDegradation();
+      },
+    });
 
     this.css2dRenderer = new CSS2DRenderer();
     // CSS2DRenderer 的 dom 是 div，需要绝对定位覆盖在 webgl canvas 上，
@@ -246,6 +278,9 @@ export abstract class GraphEngine {
       cancelAnimationFrame(this.animationId);
       this.animationId = null;
     }
+    // v1.3 § 10.3：落盘本次会话的 perf 摘要（AutoTuner 下次启动用）
+    appendHistory(this.sessionRecorder.finalize());
+
     this.editOverlay?.dispose();
     this.editOverlay = null;
     this.interaction?.detach();
@@ -896,6 +931,10 @@ export abstract class GraphEngine {
         this.fpsLastT = now;
       }
 
+      // v1.3 § 10.3：自适应策略 + 会话记录
+      this.adaptivePolicy.update(this.perfStats.fps, this.perfStats.totalNodes);
+      this.sessionRecorder.recordFrame(this.perfStats.fps, this.perfStats.totalNodes);
+
       this.animationId = requestAnimationFrame(tick);
     };
     tick();
@@ -904,6 +943,19 @@ export abstract class GraphEngine {
   /** v1.3 § 10.2：取当前 perfStats 快照 */
   getPerfStats(): PerfStats {
     return { ...this.perfStats };
+  }
+
+  /** v1.3 § 10.3：取自适应状态 + 当前配置（PerfPanel 显示用） */
+  getAdaptiveState(): AdaptiveState {
+    return { ...this.adaptiveState };
+  }
+  getPerfConfig(): PerfConfig {
+    return JSON.parse(JSON.stringify(this.perfConfig)) as PerfConfig;
+  }
+  /** PerfPanel 用户改了配置后调，立即生效并落盘 */
+  setPerfConfig(config: PerfConfig): void {
+    this.perfConfig = config;
+    savePerfConfig(config);
   }
 }
 

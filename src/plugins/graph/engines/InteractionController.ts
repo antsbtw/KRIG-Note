@@ -73,6 +73,18 @@ export class InteractionController {
   /** 最近一次 mousemove 事件，rAF 节流用 */
   private pendingMoveEvent: MouseEvent | null = null;
   private rafScheduled = false;
+  /** v1.3 § 10.3：hover 暂停（fps 退化时） */
+  private hoverPaused = false;
+
+  /** GraphEngine 在 AdaptivePolicy 触发时调（暂停 → 不做 rAF hover 检测） */
+  setHoverPaused(paused: boolean): void {
+    if (this.hoverPaused === paused) return;
+    this.hoverPaused = paused;
+    if (paused) {
+      // 立即清掉当前 hover 状态
+      this.setHoverState('none', null, null);
+    }
+  }
 
   private boundMouseDown: (e: MouseEvent) => void;
   private boundMouseMove: (e: MouseEvent) => void;
@@ -212,7 +224,8 @@ export class InteractionController {
       return;
     }
 
-    // 非拖动期间：rAF 节流的 hover 检测
+    // 非拖动期间：rAF 节流的 hover 检测（hoverPaused 时跳过节省 fps）
+    if (this.hoverPaused) return;
     this.pendingMoveEvent = e;
     if (!this.rafScheduled) {
       this.rafScheduled = true;
