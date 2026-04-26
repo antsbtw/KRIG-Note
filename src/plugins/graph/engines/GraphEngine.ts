@@ -5,6 +5,7 @@ import { ViewportController } from './ViewportController';
 import { InteractionController } from './InteractionController';
 import { CommandStack, type Command } from './CommandStack';
 import { NodeRenderer } from '../rendering/NodeRenderer';
+import { EdgeRenderer } from '../rendering/EdgeRenderer';
 import { SvgGeometryContent } from '../rendering/contents/SvgGeometryContent';
 import { CircleShape } from '../rendering/shapes/CircleShape';
 
@@ -103,11 +104,17 @@ export abstract class GraphEngine {
   /** edgeId → 边 label 的 SVG 几何 Object3D（v1.3 § 9.4） */
   protected edgeLabels = new Map<string, THREE.Object3D>();
 
-  /** v1.3：NodeRenderer 实例，懒初始化（异步字体加载在内部完成） */
+  /** v1.3：渲染层共享一个 SvgGeometryContent 实例（L2 GeometryCache 静态共享） */
+  private static SHARED_CONTENT = new SvgGeometryContent();
+
+  /** v1.3：NodeRenderer 实例 */
   protected nodeRenderer: NodeRenderer = new NodeRenderer(
     new CircleShape(),
-    new SvgGeometryContent(),
+    GraphEngine.SHARED_CONTENT,
   );
+
+  /** v1.3 § 3.4：EdgeRenderer 实例 */
+  protected edgeRenderer: EdgeRenderer = new EdgeRenderer(GraphEngine.SHARED_CONTENT);
 
   protected nodes: GraphNode[] = [];
   protected edges: GraphEdge[] = [];
@@ -424,38 +431,59 @@ export abstract class GraphEngine {
   }
 
   /**
-   * 重画单条边。
+   * 重画单条边（v1.3 § 3.4：通过 EdgeRenderer 渲染）。
    *
-   * v1.3：边 = group（曲线 + 箭头 + 异步 label SVG 几何）。label 作为 edge group
-   * 的 child 添加；渲染期间无 label，渲染完成后挂上（fire-and-forget）。
+   * fire-and-forget：edge label 异步 SVG 几何，渲染期间无 label，
+   * 完成后挂上。token 校验避免拖动期间老 label 出现在新位置。
    */
   protected redrawEdge(edge: GraphEdge): void {
     const oldGroup = this.edgeLines.get(edge.id);
     if (oldGroup) {
       this.scene.remove(oldGroup);
-      disposeGroup(oldGroup);
+      this.edgeRenderer.dispose(oldGroup);
       this.edgeLines.delete(edge.id);
       this.edgeLabels.delete(edge.id);
     }
     const sourceGroup = this.nodeGroups.get(edge.source);
     const targetGroup = this.nodeGroups.get(edge.target);
     if (!sourceGroup || !targetGroup) return;
+
     const radius = Math.min(this.getGroupRadius(sourceGroup), this.getGroupRadius(targetGroup));
     const { index, total } = this.computeEdgeBundle(edge);
-    const { group, labelPos } = createEdgeLine(
-      sourceGroup.position,
-      targetGroup.position,
-      radius,
-      index,
-      total,
-    );
-    group.userData = { edgeId: edge.id };
-    this.scene.add(group);
-    this.edgeLines.set(edge.id, group);
 
-    // 边 label：异步 SVG 几何，挂在 edge group 上
-    void this.attachEdgeLabel(edge.id, edge.label ?? [], labelPos.x, labelPos.y);
+    // 异步创建：边可能在 createEdge 进行中被删除，token 校验
+    const myToken = ++this.edgeRedrawToken;
+    void this.edgeRenderer
+      .createEdge({
+        source: sourceGroup.position,
+        target: targetGroup.position,
+        nodeRadius: radius,
+        edgeIndex: index,
+        totalEdges: total,
+        arrow: true,
+        label: edge.label ?? [],
+      })
+      .then((group) => {
+        if (myToken !== this.edgeRedrawToken) {
+          this.edgeRenderer.dispose(group);
+          return;
+        }
+        // 边在异步等待期间可能被删除
+        if (!this.edges.find((e) => e.id === edge.id)) {
+          this.edgeRenderer.dispose(group);
+          return;
+        }
+        group.userData = { edgeId: edge.id };
+        this.scene.add(group);
+        this.edgeLines.set(edge.id, group);
+        // label 是 group.children[2]，单独索引到 edgeLabels 便于 setVisible 等操作
+        const labelObj = group.children[2];
+        if (labelObj) this.edgeLabels.set(edge.id, labelObj);
+      });
   }
+
+  /** edge 异步渲染重入令牌 */
+  private edgeRedrawToken = 0;
 
   /**
    * 计算同一对节点（无序对）之间的所有边及当前边的索引。
@@ -579,12 +607,7 @@ export abstract class GraphEngine {
     }
     for (const group of this.edgeLines.values()) {
       this.scene.remove(group);
-      disposeGroup(group);
-    }
-    // edge labels 是 edge group 的 child，disposeGroup 会一起 dispose 几何；
-    // 但 SvgGeometryContent 的 material 走 SVGLoader 创建，需要单独清
-    for (const obj of this.edgeLabels.values()) {
-      this.nodeRenderer.disposeContent(obj);
+      this.edgeRenderer.dispose(group);
     }
     this.nodeGroups.clear();
     this.edgeLines.clear();
@@ -614,50 +637,6 @@ export abstract class GraphEngine {
   /** rerender 重入令牌（避免异步节点创建的并发问题） */
   private rerenderToken = 0;
 
-  /**
-   * 边 label：用 SvgGeometryContent 渲染 atoms，挂到 edge group 上的 (x, y)。
-   * v1.3 § 9.4：复用节点的 ContentRenderer，统一管线。
-   *
-   * 异步：rerender / redrawEdge 期间 fire-and-forget。token 校验避免拖动导致
-   * 旧 label 出现在新 edge 上。
-   */
-  protected async attachEdgeLabel(
-    edgeId: string,
-    label: Atom[],
-    x: number,
-    y: number,
-  ): Promise<void> {
-    // dispose 旧的 label（如果存在）
-    const old = this.edgeLabels.get(edgeId);
-    if (old) {
-      old.parent?.remove(old);
-      this.nodeRenderer.disposeContent(old);
-    }
-
-    // 空 label 不渲染（避免空 SVG）
-    if (!label || label.length === 0 || extractPlainText(label).trim() === '') {
-      this.edgeLabels.delete(edgeId);
-      return;
-    }
-
-    const obj = await this.nodeRenderer.renderContent(label);
-
-    // redrawEdge 已经把 edge group 替换了；用 edgeId 重新查
-    const edgeGroup = this.edgeLines.get(edgeId);
-    if (!edgeGroup) {
-      this.nodeRenderer.disposeContent(obj);
-      return;
-    }
-
-    // 边 label 用更小的字号（看起来比节点 label 小一圈），但当前 SVG 序列化器
-    // 字号是固定的；这里通过 scale 缩小到 ~0.85
-    obj.scale.multiplyScalar(0.85);
-    obj.position.set(x, y, 0.5);
-
-    edgeGroup.add(obj);
-    this.edgeLabels.set(edgeId, obj);
-  }
-
   protected clearScene(): void {
     for (const group of this.nodeGroups.values()) {
       this.scene.remove(group);
@@ -665,10 +644,7 @@ export abstract class GraphEngine {
     }
     for (const group of this.edgeLines.values()) {
       this.scene.remove(group);
-      disposeGroup(group);
-    }
-    for (const obj of this.edgeLabels.values()) {
-      this.nodeRenderer.disposeContent(obj);
+      this.edgeRenderer.dispose(group);
     }
     this.nodeGroups.clear();
     this.edgeLines.clear();
@@ -770,128 +746,5 @@ class SetEdgeLabelCommand implements Command {
   undo(): void { this.engine._setEdgeLabel(this.edgeId, this.oldLabel); }
 }
 
-// ── 边渲染辅助：直线/弧线 + 终点箭头 ──
-
-/** 同一对节点之间相邻边的法向偏移间距（世界坐标） */
-const EDGE_CURVE_SPACING = 28;
-/** 二次贝塞尔曲线分段数（数值越大越平滑、性能越低） */
-const BEZIER_SEGMENTS = 24;
-
-/**
- * 计算第 k 条边（共 N 条）的法向偏移系数。
- * - N=1 → [0]                直线
- * - N=2 → [-0.5, +0.5]        两侧对称
- * - N=3 → [-1, 0, +1]
- * - N=4 → [-1.5, -0.5, +0.5, +1.5]
- * 通用：k - (N-1)/2
- */
-function curveOffsetFactor(edgeIndex: number, totalEdges: number): number {
-  return edgeIndex - (totalEdges - 1) / 2;
-}
-
-/**
- * 创建一条边的渲染（直线或弧线）+ 终点箭头。
- * 同时返回 label 应放置的位置（弧的中点）。
- */
-function createEdgeLine(
-  from: THREE.Vector3,
-  to: THREE.Vector3,
-  nodeRadius: number,
-  edgeIndex = 0,
-  totalEdges = 1,
-): { group: THREE.Group; labelPos: { x: number; y: number } } {
-  const group = new THREE.Group();
-  const labelPos = { x: 0, y: 0 };
-
-  const dx = to.x - from.x;
-  const dy = to.y - from.y;
-  const len = Math.hypot(dx, dy);
-  if (len < 1) return { group, labelPos };
-
-  // 单位方向向量与单位法向量
-  const ux = dx / len;
-  const uy = dy / len;
-  const nx = -uy;  // 法向量（左转 90°）
-  const ny = ux;
-
-  // 端点退避（不穿入节点圆）
-  const startX = from.x + ux * nodeRadius;
-  const startY = from.y + uy * nodeRadius;
-  const endX = to.x - ux * nodeRadius;
-  const endY = to.y - uy * nodeRadius;
-
-  const offsetFactor = curveOffsetFactor(edgeIndex, totalEdges);
-  const offset = offsetFactor * EDGE_CURVE_SPACING;
-
-  let arrowAngle: number;
-  if (Math.abs(offset) < 0.01) {
-    // 直线
-    const geometry = new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(startX, startY, -1),
-      new THREE.Vector3(endX, endY, -1),
-    ]);
-    const material = new THREE.LineBasicMaterial({ color: 0x888888 });
-    group.add(new THREE.Line(geometry, material));
-
-    labelPos.x = (startX + endX) / 2;
-    labelPos.y = (startY + endY) / 2;
-    arrowAngle = Math.atan2(dy, dx);
-  } else {
-    // 二次贝塞尔弧线
-    // 控制点 = 直线中点 + 法向偏移
-    const midX = (startX + endX) / 2;
-    const midY = (startY + endY) / 2;
-    const ctrlX = midX + nx * offset;
-    const ctrlY = midY + ny * offset;
-
-    // 采样 BEZIER_SEGMENTS+1 个点
-    const points: THREE.Vector3[] = [];
-    for (let i = 0; i <= BEZIER_SEGMENTS; i++) {
-      const t = i / BEZIER_SEGMENTS;
-      const oneMinusT = 1 - t;
-      const x = oneMinusT * oneMinusT * startX + 2 * oneMinusT * t * ctrlX + t * t * endX;
-      const y = oneMinusT * oneMinusT * startY + 2 * oneMinusT * t * ctrlY + t * t * endY;
-      points.push(new THREE.Vector3(x, y, -1));
-    }
-    const geometry = new THREE.BufferGeometry().setFromPoints(points);
-    const material = new THREE.LineBasicMaterial({ color: 0x888888 });
-    group.add(new THREE.Line(geometry, material));
-
-    // label 位置 = 弧线中点（t=0.5 时的贝塞尔点）
-    labelPos.x = 0.25 * startX + 0.5 * ctrlX + 0.25 * endX;
-    labelPos.y = 0.25 * startY + 0.5 * ctrlY + 0.25 * endY;
-
-    // 箭头方向 = 弧线在终点的切线 = B'(1) = 2 * (end - ctrl)
-    const tangentX = endX - ctrlX;
-    const tangentY = endY - ctrlY;
-    arrowAngle = Math.atan2(tangentY, tangentX);
-  }
-
-  // 箭头（尖端在 endX, endY，沿切线方向）
-  const arrowSize = 10;
-  const arrowGeo = new THREE.BufferGeometry().setFromPoints([
-    new THREE.Vector3(0, 0, 0),
-    new THREE.Vector3(-arrowSize, arrowSize / 2, 0),
-    new THREE.Vector3(-arrowSize, -arrowSize / 2, 0),
-  ]);
-  const arrowMat = new THREE.MeshBasicMaterial({ color: 0x888888 });
-  const arrow = new THREE.Mesh(arrowGeo, arrowMat);
-  arrow.position.set(endX, endY, -0.5);
-  arrow.rotation.z = arrowAngle;
-  group.add(arrow);
-
-  return { group, labelPos };
-}
-
-function disposeGroup(group: THREE.Group): void {
-  group.traverse((obj) => {
-    if (obj instanceof THREE.Line || obj instanceof THREE.Mesh) {
-      obj.geometry.dispose();
-      if (Array.isArray(obj.material)) obj.material.forEach((m) => m.dispose());
-      else (obj.material as THREE.Material).dispose();
-    }
-  });
-}
-
-// v1.3：节点 / 边 label 都改走 NodeRenderer.renderContent → SVG 几何，
+// v1.3 § 3.4：边渲染逻辑提取到 EdgeRenderer 类（src/plugins/graph/rendering/EdgeRenderer.ts）。
 // CSS2DRenderer 仅保留作 Phase 3 EditOverlay 浮层渲染器（当前空闲）。
