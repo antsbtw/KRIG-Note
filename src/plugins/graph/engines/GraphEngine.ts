@@ -420,26 +420,23 @@ export abstract class GraphEngine {
     // 隐藏边 label（避免和编辑器重叠）
     this.setEdgeLabelVisible(edgeId, false);
 
-    // 浮层位置：优先用实际渲染的 label 位置（包含弧线偏移），
-    // 没有 label 时用曲线中点（曲线 children[0] 是 THREE.Line，取中段顶点）
+    // 浮层位置：直接取曲线中段顶点（含 bundle 弧线偏移，且不受 label 几何
+    // origin 偏左偏右影响）。
+    // - 直线: BufferGeometry 只有 2 个端点，中段插值
+    // - 弧线: BEZIER_SEGMENTS+1 个采样点，中段就是弧顶
     let worldPos: THREE.Vector3;
-    const labelObj = edgeGroup?.children[2];
-    if (labelObj) {
-      worldPos = labelObj.getWorldPosition(new THREE.Vector3());
-    } else {
-      // 取曲线中段点；THREE.Line 的 BufferGeometry position 数组
-      const line = edgeGroup?.children[0];
-      if (line && line instanceof THREE.Line) {
-        const pos = line.geometry.getAttribute('position');
-        if (pos && pos.count > 0) {
+    const line = edgeGroup?.children[0];
+    if (line && line instanceof THREE.Line) {
+      const pos = line.geometry.getAttribute('position');
+      if (pos && pos.count >= 2) {
+        if (pos.count === 2) {
+          // 直线：手工插值中点
+          const x = (pos.getX(0) + pos.getX(1)) / 2;
+          const y = (pos.getY(0) + pos.getY(1)) / 2;
+          worldPos = new THREE.Vector3(x, y, 0);
+        } else {
           const mid = Math.floor(pos.count / 2);
           worldPos = new THREE.Vector3(pos.getX(mid), pos.getY(mid), 0);
-        } else {
-          worldPos = new THREE.Vector3(
-            (sourceGroup.position.x + targetGroup.position.x) / 2,
-            (sourceGroup.position.y + targetGroup.position.y) / 2,
-            0,
-          );
         }
       } else {
         worldPos = new THREE.Vector3(
@@ -448,6 +445,12 @@ export abstract class GraphEngine {
           0,
         );
       }
+    } else {
+      worldPos = new THREE.Vector3(
+        (sourceGroup.position.x + targetGroup.position.x) / 2,
+        (sourceGroup.position.y + targetGroup.position.y) / 2,
+        0,
+      );
     }
     const screen = this.worldToScreen(worldPos);
 
