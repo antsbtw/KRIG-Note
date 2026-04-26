@@ -146,6 +146,8 @@ export abstract class GraphEngine {
   protected commandStack = new CommandStack();
 
   protected selectedId: string | null = null;
+  /** v1.3 § 7.3：被选中的是节点还是边（决定 Delete 删谁、setHighlight 走哪条路径） */
+  protected selectedKind: 'node' | 'edge' | null = null;
   protected hoveredId: string | null = null;
 
   /** v1.3 § 10.2：性能监控数据（PerfPanel 读取 / 退化策略读取） */
@@ -219,7 +221,8 @@ export abstract class GraphEngine {
           // applyNodePosition 内部只是把 nodes[].position 同步并重算边
           this.commandStack.execute(new MoveNodeCommand(this, id, fromX, fromY, toX, toY));
         },
-        onSelect: (id) => this.setSelected(id),
+        onSelect: (id) => this.setSelected(id, id ? 'node' : null),
+        onEdgeSelect: (id) => this.setSelected(id, 'edge'),
         onEdgeCreate: (sourceId, targetId) => this.addEdgeBySource(sourceId, targetId),
         onHoverChange: (id) => this.applyHoverHighlight(id),
         onNodeDoubleClick: (id) => this.enterEditMode(id),
@@ -316,12 +319,20 @@ export abstract class GraphEngine {
   deleteSelected(): void {
     if (!this.selectedId) return;
     const id = this.selectedId;
-    const node = this.nodes.find((n) => n.id === id);
-    if (!node) return;
-    // 找出关联的边（都要一起删除以维持图完整性）
-    const relatedEdges = this.edges.filter((e) => e.source === id || e.target === id);
-    this.commandStack.execute(new RemoveNodeCommand(this, node, relatedEdges));
+
+    if (this.selectedKind === 'edge') {
+      const edge = this.edges.find((e) => e.id === id);
+      if (!edge) return;
+      this.commandStack.execute(new RemoveEdgeCommand(this, edge));
+    } else {
+      const node = this.nodes.find((n) => n.id === id);
+      if (!node) return;
+      // 找出关联的边（都要一起删除以维持图完整性）
+      const relatedEdges = this.edges.filter((e) => e.source === id || e.target === id);
+      this.commandStack.execute(new RemoveNodeCommand(this, node, relatedEdges));
+    }
     this.selectedId = null;
+    this.selectedKind = null;
   }
 
   /** 改节点 label（Atom[] 形态），入 Command 栈 */
@@ -470,19 +481,30 @@ export abstract class GraphEngine {
 
   // ── 选中状态 ──
 
-  protected setSelected(id: string | null): void {
-    if (this.selectedId === id) return;
+  protected setSelected(id: string | null, kind: 'node' | 'edge' | null = null): void {
+    // 自动推断 kind（兼容旧 setSelected(id)）
+    if (id !== null && kind === null) {
+      kind = this.nodeGroups.has(id) ? 'node' : this.edgeLines.has(id) ? 'edge' : null;
+    }
+    if (id === null) kind = null;
+
+    if (this.selectedId === id && this.selectedKind === kind) return;
     this.selectedId = id;
+    this.selectedKind = kind;
     this.applySelectionHighlight();
     this.onChange?.({ type: 'selection', selectedId: id });
   }
 
   /**
    * 高亮优先级（v1.3 § 7.3）：selected > hover > default
+   * 同时刷新所有节点 + 所有边。
    */
   protected applySelectionHighlight(): void {
     for (const [nodeId, group] of this.nodeGroups) {
-      this.nodeRenderer.setHighlight(group, this.computeHighlightMode(nodeId));
+      this.nodeRenderer.setHighlight(group, this.computeNodeHighlightMode(nodeId));
+    }
+    for (const [edgeId, group] of this.edgeLines) {
+      this.edgeRenderer.setHighlight(group, this.computeEdgeHighlightMode(edgeId));
     }
   }
 
@@ -493,17 +515,22 @@ export abstract class GraphEngine {
 
     if (oldId && oldId !== nodeId) {
       const oldGroup = this.nodeGroups.get(oldId);
-      if (oldGroup) this.nodeRenderer.setHighlight(oldGroup, this.computeHighlightMode(oldId));
+      if (oldGroup) this.nodeRenderer.setHighlight(oldGroup, this.computeNodeHighlightMode(oldId));
     }
     if (nodeId) {
       const newGroup = this.nodeGroups.get(nodeId);
-      if (newGroup) this.nodeRenderer.setHighlight(newGroup, this.computeHighlightMode(nodeId));
+      if (newGroup) this.nodeRenderer.setHighlight(newGroup, this.computeNodeHighlightMode(nodeId));
     }
   }
 
-  private computeHighlightMode(nodeId: string): 'default' | 'hover' | 'selected' {
-    if (nodeId === this.selectedId) return 'selected';
+  private computeNodeHighlightMode(nodeId: string): 'default' | 'hover' | 'selected' {
+    if (this.selectedKind === 'node' && nodeId === this.selectedId) return 'selected';
     if (nodeId === this.hoveredId) return 'hover';
+    return 'default';
+  }
+
+  private computeEdgeHighlightMode(edgeId: string): 'default' | 'hover' | 'selected' {
+    if (this.selectedKind === 'edge' && edgeId === this.selectedId) return 'selected';
     return 'default';
   }
 
@@ -859,6 +886,13 @@ class AddEdgeCommand implements Command {
   constructor(private engine: GraphEngine, private edge: GraphEdge) {}
   execute(): void { this.engine._addEdge(this.edge); }
   undo(): void { this.engine._removeEdge(this.edge.id); }
+}
+
+class RemoveEdgeCommand implements Command {
+  readonly name = 'remove-edge';
+  constructor(private engine: GraphEngine, private edge: GraphEdge) {}
+  execute(): void { this.engine._removeEdge(this.edge.id); }
+  undo(): void { this.engine._addEdge(this.edge); }
 }
 
 class MoveNodeCommand implements Command {

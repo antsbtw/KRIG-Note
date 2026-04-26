@@ -37,6 +37,8 @@ export interface InteractionCallbacks {
   onNodeDoubleClick?: (nodeId: string) => void;
   /** 双击边（v1.3 § 7.2 → enterEditMode for edge label） */
   onEdgeDoubleClick?: (edgeId: string) => void;
+  /** 单击边 → 选中（v1.3 § 7.2） */
+  onEdgeSelect?: (edgeId: string) => void;
 }
 
 type HoverState = 'none' | 'node-center' | 'node-edge';
@@ -45,8 +47,13 @@ export class InteractionController {
   private raycaster = new THREE.Raycaster();
   private mouse = new THREE.Vector2();
 
-  private dragMode: 'none' | 'node' | 'edge' = 'none';
+  /**
+   * 'node' = 拖动节点 / 'edge' = 拖出新边 / 'click-edge' = 单击选中边
+   * （click-edge 不参与拖动，只在 mouseup 时触发 onSelectEdge）
+   */
+  private dragMode: 'none' | 'node' | 'edge' | 'click-edge' = 'none';
   private dragNodeId: string | null = null;
+  private dragEdgeId: string | null = null;
   private dragStartScreen = { x: 0, y: 0 };
   private dragStartWorld = { x: 0, y: 0 };
   private dragNodeStart = { x: 0, y: 0 };
@@ -93,9 +100,11 @@ export class InteractionController {
     window.addEventListener('mousemove', this.boundMouseMove);
     window.addEventListener('mouseup', this.boundMouseUp);
     this.domElement.addEventListener('dblclick', this.boundDoubleClick);
-    // 让 viewport 知道：左键按在节点上时不平移，按空白时平移
+    // 让 viewport 知道：左键按在节点 / 边上时不平移，按真正的空白才平移
     this.viewport.shouldAllowLeftPan = (e: MouseEvent) => {
-      return this.pickNodeAtScreen(e.clientX, e.clientY) === null;
+      if (this.pickNodeAtScreen(e.clientX, e.clientY)) return false;
+      if (this.pickEdgeAtScreen(e.clientX, e.clientY)) return false;
+      return true;
     };
   }
 
@@ -142,7 +151,19 @@ export class InteractionController {
     if (e.button !== 0) return;  // 只处理左键
 
     const nodeId = this.pickNodeAtScreen(e.clientX, e.clientY);
-    if (!nodeId) return;  // 空白处由 ViewportController 处理平移
+    if (!nodeId) {
+      // 不是节点 → 试 pickEdge，命中边走 click-edge 模式（mouseup 时 onSelect）
+      const edgeId = this.pickEdgeAtScreen(e.clientX, e.clientY);
+      if (edgeId) {
+        e.preventDefault();
+        e.stopPropagation();
+        this.dragMode = 'click-edge';
+        this.dragEdgeId = edgeId;
+        this.dragStartScreen = { x: e.clientX, y: e.clientY };
+        this.dragMoved = false;
+      }
+      return;
+    }
 
     e.preventDefault();
     e.stopPropagation();
@@ -279,14 +300,22 @@ export class InteractionController {
 
     const wasDragMode = this.dragMode;
     const wasNodeId = this.dragNodeId;
+    const wasEdgeId = this.dragEdgeId;
     const moved = this.dragMoved;
 
     // 重置状态先（避免后续回调里再次进入）
     this.dragMode = 'none';
     this.dragNodeId = null;
+    this.dragEdgeId = null;
     this.removeGhostEdge();
     // 拖动结束后清光标，由下一次 mousemove 触发的 hover 检测重新设置
     this.domElement.style.cursor = '';
+
+    // 单击边（click-edge 不参与拖动）
+    if (wasDragMode === 'click-edge' && wasEdgeId && !moved) {
+      this.callbacks.onEdgeSelect?.(wasEdgeId);
+      return;
+    }
 
     if (!moved) {
       // 单击节点

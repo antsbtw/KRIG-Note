@@ -101,18 +101,20 @@ export class EdgeRenderer {
   }
 
   setHighlight(group: THREE.Group, mode: HighlightMode): void {
-    const line = group.children[0];
-    if (!(line instanceof THREE.Line)) return;
-    const mat = line.material as THREE.LineBasicMaterial;
+    let color: number;
     switch (mode) {
-      case 'hover':
-        mat.color.setHex(EDGE_COLOR_HOVER);
-        break;
-      case 'selected':
-        mat.color.setHex(EDGE_COLOR_SELECTED);
-        break;
-      default:
-        mat.color.setHex(EDGE_COLOR_DEFAULT);
+      case 'hover':    color = EDGE_COLOR_HOVER; break;
+      case 'selected': color = EDGE_COLOR_SELECTED; break;
+      default:         color = EDGE_COLOR_DEFAULT;
+    }
+    // children[0] = 主曲线 Line; children[1] = 箭头 Mesh（或占位 Group）
+    const line = group.children[0];
+    if (line instanceof THREE.Line) {
+      (line.material as THREE.LineBasicMaterial).color.setHex(color);
+    }
+    const arrow = group.children[1];
+    if (arrow instanceof THREE.Mesh) {
+      (arrow.material as THREE.MeshBasicMaterial).color.setHex(color);
     }
   }
 
