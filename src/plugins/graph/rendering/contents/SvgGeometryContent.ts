@@ -3,19 +3,64 @@ import { SVGLoader } from 'three/examples/jsm/loaders/SVGLoader.js';
 import type { ContentRenderer } from '../interfaces';
 import { atomsToSvg, type Atom } from '../../../../lib/atom-serializers/svg';
 import { extractPlainText } from '../../engines/GraphEngine';
+import { LruCache } from '../../../../lib/atom-serializers/lru';
 
 const DEFAULT_FILL = 0xdddddd;
+
+/**
+ * L2 GeometryCache 的一条记录：从某个 SVG 字符串解析得到的 path 渲染单元。
+ * 每个 unit 对应一个 fill 颜色，含一组共享 geometry + 共享 material。
+ *
+ * Mesh 不缓存（spec § 5.1 L3）：每次 render 时为每个 unit 创建新 Mesh，
+ * 复用 geometry + material 引用。
+ */
+interface CachedGeometryUnit {
+  geometries: THREE.ShapeGeometry[];
+  material: THREE.MeshBasicMaterial;
+}
+type CachedGeometry = CachedGeometryUnit[];
 
 /**
  * 默认内容渲染器：Atom[] → SVG → ShapeGeometry → Mesh。
  *
  * 详见 docs/graph/Graph-3D-Rendering-Spec.md § 3.2 / § 5。
  *
+ * 三级缓存（spec § 5.1）：
+ * - L1（atomsToSvg 内部）：atoms → SVG 字符串
+ * - L2（本类）：SVG 字符串 → ShapeGeometry[] + Material（共享引用）
+ * - L3：Mesh 不缓存，每次新建（独立 transform）
+ *
  * 错误处理：序列化器 reject 时回退到纯文字提取（extractPlainText）作为
  * fallback path，避免节点显示空白。fallback path 是简单矩形占位。
  */
 export class SvgGeometryContent implements ContentRenderer {
   private loader = new SVGLoader();
+
+  /**
+   * L2 GeometryCache（spec § 5.1）：SVG 字符串 → 解析后的 path 渲染单元。
+   * 静态字段：跨 SvgGeometryContent 实例共享，因为节点 / 边 label 都用同一个
+   * SVG 几何路径，缓存命中率最大化。
+   */
+  private static GEOMETRY_CACHE = new LruCache<string, CachedGeometry>(500);
+
+  static getGeometryCacheStats(): { size: number; hits: number; misses: number; hitRate: number } {
+    return {
+      size: this.GEOMETRY_CACHE.size,
+      hits: this.GEOMETRY_CACHE.hits,
+      misses: this.GEOMETRY_CACHE.misses,
+      hitRate: this.GEOMETRY_CACHE.hitRate(),
+    };
+  }
+
+  static clearGeometryCache(): void {
+    for (const cached of this.GEOMETRY_CACHE.values()) {
+      for (const unit of cached) {
+        for (const g of unit.geometries) g.dispose();
+        unit.material.dispose();
+      }
+    }
+    this.GEOMETRY_CACHE.clear();
+  }
 
   async render(atoms: Atom[]): Promise<THREE.Object3D> {
     let svgString: string;
@@ -26,12 +71,31 @@ export class SvgGeometryContent implements ContentRenderer {
       svgString = this.fallbackSvg(atoms);
     }
 
-    const data = this.loader.parse(svgString);
+    const cached = this.getOrParseGeometry(svgString);
+
+    // 用缓存的 geometry + material 创建独立 mesh
     const group = new THREE.Group();
+    for (const unit of cached) {
+      for (const g of unit.geometries) {
+        group.add(new THREE.Mesh(g, unit.material));
+      }
+    }
+
+    // SVG y 轴向下，Three.js y 轴向上：翻转
+    group.scale.y = -1;
+    return group;
+  }
+
+  /** L2 缓存查找 / 回填 */
+  private getOrParseGeometry(svgString: string): CachedGeometry {
+    const cached = SvgGeometryContent.GEOMETRY_CACHE.get(svgString);
+    if (cached) return cached;
+
+    const data = this.loader.parse(svgString);
+    const units: CachedGeometryUnit[] = [];
 
     for (const path of data.paths) {
       const fillColor = path.userData?.style?.fill;
-      // 显式 fill="none" 跳过（描边类，PoC 暂不处理）
       if (fillColor === 'none') continue;
 
       const color =
@@ -46,29 +110,29 @@ export class SvgGeometryContent implements ContentRenderer {
       });
 
       const shapes = SVGLoader.createShapes(path);
-      for (const shape of shapes) {
-        const geometry = new THREE.ShapeGeometry(shape);
-        const mesh = new THREE.Mesh(geometry, material);
-        group.add(mesh);
-      }
+      const geometries = shapes.map((shape) => new THREE.ShapeGeometry(shape));
+      units.push({ geometries, material });
     }
 
-    // SVG y 轴向下，Three.js y 轴向上：翻转
-    group.scale.y = -1;
-    return group;
+    SvgGeometryContent.GEOMETRY_CACHE.set(svgString, units);
+    return units;
   }
 
   getBBox(rendered: THREE.Object3D): THREE.Box3 {
     return new THREE.Box3().setFromObject(rendered);
   }
 
+  /**
+   * L3 不缓存：dispose 时只把 rendered 从其 parent 上摘下，**不 dispose
+   * geometry / material**（它们由 L2 缓存共享管理，被 LRU 淘汰时统一 dispose）。
+   *
+   * 注：早期实现 traverse + parent.remove(obj) 会在 traversal 中改 children
+   * 数组导致索引越界（Cannot read 'traverse' of undefined）。这里只摘 rendered
+   * 自身即可，内部 mesh 是 rendered 的 child，没有外部引用，rendered 被 GC 时
+   * 一起回收。
+   */
   dispose(rendered: THREE.Object3D): void {
-    rendered.traverse((obj) => {
-      if (obj instanceof THREE.Mesh) {
-        obj.geometry.dispose();
-        if (obj.material instanceof THREE.Material) obj.material.dispose();
-      }
-    });
+    rendered.parent?.remove(rendered);
   }
 
   /** 序列化器失败时的兜底：用纯文字提取生成简单 SVG */

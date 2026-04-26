@@ -13,7 +13,9 @@ export function loadFont(key: FontKey): Promise<opentype.Font> {
     const buffer = await fetch(url).then((r) => r.arrayBuffer());
     const font = opentype.parse(buffer);
     const dt = performance.now() - t0;
-    console.info(`[font-loader] ${key} loaded in ${dt.toFixed(1)}ms (${(buffer.byteLength / 1024).toFixed(0)}KB)`);
+    console.info(
+      `[font-loader] ${key} loaded in ${dt.toFixed(1)}ms (${(buffer.byteLength / 1024).toFixed(0)}KB)`,
+    );
     return font;
   })();
 
@@ -32,7 +34,50 @@ export function isCjk(ch: string): boolean {
   );
 }
 
-/** 根据字符自动选字体：CJK 用 Noto SC，其余用 Inter */
-export function pickFontForChar(ch: string): FontKey {
-  return isCjk(ch) ? 'notoSansSc' : 'inter';
+/**
+ * Mark 集合：决定使用哪种字体变体。
+ *
+ * 优先级（顶到底）：
+ * - code: 等宽字体（覆盖 bold/italic，因为我们没装 mono bold/italic）
+ * - bold + italic: 暂用 bold（没装 BoldItalic）
+ * - bold: bold 字体
+ * - italic: italic 字体
+ * - 默认: regular
+ *
+ * v1.3 § 4.4.1 / spec § 4.3 mark 优先级。
+ */
+export interface MarkSet {
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  code?: boolean;
+}
+
+/**
+ * 根据字符 + mark 集合选字体：
+ * - code mark: JetBrains Mono（CJK 字符 fallback 到 Noto SC，因为 mono 没中文）
+ * - CJK + bold: Noto SC Bold
+ * - CJK: Noto SC Regular
+ * - 西文 + bold: Inter Bold
+ * - 西文 + italic: Inter Italic
+ * - 西文: Inter Regular
+ *
+ * 注：当前未装 BoldItalic 变体，bold + italic 同时存在时优先 bold；
+ * 未来需要时再加 Inter-BoldItalic.ttf。
+ */
+export function pickFontForChar(ch: string, marks?: MarkSet): FontKey {
+  const cjk = isCjk(ch);
+
+  if (marks?.code) {
+    // code mark 用等宽字体；CJK 没等宽变体，fallback Noto SC
+    return cjk ? 'notoSansSc' : 'jetBrainsMono';
+  }
+
+  if (cjk) {
+    return marks?.bold ? 'notoSansScBold' : 'notoSansSc';
+  }
+
+  if (marks?.bold) return 'interBold';
+  if (marks?.italic) return 'interItalic';
+  return 'inter';
 }

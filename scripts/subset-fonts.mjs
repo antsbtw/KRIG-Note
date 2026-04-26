@@ -98,12 +98,20 @@ async function subsetOne(filename, charSet) {
 async function subsetAll() {
   const ascii = asciiRange();
   const cjk = buildGb2312Level1Chars();
+  const western = ascii + PUNCTUATION;
+  const fullCjk = ascii + PUNCTUATION + cjk;
 
-  // Inter：仅 ASCII + 西文标点（中文不画）
-  await subsetOne('Inter-Regular.ttf', ascii + PUNCTUATION);
+  // Inter 三字重：仅 ASCII + 西文标点（中文不画，让 NotoSansSC 接管）
+  await subsetOne('Inter-Regular.ttf', western);
+  await subsetOne('Inter-Bold.ttf', western);
+  await subsetOne('Inter-Italic.ttf', western);
 
-  // Noto Sans SC：ASCII + 标点 + GB 2312 一级
-  await subsetOne('NotoSansSC-Regular.ttf', ascii + PUNCTUATION + cjk);
+  // Noto Sans SC 两字重：ASCII + 标点 + GB 2312 一级
+  await subsetOne('NotoSansSC-Regular.ttf', fullCjk);
+  await subsetOne('NotoSansSC-Bold.ttf', fullCjk);
+
+  // JetBrains Mono：仅 ASCII + 西文标点（code mark 用，中文不画）
+  await subsetOne('JetBrainsMono-Regular.ttf', western);
 }
 
 // ── 入口 ──
