@@ -36,6 +36,7 @@ export class EditOverlay {
   private active: EditTarget | null = null;
   private cssObj: CSS2DObject | null = null;
   private textarea: HTMLTextAreaElement | null = null;
+  private backdrop: HTMLDivElement | null = null;
 
   constructor(
     private scene: THREE.Scene,
@@ -57,6 +58,25 @@ export class EditOverlay {
     this.active = target;
     const initialText = extractPlainText(target.atoms);
 
+    // 全屏 backdrop：点击 backdrop 提交并退出（解决"画布点击不触发 blur"问题）
+    const backdrop = document.createElement('div');
+    backdrop.className = 'krig-edit-backdrop';
+    backdrop.style.cssText = `
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      background: transparent;
+      pointer-events: auto;
+    `;
+    backdrop.addEventListener('mousedown', (e) => {
+      // 只响应点在 backdrop 自身的 mousedown（不响应冒泡上来的 popup 内点击）
+      if (e.target === backdrop) {
+        this.exit(true);
+      }
+    });
+    document.body.appendChild(backdrop);
+    this.backdrop = backdrop;
+
     const root = document.createElement('div');
     root.className = 'krig-edit-popup';
     root.style.cssText = `
@@ -69,6 +89,8 @@ export class EditOverlay {
       pointer-events: auto;
       transform: translate(-50%, -50%);
     `;
+    // popup 内的 mousedown 不冒泡到 backdrop（避免点击 popup 内部触发退出）
+    root.addEventListener('mousedown', (e) => e.stopPropagation());
 
     const textarea = document.createElement('textarea');
     textarea.value = initialText;
@@ -89,17 +111,19 @@ export class EditOverlay {
     textarea.placeholder = 'Type label...';
     root.appendChild(textarea);
 
-    // 事件
-    textarea.addEventListener('blur', () => {
-      // 延迟一帧避免 click 立即触发 blur 后再操作 dom
-      setTimeout(() => this.exit(true), 0);
-    });
+    // 键盘事件（在 textarea + popup 内 stopPropagation 防止冒泡到 GraphView 全局快捷键）
     textarea.addEventListener('keydown', (e) => {
-      e.stopPropagation(); // 防止 GraphView 全局快捷键
+      e.stopPropagation();
       if (e.key === 'Escape') {
         e.preventDefault();
         this.exit(false);
-      } else if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      } else if (e.key === 'Enter' && !e.shiftKey) {
+        // Enter 提交，Shift+Enter 换行
+        e.preventDefault();
+        this.exit(true);
+      }
+      // Cmd+Enter / Ctrl+Enter 也提交（多行场景）
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
         e.preventDefault();
         this.exit(true);
       }
@@ -140,6 +164,10 @@ export class EditOverlay {
       this.cssObj.parent?.remove(this.cssObj);
       this.cssObj.element.remove();
       this.cssObj = null;
+    }
+    if (this.backdrop) {
+      this.backdrop.remove();
+      this.backdrop = null;
     }
     this.textarea = null;
   }
