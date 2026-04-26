@@ -1,25 +1,28 @@
 import type { Atom } from '../../engines/GraphEngine';
+import { GraphEditor } from './pm/editor';
+import './edit-overlay.css';
 
 /**
  * EditOverlay：节点 / 边的编辑浮层管理（v1.3 spec § 7）。
  *
  * 显示态 = 节点 SVG 几何 mesh；编辑态 = DOM PM 编辑器浮层覆盖在节点位置。
  *
- * 当前实现（Phase 3.1）：仅 textarea 占位，PM schema/UI 在 Phase 3.2-3.4 接入。
+ * Phase 3.2：textarea 替换为 ProseMirror EditorView（GraphEditor）。
  *
  * DOM 结构：
  *   document.body
  *     └── backdrop (fixed inset:0, z-index:1000)
- *           └── popup (absolute, 绝对定位到屏幕坐标)
- *                 └── textarea
+ *           └── popup (absolute, 屏幕坐标定位)
+ *                 └── pm-mount (PM EditorView 挂载点)
  *
  * 事件流：
- *   - 点 textarea / popup 内部 → 不冒泡到 backdrop（stopPropagation）
+ *   - 点 popup 内部 → mousedown stopPropagation，不冒泡到 backdrop
  *   - 点 backdrop 空白 → 触发 exit(true)
  *
- * 生命周期：
- *   enter(target) → mountPopup → focus
- *   exit(commit) → 提取 atoms → 销毁 popup
+ * 键盘:
+ *   - Esc: 取消（不写回）
+ *   - Cmd-Enter / Ctrl-Enter: 提交
+ *   - 其他键 PM 自己处理（含 Mod-B/I/U/E、Tab/Shift-Tab、Shift-Enter 等）
  */
 
 export interface EditTarget {
@@ -38,7 +41,7 @@ export interface EditOverlayCallbacks {
 
 export class EditOverlay {
   private active: EditTarget | null = null;
-  private textarea: HTMLTextAreaElement | null = null;
+  private editor: GraphEditor | null = null;
   private backdrop: HTMLDivElement | null = null;
 
   constructor(private callbacks: EditOverlayCallbacks) {}
@@ -56,7 +59,6 @@ export class EditOverlay {
     if (this.active) this.exit(true);
 
     this.active = target;
-    const initialText = extractPlainText(target.atoms);
 
     // 全屏 backdrop：点击 backdrop 提交并退出
     const backdrop = document.createElement('div');
@@ -69,7 +71,6 @@ export class EditOverlay {
       pointer-events: auto;
     `;
     backdrop.addEventListener('mousedown', (e) => {
-      // e.target === backdrop 才退出（popup 内的 mousedown 都 stopPropagation 了）
       if (e.target === backdrop) {
         this.exit(true);
       }
@@ -83,74 +84,68 @@ export class EditOverlay {
       position: absolute;
       left: ${target.screenX}px;
       top: ${target.screenY}px;
-      width: 280px;
-      padding: 8px;
-      background: rgba(40, 44, 52, 0.95);
+      width: 300px;
+      padding: 8px 10px;
+      background: rgba(40, 44, 52, 0.97);
       border: 1px solid #4a90e2;
       border-radius: 8px;
-      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.55);
       transform: translate(-50%, -50%);
-    `;
-    // popup 内任何 mousedown 都不冒泡到 backdrop（保留对编辑器内部正常的 click/select 行为）
-    popup.addEventListener('mousedown', (e) => e.stopPropagation());
-
-    const textarea = document.createElement('textarea');
-    textarea.value = initialText;
-    textarea.style.cssText = `
-      width: 100%;
-      min-height: 60px;
-      max-height: 200px;
-      padding: 4px;
-      background: transparent;
       color: #e0e0e0;
-      border: none;
-      outline: none;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       font-size: 14px;
-      line-height: 1.4;
-      resize: none;
-      box-sizing: border-box;
+      line-height: 1.5;
     `;
-    textarea.placeholder = 'Type label...';
-    popup.appendChild(textarea);
+    popup.addEventListener('mousedown', (e) => e.stopPropagation());
 
-    // 键盘事件
-    textarea.addEventListener('keydown', (e) => {
-      e.stopPropagation();
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        this.exit(false);
-        return;
-      }
-      // Enter 提交，Shift+Enter 换行；Cmd+Enter 也提交（多行场景）
-      if (e.key === 'Enter') {
-        if (e.shiftKey && !e.metaKey && !e.ctrlKey) return; // 换行
-        e.preventDefault();
-        this.exit(true);
-      }
-    });
+    // PM 挂载点
+    const pmMount = document.createElement('div');
+    pmMount.className = 'krig-edit-pm-mount';
+    pmMount.style.cssText = `
+      min-height: 24px;
+      max-height: 240px;
+      overflow-y: auto;
+      outline: none;
+    `;
+    popup.appendChild(pmMount);
 
     backdrop.appendChild(popup);
     document.body.appendChild(backdrop);
 
-    this.textarea = textarea;
+    // 创建 PM 编辑器
+    this.editor = new GraphEditor(pmMount, target.atoms);
 
-    // autofocus + 全选
+    // popup 级 keydown：处理 Esc / Cmd+Enter（捕获阶段，先于 PM keymap）
+    popup.addEventListener(
+      'keydown',
+      (e) => {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          e.stopPropagation();
+          this.exit(false);
+        } else if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+          e.preventDefault();
+          e.stopPropagation();
+          this.exit(true);
+        }
+      },
+      { capture: true },
+    );
+
+    // autofocus
     setTimeout(() => {
-      textarea.focus();
-      textarea.select();
+      this.editor?.focus();
     }, 50);
   }
 
-  /** 关闭浮层。commit=true 时把当前 textarea 内容做成 atoms 回调；否则丢弃。 */
+  /** 关闭浮层。commit=true 时把 PM doc 转回 atoms 回调；否则丢弃。 */
   exit(commit: boolean): void {
     if (!this.active) return;
     const target = this.active;
 
     let atoms: Atom[] | null = null;
-    if (commit && this.textarea) {
-      const text = this.textarea.value.trim();
-      atoms = makeTextAtoms(text);
+    if (commit && this.editor) {
+      atoms = this.editor.getAtoms();
     }
 
     this.unmount();
@@ -159,38 +154,18 @@ export class EditOverlay {
     this.callbacks.onExit(target, atoms);
   }
 
-  /** 销毁浮层资源 */
   private unmount(): void {
+    if (this.editor) {
+      this.editor.destroy();
+      this.editor = null;
+    }
     if (this.backdrop) {
       this.backdrop.remove();
       this.backdrop = null;
     }
-    this.textarea = null;
   }
 
-  /** 外部 dispose（GraphEngine.dispose 时调） */
   dispose(): void {
     if (this.active) this.exit(false);
   }
-}
-
-// ── helpers ──
-
-function extractPlainText(atoms: Atom[]): string {
-  if (!atoms || !Array.isArray(atoms)) return '';
-  const out: string[] = [];
-  function walk(node: unknown): void {
-    if (!node || typeof node !== 'object') return;
-    const n = node as { text?: string; content?: unknown[] };
-    if (typeof n.text === 'string') out.push(n.text);
-    if (Array.isArray(n.content)) n.content.forEach(walk);
-  }
-  atoms.forEach(walk);
-  return out.join('');
-}
-
-/** 把纯文本包成单个 textBlock atom（Phase 3.1 占位；3.2 替换为 PM 输出） */
-function makeTextAtoms(text: string): Atom[] {
-  if (!text) return [{ type: 'textBlock', content: [] }];
-  return [{ type: 'textBlock', content: [{ type: 'text', text }] }];
 }
