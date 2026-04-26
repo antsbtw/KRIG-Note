@@ -116,20 +116,38 @@ const SCHEMA_QUERIES = [
   // v1.4 NavSide 重构：graph 加 folder_id 字段（schemaless 自动支持，索引加速查询）
   `DEFINE INDEX IF NOT EXISTS graph_folder_id ON graph FIELDS folder_id;`,
 
-  // graph_node 表（节点）
-  `DEFINE TABLE IF NOT EXISTS graph_node SCHEMALESS;`,
-  `DEFINE INDEX IF NOT EXISTS graph_node_graph ON graph_node FIELDS graph_id;`,
-
-  // graph_edge 表（边）
-  `DEFINE TABLE IF NOT EXISTS graph_edge SCHEMALESS;`,
-  `DEFINE INDEX IF NOT EXISTS graph_edge_graph ON graph_edge FIELDS graph_id;`,
-  `DEFINE INDEX IF NOT EXISTS graph_edge_source ON graph_edge FIELDS source`,
-  `DEFINE INDEX IF NOT EXISTS graph_edge_target ON graph_edge FIELDS target`,
-
   // graph_folder 表（图谱文件夹，v1.4 NavSide 重构）
   `DEFINE TABLE IF NOT EXISTS graph_folder SCHEMALESS;`,
   `DEFINE INDEX IF NOT EXISTS graph_folder_parent ON graph_folder FIELDS parent_id;`,
   `DEFINE INDEX IF NOT EXISTS graph_folder_sort ON graph_folder FIELDS sort_order;`,
+
+  // ── v1.4 Graph 数据模型重构（feature/graph-import）──
+  //
+  // 四态分立：
+  //   数学态 → graph_geometry（几何骨架，统一 4 种几何体）
+  //   物理态 → Substance Library（声明式资源，不入库）
+  //   语义态 → graph_intension_atom（描述属性 atom）
+  //   视觉态 → graph_presentation_atom（视觉属性 atom，按 layout 分组）
+  //
+  // v1.3 graph_node / graph_edge 已彻底删除（无技术债，无兼容包袱）。
+
+  // graph_geometry 表（几何骨架：point / line / surface / volume）
+  `DEFINE TABLE IF NOT EXISTS graph_geometry SCHEMALESS;`,
+  `DEFINE INDEX IF NOT EXISTS graph_geom_graph ON graph_geometry FIELDS graph_id;`,
+  `DEFINE INDEX IF NOT EXISTS graph_geom_kind ON graph_geometry FIELDS kind;`,
+
+  // graph_intension_atom 表（语义属性：predicate :: value）
+  `DEFINE TABLE IF NOT EXISTS graph_intension_atom SCHEMALESS;`,
+  `DEFINE INDEX IF NOT EXISTS gia_graph ON graph_intension_atom FIELDS graph_id;`,
+  `DEFINE INDEX IF NOT EXISTS gia_subject ON graph_intension_atom FIELDS subject_id;`,
+  `DEFINE INDEX IF NOT EXISTS gia_predicate ON graph_intension_atom FIELDS predicate;`,
+
+  // graph_presentation_atom 表（视觉属性：layout_id + attribute :: value）
+  `DEFINE TABLE IF NOT EXISTS graph_presentation_atom SCHEMALESS;`,
+  `DEFINE INDEX IF NOT EXISTS gpa_graph ON graph_presentation_atom FIELDS graph_id;`,
+  `DEFINE INDEX IF NOT EXISTS gpa_layout ON graph_presentation_atom FIELDS layout_id;`,
+  `DEFINE INDEX IF NOT EXISTS gpa_subject ON graph_presentation_atom FIELDS subject_id;`,
+  `DEFINE INDEX IF NOT EXISTS gpa_attr ON graph_presentation_atom FIELDS attribute;`,
 ];
 
 export async function initSchema(): Promise<void> {

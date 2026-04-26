@@ -87,11 +87,34 @@ contextBridge.exposeInMainWorld('viewAPI', {
     ipcRenderer.on(IPC.GRAPH_ACTIVE_CHANGED, listener);
     return () => ipcRenderer.removeListener(IPC.GRAPH_ACTIVE_CHANGED, listener);
   },
-  graphLoadData: (graphId: string) => ipcRenderer.invoke(IPC.GRAPH_LOAD_DATA, graphId),
-  graphNodeSave: (node: unknown) => ipcRenderer.invoke(IPC.GRAPH_NODE_SAVE, node),
-  graphNodeDelete: (graphId: string, nodeId: string) => ipcRenderer.invoke(IPC.GRAPH_NODE_DELETE, graphId, nodeId),
-  graphEdgeSave: (edge: unknown) => ipcRenderer.invoke(IPC.GRAPH_EDGE_SAVE, edge),
-  graphEdgeDelete: (graphId: string, edgeId: string) => ipcRenderer.invoke(IPC.GRAPH_EDGE_DELETE, graphId, edgeId),
+  // ── v1.4 graph-import：四态数据模型 ──
+  graphLoadFull: (graphId: string) => ipcRenderer.invoke(IPC.GRAPH_LOAD_FULL, graphId),
+  graphSetActiveLayout: (graphId: string, layoutId: string) => ipcRenderer.invoke(IPC.GRAPH_SET_ACTIVE_LAYOUT, graphId, layoutId),
+  // Geometry
+  graphGeometryCreate: (record: unknown) => ipcRenderer.invoke(IPC.GRAPH_GEOMETRY_CREATE, record),
+  graphGeometryDelete: (id: string) => ipcRenderer.invoke(IPC.GRAPH_GEOMETRY_DELETE, id),
+  // Intension
+  graphIntensionList: (graphId: string, subjectId?: string) => ipcRenderer.invoke(IPC.GRAPH_INTENSION_LIST, graphId, subjectId),
+  graphIntensionCreate: (record: unknown) => ipcRenderer.invoke(IPC.GRAPH_INTENSION_CREATE, record),
+  graphIntensionUpdate: (id: string, fields: unknown) => ipcRenderer.invoke(IPC.GRAPH_INTENSION_UPDATE, id, fields),
+  graphIntensionDelete: (id: string) => ipcRenderer.invoke(IPC.GRAPH_INTENSION_DELETE, id),
+  graphIntensionCreateBulk: (records: unknown[]) => ipcRenderer.invoke(IPC.GRAPH_INTENSION_CREATE_BULK, records),
+  // Presentation
+  graphPresentationList: (graphId: string, layoutIds?: string[]) => ipcRenderer.invoke(IPC.GRAPH_PRESENTATION_LIST, graphId, layoutIds),
+  graphPresentationSet: (record: unknown) => ipcRenderer.invoke(IPC.GRAPH_PRESENTATION_SET, record),
+  graphPresentationSetBulk: (records: unknown[]) => ipcRenderer.invoke(IPC.GRAPH_PRESENTATION_SET_BULK, records),
+  graphPresentationDelete: (graphId: string, layoutId: string, subjectId: string, attribute: string) =>
+    ipcRenderer.invoke(IPC.GRAPH_PRESENTATION_DELETE, graphId, layoutId, subjectId, attribute),
+  graphPresentationClearLayout: (graphId: string, layoutId: string) =>
+    ipcRenderer.invoke(IPC.GRAPH_PRESENTATION_CLEAR_LAYOUT, graphId, layoutId),
+  onGraphPresentationChanged: (callback: (info: { graphId: string }) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, info: { graphId: string }) => callback(info);
+    ipcRenderer.on(IPC.GRAPH_PRESENTATION_CHANGED, listener);
+    return () => ipcRenderer.removeListener(IPC.GRAPH_PRESENTATION_CHANGED, listener);
+  },
+  // Substance（GraphView 需要查询渲染默认值）
+  graphSubstanceList: () => ipcRenderer.invoke(IPC.GRAPH_SUBSTANCE_LIST),
+  graphSubstanceGet: (id: string) => ipcRenderer.invoke(IPC.GRAPH_SUBSTANCE_GET, id),
 
   // 文件对话框 + 媒体操作（通用服务）
   fileSaveDialog: (options: { defaultName: string; data: string; filters?: { name: string; extensions: string[] }[] }) =>

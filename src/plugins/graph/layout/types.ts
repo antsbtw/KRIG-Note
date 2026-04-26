@@ -11,35 +11,16 @@
  * 详细设计见 docs/graph/KRIG-Graph-Import-Spec.md §2
  */
 import type { Substance } from '../substance/types';
-
-// 临时复用现有 GraphNodeRecord/EdgeRecord 类型（D2 数据层重构后改为 GraphGeometryRecord 等新类型）
-// 这里先用占位符，避免循环依赖
-export interface GeometryInput {
-  id: string;
-  graph_id: string;
-  kind: 'point' | 'line' | 'surface' | 'volume';
-  members: string[];
-}
-
-export interface IntensionInput {
-  subject_id: string;
-  predicate: string;
-  value: string;
-  value_kind: string;
-}
-
-export interface PresentationInput {
-  layout_id: string;
-  subject_id: string;
-  attribute: string;
-  value: string;
-  value_kind: string;
-}
+import type {
+  GraphGeometryRecord,
+  GraphIntensionAtomRecord,
+  GraphPresentationAtomRecord,
+} from '../../../main/storage/types';
 
 export interface LayoutInput {
-  geometries: GeometryInput[];
-  intensions: IntensionInput[];
-  presentations: PresentationInput[];
+  geometries: GraphGeometryRecord[];
+  intensions: GraphIntensionAtomRecord[];
+  presentations: GraphPresentationAtomRecord[];
   /** 给算法用的 substance 解析器（v3 物理属性驱动用） */
   substanceResolver: (id: string) => Substance | undefined;
   dimension: 2 | 3;

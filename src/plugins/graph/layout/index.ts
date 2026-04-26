@@ -9,9 +9,6 @@ export type {
   LayoutAlgorithm,
   LayoutInput,
   LayoutOutput,
-  GeometryInput,
-  IntensionInput,
-  PresentationInput,
 } from './types';
 
 // 自动注册内置算法（D7-D8 填充）
