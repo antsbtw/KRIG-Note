@@ -2,6 +2,7 @@ import type { Atom } from '../types';
 export type { Atom } from '../types';
 import { renderTextBlock } from './blocks/textBlock';
 import { renderMathBlock } from './blocks/mathBlock';
+import { renderList } from './blocks/list';
 import { LruCache } from '../lru';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -51,6 +52,10 @@ async function renderAtom(atom: Atom, yOffset: number): Promise<{ svg: string; h
       const tex = (atom.attrs?.tex as string) ?? '';
       return renderMathBlock(tex, FONT_SIZE, yOffset);
     }
+    case 'bulletList':
+      return renderList(atom, yOffset, false);
+    case 'orderedList':
+      return renderList(atom, yOffset, true);
     default:
       return { svg: '', height: 0 };
   }
