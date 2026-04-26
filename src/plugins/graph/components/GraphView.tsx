@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { BasicEngine } from '../engines/BasicEngine';
 import type { GraphNode, GraphEdge, Atom, ChangeEvent } from '../engines/GraphEngine';
 import { ensureAtomLabel, makeTextLabel, extractPlainText } from '../engines/GraphEngine';
+import { PerfPanel } from './PerfPanel';
 
 // ── DB 持久化形态（v1.2：label 字段是 atom 数组，但兼容 v1.1 的 string） ──
 
@@ -330,6 +331,13 @@ export function GraphView() {
       >
         左键拖动节点 · 节点边缘拖出新边 · 中键/右键拖动平移 · 滚轮缩放
       </div>
+
+      <PerfPanel
+        getStats={() => engineRef.current?.getPerfStats() ?? null}
+        getAdaptiveState={() => engineRef.current?.getAdaptiveState() ?? null}
+        getPerfConfig={() => engineRef.current?.getPerfConfig() ?? null}
+        setPerfConfig={(c) => engineRef.current?.setPerfConfig(c)}
+      />
     </div>
   );
 }

@@ -37,16 +37,25 @@ export interface InteractionCallbacks {
   onNodeDoubleClick?: (nodeId: string) => void;
   /** 双击边（v1.3 § 7.2 → enterEditMode for edge label） */
   onEdgeDoubleClick?: (edgeId: string) => void;
+  /** 单击边 → 选中（v1.3 § 7.2） */
+  onEdgeSelect?: (edgeId: string) => void;
+  /** 鼠标悬停的边变化通知（hover 视觉反馈） */
+  onEdgeHoverChange?: (edgeId: string | null) => void;
 }
 
-type HoverState = 'none' | 'node-center' | 'node-edge';
+type HoverState = 'none' | 'node-center' | 'node-edge' | 'edge';
 
 export class InteractionController {
   private raycaster = new THREE.Raycaster();
   private mouse = new THREE.Vector2();
 
-  private dragMode: 'none' | 'node' | 'edge' = 'none';
+  /**
+   * 'node' = 拖动节点 / 'edge' = 拖出新边 / 'click-edge' = 单击选中边
+   * （click-edge 不参与拖动，只在 mouseup 时触发 onSelectEdge）
+   */
+  private dragMode: 'none' | 'node' | 'edge' | 'click-edge' = 'none';
   private dragNodeId: string | null = null;
+  private dragEdgeId: string | null = null;
   private dragStartScreen = { x: 0, y: 0 };
   private dragStartWorld = { x: 0, y: 0 };
   private dragNodeStart = { x: 0, y: 0 };
@@ -60,9 +69,22 @@ export class InteractionController {
   /** 当前 hover 的状态 + 节点 id（None 时 id 为 null） */
   private hoverState: HoverState = 'none';
   private hoverNodeId: string | null = null;
+  private hoverEdgeId: string | null = null;
   /** 最近一次 mousemove 事件，rAF 节流用 */
   private pendingMoveEvent: MouseEvent | null = null;
   private rafScheduled = false;
+  /** v1.3 § 10.3：hover 暂停（fps 退化时） */
+  private hoverPaused = false;
+
+  /** GraphEngine 在 AdaptivePolicy 触发时调（暂停 → 不做 rAF hover 检测） */
+  setHoverPaused(paused: boolean): void {
+    if (this.hoverPaused === paused) return;
+    this.hoverPaused = paused;
+    if (paused) {
+      // 立即清掉当前 hover 状态
+      this.setHoverState('none', null, null);
+    }
+  }
 
   private boundMouseDown: (e: MouseEvent) => void;
   private boundMouseMove: (e: MouseEvent) => void;
@@ -93,9 +115,11 @@ export class InteractionController {
     window.addEventListener('mousemove', this.boundMouseMove);
     window.addEventListener('mouseup', this.boundMouseUp);
     this.domElement.addEventListener('dblclick', this.boundDoubleClick);
-    // 让 viewport 知道：左键按在节点上时不平移，按空白时平移
+    // 让 viewport 知道：左键按在节点 / 边上时不平移，按真正的空白才平移
     this.viewport.shouldAllowLeftPan = (e: MouseEvent) => {
-      return this.pickNodeAtScreen(e.clientX, e.clientY) === null;
+      if (this.pickNodeAtScreen(e.clientX, e.clientY)) return false;
+      if (this.pickEdgeAtScreen(e.clientX, e.clientY)) return false;
+      return true;
     };
   }
 
@@ -142,7 +166,19 @@ export class InteractionController {
     if (e.button !== 0) return;  // 只处理左键
 
     const nodeId = this.pickNodeAtScreen(e.clientX, e.clientY);
-    if (!nodeId) return;  // 空白处由 ViewportController 处理平移
+    if (!nodeId) {
+      // 不是节点 → 试 pickEdge，命中边走 click-edge 模式（mouseup 时 onSelect）
+      const edgeId = this.pickEdgeAtScreen(e.clientX, e.clientY);
+      if (edgeId) {
+        e.preventDefault();
+        e.stopPropagation();
+        this.dragMode = 'click-edge';
+        this.dragEdgeId = edgeId;
+        this.dragStartScreen = { x: e.clientX, y: e.clientY };
+        this.dragMoved = false;
+      }
+      return;
+    }
 
     e.preventDefault();
     e.stopPropagation();
@@ -188,7 +224,8 @@ export class InteractionController {
       return;
     }
 
-    // 非拖动期间：rAF 节流的 hover 检测
+    // 非拖动期间：rAF 节流的 hover 检测（hoverPaused 时跳过节省 fps）
+    if (this.hoverPaused) return;
     this.pendingMoveEvent = e;
     if (!this.rafScheduled) {
       this.rafScheduled = true;
@@ -203,35 +240,45 @@ export class InteractionController {
 
   /** rAF 节流的 hover 检测：根据鼠标位置更新 cursor + 高亮环 */
   private updateHover(e: MouseEvent): void {
+    // 优先级：节点 > 边
     const nodeId = this.pickNodeAtScreen(e.clientX, e.clientY);
-    if (!nodeId) {
-      this.setHoverState('none', null);
+    if (nodeId) {
+      const group = this.getNodeGroups().get(nodeId);
+      if (group) {
+        const world = this.viewport.screenToWorld(e.clientX, e.clientY);
+        if (this.isOnNodeEdge(group, world.x, world.y)) {
+          this.setHoverState('node-edge', nodeId, null);
+        } else {
+          this.setHoverState('node-center', nodeId, null);
+        }
+        return;
+      }
+    }
+
+    // 节点没命中 → 试边
+    const edgeId = this.pickEdgeAtScreen(e.clientX, e.clientY);
+    if (edgeId) {
+      this.setHoverState('edge', null, edgeId);
       return;
     }
-    const group = this.getNodeGroups().get(nodeId);
-    if (!group) {
-      this.setHoverState('none', null);
-      return;
-    }
-    const world = this.viewport.screenToWorld(e.clientX, e.clientY);
-    if (this.isOnNodeEdge(group, world.x, world.y)) {
-      this.setHoverState('node-edge', nodeId);
-    } else {
-      this.setHoverState('node-center', nodeId);
-    }
+
+    this.setHoverState('none', null, null);
   }
 
   /** 状态变化时才更新 cursor / ring（避免无意义重画） */
-  private setHoverState(next: HoverState, nodeId: string | null): void {
-    if (next === this.hoverState && nodeId === this.hoverNodeId) return;
+  private setHoverState(next: HoverState, nodeId: string | null, edgeId: string | null): void {
+    if (next === this.hoverState && nodeId === this.hoverNodeId && edgeId === this.hoverEdgeId) return;
 
     const oldNodeId = this.hoverNodeId;
+    const oldEdgeId = this.hoverEdgeId;
     this.hoverState = next;
     this.hoverNodeId = nodeId;
+    this.hoverEdgeId = edgeId;
 
     // cursor
     if (next === 'node-center') this.domElement.style.cursor = 'grab';
     else if (next === 'node-edge') this.domElement.style.cursor = 'crosshair';
+    else if (next === 'edge') this.domElement.style.cursor = 'pointer';
     else this.domElement.style.cursor = '';
 
     // 高亮环：仅在 node-edge 时显示
@@ -242,9 +289,13 @@ export class InteractionController {
       this.hideHoverRing();
     }
 
-    // hover 节点变化通知（用于上层切换 nodeRenderer.setHighlight）
+    // 节点 hover 变化通知（用于上层切换 nodeRenderer.setHighlight）
     if (oldNodeId !== nodeId) {
       this.callbacks.onHoverChange?.(nodeId);
+    }
+    // 边 hover 变化通知
+    if (oldEdgeId !== edgeId) {
+      this.callbacks.onEdgeHoverChange?.(edgeId);
     }
   }
 
@@ -279,14 +330,22 @@ export class InteractionController {
 
     const wasDragMode = this.dragMode;
     const wasNodeId = this.dragNodeId;
+    const wasEdgeId = this.dragEdgeId;
     const moved = this.dragMoved;
 
     // 重置状态先（避免后续回调里再次进入）
     this.dragMode = 'none';
     this.dragNodeId = null;
+    this.dragEdgeId = null;
     this.removeGhostEdge();
     // 拖动结束后清光标，由下一次 mousemove 触发的 hover 检测重新设置
     this.domElement.style.cursor = '';
+
+    // 单击边（click-edge 不参与拖动）
+    if (wasDragMode === 'click-edge' && wasEdgeId && !moved) {
+      this.callbacks.onEdgeSelect?.(wasEdgeId);
+      return;
+    }
 
     if (!moved) {
       // 单击节点

@@ -3,6 +3,13 @@ import { FONT_URLS, type FontKey } from './fonts';
 
 const cache = new Map<FontKey, Promise<opentype.Font>>();
 
+/** 字体加载耗时（v1.3 § 10.2 perf 指标） */
+const loadStats: Partial<Record<FontKey, { ms: number; sizeKb: number }>> = {};
+
+export function getFontLoadStats(): Partial<Record<FontKey, { ms: number; sizeKb: number }>> {
+  return { ...loadStats };
+}
+
 export function loadFont(key: FontKey): Promise<opentype.Font> {
   let p = cache.get(key);
   if (p) return p;
@@ -13,9 +20,9 @@ export function loadFont(key: FontKey): Promise<opentype.Font> {
     const buffer = await fetch(url).then((r) => r.arrayBuffer());
     const font = opentype.parse(buffer);
     const dt = performance.now() - t0;
-    console.info(
-      `[font-loader] ${key} loaded in ${dt.toFixed(1)}ms (${(buffer.byteLength / 1024).toFixed(0)}KB)`,
-    );
+    const sizeKb = buffer.byteLength / 1024;
+    loadStats[key] = { ms: dt, sizeKb };
+    console.info(`[font-loader] ${key} loaded in ${dt.toFixed(1)}ms (${sizeKb.toFixed(0)}KB)`);
     return font;
   })();
 

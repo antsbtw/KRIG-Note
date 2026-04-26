@@ -9,6 +9,10 @@ import { EdgeRenderer } from '../rendering/EdgeRenderer';
 import { SvgGeometryContent } from '../rendering/contents/SvgGeometryContent';
 import { CircleShape } from '../rendering/shapes/CircleShape';
 import { EditOverlay, type EditTarget } from '../rendering/edit/EditOverlay';
+import { loadPerfConfig, savePerfConfig, type PerfConfig } from '../perf/PerfConfig';
+import { autoTune } from '../perf/AutoTuner';
+import { AdaptivePolicy, type AdaptiveState } from '../perf/AdaptivePolicy';
+import { SessionRecorder, appendHistory } from '../perf/PerfHistory';
 
 /**
  * GraphEngine — L5 GraphView 内部的渲染引擎抽象基类
@@ -89,6 +93,21 @@ export interface LayoutAlgo {
   ): Promise<Map<string, { x: number; y: number }>>;
 }
 
+/**
+ * v1.3 § 10.2：渲染层运行时性能数据。
+ * GraphEngine.getPerfStats() 暴露给 PerfPanel / 退化策略读取。
+ */
+export interface PerfStats {
+  /** 最后一次单节点创建耗时（ms） */
+  lastNodeMs: number;
+  /** 当前场景中节点数 */
+  totalNodes: number;
+  /** 最后一次全场 rerender 累计耗时（ms） */
+  totalSetupMs: number;
+  /** 当前 fps（500ms 滑动窗口） */
+  fps: number;
+}
+
 // ── 基类 ──
 
 export abstract class GraphEngine {
@@ -131,7 +150,27 @@ export abstract class GraphEngine {
   protected commandStack = new CommandStack();
 
   protected selectedId: string | null = null;
+  /** v1.3 § 7.3：被选中的是节点还是边（决定 Delete 删谁、setHighlight 走哪条路径） */
+  protected selectedKind: 'node' | 'edge' | null = null;
   protected hoveredId: string | null = null;
+  protected hoveredEdgeId: string | null = null;
+
+  /** v1.3 § 10.2：性能监控数据（PerfPanel 读取 / 退化策略读取） */
+  protected perfStats: PerfStats = {
+    lastNodeMs: 0,
+    totalNodes: 0,
+    totalSetupMs: 0,
+    fps: 0,
+  };
+  /** fps 采样窗口 */
+  private fpsFrames = 0;
+  private fpsLastT = performance.now();
+
+  /** v1.3 § 10.3：自适应配置 + 退化策略 + 历史记录 */
+  private perfConfig: PerfConfig;
+  private adaptivePolicy: AdaptivePolicy;
+  private sessionRecorder = new SessionRecorder();
+  private adaptiveState: AdaptiveState = { hoverPaused: false, lodEnabled: false };
 
   /** 数据变更回调（外层接 SurrealDB） */
   onChange: ((event: ChangeEvent) => void) | null = null;
@@ -142,6 +181,28 @@ export abstract class GraphEngine {
     this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 1000);
     this.camera.position.set(0, 0, 100);
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+
+    // 加载 PerfConfig + AutoTuner 调整（v1.3 § 10.3）
+    const loaded = loadPerfConfig();
+    const tuned = autoTune(loaded);
+    if (tuned.result.applied) {
+      console.info('[perf] auto-tuned thresholds:', tuned.result.reason);
+      savePerfConfig(tuned.config);
+    }
+    this.perfConfig = tuned.config;
+    this.adaptivePolicy = new AdaptivePolicy(() => this.perfConfig, {
+      onStateChange: (s) => { this.adaptiveState = s; },
+      onHoverPauseChange: (paused) => {
+        this.interaction?.setHoverPaused(paused);
+        this.sessionRecorder.recordDegradation();
+      },
+      onLodChange: (enabled) => {
+        // LOD 启用时，下次 rerender 会按新 lodNodeCount 决定是否 skip content
+        // 当前仅记录状态，不强制立即 rerender（避免抖动）
+        console.info(`[perf] LOD ${enabled ? 'enabled' : 'disabled'}`);
+        if (enabled) this.sessionRecorder.recordDegradation();
+      },
+    });
 
     this.css2dRenderer = new CSS2DRenderer();
     // CSS2DRenderer 的 dom 是 div，需要绝对定位覆盖在 webgl canvas 上，
@@ -193,9 +254,11 @@ export abstract class GraphEngine {
           // applyNodePosition 内部只是把 nodes[].position 同步并重算边
           this.commandStack.execute(new MoveNodeCommand(this, id, fromX, fromY, toX, toY));
         },
-        onSelect: (id) => this.setSelected(id),
+        onSelect: (id) => this.setSelected(id, id ? 'node' : null),
+        onEdgeSelect: (id) => this.setSelected(id, 'edge'),
         onEdgeCreate: (sourceId, targetId) => this.addEdgeBySource(sourceId, targetId),
         onHoverChange: (id) => this.applyHoverHighlight(id),
+        onEdgeHoverChange: (id) => this.applyEdgeHoverHighlight(id),
         onNodeDoubleClick: (id) => this.enterEditMode(id),
         onEdgeDoubleClick: (id) => this.enterEditModeForEdge(id),
       },
@@ -215,6 +278,9 @@ export abstract class GraphEngine {
       cancelAnimationFrame(this.animationId);
       this.animationId = null;
     }
+    // v1.3 § 10.3：落盘本次会话的 perf 摘要（AutoTuner 下次启动用）
+    appendHistory(this.sessionRecorder.finalize());
+
     this.editOverlay?.dispose();
     this.editOverlay = null;
     this.interaction?.detach();
@@ -290,12 +356,20 @@ export abstract class GraphEngine {
   deleteSelected(): void {
     if (!this.selectedId) return;
     const id = this.selectedId;
-    const node = this.nodes.find((n) => n.id === id);
-    if (!node) return;
-    // 找出关联的边（都要一起删除以维持图完整性）
-    const relatedEdges = this.edges.filter((e) => e.source === id || e.target === id);
-    this.commandStack.execute(new RemoveNodeCommand(this, node, relatedEdges));
+
+    if (this.selectedKind === 'edge') {
+      const edge = this.edges.find((e) => e.id === id);
+      if (!edge) return;
+      this.commandStack.execute(new RemoveEdgeCommand(this, edge));
+    } else {
+      const node = this.nodes.find((n) => n.id === id);
+      if (!node) return;
+      // 找出关联的边（都要一起删除以维持图完整性）
+      const relatedEdges = this.edges.filter((e) => e.source === id || e.target === id);
+      this.commandStack.execute(new RemoveNodeCommand(this, node, relatedEdges));
+    }
     this.selectedId = null;
+    this.selectedKind = null;
   }
 
   /** 改节点 label（Atom[] 形态），入 Command 栈 */
@@ -373,6 +447,7 @@ export abstract class GraphEngine {
     if (!this.editOverlay) return;
     const edge = this.edges.find((e) => e.id === edgeId);
     if (!edge) return;
+    const edgeGroup = this.edgeLines.get(edgeId);
     const sourceGroup = this.nodeGroups.get(edge.source);
     const targetGroup = this.nodeGroups.get(edge.target);
     if (!sourceGroup || !targetGroup) return;
@@ -380,18 +455,46 @@ export abstract class GraphEngine {
     // 隐藏边 label（避免和编辑器重叠）
     this.setEdgeLabelVisible(edgeId, false);
 
-    // 浮层位置 = 两节点屏幕中点（边曲线的视觉中点附近）
-    const sScreen = this.worldToScreen(sourceGroup.position);
-    const tScreen = this.worldToScreen(targetGroup.position);
-    const screenX = (sScreen.x + tScreen.x) / 2;
-    const screenY = (sScreen.y + tScreen.y) / 2;
+    // 浮层位置：直接取曲线中段顶点（含 bundle 弧线偏移，且不受 label 几何
+    // origin 偏左偏右影响）。
+    // - 直线: BufferGeometry 只有 2 个端点，中段插值
+    // - 弧线: BEZIER_SEGMENTS+1 个采样点，中段就是弧顶
+    let worldPos: THREE.Vector3;
+    const line = edgeGroup?.children[0];
+    if (line && line instanceof THREE.Line) {
+      const pos = line.geometry.getAttribute('position');
+      if (pos && pos.count >= 2) {
+        if (pos.count === 2) {
+          // 直线：手工插值中点
+          const x = (pos.getX(0) + pos.getX(1)) / 2;
+          const y = (pos.getY(0) + pos.getY(1)) / 2;
+          worldPos = new THREE.Vector3(x, y, 0);
+        } else {
+          const mid = Math.floor(pos.count / 2);
+          worldPos = new THREE.Vector3(pos.getX(mid), pos.getY(mid), 0);
+        }
+      } else {
+        worldPos = new THREE.Vector3(
+          (sourceGroup.position.x + targetGroup.position.x) / 2,
+          (sourceGroup.position.y + targetGroup.position.y) / 2,
+          0,
+        );
+      }
+    } else {
+      worldPos = new THREE.Vector3(
+        (sourceGroup.position.x + targetGroup.position.x) / 2,
+        (sourceGroup.position.y + targetGroup.position.y) / 2,
+        0,
+      );
+    }
+    const screen = this.worldToScreen(worldPos);
 
     this.editOverlay.enter({
       kind: 'edge',
       id: edgeId,
       atoms: edge.label ?? [],
-      screenX,
-      screenY,
+      screenX: screen.x,
+      screenY: screen.y,
       // 边浮窗也走 below 模式：浮在中点下方 16px，含指针，与节点视觉一致
       anchorOffsetY: 16,
     });
@@ -444,19 +547,30 @@ export abstract class GraphEngine {
 
   // ── 选中状态 ──
 
-  protected setSelected(id: string | null): void {
-    if (this.selectedId === id) return;
+  protected setSelected(id: string | null, kind: 'node' | 'edge' | null = null): void {
+    // 自动推断 kind（兼容旧 setSelected(id)）
+    if (id !== null && kind === null) {
+      kind = this.nodeGroups.has(id) ? 'node' : this.edgeLines.has(id) ? 'edge' : null;
+    }
+    if (id === null) kind = null;
+
+    if (this.selectedId === id && this.selectedKind === kind) return;
     this.selectedId = id;
+    this.selectedKind = kind;
     this.applySelectionHighlight();
     this.onChange?.({ type: 'selection', selectedId: id });
   }
 
   /**
    * 高亮优先级（v1.3 § 7.3）：selected > hover > default
+   * 同时刷新所有节点 + 所有边。
    */
   protected applySelectionHighlight(): void {
     for (const [nodeId, group] of this.nodeGroups) {
-      this.nodeRenderer.setHighlight(group, this.computeHighlightMode(nodeId));
+      this.nodeRenderer.setHighlight(group, this.computeNodeHighlightMode(nodeId));
+    }
+    for (const [edgeId, group] of this.edgeLines) {
+      this.edgeRenderer.setHighlight(group, this.computeEdgeHighlightMode(edgeId));
     }
   }
 
@@ -467,17 +581,38 @@ export abstract class GraphEngine {
 
     if (oldId && oldId !== nodeId) {
       const oldGroup = this.nodeGroups.get(oldId);
-      if (oldGroup) this.nodeRenderer.setHighlight(oldGroup, this.computeHighlightMode(oldId));
+      if (oldGroup) this.nodeRenderer.setHighlight(oldGroup, this.computeNodeHighlightMode(oldId));
     }
     if (nodeId) {
       const newGroup = this.nodeGroups.get(nodeId);
-      if (newGroup) this.nodeRenderer.setHighlight(newGroup, this.computeHighlightMode(nodeId));
+      if (newGroup) this.nodeRenderer.setHighlight(newGroup, this.computeNodeHighlightMode(nodeId));
     }
   }
 
-  private computeHighlightMode(nodeId: string): 'default' | 'hover' | 'selected' {
-    if (nodeId === this.selectedId) return 'selected';
+  /** 边 hover 切换：仅刷新涉及到的边 */
+  protected applyEdgeHoverHighlight(edgeId: string | null): void {
+    const oldId = this.hoveredEdgeId;
+    this.hoveredEdgeId = edgeId;
+
+    if (oldId && oldId !== edgeId) {
+      const oldGroup = this.edgeLines.get(oldId);
+      if (oldGroup) this.edgeRenderer.setHighlight(oldGroup, this.computeEdgeHighlightMode(oldId));
+    }
+    if (edgeId) {
+      const newGroup = this.edgeLines.get(edgeId);
+      if (newGroup) this.edgeRenderer.setHighlight(newGroup, this.computeEdgeHighlightMode(edgeId));
+    }
+  }
+
+  private computeNodeHighlightMode(nodeId: string): 'default' | 'hover' | 'selected' {
+    if (this.selectedKind === 'node' && nodeId === this.selectedId) return 'selected';
     if (nodeId === this.hoveredId) return 'hover';
+    return 'default';
+  }
+
+  private computeEdgeHighlightMode(edgeId: string): 'default' | 'hover' | 'selected' {
+    if (this.selectedKind === 'edge' && edgeId === this.selectedId) return 'selected';
+    if (edgeId === this.hoveredEdgeId) return 'hover';
     return 'default';
   }
 
@@ -597,6 +732,17 @@ export abstract class GraphEngine {
    * 排序规则：先按 (source, target) 字典序，再按 edge.id —— 保证两次渲染索引稳定，
    * 避免每次拖动都重排导致弧线"跳动"。
    */
+  /**
+   * 计算同一对节点（无序对）之间的所有边及当前边的索引。
+   *
+   * 关键：A→B 和 B→A 视为同一无序对（曲线视觉占位重叠），但**反向边的法向量
+   * 也是反的**。EdgeRenderer 的 curveOffsetFactor 对反向边输入 -k 才能让弧
+   * 落到对侧。
+   *
+   * 实施：bundle 包含所有同对边，按 id 稳定排序。返回 effectiveIndex 已对
+   * 反向边取负偏移系数（反向边 effectiveIndex = - rawIndex + (total-1)/2 * 2
+   * = (total-1) - rawIndex）。
+   */
   protected computeEdgeBundle(edge: GraphEdge): { index: number; total: number } {
     const a = edge.source < edge.target ? edge.source : edge.target;
     const b = edge.source < edge.target ? edge.target : edge.source;
@@ -607,7 +753,15 @@ export abstract class GraphEngine {
         return ea === a && eb === b;
       })
       .sort((x, y) => x.id.localeCompare(y.id));
-    return { index: sameBundle.findIndex((e) => e.id === edge.id), total: sameBundle.length };
+    const total = sameBundle.length;
+    const rawIndex = sameBundle.findIndex((e) => e.id === edge.id);
+    // bundle 主方向 = source 字典序较小的方向 (a→b)
+    // 当前边方向：edge.source === a 即同向，否则反向
+    const isForward = edge.source === a;
+    // 反向边镜像 index 让 curveOffsetFactor(idx, total) 返回相反符号
+    // 公式：mirroredIdx = (total - 1) - rawIndex
+    const index = isForward ? rawIndex : (total - 1) - rawIndex;
+    return { index, total };
   }
 
   /** 给定 group，从 shape mesh 的 userData 读半径（CircleShape 在 createMesh 写入） */
@@ -705,6 +859,7 @@ export abstract class GraphEngine {
   async rerender(): Promise<void> {
     // 用本地令牌避免重入导致旧 rerender 的节点出现在新场景里
     const token = ++this.rerenderToken;
+    const setupT0 = performance.now();
 
     for (const group of this.nodeGroups.values()) {
       this.scene.remove(group);
@@ -718,9 +873,13 @@ export abstract class GraphEngine {
     this.edgeLines.clear();
     this.edgeLabels.clear();
 
+    // v1.3 § 10.3：LOD 状态决定是否跳过 content 渲染（节点超阈值时省开销）
+    const skipContent = this.adaptiveState.lodEnabled;
+
     // 节点：异步并行创建（保留顺序需求时改 for-await）
     const nodeJobs = this.nodes.map(async (node) => {
-      const group = await this.nodeRenderer.createNode(node);
+      const tNode = performance.now();
+      const group = await this.nodeRenderer.createNode(node, { skipContent });
       if (token !== this.rerenderToken) {
         // 已被新 rerender 替代，丢弃
         this.nodeRenderer.dispose(group);
@@ -729,6 +888,7 @@ export abstract class GraphEngine {
       group.userData.nodeId = node.id;
       this.scene.add(group);
       this.nodeGroups.set(node.id, group);
+      this.perfStats.lastNodeMs = performance.now() - tNode;
     });
     await Promise.all(nodeJobs);
     if (token !== this.rerenderToken) return;
@@ -737,6 +897,9 @@ export abstract class GraphEngine {
     for (const edge of this.edges) {
       this.redrawEdge(edge);
     }
+
+    this.perfStats.totalNodes = this.nodes.length;
+    this.perfStats.totalSetupMs = performance.now() - setupT0;
   }
 
   /** rerender 重入令牌（避免异步节点创建的并发问题） */
@@ -760,9 +923,42 @@ export abstract class GraphEngine {
     const tick = () => {
       this.renderer.render(this.scene, this.camera);
       this.css2dRenderer.render(this.scene, this.camera);
+
+      // fps 采样：500ms 滑动窗口
+      this.fpsFrames++;
+      const now = performance.now();
+      const dt = now - this.fpsLastT;
+      if (dt >= 500) {
+        this.perfStats.fps = (this.fpsFrames * 1000) / dt;
+        this.fpsFrames = 0;
+        this.fpsLastT = now;
+      }
+
+      // v1.3 § 10.3：自适应策略 + 会话记录
+      this.adaptivePolicy.update(this.perfStats.fps, this.perfStats.totalNodes);
+      this.sessionRecorder.recordFrame(this.perfStats.fps, this.perfStats.totalNodes);
+
       this.animationId = requestAnimationFrame(tick);
     };
     tick();
+  }
+
+  /** v1.3 § 10.2：取当前 perfStats 快照 */
+  getPerfStats(): PerfStats {
+    return { ...this.perfStats };
+  }
+
+  /** v1.3 § 10.3：取自适应状态 + 当前配置（PerfPanel 显示用） */
+  getAdaptiveState(): AdaptiveState {
+    return { ...this.adaptiveState };
+  }
+  getPerfConfig(): PerfConfig {
+    return JSON.parse(JSON.stringify(this.perfConfig)) as PerfConfig;
+  }
+  /** PerfPanel 用户改了配置后调，立即生效并落盘 */
+  setPerfConfig(config: PerfConfig): void {
+    this.perfConfig = config;
+    savePerfConfig(config);
   }
 }
 
@@ -811,6 +1007,13 @@ class AddEdgeCommand implements Command {
   constructor(private engine: GraphEngine, private edge: GraphEdge) {}
   execute(): void { this.engine._addEdge(this.edge); }
   undo(): void { this.engine._removeEdge(this.edge.id); }
+}
+
+class RemoveEdgeCommand implements Command {
+  readonly name = 'remove-edge';
+  constructor(private engine: GraphEngine, private edge: GraphEdge) {}
+  execute(): void { this.engine._removeEdge(this.edge.id); }
+  undo(): void { this.engine._addEdge(this.edge); }
 }
 
 class MoveNodeCommand implements Command {
