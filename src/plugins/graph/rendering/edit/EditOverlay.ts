@@ -115,7 +115,7 @@ export class EditOverlay {
     // 创建 PM 编辑器
     this.editor = new GraphEditor(pmMount, target.atoms);
 
-    // popup 级 keydown：处理 Esc / Cmd+Enter（捕获阶段，先于 PM keymap）
+    // popup 级 keydown - capture 阶段：拦截 Esc / Cmd+Enter（先于 PM keymap）
     popup.addEventListener(
       'keydown',
       (e) => {
@@ -131,6 +131,13 @@ export class EditOverlay {
       },
       { capture: true },
     );
+
+    // popup 级 keydown - bubble 阶段：阻止所有按键冒泡到 window，避免
+    // GraphView 全局快捷键（Backspace/Delete deleteSelected, Cmd+Z undo）
+    // 误操作图谱。PM 已经在 popup 之内处理过，此处只是阻止外溢。
+    popup.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+    });
 
     // autofocus
     setTimeout(() => {

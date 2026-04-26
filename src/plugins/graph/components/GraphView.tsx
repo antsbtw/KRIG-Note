@@ -215,6 +215,11 @@ export function GraphView() {
   useEffect(() => {
     if (!activeGraphId) return;
     const onKey = (e: KeyboardEvent) => {
+      // 编辑器浮层活跃时，所有快捷键交给浮层内部处理（v1.3 § 7.3 编辑期间
+      // 不应触发图谱级 Delete / Cmd+Z 等动作）
+      const target = e.target as HTMLElement | null;
+      if (target?.closest?.('.krig-edit-popup')) return;
+
       const engine = engineRef.current;
       if (!engine) return;
       const meta = e.metaKey || e.ctrlKey;
