@@ -39,9 +39,11 @@ export interface InteractionCallbacks {
   onEdgeDoubleClick?: (edgeId: string) => void;
   /** 单击边 → 选中（v1.3 § 7.2） */
   onEdgeSelect?: (edgeId: string) => void;
+  /** 鼠标悬停的边变化通知（hover 视觉反馈） */
+  onEdgeHoverChange?: (edgeId: string | null) => void;
 }
 
-type HoverState = 'none' | 'node-center' | 'node-edge';
+type HoverState = 'none' | 'node-center' | 'node-edge' | 'edge';
 
 export class InteractionController {
   private raycaster = new THREE.Raycaster();
@@ -67,6 +69,7 @@ export class InteractionController {
   /** 当前 hover 的状态 + 节点 id（None 时 id 为 null） */
   private hoverState: HoverState = 'none';
   private hoverNodeId: string | null = null;
+  private hoverEdgeId: string | null = null;
   /** 最近一次 mousemove 事件，rAF 节流用 */
   private pendingMoveEvent: MouseEvent | null = null;
   private rafScheduled = false;
@@ -224,35 +227,45 @@ export class InteractionController {
 
   /** rAF 节流的 hover 检测：根据鼠标位置更新 cursor + 高亮环 */
   private updateHover(e: MouseEvent): void {
+    // 优先级：节点 > 边
     const nodeId = this.pickNodeAtScreen(e.clientX, e.clientY);
-    if (!nodeId) {
-      this.setHoverState('none', null);
+    if (nodeId) {
+      const group = this.getNodeGroups().get(nodeId);
+      if (group) {
+        const world = this.viewport.screenToWorld(e.clientX, e.clientY);
+        if (this.isOnNodeEdge(group, world.x, world.y)) {
+          this.setHoverState('node-edge', nodeId, null);
+        } else {
+          this.setHoverState('node-center', nodeId, null);
+        }
+        return;
+      }
+    }
+
+    // 节点没命中 → 试边
+    const edgeId = this.pickEdgeAtScreen(e.clientX, e.clientY);
+    if (edgeId) {
+      this.setHoverState('edge', null, edgeId);
       return;
     }
-    const group = this.getNodeGroups().get(nodeId);
-    if (!group) {
-      this.setHoverState('none', null);
-      return;
-    }
-    const world = this.viewport.screenToWorld(e.clientX, e.clientY);
-    if (this.isOnNodeEdge(group, world.x, world.y)) {
-      this.setHoverState('node-edge', nodeId);
-    } else {
-      this.setHoverState('node-center', nodeId);
-    }
+
+    this.setHoverState('none', null, null);
   }
 
   /** 状态变化时才更新 cursor / ring（避免无意义重画） */
-  private setHoverState(next: HoverState, nodeId: string | null): void {
-    if (next === this.hoverState && nodeId === this.hoverNodeId) return;
+  private setHoverState(next: HoverState, nodeId: string | null, edgeId: string | null): void {
+    if (next === this.hoverState && nodeId === this.hoverNodeId && edgeId === this.hoverEdgeId) return;
 
     const oldNodeId = this.hoverNodeId;
+    const oldEdgeId = this.hoverEdgeId;
     this.hoverState = next;
     this.hoverNodeId = nodeId;
+    this.hoverEdgeId = edgeId;
 
     // cursor
     if (next === 'node-center') this.domElement.style.cursor = 'grab';
     else if (next === 'node-edge') this.domElement.style.cursor = 'crosshair';
+    else if (next === 'edge') this.domElement.style.cursor = 'pointer';
     else this.domElement.style.cursor = '';
 
     // 高亮环：仅在 node-edge 时显示
@@ -263,9 +276,13 @@ export class InteractionController {
       this.hideHoverRing();
     }
 
-    // hover 节点变化通知（用于上层切换 nodeRenderer.setHighlight）
+    // 节点 hover 变化通知（用于上层切换 nodeRenderer.setHighlight）
     if (oldNodeId !== nodeId) {
       this.callbacks.onHoverChange?.(nodeId);
+    }
+    // 边 hover 变化通知
+    if (oldEdgeId !== edgeId) {
+      this.callbacks.onEdgeHoverChange?.(edgeId);
     }
   }
 

@@ -149,6 +149,7 @@ export abstract class GraphEngine {
   /** v1.3 § 7.3：被选中的是节点还是边（决定 Delete 删谁、setHighlight 走哪条路径） */
   protected selectedKind: 'node' | 'edge' | null = null;
   protected hoveredId: string | null = null;
+  protected hoveredEdgeId: string | null = null;
 
   /** v1.3 § 10.2：性能监控数据（PerfPanel 读取 / 退化策略读取） */
   protected perfStats: PerfStats = {
@@ -225,6 +226,7 @@ export abstract class GraphEngine {
         onEdgeSelect: (id) => this.setSelected(id, 'edge'),
         onEdgeCreate: (sourceId, targetId) => this.addEdgeBySource(sourceId, targetId),
         onHoverChange: (id) => this.applyHoverHighlight(id),
+        onEdgeHoverChange: (id) => this.applyEdgeHoverHighlight(id),
         onNodeDoubleClick: (id) => this.enterEditMode(id),
         onEdgeDoubleClick: (id) => this.enterEditModeForEdge(id),
       },
@@ -523,6 +525,21 @@ export abstract class GraphEngine {
     }
   }
 
+  /** 边 hover 切换：仅刷新涉及到的边 */
+  protected applyEdgeHoverHighlight(edgeId: string | null): void {
+    const oldId = this.hoveredEdgeId;
+    this.hoveredEdgeId = edgeId;
+
+    if (oldId && oldId !== edgeId) {
+      const oldGroup = this.edgeLines.get(oldId);
+      if (oldGroup) this.edgeRenderer.setHighlight(oldGroup, this.computeEdgeHighlightMode(oldId));
+    }
+    if (edgeId) {
+      const newGroup = this.edgeLines.get(edgeId);
+      if (newGroup) this.edgeRenderer.setHighlight(newGroup, this.computeEdgeHighlightMode(edgeId));
+    }
+  }
+
   private computeNodeHighlightMode(nodeId: string): 'default' | 'hover' | 'selected' {
     if (this.selectedKind === 'node' && nodeId === this.selectedId) return 'selected';
     if (nodeId === this.hoveredId) return 'hover';
@@ -531,6 +548,7 @@ export abstract class GraphEngine {
 
   private computeEdgeHighlightMode(edgeId: string): 'default' | 'hover' | 'selected' {
     if (this.selectedKind === 'edge' && edgeId === this.selectedId) return 'selected';
+    if (edgeId === this.hoveredEdgeId) return 'hover';
     return 'default';
   }
 
