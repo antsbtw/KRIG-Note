@@ -873,10 +873,13 @@ export abstract class GraphEngine {
     this.edgeLines.clear();
     this.edgeLabels.clear();
 
+    // v1.3 § 10.3：LOD 状态决定是否跳过 content 渲染（节点超阈值时省开销）
+    const skipContent = this.adaptiveState.lodEnabled;
+
     // 节点：异步并行创建（保留顺序需求时改 for-await）
     const nodeJobs = this.nodes.map(async (node) => {
       const tNode = performance.now();
-      const group = await this.nodeRenderer.createNode(node);
+      const group = await this.nodeRenderer.createNode(node, { skipContent });
       if (token !== this.rerenderToken) {
         // 已被新 rerender 替代，丢弃
         this.nodeRenderer.dispose(group);

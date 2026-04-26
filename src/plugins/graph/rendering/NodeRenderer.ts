@@ -17,7 +17,18 @@ export class NodeRenderer {
     private content: ContentRenderer,
   ) {}
 
-  async createNode(node: GraphNode): Promise<THREE.Group> {
+  /**
+   * 创建节点 group。
+   *
+   * @param node - 节点数据
+   * @param options.skipContent - LOD 模式：跳过 content 渲染，仅画 shape。
+   *   场景中 children[1] 仍占位（空 Group）保持 children 索引稳定（避免
+   *   updateContent / dispose / setHighlight 越界）。
+   */
+  async createNode(
+    node: GraphNode,
+    options: { skipContent?: boolean } = {},
+  ): Promise<THREE.Group> {
     const group = new THREE.Group();
     group.userData.id = node.id;
     if (node.position) {
@@ -25,6 +36,13 @@ export class NodeRenderer {
     }
 
     const shapeMesh = this.shape.createMesh(node);
+
+    if (options.skipContent) {
+      // LOD：仅 shape，content 用空 Group 占位
+      group.add(shapeMesh, new THREE.Group());
+      return group;
+    }
+
     const contentObj = await this.content.render(node.label);
 
     // 内容 bbox 反馈给形状（图谱 no-op；思维导图等变种生效）

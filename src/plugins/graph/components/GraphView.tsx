@@ -332,7 +332,12 @@ export function GraphView() {
         左键拖动节点 · 节点边缘拖出新边 · 中键/右键拖动平移 · 滚轮缩放
       </div>
 
-      <PerfPanel getStats={() => engineRef.current?.getPerfStats() ?? null} />
+      <PerfPanel
+        getStats={() => engineRef.current?.getPerfStats() ?? null}
+        getAdaptiveState={() => engineRef.current?.getAdaptiveState() ?? null}
+        getPerfConfig={() => engineRef.current?.getPerfConfig() ?? null}
+        setPerfConfig={(c) => engineRef.current?.setPerfConfig(c)}
+      />
     </div>
   );
 }
