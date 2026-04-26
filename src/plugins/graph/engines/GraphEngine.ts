@@ -451,8 +451,14 @@ export abstract class GraphEngine {
     const radius = Math.min(this.getGroupRadius(sourceGroup), this.getGroupRadius(targetGroup));
     const { index, total } = this.computeEdgeBundle(edge);
 
-    // 异步创建：边可能在 createEdge 进行中被删除，token 校验
-    const myToken = ++this.edgeRedrawToken;
+    // 异步创建：用 per-edge token 避免同一条边的多次 redrawEdge 互相覆盖
+    // （拖动期间频繁 redraw 时只保留最新结果）。
+    // 注意：每条边独立 token，不会因为画其他边而失效。
+    const tokens = this.edgeRedrawTokens;
+    const myToken = (tokens.get(edge.id) ?? 0) + 1;
+    tokens.set(edge.id, myToken);
+
+    const edgeId = edge.id;
     void this.edgeRenderer
       .createEdge({
         source: sourceGroup.position,
@@ -464,26 +470,27 @@ export abstract class GraphEngine {
         label: edge.label ?? [],
       })
       .then((group) => {
-        if (myToken !== this.edgeRedrawToken) {
+        // 该 edge 已经被新一次 redrawEdge 替代（如拖动期间）
+        if (tokens.get(edgeId) !== myToken) {
           this.edgeRenderer.dispose(group);
           return;
         }
         // 边在异步等待期间可能被删除
-        if (!this.edges.find((e) => e.id === edge.id)) {
+        if (!this.edges.find((e) => e.id === edgeId)) {
           this.edgeRenderer.dispose(group);
+          tokens.delete(edgeId);
           return;
         }
-        group.userData = { edgeId: edge.id };
+        group.userData = { edgeId };
         this.scene.add(group);
-        this.edgeLines.set(edge.id, group);
-        // label 是 group.children[2]，单独索引到 edgeLabels 便于 setVisible 等操作
+        this.edgeLines.set(edgeId, group);
         const labelObj = group.children[2];
-        if (labelObj) this.edgeLabels.set(edge.id, labelObj);
+        if (labelObj) this.edgeLabels.set(edgeId, labelObj);
       });
   }
 
-  /** edge 异步渲染重入令牌 */
-  private edgeRedrawToken = 0;
+  /** edge 异步渲染 per-edge token（避免拖动期间老 createEdge 回调污染场景） */
+  private edgeRedrawTokens = new Map<string, number>();
 
   /**
    * 计算同一对节点（无序对）之间的所有边及当前边的索引。
