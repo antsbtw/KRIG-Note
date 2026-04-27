@@ -193,6 +193,12 @@ export function registerGraphIpcHandlers(ctx: PluginContext): void {
     await graphViewStore.setActiveLayout(graphId, layoutId);
   });
 
+  // Graph 主表：切换 ViewMode（v1.6 B3）
+  ipcMain.handle(IPC.GRAPH_SET_ACTIVE_VIEW_MODE, async (_event, graphId: string, viewModeId: string) => {
+    if (!isDBReady()) return;
+    await graphViewStore.setActiveViewMode(graphId, viewModeId);
+  });
+
   // Geometry CRUD
   ipcMain.handle(IPC.GRAPH_GEOMETRY_CREATE, async (_event, record: Omit<GraphGeometryRecord, 'created_at'>) => {
     if (!isDBReady()) return null;

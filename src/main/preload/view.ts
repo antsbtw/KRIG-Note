@@ -90,6 +90,7 @@ contextBridge.exposeInMainWorld('viewAPI', {
   // ── v1.4 graph-import：四态数据模型 ──
   graphLoadFull: (graphId: string) => ipcRenderer.invoke(IPC.GRAPH_LOAD_FULL, graphId),
   graphSetActiveLayout: (graphId: string, layoutId: string) => ipcRenderer.invoke(IPC.GRAPH_SET_ACTIVE_LAYOUT, graphId, layoutId),
+  graphSetActiveViewMode: (graphId: string, viewModeId: string) => ipcRenderer.invoke(IPC.GRAPH_SET_ACTIVE_VIEW_MODE, graphId, viewModeId),
   // Geometry
   graphGeometryCreate: (record: unknown) => ipcRenderer.invoke(IPC.GRAPH_GEOMETRY_CREATE, record),
   graphGeometryDelete: (id: string) => ipcRenderer.invoke(IPC.GRAPH_GEOMETRY_DELETE, id),

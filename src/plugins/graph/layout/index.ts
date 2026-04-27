@@ -15,3 +15,4 @@ export type {
 import './force';
 import './grid';
 import './manual';
+import './tree-hierarchy';

@@ -103,6 +103,12 @@ export interface GraphRecord {
   dimension?: 2 | 3;
   /** v1.4 graph-import 重构：当前激活布局算法 id（缺省 = 'force'） */
   active_layout?: string;
+  /**
+   * v1.6 B3 ViewMode 切换：当前激活的 ViewMode id（注册到 viewModeRegistry）。
+   * v1.4/v1.5 数据 = undefined → 渲染时回退到 active_layout 对应的 ViewMode
+   * （同 id 内置 ViewMode 默认存在：force / tree / grid）。
+   */
+  active_view_mode?: string;
   created_at: number;
   updated_at: number;
   meta?: Record<string, unknown>;
@@ -128,6 +134,8 @@ export interface IGraphStore {
   moveToFolder(id: string, folderId: string | null): Promise<void>;
   /** v1.4 graph-import：切换激活的布局算法 */
   setActiveLayout(id: string, layoutId: string): Promise<void>;
+  /** v1.6 B3：切换激活的 ViewMode */
+  setActiveViewMode(id: string, viewModeId: string): Promise<void>;
   delete(id: string): Promise<void>;
   // 节点/边 CRUD 由 graph-geometry-store / graph-intension-atom-store / graph-presentation-atom-store 接管
 }

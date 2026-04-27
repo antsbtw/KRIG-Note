@@ -92,6 +92,7 @@ export const graphViewStore: IGraphStore = {
       host_note_id: r.host_note_id ?? null,
       dimension: (r.dimension as 2 | 3) ?? DEFAULT_DIMENSION,
       active_layout: r.active_layout ?? DEFAULT_LAYOUT,
+      active_view_mode: r.active_view_mode ?? undefined,
       created_at: r.created_at || 0,
       updated_at: r.updated_at || 0,
       meta: r.meta ?? {},
@@ -158,6 +159,15 @@ export const graphViewStore: IGraphStore = {
     await db.query(
       `UPDATE type::record('graph', $id) SET active_layout = $active_layout, updated_at = $updated_at`,
       { id, active_layout: layoutId, updated_at: Date.now() },
+    );
+  },
+
+  async setActiveViewMode(id: string, viewModeId: string): Promise<void> {
+    const db = getDB();
+    if (!db) return;
+    await db.query(
+      `UPDATE type::record('graph', $id) SET active_view_mode = $active_view_mode, updated_at = $updated_at`,
+      { id, active_view_mode: viewModeId, updated_at: Date.now() },
     );
   },
 

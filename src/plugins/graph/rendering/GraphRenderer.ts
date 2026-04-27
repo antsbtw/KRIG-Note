@@ -230,6 +230,8 @@ export class GraphRenderer {
     }
 
     // ── 第一次 fit（基础几何，无 label） ──
+    // 切换 ViewMode 时 fitBox 必须重新计算（不残留上次视角）
+    this.scene.invalidateFit();
     this.scene.fitToContent();
 
     // ── Pass 4: label（异步） ──
@@ -244,7 +246,7 @@ export class GraphRenderer {
     }
 
     if (myToken !== this.loadToken) return;
-    // 加完 label 再 fit 一次
+    // 加完 label 再 fit 一次（label 退化几何会被 SceneManager 防御性跳过）
     this.scene.fitToContent();
   }
 
