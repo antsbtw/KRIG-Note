@@ -99,7 +99,6 @@ export class GraphRenderer {
     }
 
     // ── 第一次 fit（基础几何，无 label） ──
-    console.log('[GraphRenderer] before fit: scene children =', this.scene.scene.children.length, 'meshes=', this.meshes.size);
     this.scene.fitToContent();
 
     // ── Pass 4: label（异步） ──
