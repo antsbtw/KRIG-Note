@@ -353,6 +353,7 @@ export const IPC = {
   GRAPH_SET_ACTIVE: 'graph:set-active',      // navside → main：设置当前 workspace 的 activeGraphId
   GRAPH_ACTIVE_CHANGED: 'graph:active-changed',  // main → renderer：activeGraphId 变化（GraphView/NavSide 监听）
   GRAPH_MOVE_TO_FOLDER: 'graph:move-to-folder',  // v1.4: 把图移动到指定 folder（null = 根）
+  GRAPH_SET_ACTIVE_LAYOUT: 'graph:set-active-layout',  // v1.4 graph-import: 切换图谱当前布局算法
   // Graph Folder (v1.4 NavSide 重构)
   GRAPH_FOLDER_LIST: 'graph-folder:list',
   GRAPH_FOLDER_CREATE: 'graph-folder:create',
@@ -360,12 +361,24 @@ export const IPC = {
   GRAPH_FOLDER_DELETE: 'graph-folder:delete',
   GRAPH_FOLDER_MOVE: 'graph-folder:move',
   GRAPH_FOLDER_LIST_CHANGED: 'graph-folder:list-changed',  // main → renderer 广播
-  // 节点/边 CRUD（GraphView ↔ main）
-  GRAPH_LOAD_DATA: 'graph:load-data',        // GraphView → main：加载某图的 nodes+edges
-  GRAPH_NODE_SAVE: 'graph:node-save',
-  GRAPH_NODE_DELETE: 'graph:node-delete',
-  GRAPH_EDGE_SAVE: 'graph:edge-save',
-  GRAPH_EDGE_DELETE: 'graph:edge-delete',
+  // ── v1.4 graph-import：四态数据模型 IPC ──
+  GRAPH_LOAD_FULL: 'graph:load-full',                            // GraphView → main：加载图谱全部数据（geometries + intensions + presentations）
+  GRAPH_GEOMETRY_CREATE: 'graph:geometry-create',
+  GRAPH_GEOMETRY_DELETE: 'graph:geometry-delete',
+  GRAPH_INTENSION_LIST: 'graph:intension-list',
+  GRAPH_INTENSION_CREATE: 'graph:intension-create',
+  GRAPH_INTENSION_UPDATE: 'graph:intension-update',
+  GRAPH_INTENSION_DELETE: 'graph:intension-delete',
+  GRAPH_INTENSION_CREATE_BULK: 'graph:intension-create-bulk',
+  GRAPH_PRESENTATION_LIST: 'graph:presentation-list',
+  GRAPH_PRESENTATION_SET: 'graph:presentation-set',
+  GRAPH_PRESENTATION_SET_BULK: 'graph:presentation-set-bulk',
+  GRAPH_PRESENTATION_DELETE: 'graph:presentation-delete',
+  GRAPH_PRESENTATION_CLEAR_LAYOUT: 'graph:presentation-clear-layout',  // 清空指定 layout 所有 atom
+  GRAPH_PRESENTATION_CHANGED: 'graph:presentation-changed',           // main → renderer 广播
+  GRAPH_IMPORT_FROM_FILE: 'graph:import-from-file',                    // D11 实施
+  GRAPH_SUBSTANCE_LIST: 'graph:substance-list',                        // 列出所有可用 substance（v1.5 详情面板用）
+  GRAPH_SUBSTANCE_GET: 'graph:substance-get',
 
   // Web Translate
   WEB_TRANSLATE_FETCH_ELEMENT_JS: 'web-translate:fetch-element-js',

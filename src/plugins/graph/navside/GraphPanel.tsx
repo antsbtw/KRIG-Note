@@ -48,6 +48,9 @@ export function GraphPanel() {
           // "+ 图谱" 仍弹 VariantPicker 选 variant
           setPickerAnchor(ev.detail.target);
           break;
+        case 'import-graph':
+          void ops.handleImport();
+          break;
       }
     };
     window.addEventListener('navside:action', handler as EventListener);

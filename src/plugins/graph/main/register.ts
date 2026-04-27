@@ -26,6 +26,7 @@ export function register(ctx: PluginContext): void {
       actions: [
         { id: 'create-folder', label: '+ 文件夹' },
         { id: 'create-graph', label: '+ 图谱' },
+        { id: 'import-graph', label: '+ 导入' },
       ],
     },
     contentType: 'graph-list',

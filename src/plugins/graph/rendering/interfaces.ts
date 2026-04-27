@@ -1,68 +1,94 @@
 import type * as THREE from 'three';
-import type { Atom } from '../../../lib/atom-serializers/svg';
-import type { GraphNode } from '../engines/GraphEngine';
+import type { Atom } from '../../../lib/atom-serializers/types';
 
 export type HighlightMode = 'default' | 'hover' | 'selected';
 
 /**
- * 形状渲染抽象。
+ * 形状视觉参数（来自 substance.visual ⊕ presentation atom 合成）。
  *
- * 实现示例：
- * - CircleShape：图谱节点圆
- * - RoundRectShape：思维导图节点框（独立 spec 实施）
- * - DiamondShape：BPMN 网关
- * - TaskShape / EventShape：BPMN 任务 / 事件
- *
- * 详见 docs/graph/Graph-3D-Rendering-Spec.md § 3.1。
+ * 不是所有字段都对所有 shape 适用：
+ * - 圆只用 fill / border / size.width（半径 = width/2）
+ * - 矩形用 fill / border / size.width / size.height
+ * - 线只用 border（fill 忽略）
+ * 实现按需读取自己关心的字段。
  */
-export interface ShapeRenderer {
-  /** 根据节点数据创建形状 mesh */
-  createMesh(node: GraphNode): THREE.Object3D;
+export interface ShapeVisual {
+  fill?: { color?: string; opacity?: number };
+  border?: { color?: string; width?: number; style?: 'solid' | 'dashed' | 'dotted' };
+  text?: { color?: string; size?: number; font?: string; weight?: number };
+  size?: { width?: number; height?: number; depth?: number };
+}
 
-  /**
-   * 根据内容 bbox 调整形状尺寸（可选）。
-   * - 图谱 CircleShape：no-op（圆固定半径）
-   * - 思维导图 RoundRectShape：依据 bbox 调整框宽高
-   */
-  fitToContent?(mesh: THREE.Object3D, contentBBox: THREE.Box3): void;
+// ── Point 类形状（圆 / 多边形 / 矩形 / 球等） ──
 
-  /** 内容应放置的相对坐标（圆下方 / 框中心 / ...） */
-  getContentAnchor(mesh: THREE.Object3D): THREE.Vector3;
-
-  /**
-   * 应用高亮态（v1.3 § 7.3）。形状自定义高亮策略（圆改色 / 矩形描边 / 等）。
-   */
+/**
+ * Point 形状渲染器：固定形状，用视觉参数定制。
+ *
+ * 实现按 substance.visual.shape 字段选择：
+ * - 'circle'        → CircleShape
+ * - 'hexagon'       → HexagonShape
+ * - 'rounded-rect'  → RoundedRectShape
+ * - 'box'           → RoundedRectShape (alias)
+ */
+export interface PointShapeRenderer {
+  /** 创建形状 mesh */
+  createMesh(visual: ShapeVisual): THREE.Object3D;
+  /** 应用高亮态 */
   setHighlight(mesh: THREE.Object3D, mode: HighlightMode): void;
-
   dispose(mesh: THREE.Object3D): void;
 }
 
+// ── Line 类形状 ──
+
 /**
- * 内容渲染抽象。
+ * Line 形状渲染器：根据端点位置 + 视觉参数创建线段。
  *
- * 实现示例：
- * - SvgGeometryContent：SVG 几何（默认显示态）
- * - CssDomContent：CSS2DRenderer 浮层（编辑态，Phase 3 实现）
+ * v1 简化：直线连接首尾两端点。
+ * v1.5+：可加曲线 / 弧线偏移（多重图）/ 箭头。
+ */
+export interface LineShapeRenderer {
+  /**
+   * 创建 line mesh。
+   * @param points 至少 2 个端点（世界坐标）
+   * @param visual 视觉参数（border 决定线型）
+   */
+  createMesh(points: THREE.Vector3[], visual: ShapeVisual): THREE.Object3D;
+  setHighlight(mesh: THREE.Object3D, mode: HighlightMode): void;
+  dispose(mesh: THREE.Object3D): void;
+}
+
+// ── Surface 类形状 ──
+
+/**
+ * Surface 形状渲染器：根据顶点位置创建凸包多边形。
  *
- * 详见 docs/graph/Graph-3D-Rendering-Spec.md § 3.2。
+ * v1：2D 凸包（Andrew monotone chain）+ ShapeGeometry fill + LineLoop 边框。
+ */
+export interface SurfaceShapeRenderer {
+  /**
+   * 创建 surface mesh。
+   * @param vertices 至少 3 个顶点（世界坐标，将算凸包）
+   * @param visual 视觉参数（fill 决定填充，border 决定边框）
+   */
+  createMesh(vertices: Array<{ x: number; y: number }>, visual: ShapeVisual): THREE.Object3D;
+  setHighlight(mesh: THREE.Object3D, mode: HighlightMode): void;
+  dispose(mesh: THREE.Object3D): void;
+}
+
+// ── 内容（label）渲染器 ──
+
+/**
+ * 内容渲染器接口（label / 公式 / etc）。
+ *
+ * 实现：
+ * - SvgGeometryContent：Atom[] → SVG → ShapeGeometry → Mesh（默认）
  */
 export interface ContentRenderer {
-  /** Atom[] 渲染为 Three.js Object3D */
   render(atoms: Atom[]): Promise<THREE.Object3D>;
-
-  /** 渲染结果的边界盒（供 ShapeRenderer.fitToContent 使用） */
   getBBox(rendered: THREE.Object3D): THREE.Box3;
-
   dispose(rendered: THREE.Object3D): void;
 }
 
-/**
- * 形状库：变种通过实现 ShapeLibrary 提供自己的形状集合。
- *
- * 详见 docs/graph/KRIG_GraphView_Spec_v1.3.md § 10.1。
- */
-export interface ShapeLibrary {
-  getDefaultShape(): ShapeRenderer;
-  getShape(nodeType: string): ShapeRenderer;
-  registerShape(nodeType: string, renderer: ShapeRenderer): void;
-}
+// ── 旧 ShapeRenderer 类型保留作向后兼容（== PointShapeRenderer） ──
+// 既有的 CircleShape 仍可用，新代码直接用 PointShapeRenderer
+export type ShapeRenderer = PointShapeRenderer;

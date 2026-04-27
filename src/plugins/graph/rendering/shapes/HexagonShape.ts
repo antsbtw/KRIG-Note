@@ -1,28 +1,30 @@
 import * as THREE from 'three';
 import type { PointShapeRenderer, ShapeVisual, HighlightMode } from '../interfaces';
 
-const DEFAULT_RADIUS = 24;
-const SEGMENTS = 32;
-const DEFAULT_FILL = '#4a90e2';
-const DEFAULT_BORDER = '#ffffff';
+const DEFAULT_RADIUS = 32;
+const DEFAULT_FILL = '#1a1a1a';
+const DEFAULT_BORDER = '#888888';
 const HIGHLIGHT_HOVER = '#ffaa3b';
 const HIGHLIGHT_SELECTED = '#55cc88';
 
 /**
- * 圆形 shape 渲染器。
+ * 六边形 shape 渲染器（krig-layer 用）。
  *
  * 输出 Group:
- *   children[0] = fill mesh (CircleGeometry)
- *   children[1] = border line (CircleGeometry edges, LineLoop)
+ *   children[0] = fill mesh (ShapeGeometry of hexagon)
+ *   children[1] = border line (LineLoop of hexagon edges)
  *
  * 视觉合成：
- *   - radius = visual.size.width / 2（默认 24）
+ *   - radius = visual.size.width / 2（默认 32 = 64/2）
  *   - fill = visual.fill.color / opacity
- *   - border = visual.border.color / width（width 仅 WebGL 1px 限制）
+ *   - border = visual.border.color / width
  *
- * 内容锚点：圆下方（-radius - 4），让 label 不遮挡圆。
+ * "尖朝上"几何（pointy-top）— 6 个顶点逆时针：
+ *   顶点 i 角度 = π/2 + i * π/3
+ *
+ * 内容锚点：六边形下方（让 label 不遮挡）。
  */
-export class CircleShape implements PointShapeRenderer {
+export class HexagonShape implements PointShapeRenderer {
   createMesh(visual: ShapeVisual): THREE.Object3D {
     const radius = (visual.size?.width ?? DEFAULT_RADIUS * 2) / 2;
     const fillColor = visual.fill?.color ?? DEFAULT_FILL;
@@ -32,29 +34,34 @@ export class CircleShape implements PointShapeRenderer {
 
     const group = new THREE.Group();
 
+    // 6 顶点（pointy-top）
+    const vertices: THREE.Vector2[] = [];
+    for (let i = 0; i < 6; i++) {
+      const angle = Math.PI / 2 + (i * Math.PI) / 3;
+      vertices.push(new THREE.Vector2(
+        Math.cos(angle) * radius,
+        Math.sin(angle) * radius,
+      ));
+    }
+
     // ── fill ──
-    const fillGeom = new THREE.CircleGeometry(radius, SEGMENTS);
+    const shape = new THREE.Shape(vertices);
+    const fillGeom = new THREE.ShapeGeometry(shape);
     const fillMat = new THREE.MeshBasicMaterial({
       color: new THREE.Color(fillColor),
       transparent: true,
       opacity,
+      side: THREE.DoubleSide,
     });
     const fillMesh = new THREE.Mesh(fillGeom, fillMat);
     fillMesh.userData.role = 'fill';
     fillMesh.userData.defaultColor = fillColor;
     group.add(fillMesh);
 
-    // ── border（border.width > 0 才画）──
+    // ── border ──
     if (borderWidth > 0) {
-      const borderPoints: THREE.Vector3[] = [];
-      for (let i = 0; i <= SEGMENTS; i++) {
-        const angle = (i / SEGMENTS) * Math.PI * 2;
-        borderPoints.push(new THREE.Vector3(
-          Math.cos(angle) * radius,
-          Math.sin(angle) * radius,
-          0.01,
-        ));
-      }
+      const borderPoints = vertices.map((v) => new THREE.Vector3(v.x, v.y, 0.01));
+      borderPoints.push(borderPoints[0].clone());  // 闭合
       const borderGeom = new THREE.BufferGeometry().setFromPoints(borderPoints);
       const borderMat = new THREE.LineBasicMaterial({
         color: new THREE.Color(borderColor),
@@ -65,7 +72,7 @@ export class CircleShape implements PointShapeRenderer {
       group.add(borderLine);
     }
 
-    group.userData.shape = 'circle';
+    group.userData.shape = 'hexagon';
     group.userData.radius = radius;
     return group;
   }

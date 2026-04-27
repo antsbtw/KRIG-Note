@@ -1,12 +1,22 @@
-import { ipcMain } from 'electron';
+import { ipcMain, dialog } from 'electron';
 import { IPC } from '../../../shared/types';
 import type { PluginContext } from '../../../shared/plugin-types';
 import { workspaceManager } from '../../../main/workspace/manager';
 import { graphViewStore } from '../../../main/storage/graphview-store';
+import { graphGeometryStore } from '../../../main/storage/graph-geometry-store';
+import { graphIntensionAtomStore } from '../../../main/storage/graph-intension-atom-store';
+import { graphPresentationAtomStore } from '../../../main/storage/graph-presentation-atom-store';
 import { graphFolderStore } from '../../../main/storage/graph-folder-store';
 import { activityStore } from '../../../main/storage/activity-store';
 import { isDBReady } from '../../../main/storage/client';
-import type { GraphVariant, GraphNodeRecord, GraphEdgeRecord } from '../../../main/storage/types';
+import type {
+  GraphVariant,
+  GraphGeometryRecord,
+  GraphIntensionAtomRecord,
+  GraphPresentationAtomRecord,
+} from '../../../main/storage/types';
+import { substanceLibrary } from '../substance';
+import { importFromMarkdown } from './import/handler';
 
 export function registerGraphIpcHandlers(ctx: PluginContext): void {
   const getMainWindow = ctx.getMainWindow;
@@ -151,30 +161,151 @@ export function registerGraphIpcHandlers(ctx: PluginContext): void {
     broadcastFolderList();
   });
 
-  // ── 节点/边 CRUD ──
+  // ── v1.4 graph-import：四态数据 IPC ──
 
-  ipcMain.handle(IPC.GRAPH_LOAD_DATA, async (_event, graphId: string) => {
-    if (!isDBReady()) return { nodes: [], edges: [] };
-    return graphViewStore.loadGraphData(graphId);
+  function broadcastPresentationChanged(graphId: string): void {
+    const win = getMainWindow();
+    if (!win) return;
+    for (const view of win.contentView.children) {
+      if ('webContents' in view) {
+        (view as any).webContents.send(IPC.GRAPH_PRESENTATION_CHANGED, { graphId });
+      }
+    }
+  }
+
+  // 加载图谱全部数据（GraphView 启动用）
+  ipcMain.handle(IPC.GRAPH_LOAD_FULL, async (_event, graphId: string) => {
+    if (!isDBReady()) return null;
+    const graph = await graphViewStore.get(graphId);
+    if (!graph) return null;
+    const activeLayout = graph.active_layout || 'force';
+    const [geometries, intensions, presentations] = await Promise.all([
+      graphGeometryStore.list(graphId),
+      graphIntensionAtomStore.list(graphId),
+      graphPresentationAtomStore.list(graphId, ['*', activeLayout]),
+    ]);
+    return { graph, geometries, intensions, presentations };
   });
 
-  ipcMain.handle(IPC.GRAPH_NODE_SAVE, async (_event, node: GraphNodeRecord) => {
+  // Graph 主表：切换布局
+  ipcMain.handle(IPC.GRAPH_SET_ACTIVE_LAYOUT, async (_event, graphId: string, layoutId: string) => {
     if (!isDBReady()) return;
-    await graphViewStore.saveNode(node);
+    await graphViewStore.setActiveLayout(graphId, layoutId);
   });
 
-  ipcMain.handle(IPC.GRAPH_NODE_DELETE, async (_event, graphId: string, nodeId: string) => {
-    if (!isDBReady()) return;
-    await graphViewStore.deleteNode(graphId, nodeId);
+  // Geometry CRUD
+  ipcMain.handle(IPC.GRAPH_GEOMETRY_CREATE, async (_event, record: Omit<GraphGeometryRecord, 'created_at'>) => {
+    if (!isDBReady()) return null;
+    return graphGeometryStore.create(record);
   });
 
-  ipcMain.handle(IPC.GRAPH_EDGE_SAVE, async (_event, edge: GraphEdgeRecord) => {
+  ipcMain.handle(IPC.GRAPH_GEOMETRY_DELETE, async (_event, id: string) => {
     if (!isDBReady()) return;
-    await graphViewStore.saveEdge(edge);
+    await graphGeometryStore.delete(id);
   });
 
-  ipcMain.handle(IPC.GRAPH_EDGE_DELETE, async (_event, graphId: string, edgeId: string) => {
+  // Intension Atom CRUD
+  ipcMain.handle(IPC.GRAPH_INTENSION_LIST, async (_event, graphId: string, subjectId?: string) => {
+    if (!isDBReady()) return [];
+    return graphIntensionAtomStore.list(graphId, subjectId);
+  });
+
+  ipcMain.handle(IPC.GRAPH_INTENSION_CREATE, async (_event, record: Omit<GraphIntensionAtomRecord, 'id' | 'created_at'>) => {
+    if (!isDBReady()) return null;
+    return graphIntensionAtomStore.create(record);
+  });
+
+  ipcMain.handle(IPC.GRAPH_INTENSION_UPDATE, async (_event, id: string, fields: Partial<GraphIntensionAtomRecord>) => {
     if (!isDBReady()) return;
-    await graphViewStore.deleteEdge(graphId, edgeId);
+    await graphIntensionAtomStore.update(id, fields);
+  });
+
+  ipcMain.handle(IPC.GRAPH_INTENSION_DELETE, async (_event, id: string) => {
+    if (!isDBReady()) return;
+    await graphIntensionAtomStore.delete(id);
+  });
+
+  ipcMain.handle(IPC.GRAPH_INTENSION_CREATE_BULK, async (_event, records: Omit<GraphIntensionAtomRecord, 'id' | 'created_at'>[]) => {
+    if (!isDBReady()) return;
+    await graphIntensionAtomStore.createBulk(records);
+  });
+
+  // Presentation Atom CRUD
+  ipcMain.handle(IPC.GRAPH_PRESENTATION_LIST, async (_event, graphId: string, layoutIds?: string[]) => {
+    if (!isDBReady()) return [];
+    return graphPresentationAtomStore.list(graphId, layoutIds);
+  });
+
+  ipcMain.handle(IPC.GRAPH_PRESENTATION_SET, async (_event, record: Omit<GraphPresentationAtomRecord, 'id' | 'updated_at'>) => {
+    if (!isDBReady()) return;
+    await graphPresentationAtomStore.set(record);
+    broadcastPresentationChanged(record.graph_id);
+  });
+
+  ipcMain.handle(IPC.GRAPH_PRESENTATION_SET_BULK, async (_event, records: Omit<GraphPresentationAtomRecord, 'id' | 'updated_at'>[]) => {
+    if (!isDBReady() || records.length === 0) return;
+    await graphPresentationAtomStore.setBulk(records);
+    broadcastPresentationChanged(records[0].graph_id);
+  });
+
+  ipcMain.handle(IPC.GRAPH_PRESENTATION_DELETE, async (
+    _event,
+    graphId: string, layoutId: string, subjectId: string, attribute: string,
+  ) => {
+    if (!isDBReady()) return;
+    await graphPresentationAtomStore.delete(graphId, layoutId, subjectId, attribute);
+    broadcastPresentationChanged(graphId);
+  });
+
+  ipcMain.handle(IPC.GRAPH_PRESENTATION_CLEAR_LAYOUT, async (_event, graphId: string, layoutId: string) => {
+    if (!isDBReady()) return;
+    await graphPresentationAtomStore.clearByLayout(graphId, layoutId);
+    broadcastPresentationChanged(graphId);
+  });
+
+  // Substance Library 查询（声明式资源，main 进程内可访问，但 GraphView 也需要）
+  ipcMain.handle(IPC.GRAPH_SUBSTANCE_LIST, async () => {
+    return substanceLibrary.list();
+  });
+
+  ipcMain.handle(IPC.GRAPH_SUBSTANCE_GET, async (_event, id: string) => {
+    return substanceLibrary.get(id) ?? null;
+  });
+
+  // ── 从 Markdown 文件导入图谱 ──
+  //
+  // 流程：
+  //   1. 弹文件对话框选 .md 文件（无路径参数时）/ 直接读传入路径（自动化测试用）
+  //   2. parser → handler → 写 4 张表
+  //   3. 广播 GRAPH_LIST_CHANGED（NavSide 自动 refetch 列表 + 显示新图）
+  //   4. 返回 { graphId, stats, warnings }
+  ipcMain.handle(IPC.GRAPH_IMPORT_FROM_FILE, async (_event, providedPath?: string) => {
+    if (!isDBReady()) return { error: 'DB not ready' };
+
+    let filePath = providedPath;
+    if (!filePath) {
+      const win = getMainWindow();
+      const result = await dialog.showOpenDialog(win as any, {
+        title: '导入 Markdown 图谱',
+        filters: [{ name: 'Markdown', extensions: ['md', 'markdown'] }],
+        properties: ['openFile'],
+      });
+      if (result.canceled || result.filePaths.length === 0) return { canceled: true };
+      filePath = result.filePaths[0];
+    }
+
+    try {
+      const importResult = await importFromMarkdown(filePath);
+      activityStore.log('graph.import', importResult.graphId, {
+        path: filePath,
+        ...importResult.stats,
+        warnings: importResult.warnings.length,
+      });
+      broadcastList();
+      return importResult;
+    } catch (err) {
+      console.error('[Graph IPC] import failed:', err);
+      return { error: String(err) };
+    }
   });
 }
