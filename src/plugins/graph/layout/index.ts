@@ -11,7 +11,7 @@ export type {
   LayoutOutput,
 } from './types';
 
-// 自动注册内置算法（D7-D8 填充）
-// import './force';
-// import './grid';
-// import './manual';
+// 自动注册内置算法（副作用 import）
+import './force';
+import './grid';
+import './manual';
