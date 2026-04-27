@@ -4,58 +4,97 @@ import type { Atom } from '../../../lib/atom-serializers/types';
 export type HighlightMode = 'default' | 'hover' | 'selected';
 
 /**
- * 形状渲染器接口（模型无关）。
- *
- * 实现按 substance.visual.shape 字段选择具体实现：
- * - 'circle'        → CircleShape
- * - 'hexagon'       → HexagonShape（v2 实施）
- * - 'rounded-rect'  → RoundRectShape（v2 实施）
- * - 'box'           → 同 rounded-rect
- *
- * 所有 ShapeRenderer 接受统一的视觉参数（来自 substance.visual ⊕ presentation atom 合成）。
- */
-export interface ShapeRenderer {
-  /** 创建形状 mesh，按视觉参数定制颜色 / 尺寸 / 边框等 */
-  createMesh(visual: ShapeVisual): THREE.Object3D;
-
-  /**
-   * 内容（label）应放置的相对坐标（圆下方 / 矩形中心 / ...）。
-   * Three.js 局部坐标系，原点在形状中心。
-   */
-  getContentAnchor(mesh: THREE.Object3D): THREE.Vector3;
-
-  /** 应用高亮态：default / hover / selected */
-  setHighlight(mesh: THREE.Object3D, mode: HighlightMode): void;
-
-  dispose(mesh: THREE.Object3D): void;
-}
-
-/**
  * 形状视觉参数（来自 substance.visual ⊕ presentation atom 合成）。
  *
  * 不是所有字段都对所有 shape 适用：
- * - 圆只用 fill / border / size.width（半径）
+ * - 圆只用 fill / border / size.width（半径 = width/2）
  * - 矩形用 fill / border / size.width / size.height
+ * - 线只用 border（fill 忽略）
  * 实现按需读取自己关心的字段。
  */
 export interface ShapeVisual {
   fill?: { color?: string; opacity?: number };
   border?: { color?: string; width?: number; style?: 'solid' | 'dashed' | 'dotted' };
+  text?: { color?: string; size?: number; font?: string; weight?: number };
   size?: { width?: number; height?: number; depth?: number };
 }
 
+// ── Point 类形状（圆 / 多边形 / 矩形 / 球等） ──
+
 /**
- * 内容（label / 数学公式 / etc）渲染器接口。
+ * Point 形状渲染器：固定形状，用视觉参数定制。
+ *
+ * 实现按 substance.visual.shape 字段选择：
+ * - 'circle'        → CircleShape
+ * - 'hexagon'       → HexagonShape
+ * - 'rounded-rect'  → RoundedRectShape
+ * - 'box'           → RoundedRectShape (alias)
+ */
+export interface PointShapeRenderer {
+  /** 创建形状 mesh */
+  createMesh(visual: ShapeVisual): THREE.Object3D;
+  /** 内容（label）相对中心的锚点位置（用于 label 定位） */
+  getContentAnchor(mesh: THREE.Object3D): THREE.Vector3;
+  /** 应用高亮态 */
+  setHighlight(mesh: THREE.Object3D, mode: HighlightMode): void;
+  dispose(mesh: THREE.Object3D): void;
+}
+
+// ── Line 类形状 ──
+
+/**
+ * Line 形状渲染器：根据端点位置 + 视觉参数创建线段。
+ *
+ * v1 简化：直线连接首尾两端点。
+ * v1.5+：可加曲线 / 弧线偏移（多重图）/ 箭头。
+ */
+export interface LineShapeRenderer {
+  /**
+   * 创建 line mesh。
+   * @param points 至少 2 个端点（世界坐标）
+   * @param visual 视觉参数（border 决定线型）
+   */
+  createMesh(points: THREE.Vector3[], visual: ShapeVisual): THREE.Object3D;
+  /** label 锚点：默认线段中点 */
+  getContentAnchor(mesh: THREE.Object3D): THREE.Vector3;
+  setHighlight(mesh: THREE.Object3D, mode: HighlightMode): void;
+  dispose(mesh: THREE.Object3D): void;
+}
+
+// ── Surface 类形状 ──
+
+/**
+ * Surface 形状渲染器：根据顶点位置创建凸包多边形。
+ *
+ * v1：2D 凸包（Andrew monotone chain）+ ShapeGeometry fill + LineLoop 边框。
+ */
+export interface SurfaceShapeRenderer {
+  /**
+   * 创建 surface mesh。
+   * @param vertices 至少 3 个顶点（世界坐标，将算凸包）
+   * @param visual 视觉参数（fill 决定填充，border 决定边框）
+   */
+  createMesh(vertices: Array<{ x: number; y: number }>, visual: ShapeVisual): THREE.Object3D;
+  /** label 锚点：默认凸包中心 */
+  getContentAnchor(mesh: THREE.Object3D): THREE.Vector3;
+  setHighlight(mesh: THREE.Object3D, mode: HighlightMode): void;
+  dispose(mesh: THREE.Object3D): void;
+}
+
+// ── 内容（label）渲染器 ──
+
+/**
+ * 内容渲染器接口（label / 公式 / etc）。
  *
  * 实现：
  * - SvgGeometryContent：Atom[] → SVG → ShapeGeometry → Mesh（默认）
  */
 export interface ContentRenderer {
-  /** Atom[] 渲染为 Three.js Object3D */
   render(atoms: Atom[]): Promise<THREE.Object3D>;
-
-  /** 渲染结果的边界盒 */
   getBBox(rendered: THREE.Object3D): THREE.Box3;
-
   dispose(rendered: THREE.Object3D): void;
 }
+
+// ── 旧 ShapeRenderer 类型保留作向后兼容（== PointShapeRenderer） ──
+// 既有的 CircleShape 仍可用，新代码直接用 PointShapeRenderer
+export type ShapeRenderer = PointShapeRenderer;
