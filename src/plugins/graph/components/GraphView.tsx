@@ -3,6 +3,7 @@ import { GraphRenderer } from '../rendering/GraphRenderer';
 import { adapt } from '../rendering/adapter';
 import { substanceLibrary } from '../substance';
 import { layoutRegistry } from '../layout';
+import { composePatterns } from '../pattern';
 import type {
   GraphRecord,
   GraphGeometryRecord,
@@ -138,7 +139,16 @@ export function GraphView() {
           return;
         }
 
-        // 1. 算布局位置
+        // 1. Pattern 阶段（spec §3.1 ②）：扫描 Pattern Substance 容器，
+        //    算容器内子节点的"相对容器中心"槽位偏移
+        const patternResult = composePatterns({
+          geometries: data.geometries,
+          intensions: data.intensions,
+          substanceResolver: (id) => substanceLibrary.get(id),
+        });
+
+        // 2. Layout 阶段（spec §3.1 ③）：剔除已被 Pattern 管理的子节点，
+        //    剩余节点（容器 + 散户）走 ViewMode.layout
         const activeLayout = data.graph.active_layout || 'force';
         activeGraphIdRef.current = data.graph.id;
         activeLayoutRef.current = activeLayout;
@@ -149,15 +159,34 @@ export function GraphView() {
           return;
         }
 
+        const geometriesForLayout = data.geometries.filter(
+          (g) => !patternResult.members.has(g.id),
+        );
+        const intensionsForLayout = data.intensions.filter(
+          (a) => !patternResult.members.has(a.subject_id),
+        );
+
         const layoutResult = algorithm.compute({
-          geometries: data.geometries,
-          intensions: data.intensions,
+          geometries: geometriesForLayout,
+          intensions: intensionsForLayout,
           presentations: data.presentations,
           substanceResolver: (id) => substanceLibrary.get(id),
           dimension: data.graph.dimension ?? 2,
         });
 
-        // 2. 把 layout positions 注入 presentations（作为虚拟 position atom）
+        // 3. 合并：Pattern members 最终位置 = 容器 layout 位置 + 相对偏移
+        const finalPositions = new Map<string, { x: number; y: number; z?: number }>(layoutResult.positions);
+        for (const [memberId, member] of patternResult.members) {
+          const containerPos = layoutResult.positions.get(member.containerId);
+          if (!containerPos) continue;  // 容器没拿到位置（不应发生，兜底）
+          finalPositions.set(memberId, {
+            x: containerPos.x + member.offsetX,
+            y: containerPos.y + member.offsetY,
+            z: containerPos.z,
+          });
+        }
+
+        // 4. 把 finalPositions 注入 presentations（作为虚拟 position atom）
         // 仅当 presentation 中没有该 subject 的 position.x 才注入（pinned 优先）
         const existingPositionSubjects = new Set(
           data.presentations
@@ -165,7 +194,7 @@ export function GraphView() {
             .map((p) => p.subject_id),
         );
         const layoutPresentations: GraphPresentationAtomRecord[] = [];
-        for (const [geomId, pos] of layoutResult.positions) {
+        for (const [geomId, pos] of finalPositions) {
           if (existingPositionSubjects.has(geomId)) continue;
           layoutPresentations.push(
             { id: `_lyt_${geomId}_x`, graph_id: data.graph.id, layout_id: activeLayout, subject_id: geomId, attribute: 'position.x', value: String(pos.x), value_kind: 'number', updated_at: 0 },

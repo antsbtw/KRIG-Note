@@ -77,6 +77,47 @@ export interface SubstanceBehavior {
   [key: string]: unknown;
 }
 
+// ── B3 Pattern 扩展：Substance 升级为 "组合性 Substance"（详见 KRIG-Graph-Pattern-Spec.md §1）──
+
+/**
+ * 角色选择器：从图谱里找出"哪些子节点担当哪个角色"。
+ *
+ * 例（pattern-workspace）：
+ *   roles.navside = { via: 'contains', requires_substance: 'krig-navside', arity: 'one' }
+ *   = "通过 contains 关系连到我、且 substance 是 krig-navside 的那个子节点 = navside 角色"
+ */
+export interface RoleSelector {
+  /** 通过哪种关系连到容器节点（intension atom 的 predicate id） */
+  via: string;
+  /** 子节点必须引用的 substance id（可选，进一步缩窄匹配范围） */
+  requires_substance?: string;
+  /** 期待 0..1 个还是 0..N 个 */
+  arity: 'one' | 'many';
+  /**
+   * 是否必填（默认 false = 宽容）。
+   *   true  ：缺这个角色 → Pattern 整体作废 → 容器内所有子节点走 fallback layout
+   *   false ：缺这个角色 → 槽位留空，Pattern 仍然生效
+   */
+  required?: boolean;
+}
+
+/** 命名槽位位置 */
+export type SlotPosition =
+  | 'left' | 'right' | 'top' | 'bottom' | 'center'
+  | { x: number; y: number };  // 自定义偏移（相对容器中心）
+
+/**
+ * Pattern 内部布局规则（Pattern Substance 的 pattern_layout 字段）。
+ *
+ *   slots:  把每个角色摆到容器内的命名位置（v1 实现）
+ *   tree:   按 root_role / child_role 递归展开树形（v1.5+）
+ *   custom: 引用注册到 patternLayoutRegistry 的自定义算法（v1.5+）
+ */
+export type PatternLayout =
+  | { kind: 'slots'; assignments: Record<string, SlotPosition> }
+  | { kind: 'tree'; root_role: string; child_role: string }
+  | { kind: 'custom'; algorithm: string };
+
 /**
  * Substance 来源层级（spec §1.3.8 三层架构）。
  *
@@ -115,4 +156,18 @@ export interface Substance {
   physical?: SubstancePhysical;
   chemical?: SubstanceChemical;
   behavior?: SubstanceBehavior;
+
+  // ── B3 Pattern 扩展（仅 Pattern Substance 填）──
+  /**
+   * 角色定义：从图谱里找出"哪些子节点担当哪个角色"。
+   * 简单 Substance 不填；填了就是 Pattern Substance（渲染管线走 Pattern 路径）。
+   * 详见 docs/graph/KRIG-Graph-Pattern-Spec.md §1.2
+   */
+  roles?: Record<string, RoleSelector>;
+
+  /**
+   * 角色布局规则：每个角色摆在容器内哪个位置。
+   * 与 roles 同时填或同时不填（v1 简化要求）。
+   */
+  pattern_layout?: PatternLayout;
 }
