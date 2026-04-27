@@ -91,6 +91,16 @@ export class SceneManager {
   }
 
   /**
+   * 清掉 fit 缓存。
+   *
+   * 用户主动控制视图（缩放 / 平移 / 拖动节点）后调；
+   * 之后 resize 不再按旧 box 重新 fit，保留用户当前的视野。
+   */
+  invalidateFit(): void {
+    this.fitBox = null;
+  }
+
+  /**
    * 自动 fit 场景内容到视图。
    *
    * 算法：

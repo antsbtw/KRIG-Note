@@ -20,6 +20,9 @@ export interface ResolvedVisual {
   /** basic LabelLayout id：'inside-center' / 'below-center' / ... */
   labelLayout?: string;
   labelMargin?: number;
+  /** 边方向 / 箭头（仅 line 读） */
+  arrow?: 'none' | 'forward' | 'backward' | 'both';
+  arrowSize?: number;
 }
 
 /**

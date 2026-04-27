@@ -37,6 +37,17 @@ export interface SubstanceVisual {
   labelLayout?: string;
   /** label margin（shape 边到 label 的距离）；不指定时用 layout 默认 */
   labelMargin?: number;
+
+  /**
+   * 边方向 / 箭头（仅 line 类 shape 读）
+   *   'none'      无箭头（默认）
+   *   'forward'   单向，箭头在末端（target 节点边缘）
+   *   'backward'  反向，箭头在起点
+   *   'both'      双向
+   */
+  arrow?: 'none' | 'forward' | 'backward' | 'both';
+  /** 箭头大小（世界单位）；默认 10 */
+  arrowSize?: number;
 }
 
 /** 物理属性（v1 不读，v3.0+ 用于力导驱动 / 推理） */

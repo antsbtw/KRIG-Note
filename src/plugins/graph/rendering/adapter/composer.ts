@@ -51,6 +51,8 @@ function mergeSubstanceVisual(base: ResolvedVisual, patch?: SubstanceVisual): Re
     icon: patch.icon ?? base.icon,
     labelLayout: patch.labelLayout ?? base.labelLayout,
     labelMargin: patch.labelMargin ?? base.labelMargin,
+    arrow: patch.arrow ?? base.arrow,
+    arrowSize: patch.arrowSize ?? base.arrowSize,
   };
 }
 
@@ -79,6 +81,8 @@ function applyPresentation(visual: ResolvedVisual, attribute: string, value: str
     case 'size.depth': next.size!.depth = parseFloat(value); break;
     case 'labelLayout': next.labelLayout = value; break;
     case 'labelMargin': next.labelMargin = parseFloat(value); break;
+    case 'arrow': next.arrow = value as ResolvedVisual['arrow']; break;
+    case 'arrowSize': next.arrowSize = parseFloat(value); break;
     // position.x/y/z + pinned 不影响 visual，由调用方单独处理
   }
   return next;
