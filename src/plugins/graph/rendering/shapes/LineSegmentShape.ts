@@ -73,16 +73,6 @@ export class LineSegmentShape implements LineShapeRenderer {
     return line;
   }
 
-  getContentAnchor(mesh: THREE.Object3D): THREE.Vector3 {
-    // 线段中点（局部坐标系下；调用方需要 worldToLocal 处理）
-    // 注：这里返回的是世界坐标（因为 Line 没用 group 平移），调用方放 label 时直接用
-    const sx = (mesh.userData.startX as number) ?? 0;
-    const sy = (mesh.userData.startY as number) ?? 0;
-    const ex = (mesh.userData.endX as number) ?? 0;
-    const ey = (mesh.userData.endY as number) ?? 0;
-    return new THREE.Vector3((sx + ex) / 2, (sy + ey) / 2, 0.5);
-  }
-
   setHighlight(mesh: THREE.Object3D, mode: HighlightMode): void {
     if (!(mesh instanceof THREE.Line)) return;
     const mat = mesh.material as THREE.LineBasicMaterial;

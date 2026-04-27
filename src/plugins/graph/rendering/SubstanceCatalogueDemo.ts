@@ -1,21 +1,18 @@
 /**
  * SubstanceCatalogueDemo — 内置 substance 视觉对照表（B1）。
  *
- * 用途：
- *   GraphView 进入 Graph 模式时，硬编码渲染所有内置 substance 的实例，
- *   让用户能直接看到每种物质长什么样、关系线的视觉差异、Surface 凸包效果。
+ * 用途：硬编码渲染所有内置 substance，验证：
+ *   - 视觉差异化（每种 substance 长什么样）
+ *   - Label 布局（每个 substance 引用哪种 LabelLayout）
  *
- * 不接数据库、不接交互 — 纯静态展示。
+ * 设计要点（按 B1d 重构）：
+ *   - Demo 不算 label anchor —— 每个实例只暴露 shape mesh 引用 + substance id
+ *   - attachLabels 用 substance.visual.labelLayout 调用 labelLayoutRegistry 算 anchor
+ *   - 切换 layout 只需改 substance 配置，无需改 demo
  *
- * 布局：
- *   ─ 顶行：4 个 Point substance 横向排开
- *       krig-layer / krig-shell-component / krig-view / krig-concept
- *   ─ 中行：5 条 Line substance 排成阶梯
- *       relation-contains / refs / routes-to / defines / links-to
- *   ─ 底部：1 个 Surface substance 围住几个虚拟节点
- *       krig-grouping
- *
- * Label：每个实例下方显示 substance.id（B1c 实施 SVG 几何 label 后才有）
+ * 数据流：
+ *   substance → shape mesh（位置已设）
+ *   substance.labelLayout → labelLayoutRegistry.compute(shapeBounds, labelBounds) → anchor
  */
 import * as THREE from 'three';
 import { substanceLibrary } from '../substance';
@@ -26,17 +23,17 @@ import {
 } from './shapes';
 import { SvgGeometryContent } from './contents/SvgGeometryContent';
 import { makeTextLabel } from '../../../lib/atom-serializers/extract';
+import { labelLayoutRegistry } from './labels';
 
 export interface CatalogueResult {
   /** 顶层 Group，含所有展示实例 */
   root: THREE.Group;
-  /** 各实例 group 引用，供后续添加 label 用 */
+  /** 各实例引用（attachLabels 用） */
   instances: Array<{
     substanceId: string;
     label: string;
+    /** shape mesh / line / surface group（已加到 root，世界坐标已就位） */
     object: THREE.Object3D;
-    /** label 应放置的世界坐标（每个 shape 自己决定锚点 + group 位置） */
-    labelAnchor: THREE.Vector3;
   }>;
 }
 
@@ -49,27 +46,6 @@ const LINE_LENGTH = 180;
 
 const SURFACE_ROW_Y = -250;
 const SURFACE_NODE_RADIUS = 20;
-
-/**
- * 构建对照表。
- * 调用方需把返回的 `root` 加到 SceneManager.scene。
- *
- * 注意：label 是异步的（SvgGeometryContent 需要等字体加载）。
- * 调用 attachLabels() 后再调一次 fitToContent。
- */
-export async function attachLabels(result: CatalogueResult): Promise<void> {
-  const contentRenderer = new SvgGeometryContent();
-  for (const inst of result.instances) {
-    try {
-      const atoms = makeTextLabel(inst.label);
-      const labelObj = await contentRenderer.render(atoms);
-      labelObj.position.copy(inst.labelAnchor);
-      result.root.add(labelObj);
-    } catch (err) {
-      console.warn('[Catalogue] label render failed for', inst.substanceId, err);
-    }
-  }
-}
 
 export function buildSubstanceCatalogue(): CatalogueResult {
   const root = new THREE.Group();
@@ -91,24 +67,18 @@ export function buildSubstanceCatalogue(): CatalogueResult {
     const shape = pointShapeRegistry.get(shapeId);
     const mesh = shape.createMesh(sub.visual);
 
-    // 定位
     const x = pointStartX + i * POINT_SPACING;
     mesh.position.set(x, POINT_ROW_Y, 0);
     root.add(mesh);
-
-    // label 锚点：shape 的 contentAnchor + 实例位置
-    const localAnchor = shape.getContentAnchor(mesh);
-    const worldAnchor = mesh.position.clone().add(localAnchor);
 
     instances.push({
       substanceId: subId,
       label: sub.label,
       object: mesh,
-      labelAnchor: worldAnchor,
     });
   });
 
-  // ── 中行：Line substances（每条线下方有 label）──
+  // ── 中行：Line substances ──
   const lineSubstances = [
     'relation-contains',
     'relation-refs',
@@ -124,8 +94,6 @@ export function buildSubstanceCatalogue(): CatalogueResult {
 
     const cx = lineStartX + i * LINE_SPACING;
     const cy = LINE_ROW_Y;
-
-    // 线段两端点（横向，长度 LINE_LENGTH）
     const start = new THREE.Vector3(cx - LINE_LENGTH / 2, cy, 0);
     const end = new THREE.Vector3(cx + LINE_LENGTH / 2, cy, 0);
 
@@ -133,21 +101,16 @@ export function buildSubstanceCatalogue(): CatalogueResult {
     const lineObj = shape.createMesh([start, end], sub.visual);
     root.add(lineObj);
 
-    // label 锚点：线段中点稍下方
-    const labelAnchor = new THREE.Vector3(cx, cy - 24, 0.5);
-
     instances.push({
       substanceId: subId,
       label: sub.label,
       object: lineObj,
-      labelAnchor,
     });
   });
 
-  // ── 底部：Surface substance（凸包围住几个虚拟节点）──
+  // ── 底部：Surface substance ──
   const groupingSub = substanceLibrary.get('krig-grouping');
   if (groupingSub && groupingSub.visual) {
-    // 5 个虚拟节点（小圆）— 仅用于让 Surface 有凸包顶点
     const dummyNodePositions: Array<{ x: number; y: number }> = [];
     const dummyCount = 5;
     for (let i = 0; i < dummyCount; i++) {
@@ -159,16 +122,14 @@ export function buildSubstanceCatalogue(): CatalogueResult {
       });
     }
 
-    // 先画 Surface（z=-1，会被节点遮住）
     const surfaceShape = surfaceShapeRegistry.get('polygon');
     const surfaceObj = surfaceShape.createMesh(dummyNodePositions, groupingSub.visual);
     root.add(surfaceObj);
 
-    // 再画虚拟节点（用 krig-concept 的视觉）
+    // 5 个虚拟节点
     const conceptSub = substanceLibrary.get('krig-concept');
     if (conceptSub?.visual) {
       const conceptShape = pointShapeRegistry.get(conceptSub.visual.shape ?? 'circle');
-      // 用小尺寸（让它们看起来是"被圈起来"的节点）
       const smallVisual = {
         ...conceptSub.visual,
         size: { width: SURFACE_NODE_RADIUS * 2, height: SURFACE_NODE_RADIUS * 2 },
@@ -180,17 +141,60 @@ export function buildSubstanceCatalogue(): CatalogueResult {
       }
     }
 
-    // Surface label 在凸包上方
-    const labelAnchor = new THREE.Vector3(0, SURFACE_ROW_Y + 80, 0.5);
     instances.push({
       substanceId: 'krig-grouping',
       label: groupingSub.label,
       object: surfaceObj,
-      labelAnchor,
     });
   }
 
   return { root, instances };
+}
+
+/**
+ * 异步附加 label 到所有实例。
+ *
+ * 流程（每个实例）：
+ *   1. SvgGeometryContent.render(label 文字) → labelObj
+ *   2. 算 labelObj 的 bbox
+ *   3. 算 shape mesh 的世界坐标 bbox
+ *   4. labelLayoutRegistry.get(substance.labelLayout).compute(shape, label) → anchor
+ *   5. labelObj.position = anchor - label 中心偏移（让 label 几何中心对齐 anchor）
+ */
+export async function attachLabels(result: CatalogueResult): Promise<void> {
+  const contentRenderer = new SvgGeometryContent();
+
+  for (const inst of result.instances) {
+    try {
+      const sub = substanceLibrary.get(inst.substanceId);
+      const layoutId = sub?.visual?.labelLayout ?? 'below-center';
+      const layout = labelLayoutRegistry.get(layoutId);
+
+      // 渲染 label mesh（v1.3 SvgGeometryContent，不变）
+      const atoms = makeTextLabel(inst.label);
+      const labelObj = await contentRenderer.render(atoms);
+
+      // shape 世界坐标 bbox
+      const shapeBounds = new THREE.Box3().setFromObject(inst.object);
+
+      // label 自身 bbox（local，包含 group.scale.y=-1 翻转）
+      const labelBounds = contentRenderer.getBBox(labelObj);
+
+      // 用 layout 算 anchor
+      const margin = sub?.visual?.labelMargin;
+      const { anchor } = layout.compute({ shapeBounds, labelBounds, margin });
+
+      // labelObj 的本地原点在 SVG (0,0)（左上）；
+      // 让 label 几何中心对齐 anchor —— 减去 labelBounds 中心
+      const lcx = (labelBounds.min.x + labelBounds.max.x) / 2;
+      const lcy = (labelBounds.min.y + labelBounds.max.y) / 2;
+      labelObj.position.set(anchor.x - lcx, anchor.y - lcy, anchor.z);
+
+      result.root.add(labelObj);
+    } catch (err) {
+      console.error('[Catalogue] label render FAILED for', inst.substanceId, err);
+    }
+  }
 }
 
 /** 释放整个 demo 的 GPU 资源 */

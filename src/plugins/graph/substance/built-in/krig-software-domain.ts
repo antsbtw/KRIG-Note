@@ -29,6 +29,7 @@ substanceLibrary.register({
     border: { color: '#888', width: 3, style: 'solid' },
     text: { color: '#ffffff', size: 16, weight: 600 },
     size: { width: 84, height: 84 },
+    labelLayout: 'inside-center',  // 六边形够大，label 在内部
   },
 });
 
@@ -44,6 +45,7 @@ substanceLibrary.register({
     border: { color: '#4a7aaa', width: 2, style: 'solid' },
     text: { color: '#e8eaed', size: 13, weight: 500 },
     size: { width: 100, height: 56 },
+    labelLayout: 'inside-center',  // 矩形装得下，label 在内部
   },
 });
 
@@ -59,6 +61,8 @@ substanceLibrary.register({
     border: { color: '#60a5fa', width: 2, style: 'solid' },
     text: { color: '#ffffff', size: 13, weight: 500 },
     size: { width: 72, height: 72 },
+    labelLayout: 'below-center',  // 圆装不下复杂 label，下方
+    labelMargin: 16,
   },
 });
 
@@ -74,6 +78,8 @@ substanceLibrary.register({
     border: { color: '#999', width: 1, style: 'dashed' },
     text: { color: '#ddd', size: 12, weight: 400 },
     size: { width: 60, height: 60 },
+    labelLayout: 'below-center',
+    labelMargin: 14,
   },
 });
 
@@ -87,5 +93,7 @@ substanceLibrary.register({
     fill: { color: '#444', opacity: 0.15 },
     border: { color: '#888', width: 2, style: 'dashed' },
     text: { color: '#aaa', size: 11, weight: 400 },
+    labelLayout: 'above-center',  // Surface 标题在上方
+    labelMargin: 12,
   },
 });

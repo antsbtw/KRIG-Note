@@ -21,6 +21,8 @@ substanceLibrary.register({
   visual: {
     border: { color: '#c0c0c0', width: 2, style: 'solid' },
     text: { color: '#888', size: 10 },
+    labelLayout: 'below-center',
+    labelMargin: 8,
   },
 });
 
@@ -32,6 +34,8 @@ substanceLibrary.register({
   visual: {
     border: { color: '#888', width: 1, style: 'dashed' },
     text: { color: '#666', size: 10 },
+    labelLayout: 'below-center',
+    labelMargin: 8,
   },
 });
 
@@ -43,6 +47,8 @@ substanceLibrary.register({
   visual: {
     border: { color: '#3b82f6', width: 2, style: 'dotted' },
     text: { color: '#60a5fa', size: 10 },
+    labelLayout: 'below-center',
+    labelMargin: 8,
   },
 });
 
@@ -54,6 +60,8 @@ substanceLibrary.register({
   visual: {
     border: { color: '#aaa', width: 3, style: 'solid' },
     text: { color: '#888', size: 10 },
+    labelLayout: 'below-center',
+    labelMargin: 8,
   },
 });
 
@@ -65,5 +73,7 @@ substanceLibrary.register({
   visual: {
     border: { color: '#999', width: 1, style: 'solid' },
     text: { color: '#777', size: 10 },
+    labelLayout: 'below-center',
+    labelMargin: 8,
   },
 });

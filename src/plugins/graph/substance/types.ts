@@ -18,7 +18,7 @@ export type GeometryKind = 'point' | 'line' | 'surface' | 'volume';
 
 /** 视觉投射：substance 的默认渲染参数（presentation atom 可覆盖） */
 export interface SubstanceVisual {
-  /** 形状基础（'circle' / 'box' / 'hexagon' / 'sphere' / 'cube' / ...） */
+  /** 形状基础（引用 basic shape 注册表）：'circle' / 'box' / 'hexagon' / ... */
   shape?: string;
   fill?: { color?: string; opacity?: number };
   border?: { color?: string; width?: number; style?: 'solid' | 'dashed' | 'dotted' };
@@ -26,6 +26,17 @@ export interface SubstanceVisual {
   size?: { width?: number; height?: number; depth?: number };
   /** emoji / SVG path */
   icon?: string;
+
+  /**
+   * label 布局：引用 basic LabelLayout 注册表
+   *   'inside-center' / 'inside-top'
+   *   'above-center' / 'below-center'
+   *   'left-of' / 'right-of'
+   * 默认 'below-center'（v1）
+   */
+  labelLayout?: string;
+  /** label margin（shape 边到 label 的距离）；不指定时用 layout 默认 */
+  labelMargin?: number;
 }
 
 /** 物理属性（v1 不读，v3.0+ 用于力导驱动 / 推理） */

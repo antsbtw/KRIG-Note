@@ -94,11 +94,6 @@ export class ConvexHullShape implements SurfaceShapeRenderer {
     return group;
   }
 
-  getContentAnchor(mesh: THREE.Object3D): THREE.Vector3 {
-    const center = (mesh.userData.hullCenter as { x: number; y: number }) ?? { x: 0, y: 0 };
-    return new THREE.Vector3(center.x, center.y, 0.5);
-  }
-
   setHighlight(mesh: THREE.Object3D, mode: HighlightMode): void {
     const fill = (mesh as THREE.Group).children?.find(
       (c) => c.userData.role === 'fill',

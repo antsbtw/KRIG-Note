@@ -33,8 +33,6 @@ export interface ShapeVisual {
 export interface PointShapeRenderer {
   /** 创建形状 mesh */
   createMesh(visual: ShapeVisual): THREE.Object3D;
-  /** 内容（label）相对中心的锚点位置（用于 label 定位） */
-  getContentAnchor(mesh: THREE.Object3D): THREE.Vector3;
   /** 应用高亮态 */
   setHighlight(mesh: THREE.Object3D, mode: HighlightMode): void;
   dispose(mesh: THREE.Object3D): void;
@@ -55,8 +53,6 @@ export interface LineShapeRenderer {
    * @param visual 视觉参数（border 决定线型）
    */
   createMesh(points: THREE.Vector3[], visual: ShapeVisual): THREE.Object3D;
-  /** label 锚点：默认线段中点 */
-  getContentAnchor(mesh: THREE.Object3D): THREE.Vector3;
   setHighlight(mesh: THREE.Object3D, mode: HighlightMode): void;
   dispose(mesh: THREE.Object3D): void;
 }
@@ -75,8 +71,6 @@ export interface SurfaceShapeRenderer {
    * @param visual 视觉参数（fill 决定填充，border 决定边框）
    */
   createMesh(vertices: Array<{ x: number; y: number }>, visual: ShapeVisual): THREE.Object3D;
-  /** label 锚点：默认凸包中心 */
-  getContentAnchor(mesh: THREE.Object3D): THREE.Vector3;
   setHighlight(mesh: THREE.Object3D, mode: HighlightMode): void;
   dispose(mesh: THREE.Object3D): void;
 }

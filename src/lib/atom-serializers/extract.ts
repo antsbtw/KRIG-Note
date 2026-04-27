@@ -30,10 +30,15 @@ export function ensureAtomLabel(value: unknown): Atom[] {
   return [];
 }
 
-/** 用纯文字构造一个 textBlock atom（与 ProseMirror node JSON 兼容） */
+/** 用纯文字构造一个 textBlock atom。
+ *
+ * 结构对应 SVG 序列化器期待的格式：
+ *   textBlock 直接含 inline children（text / 等）
+ *   见 svg/blocks/textBlock.ts renderTextBlock 实现
+ */
 export function makeTextLabel(text: string): Atom[] {
   return [{
     type: 'textBlock',
-    content: [{ type: 'paragraph', content: [{ type: 'text', text }] }],
+    content: [{ type: 'text', text }],
   }];
 }

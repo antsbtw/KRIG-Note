@@ -72,11 +72,6 @@ export class RoundedRectShape implements PointShapeRenderer {
     return group;
   }
 
-  getContentAnchor(_mesh: THREE.Object3D): THREE.Vector3 {
-    // label 在矩形中心
-    return new THREE.Vector3(0, 0, 0.1);
-  }
-
   setHighlight(mesh: THREE.Object3D, mode: HighlightMode): void {
     const fill = (mesh as THREE.Group).children?.find(
       (c) => c.userData.role === 'fill',

@@ -70,11 +70,6 @@ export class CircleShape implements PointShapeRenderer {
     return group;
   }
 
-  getContentAnchor(mesh: THREE.Object3D): THREE.Vector3 {
-    const r = (mesh.userData.radius as number) ?? DEFAULT_RADIUS;
-    return new THREE.Vector3(0, -r - 4, 0.1);
-  }
-
   setHighlight(mesh: THREE.Object3D, mode: HighlightMode): void {
     const fill = (mesh as THREE.Group).children?.find(
       (c) => c.userData.role === 'fill',
