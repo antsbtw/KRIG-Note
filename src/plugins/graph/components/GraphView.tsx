@@ -1,68 +1,217 @@
-import { useEffect, useRef } from 'react';
-import { SceneManager } from '../rendering/scene/SceneManager';
-import { buildSubstanceCatalogue, disposeSubstanceCatalogue, attachLabels } from '../rendering/SubstanceCatalogueDemo';
-import type * as THREE from 'three';
+import { useEffect, useRef, useState } from 'react';
+import { GraphRenderer } from '../rendering/GraphRenderer';
+import { adapt } from '../rendering/adapter';
+import { substanceLibrary } from '../substance';
+import { layoutRegistry } from '../layout';
+import type {
+  GraphRecord,
+  GraphGeometryRecord,
+  GraphIntensionAtomRecord,
+  GraphPresentationAtomRecord,
+} from '../../../main/storage/types';
 
 /**
- * GraphView — B1 阶段：Substance 视觉对照表（demo）。
+ * GraphView — D-data 阶段：接入真实 graph 数据流。
  *
- * 当前阶段策略（按用户要求"先看到 substance + label"）：
- *   - 进入 Graph 模式立刻渲染所有内置 substance 的视觉对照
- *   - 不读 activeGraphId / 不接数据库 / 不接交互
- *   - 不区分 NavSide 选择哪个图谱（永远显示同样的 demo）
+ * 数据流：
+ *   activeGraphId 变化
+ *      ↓
+ *   viewAPI.graphLoadFull(id) → { graph, geometries, intensions, presentations }
+ *      ↓
+ *   layoutRegistry.compute(...) → positions（layout 写入 position.x/y atom）
+ *      ↓
+ *   adapter.adapt(...) → RenderableScene
+ *      ↓
+ *   GraphRenderer.setData(scene)
+ *      ↓
+ *   场景渲染（shape + label + scene fit）
  *
- * 后续 B 阶段会逐步加：
- *   B2-B5  缩放 / 平移 / fitView
- *   B6+    label（SVG 几何）
- *   D-*    真实数据流接入（取代 demo）
+ * 不接交互（B2 阶段加缩放 / 平移 / 拖动）。
  */
-export function GraphView() {
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const sceneRef = useRef<SceneManager | null>(null);
-  const demoRootRef = useRef<THREE.Group | null>(null);
 
+interface LoadedGraph {
+  graph: GraphRecord;
+  geometries: GraphGeometryRecord[];
+  intensions: GraphIntensionAtomRecord[];
+  presentations: GraphPresentationAtomRecord[];
+}
+
+declare const viewAPI: {
+  onRestoreWorkspaceState: (cb: (state: { activeGraphId?: string | null }) => void) => () => void;
+  onGraphActiveChanged: (cb: (graphId: string | null) => void) => () => void;
+  graphLoadFull: (graphId: string) => Promise<LoadedGraph | null>;
+  onGraphPresentationChanged?: (cb: (info: { graphId: string }) => void) => () => void;
+};
+
+export function GraphView() {
+  const [activeGraphId, setActiveGraphId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [stats, setStats] = useState<{ total: number; warnings: number } | null>(null);
+
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const rendererRef = useRef<GraphRenderer | null>(null);
+  const loadTokenRef = useRef(0);
+
+  // ── activeGraphId 同步 ──
+  useEffect(() => {
+    const unsub1 = viewAPI.onRestoreWorkspaceState((state) => {
+      if (state.activeGraphId !== undefined) setActiveGraphId(state.activeGraphId);
+    });
+    const unsub2 = viewAPI.onGraphActiveChanged((graphId) => {
+      setActiveGraphId(graphId);
+    });
+    return () => { unsub1(); unsub2(); };
+  }, []);
+
+  // ── GraphRenderer 生命周期 ──
   useEffect(() => {
     if (!containerRef.current) return;
-
-    const scene = new SceneManager();
-    scene.mount(containerRef.current);
-    sceneRef.current = scene;
-
-    // 加载 substance 对照表
-    const result = buildSubstanceCatalogue();
-    scene.scene.add(result.root);
-    demoRootRef.current = result.root;
-    // 先 fit 一次（基础几何）
-    scene.fitToContent();
-
-    // 异步加载 SVG 几何 label，加完再 fit 一次（label 会扩大包围盒）
-    let cancelled = false;
-    void attachLabels(result).then(() => {
-      if (cancelled) return;
-      scene.fitToContent();
-    });
-
+    const renderer = new GraphRenderer();
+    renderer.mount(containerRef.current);
+    rendererRef.current = renderer;
     return () => {
-      cancelled = true;
-      if (demoRootRef.current) {
-        scene.scene.remove(demoRootRef.current);
-        disposeSubstanceCatalogue(demoRootRef.current);
-        demoRootRef.current = null;
-      }
-      scene.unmount();
-      sceneRef.current = null;
+      renderer.unmount();
+      rendererRef.current = null;
     };
   }, []);
+
+  // ── 加载 + 渲染 graph 数据 ──
+  useEffect(() => {
+    if (!activeGraphId) return;
+    if (!rendererRef.current) return;
+
+    const myToken = ++loadTokenRef.current;
+    setLoading(true);
+    setError(null);
+
+    void (async () => {
+      try {
+        const data = await viewAPI.graphLoadFull(activeGraphId);
+        if (myToken !== loadTokenRef.current) return;
+        if (!data) {
+          setError(`graph ${activeGraphId} not found`);
+          setLoading(false);
+          return;
+        }
+
+        // 1. 算布局位置
+        const activeLayout = data.graph.active_layout || 'force';
+        const algorithm = layoutRegistry.get(activeLayout);
+        if (!algorithm) {
+          setError(`layout "${activeLayout}" not registered`);
+          setLoading(false);
+          return;
+        }
+
+        const layoutResult = algorithm.compute({
+          geometries: data.geometries,
+          intensions: data.intensions,
+          presentations: data.presentations,
+          substanceResolver: (id) => substanceLibrary.get(id),
+          dimension: data.graph.dimension ?? 2,
+        });
+
+        // 2. 把 layout positions 注入 presentations（作为虚拟 position atom）
+        // 仅当 presentation 中没有该 subject 的 position.x 才注入（pinned 优先）
+        const existingPositionSubjects = new Set(
+          data.presentations
+            .filter((p) => p.attribute === 'position.x' && (p.layout_id === '*' || p.layout_id === activeLayout))
+            .map((p) => p.subject_id),
+        );
+        const layoutPresentations: GraphPresentationAtomRecord[] = [];
+        for (const [geomId, pos] of layoutResult.positions) {
+          if (existingPositionSubjects.has(geomId)) continue;
+          layoutPresentations.push(
+            { id: `_lyt_${geomId}_x`, graph_id: data.graph.id, layout_id: activeLayout, subject_id: geomId, attribute: 'position.x', value: String(pos.x), value_kind: 'number', updated_at: 0 },
+            { id: `_lyt_${geomId}_y`, graph_id: data.graph.id, layout_id: activeLayout, subject_id: geomId, attribute: 'position.y', value: String(pos.y), value_kind: 'number', updated_at: 0 },
+          );
+          if (pos.z !== undefined) {
+            layoutPresentations.push(
+              { id: `_lyt_${geomId}_z`, graph_id: data.graph.id, layout_id: activeLayout, subject_id: geomId, attribute: 'position.z', value: String(pos.z), value_kind: 'number', updated_at: 0 },
+            );
+          }
+        }
+
+        // 3. adapter
+        const sceneData = adapt({
+          graph: data.graph,
+          geometries: data.geometries,
+          intensions: data.intensions,
+          presentations: [...data.presentations, ...layoutPresentations],
+          substanceResolver: (id) => substanceLibrary.get(id),
+          activeLayout,
+        });
+
+        if (myToken !== loadTokenRef.current) return;
+        if (!rendererRef.current) return;
+
+        // 4. 渲染
+        await rendererRef.current.setData(sceneData);
+
+        if (myToken !== loadTokenRef.current) return;
+        setStats({ total: sceneData.instances.length, warnings: sceneData.warnings.length });
+        setLoading(false);
+      } catch (err) {
+        console.error('[GraphView] load failed:', err);
+        if (myToken === loadTokenRef.current) {
+          setError(String(err));
+          setLoading(false);
+        }
+      }
+    })();
+  }, [activeGraphId]);
+
+  // ── 渲染 ──
+
+  if (!activeGraphId) {
+    return (
+      <div style={emptyStyle}>
+        <div style={{ fontSize: 32 }}>🕸</div>
+        <div style={{ fontSize: 14 }}>GraphView</div>
+        <div style={{ fontSize: 12, opacity: 0.6 }}>从左侧选择或新建一个图</div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%', background: '#1e1e1e' }}>
       <div ref={containerRef} style={{ position: 'absolute', inset: 0 }} />
+      {loading && <div style={overlayStyle}>加载中…</div>}
+      {error && <div style={{ ...overlayStyle, color: '#f87171' }}>错误: {error}</div>}
       <div style={hintStyle}>
-        Substance 视觉对照表（B1 阶段 demo）· 4 Point + 5 Line + 1 Surface
+        {stats
+          ? `${stats.total} 个几何体${stats.warnings > 0 ? ` · ${stats.warnings} 警告` : ''}`
+          : 'Graph'}
       </div>
     </div>
   );
 }
+
+const emptyStyle: React.CSSProperties = {
+  height: '100%',
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'center',
+  justifyContent: 'center',
+  color: '#888',
+  gap: 8,
+  userSelect: 'none',
+  background: '#1e1e1e',
+};
+
+const overlayStyle: React.CSSProperties = {
+  position: 'absolute',
+  top: 12,
+  left: 12,
+  fontSize: 12,
+  color: '#aaa',
+  background: 'rgba(0,0,0,0.6)',
+  padding: '4px 10px',
+  borderRadius: 4,
+  pointerEvents: 'none',
+  zIndex: 10,
+};
 
 const hintStyle: React.CSSProperties = {
   position: 'absolute',
