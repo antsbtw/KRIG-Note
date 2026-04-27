@@ -298,6 +298,68 @@ intension atom: { subject: g-app, predicate: 'substance', value: 'krig-layer', v
 
 v1 仅内置 1 个 domain pack（krig-software-domain），其他留空。
 
+#### 1.3.8 Substance 三层架构（OOP 模型）
+
+**核心原则**：用户没有 substance 创建能力（用户在画布上只能 new 实例 + 设属性）。
+但单纯"系统创造，用户调用"会被多样性击败——领域多样（化学 / 法律 / 软件 / 生物）
+要求 substance 可被社区与用户扩展。解法：**OOP 三层继承**。
+
+```
+Level 1：基类层（系统硬编码）
+  Substance / PointSubstance / LineSubstance / SurfaceSubstance
+  ── 定义"调用规则"（接口契约）
+  ── 渲染层 / 布局层 / 推理层只调用基类接口（多态）
+  ── 用户不能改
+
+Level 2：领域子类层（KRIG 内置 + 社区包）
+  化学包：Diamond / Water / Gold extends Concept
+  法律包：Contract / Plaintiff / Statute extends Concept
+  软件包：krig-layer / krig-view extends Concept （v1 内置）
+  关系类：relation-contains / relation-refs extends LineSubstance
+  ── v2.x 支持 npm install @krig/substance-pack-*
+  ── 主题包是同层（修改 visual 不动语义结构）
+
+Level 3：个人扩展层（用户 JSON）
+  ~/.../KRIG/substances/*.json
+  通过 `extends: "<base-id>"` 字段继承
+  ── 用户自由创造，本地有效，不污染社区
+```
+
+**用户扩展 JSON 格式**（声明式，不需写 TypeScript）：
+```json
+{
+  "id": "hypothesis",
+  "extends": "concept",
+  "label": "假设",
+  "visual": {
+    "shape": "rounded-rect",
+    "fill": { "color": "#fbbf24" }
+  },
+  "fields": {
+    "confidence": "number",
+    "tested": "boolean"
+  }
+}
+```
+
+**v1 范围**：
+- 仅 Level 1 硬编码 + Level 2 内置 5 个领域物质（不实施加载机制）
+- Substance 接口**预留**扩展字段：`extends?: string` / `version?: string`
+- 注册表设计为**运行时可加载**（即使 v1 只用编译时硬编码）
+- 不写 JSON 加载代码（v2.x 实施）
+- 不阻塞 v1 进度
+
+**v1.5+ 路线**：
+- v1.5：内置物质包加载结构调整（`built-in/` 重组为多个领域包）
+- v2.x：JSON 加载器 + Picker UI 按层级分组
+- v3+：推理引擎读 `extends` 链做 subClassOf 传递
+
+**对应 OWL 本体**：
+- 基类层 ≈ OWL 顶层本体（owl:Thing 等）
+- 领域子类层 ≈ OWL 领域本体（DBpedia / GO / SNOMED 等）
+- 个人扩展 ≈ OWL 应用本体
+- KRIG 用 JSON 配置代替 OWL 公理，简化但保持本体扩展精神
+
 ### 1.4 `graph_intension_atom`（语义态：视图内涵）
 
 ```typescript

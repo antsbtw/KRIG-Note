@@ -55,6 +55,18 @@ export interface SubstanceBehavior {
   [key: string]: unknown;
 }
 
+/**
+ * Substance 来源层级（spec §1.3.8 三层架构）。
+ *
+ * 决定加载顺序、覆盖优先级、UI 分组：
+ *   base：系统硬编码基类（不可删，不可改）
+ *   built-in：KRIG 内置领域包（krig-software / chemistry / ...）
+ *   theme：主题包（仅改 visual，不改语义）
+ *   community：第三方 npm 包（v2.x 加载）
+ *   user：用户本地 JSON 扩展（v2.x 加载）
+ */
+export type SubstanceOrigin = 'base' | 'built-in' | 'theme' | 'community' | 'user';
+
 /** 一种 Substance 的完整定义 */
 export interface Substance {
   /** 全局唯一 id（'diamond' / 'krig-layer' / 'concept-default' ...） */
@@ -65,6 +77,17 @@ export interface Substance {
   description?: string;
   /** 限定可被哪些几何引用（默认全部） */
   applies_to_kinds?: GeometryKind[];
+
+  // ── 三层架构扩展字段（spec §1.3.8）──
+  // v1 不强制使用，但接口预留以支持未来 v2.x JSON 扩展机制
+  /** 父 substance id（继承默认值；undefined = 直接继承基类） */
+  extends?: string;
+  /** 来源层级（用于 UI 分组 / 加载顺序）；v1 内置默认 'built-in' */
+  origin?: SubstanceOrigin;
+  /** 版本号（兼容性管理，v2.x 后用） */
+  version?: string;
+  /** 来源包名（v2.x 社区包 / 用户文件用） */
+  pack?: string;
 
   visual?: SubstanceVisual;
   physical?: SubstancePhysical;
