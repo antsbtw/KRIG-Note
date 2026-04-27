@@ -7,10 +7,10 @@ const HIGHLIGHT_SELECTED = '#55cc88';
 const DEFAULT_ARROW_SIZE = 10;
 
 /**
- * 直线段 shape 渲染器（relation-* 用）。
+ * 直线段 / 多点折线 shape 渲染器（relation-* 用）。
  *
  * 输出 Group：
- *   children[0]    = line (THREE.Line)
+ *   children[0]    = line (THREE.Line)，多点折线连续画段
  *   children[1..]  = 0~2 个三角箭头（arrow 控制）
  *
  * 视觉合成：
@@ -19,7 +19,12 @@ const DEFAULT_ARROW_SIZE = 10;
  *   - style = visual.border.style（solid / dashed / dotted）
  *   - arrow = visual.arrow（none / forward / backward / both）
  *
- * 内容锚点：线段中点（label 居中显示在线段上）。
+ * B3.4 多点支持：
+ *   - points.length >= 2 时按全部点画连续折线（首末段 + 所有 bendPoints）
+ *   - 箭头只在末段：从 points[len-2] 指向 points[len-1]（forward）
+ *                    或 points[1] 指向 points[0]（backward）
+ *
+ * 内容锚点：折线中段中点（label 用，B3.4.5 暂未启用边 label）。
  */
 export class LineSegmentShape implements LineShapeRenderer {
   createMesh(points: THREE.Vector3[], visual: ShapeVisual): THREE.Object3D {
@@ -35,8 +40,8 @@ export class LineSegmentShape implements LineShapeRenderer {
     const lineStart = points[0];
     const lineEnd = points[points.length - 1];
 
-    // ── 线段 ──
-    const geometry = new THREE.BufferGeometry().setFromPoints([lineStart, lineEnd]);
+    // ── 线段（B3.4：多点折线，所有 points 连续画） ──
+    const geometry = new THREE.BufferGeometry().setFromPoints(points);
 
     let material: THREE.LineBasicMaterial | THREE.LineDashedMaterial;
     let needsLineDistances = false;
@@ -75,14 +80,15 @@ export class LineSegmentShape implements LineShapeRenderer {
     line.userData.endY = lineEnd.y;
     group.add(line);
 
-    // ── 箭头（如有） ──
+    // ── 箭头（如有，画在末段方向上） ──
+    // 末段方向：倒数第二点 → 末点（forward）；起点方向：第二点 → 起点（backward）
+    const lastSegStart = points[points.length - 2];
+    const firstSegEnd = points[1];
     if (arrow === 'forward' || arrow === 'both') {
-      // 末端箭头：从 start 指向 end
-      group.add(buildArrow(lineStart, lineEnd, color, arrowSize));
+      group.add(buildArrow(lastSegStart, lineEnd, color, arrowSize));
     }
     if (arrow === 'backward' || arrow === 'both') {
-      // 起点箭头：从 end 指向 start
-      group.add(buildArrow(lineEnd, lineStart, color, arrowSize));
+      group.add(buildArrow(firstSegEnd, lineStart, color, arrowSize));
     }
 
     group.userData.shape = 'line';

@@ -165,7 +165,8 @@ export class GraphRenderer {
       let newMesh: THREE.Object3D;
       if (inst.kind === 'line') {
         if (livePositions.length < 2) continue;
-        // 重新裁端点（节点拖到新位置后，shape 的 box 也跟着变）
+        // 拖动期间走直线兜底：ELK bendPoints 已过时（节点位置变了，
+        // 原折线无效），松手后下次 layout 重算才能恢复正确折线。
         const pts = this.clipLineEndpointsToShapes(
           inst.members,
           livePositions.map((p) => ({ x: p.x, y: p.y, z: p.z ?? 0 })),
