@@ -280,7 +280,9 @@ KRIG-Note 的核心价值不在 Layer 1（OWL / Neo4j 已经做得很好），
 | Layer 3 — 视图层交互（缩放/平移/拖动） | ✅ v1.5 完成（B2 milestone） |
 | Layer 3 — Substance Pattern（组合性 Substance）| ✅ v1.6 完成（B3.2 milestone：workspace-pattern 试金石）|
 | Layer 3 — ViewMode（多视图切换）| ✅ v1.7 完成（B3.3 milestone：力导/层级树/网格）|
-| Layer 3 — Pattern + ViewMode Spec | ✅ v0.2 决议版（11/11 决议敲定，详见 docs/graph/KRIG-Graph-Pattern-Spec.md）|
+| Layer 3 — Pattern + ViewMode Spec | ✅ v0.3 B3.4 同步版（详见 docs/graph/KRIG-Graph-Pattern-Spec.md）|
+| Layer 3 — Layout Spec（ELK 布局体系换芯）| ✅ v0.1 决策版（详见 docs/graph/KRIG-Graph-Layout-Spec.md）|
+| Layer 3 — Tree projection + ELK 布局体系 | 🚧 B3.4 进行中（feature/graph-elk-layout）|
 | Layer 2 — 内容填充框架文档 | ✅ 占位（详见 docs/graph/KRIG-Graph-Layer2-Vision.md，v2.0 启动）|
 | Layer 2 — AI 抽取笔记 → atom（来源 A） | ⏳ v2.0 |
 | Layer 2 — Wikidata 按需查询（来源 B） | ⏳ v2.x |
@@ -308,3 +310,4 @@ KRIG-Note 的核心价值不在 Layer 1（OWL / Neo4j 已经做得很好），
 |------|------|------|
 | 2026-04-27 | v1.0 初版 | wenwu 在 B2 milestone 收尾时提出"知识图谱 vs 知识表示"的核心区分 |
 | 2026-04-28 | §7 状态更新 | B3 milestone 完整交付（spec v0.2 + Pattern + ViewMode）；6 条原则全部已落地 |
+| 2026-04-28 | §7 状态更新 | B3.4 启动：决策引入 elkjs 替换手写 force/grid/tree-hierarchy；新增 Layout Spec v0.1 |

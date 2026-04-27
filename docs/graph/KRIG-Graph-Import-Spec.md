@@ -495,10 +495,14 @@ DEFINE INDEX IF NOT EXISTS gpa_unique ON graph_presentation_atom
 | `shape` | `shape` | 形状覆盖 |
 | `visible` | `visible` (`'true'` / `'false'`) | 可见性 |
 | `opacity` | `opacity` | 整体透明度 |
+| `label_bbox.*` ★ B3.4 | `label_bbox.width` / `label_bbox.height` | label 实测 SVG bbox（label-aware sizing 用） |
 
-**`layout_id = '*'` 表跨布局通用**：颜色一旦设定通常不随布局变（除非用户显式不同），所以颜色默认 `layout_id='*'`；位置必然按布局区分。
+**`layout_id = '*'` 表跨布局通用**：颜色一旦设定通常不随布局变（除非用户显式不同），所以颜色默认 `layout_id='*'`；位置必然按布局区分；`label_bbox.*` 也是 `layout_id='*'`（label 实际尺寸不依赖布局）。
 
-**v1 实际写入的 attribute**：仅 `position.x` / `position.y` / `pinned`。其他都是预留 namespace。
+**v1 实际写入的 attribute**：
+- v1.4：仅 `position.x` / `position.y` / `pinned`
+- v1.8 B3.4 增加：`label_bbox.width` / `label_bbox.height`（由 label-measurer 异步测量后写入；详见 [Layout Spec §7](./KRIG-Graph-Layout-Spec.md#7-label-aware-sizingb34-决策)）
+- 其他都是预留 namespace
 
 ### 1.6 完整数据模型总览图
 
@@ -609,6 +613,8 @@ graph_presentation_atom (3 条 — 在 force 布局下被拖动后):
 
 ## 2. 布局引擎
 
+> ⚠️ **注**：本节 v1.4 写的是"先跑起来"的简化设计。B3.4（2026-04-28 决策）整体重构 — 引入 [Eclipse Layout Kernel (ELK)](https://eclipse.dev/elk/) 的 JS 端口 elkjs 替换手写 force/grid/tree-hierarchy。完整 spec 见 [`KRIG-Graph-Layout-Spec.md`](./KRIG-Graph-Layout-Spec.md)。本节只保留与 atom 模型耦合的接口约定。
+
 ### 2.1 设计原则
 
 - 位置是纯函数的产物：`layout(geometries, intensions, presentations) → positions`
@@ -616,42 +622,61 @@ graph_presentation_atom (3 条 — 在 force 布局下被拖动后):
 - 算法可插拔（注册表）
 - pin 优先：算法尊重 `pinned` 几何体，其他围绕重排
 - 物理属性预留：v3.0 后算法可读 `substance.physical.mass / charge` 驱动力导
+- **B3.4 增补**：所有算法走 ELK，KRIG 内只写 adapter（输入转换 + 输出取出）
 
-### 2.2 `LayoutAlgorithm` 接口
+### 2.2 `LayoutAlgorithm` 接口（B3.4 异步化）
 
 ```typescript
 interface LayoutAlgorithm {
   id: string;
   label: string;
   supportsDimension: (2 | 3)[];
-  compute(input: LayoutInput): LayoutOutput;
+  compute(input: LayoutInput): Promise<LayoutOutput>;  // ← B3.4: sync → async（ELK 跑 WebWorker）
 }
 
 interface LayoutInput {
   geometries: GraphGeometryRecord[];      // 全部几何体
   intensions: GraphIntensionAtom[];       // 用于算法启发
-  presentations: GraphPresentationAtom[]; // 读 pinned 和已记录的位置
+  presentations: GraphPresentationAtom[]; // 读 pinned / 位置 / label_bbox
   substanceResolver: (id: string) => Substance | undefined;  // v3 用
   dimension: 2 | 3;
   bounds?: { width: number; height: number; depth?: number };
+
+  /** B3.4 新增：查询节点 label 实测 bbox（label-aware sizing 用） */
+  measureLabel?: (geometryId: string) => { width: number; height: number } | undefined;
 }
 
 interface LayoutOutput {
   positions: Map<string, { x: number; y: number; z?: number }>;
+  /** B3.4 新增：边路由产物（projection 用） */
+  edgeSections?: Map<string, EdgeSection[]>;
+}
+
+interface EdgeSection {
+  startPoint: { x: number; y: number };
+  endPoint:   { x: number; y: number };
+  bendPoints: Array<{ x: number; y: number }>;
 }
 ```
 
-### 2.3 v1 内置算法
+### 2.3 v1 内置算法（B3.4 改组）
 
-| id | 实现库 | 适用维度 | v1 状态 |
+KRIG layout id 对外不变，内部全部走 ELK adapter：
+
+| KRIG layout id | 内部 ELK 算法 | 适用维度 | 状态 |
 |---|---|---|---|
-| `force` | d3-force | 2D（默认） | **v1 实现** |
-| `grid` | 自实现 | 2D | **v1 实现**（fallback） |
-| `manual` | 纯 presentation 驱动 | 2D / 3D | **v1 实现** |
-| `tree` | d3-hierarchy | 2D | v1.5 |
-| `radial` | d3-hierarchy radial | 2D | v1.5 |
-| `circle` | 自实现 | 2D | v1.5 |
-| `force-3d` | d3-force-3d | 3D | v2.0 |
+| `force` | `force` | 2D | **B3.4 换芯**（v1.4 手写 → ELK） |
+| `grid` | `box` | 2D | **B3.4 换芯**（v1.4 手写 → ELK） |
+| `tree-hierarchy` | `mrtree` | 2D | **B3.4 换芯**（B3.3 字典序手写 → ELK） |
+| `radial-tree` | `radial` | 2D | v1.9+ |
+| `layered` | `layered` | 2D | v1.9+（DAG / 流程图视图） |
+| `stress` | `stress` | 2D | v1.9+（关系密度大场景） |
+| `disco` | `disco` | 2D | v1.9+（多个不连通子图） |
+
+**移除的算法**：
+- `manual` — B3.4 后由 ELK 'fixed' 处理 pinned，不再单列
+- `circle` — 改为通过 ELK radial 配置实现（v1.9+）
+- `force-3d` — 3D 布局 v3.0 重新评估
 
 ### 2.4 算法对几何体的处理
 

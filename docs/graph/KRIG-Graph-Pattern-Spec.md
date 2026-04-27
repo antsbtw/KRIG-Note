@@ -1,15 +1,17 @@
 # KRIG Graph · Pattern + View Mode Spec
 
-> Pattern Spec v0.2 · 2026-04-28（决议版，可进入 B3.2 实现阶段）
+> Pattern Spec v0.3 · 2026-04-28（B3.4 同步版）
 >
 > 作者：wenwu + Claude
 >
-> 本 spec 是 **Layer 3 知识表示层** 的设计文档，与 [`KRIG-Graph-Import-Spec.md`](./KRIG-Graph-Import-Spec.md)（Layer 1 atom 体系）平级互补。
+> 本 spec 是 **Layer 3 知识表示层** 的设计文档，与以下文档平级互补：
+> - [`KRIG-Graph-Import-Spec.md`](./KRIG-Graph-Import-Spec.md) — Layer 1 atom 体系
+> - [`KRIG-Graph-Layout-Spec.md`](./KRIG-Graph-Layout-Spec.md) — 布局引擎（ELK）
 >
 > 设计哲学根源见 [`docs/KRIG-Note-Vision.md`](../KRIG-Note-Vision.md)。
 > 本文件中所有设计决定，必须能在愿景文档 §5 的 6 条原则下找到依据。
 >
-> v0.2 状态：11 个 ⚠️ 待决议项已全部 ✅ 敲定（详见各节"决议状态"表）。可进入 B3.2 试金石实现。
+> v0.3 状态：B3.4 决策（引入 ELK 替换手写布局）已落入 §5 路线图与 §2.6 projection 节。
 
 ---
 
@@ -428,7 +430,7 @@ graph.active_layout 同步更新为 'force'    ← 兼容 v1.4 既有代码
 
 v1.5+ 路径：当 `graph_view_mode` 表加入时，图谱文件可通过 frontmatter 或独立 atom 段声明自定义 ViewMode（与图谱级 substance 同等待遇 — 见 memory `project_graph_file_self_contained.md`）。
 
-### 2.6 projection 开放注册（决议 v0.2）
+### 2.6 projection 开放注册（决议 v0.2 + B3.4 增补）
 
 **核心决议（2026-04-28）**：`projection` 是**开放字符串 id**，注册到 `projectionRegistry`，与 `layoutRegistry` 同构。
 
@@ -437,21 +439,36 @@ v1.5+ 路径：当 `graph_view_mode` 表加入时，图谱文件可通过 frontm
 ```typescript
 interface Projection {
   id: string;                       // 'graph' / 'tree' / 'matrix' / ...
-  render(scene: RenderableScene): void;  // 项目对应的渲染管线
-}
-
-class ProjectionRegistry {
-  register(p: Projection): void;
-  get(id: string): Projection | undefined;
+  label: string;
+  description?: string;
+  /**
+   * B3.4 新增：边路由风格 hint。
+   * tree projection 取 'orthogonal'；splines 等留 v1.9+。
+   * 详见 KRIG-Graph-Layout-Spec.md §5
+   */
+  edgeStyle?: 'orthogonal' | 'splines' | 'polyline' | 'straight';
+  /**
+   * B3.4 新增：让 projection 介入边渲染。
+   * 输入：line instance + 由 LayoutOutput.edgeSections 暂存的 ELK 边路由数据
+   * 输出：替代直线的折线/曲线点序列；返回 null 走原直线
+   */
+  customizeLine?(
+    inst: RenderableInstance,
+    edgeSections: EdgeSection[] | undefined,
+  ): THREE.Vector3[] | null;
 }
 ```
 
-v1 仅注册 `'graph'`（即 v1.4 已有的 shape + line + label 渲染管线）。
+#### v1.7 → v1.8 注册的 projection
+
+| id | 状态 | edgeStyle | layout 数据来源 |
+|----|------|----------|---------------|
+| `graph` | v1.4 实现 | straight | layout positions（无 sections） |
+| `tree` | **v1.8 B3.4 实现** | orthogonal | ELK mrtree 输出的 edge sections |
 
 后续 milestone 注册：
-- `'tree'`：缩进 + 父子连线
-- `'matrix'`：N×N 格子热图
-- `'timeline'`：时间轴 + 事件
+- `'matrix'`：N×N 格子热图（v1.9+）
+- `'timeline'`：时间轴 + 事件（v1.9+）
 - `'table'`：表格视图（用 NoteView 的 table block？或独立实现）
 
 #### 为什么开放
@@ -642,12 +659,25 @@ B3.2  workspace-pattern 试金石               ← ✅ 完成（v1.6-graph-patt
 B3.3  多 ViewMode 切换 UI                   ← ✅ 完成（v1.7-graph-viewmode, 2026-04-28）
        - viewModeRegistry + projectionRegistry  ✓
        - graph.active_view_mode 字段（schemaless 兼容）  ✓
-       - tree-hierarchy layout（按 contains BFS）  ✓
+       - tree-hierarchy layout（手写 BFS + 字典序，B3.4 将替换为 ELK mrtree）  ✓
        - 切换器 UI（顶部 tabs：力导/层级树/网格）  ✓
-       - 注：tree projection（缩进/真树形连线）留 v1.5+，B3.3 用 graph projection 复用
+       - 注：tree projection（真树形连线）留 B3.4，B3.3 用 graph projection 占位
        - 副作用修复：fitToContent 加 NaN 防御（feedback memory 已记）
+       ↓
+B3.4  Tree projection + ELK 布局体系换芯     ← 🚧 进行中（feature/graph-elk-layout）
+       决策依据：KRIG-Graph-Layout-Spec.md（2026-04-28）
+       核心决策：① 引入 elkjs 替换 force/grid/tree-hierarchy 三个手写算法
+                  graph 模块实验阶段，无外部用户依赖现行 layout 行为
+                  是替换技术债的最佳时机
+                ② label-aware sizing：异步测量 SVG label 真实 bbox 持久化到
+                  presentation atom，layout 用真实尺寸排版。一次到位不留技术债。
+       ─ B3.4.1  elkjs 依赖 + WebWorker 单例 + LayoutAlgorithm 异步化（含 measureLabel）
+       ─ B3.4.2  force/grid/tree 三算法换芯到 ELK（force/box/mrtree）
+       ─ B3.4.3  tree projection 注册（ORTHOGONAL 边路由）
+       ─ B3.4.4  LineSegmentShape 多点折线支持
+       ─ B3.4.5  label-aware sizing（presentation atom + label-measurer + getInstanceBoxSize）
 
-B3 milestone 全部完成，6 条愿景原则全部落地（详见 docs/KRIG-Note-Vision.md §5/§7）。
+B3.1-B3.3 已交付；B3.4 完成后整个 B3 milestone 闭合。
 ```
 
 每一步独立 milestone，每一步独立验证 + tag。
@@ -673,4 +703,6 @@ B3 milestone 全部完成，6 条愿景原则全部落地（详见 docs/KRIG-Not
 |------|------|------|
 | 2026-04-28 | v0.1 草案初稿 | B3 milestone 启动 |
 | 2026-04-28 | v0.2 决议版 | 11 个待决议项分 4 组逐条决议（详见各节"决议状态"表）；可进入 B3.2 实现 |
-| 2026-04-28 | §5 路线图状态更新 | B3.2 + B3.3 完成（v1.6 + v1.7 已 tag），整个 B3 milestone 交付 |
+| 2026-04-28 | §5 路线图状态更新 | B3.2 + B3.3 完成（v1.6 + v1.7 已 tag） |
+| 2026-04-28 | v0.3 B3.4 同步版 | 新增 KRIG-Graph-Layout-Spec.md；§2.6 projection 接口扩展 edgeStyle / customizeLine；§5 路线图加 B3.4 ELK 换芯 |
+| 2026-04-28 | v0.3.1 加 B3.4.5 | wenwu 决策 label-aware sizing 一次到位（方案 C）；§5 加 B3.4.5 阶段 |
