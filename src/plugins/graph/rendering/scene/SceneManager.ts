@@ -29,6 +29,14 @@ export class SceneManager {
   /** 视野的"世界单位高度"。默认 800 = 看到 800 单位高的范围。 */
   viewWorldHeight = 800;
 
+  /**
+   * 当前 fit 的内容包围盒。
+   *
+   * fitToContent 时记下来；ResizeObserver 触发时按新 aspect 重算 viewH，
+   * 保证内容始终完整可见（无论窗口怎么变形都不会有内容被裁）。
+   */
+  private fitBox: { minX: number; minY: number; maxX: number; maxY: number; padding: number } | null = null;
+
   private container: HTMLElement | null = null;
   private resizeObserver: ResizeObserver | null = null;
   private rafHandle = 0;
@@ -98,19 +106,37 @@ export class SceneManager {
     const box = new THREE.Box3().setFromObject(this.scene);
     if (box.isEmpty()) return;
 
-    const size = new THREE.Vector3();
-    box.getSize(size);
-    const center = new THREE.Vector3();
-    box.getCenter(center);
+    // 记下 box 给后续 resize 用
+    this.fitBox = {
+      minX: box.min.x,
+      minY: box.min.y,
+      maxX: box.max.x,
+      maxY: box.max.y,
+      padding,
+    };
 
+    this.applyFitForCurrentAspect();
+  }
+
+  /**
+   * 按当前 aspect + 已记下的 fitBox 重算 viewH 和相机。
+   * resize / fitToContent 都调这个。
+   *
+   * 不变量：box 含 padding 必然完整在视野内，无论 aspect 怎么变。
+   */
+  private applyFitForCurrentAspect(): void {
+    if (!this.fitBox || !this.container) return;
     const rect = this.container.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) return;
     const aspect = rect.width / rect.height;
 
-    // 让 box 含 padding 完全可见：
-    //   按 aspect 取 max(boxH, boxW/aspect) 作为新 viewWorldHeight
-    const neededByH = size.y + padding * 2;
-    const neededByW = (size.x + padding * 2) / aspect;
+    const sizeX = this.fitBox.maxX - this.fitBox.minX;
+    const sizeY = this.fitBox.maxY - this.fitBox.minY;
+    const padding = this.fitBox.padding;
+
+    // 按 aspect 取 max(boxH, boxW/aspect) — 保证 box 含 padding 都可见
+    const neededByH = sizeY + padding * 2;
+    const neededByW = (sizeX + padding * 2) / aspect;
     this.viewWorldHeight = Math.max(neededByH, neededByW);
 
     // 应用 frustum + camera position
@@ -120,14 +146,29 @@ export class SceneManager {
     this.camera.right = halfW;
     this.camera.top = halfH;
     this.camera.bottom = -halfH;
-    this.camera.position.set(center.x, center.y, 10);
+    this.camera.position.set(
+      (this.fitBox.minX + this.fitBox.maxX) / 2,
+      (this.fitBox.minY + this.fitBox.maxY) / 2,
+      10,
+    );
     this.camera.updateProjectionMatrix();
     this.markDirty();
   }
 
   private handleResize(width: number, height: number): void {
     if (width <= 0 || height <= 0) return;
-    this.renderer.setSize(width, height, false);
+    // setSize 第三参数 updateStyle=true，让 Three.js 设 canvas 的 CSS width/height
+    // （否则 Retina 屏 setPixelRatio=2 时 canvas DOM size 会撑成 2 倍 CSS 像素，
+    //  超出容器导致部分内容被裁。这是 v1 一直困扰的"画布尺寸"bug 根因。）
+    this.renderer.setSize(width, height, true);
+
+    // 如果有 fit 记录，按新 aspect 重新 fit（保证内容永远完整可见）
+    if (this.fitBox) {
+      this.applyFitForCurrentAspect();
+      return;
+    }
+
+    // 否则只调整 frustum aspect，保留 viewWorldHeight + position
     const aspect = width / height;
     const halfH = this.viewWorldHeight / 2;
     const halfW = halfH * aspect;
