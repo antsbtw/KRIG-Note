@@ -631,22 +631,26 @@ v2.x 加 `user` / `community` 时机制自然生效。
 ## 5. 实现路线图（B3 milestone）
 
 ```
-B3.1 (本文档)  spec v0.2 决议版              ← ✅ 完成（11/11 决议）
+B3.1 (本文档)  spec v0.2 决议版              ← ✅ 完成（11/11 决议，2026-04-28）
        ↓
-B3.2  workspace-pattern 试金石               ← 下一步
-       - Substance 接口扩展（roles + pattern_layout）
-       - Pattern 渲染管线（§3.1 ② 步）
-       - 内置 pattern-workspace
-       - 用 KRIG-Note-Concept.md 验证（增加 4 个 krig-* 子节点 substance）
+B3.2  workspace-pattern 试金石               ← ✅ 完成（v1.6-graph-pattern, 2026-04-28）
+       - Substance 接口扩展（roles + pattern_layout）  ✓
+       - Pattern 渲染管线（§3.1 ② 步）  ✓
+       - 内置 pattern-workspace + 4 个角色子 substance  ✓
+       - 端到端验证（docs/graph/samples/Workspace-Pattern-Test.md）  ✓
        ↓
-B3.3  多 ViewMode 切换 UI                   ← 然后
-       - viewModeRegistry + projectionRegistry
-       - graph.active_view_mode 字段（schema 迁移）
-       - 'tree' projection 实现
-       - 切换器 UI（顶部 tabs 或下拉）
+B3.3  多 ViewMode 切换 UI                   ← ✅ 完成（v1.7-graph-viewmode, 2026-04-28）
+       - viewModeRegistry + projectionRegistry  ✓
+       - graph.active_view_mode 字段（schemaless 兼容）  ✓
+       - tree-hierarchy layout（按 contains BFS）  ✓
+       - 切换器 UI（顶部 tabs：力导/层级树/网格）  ✓
+       - 注：tree projection（缩进/真树形连线）留 v1.5+，B3.3 用 graph projection 复用
+       - 副作用修复：fitToContent 加 NaN 防御（feedback memory 已记）
+
+B3 milestone 全部完成，6 条愿景原则全部落地（详见 docs/KRIG-Note-Vision.md §5/§7）。
 ```
 
-每一步独立 milestone，每一步可独立验证。
+每一步独立 milestone，每一步独立验证 + tag。
 
 ---
 
@@ -669,3 +673,4 @@ B3.3  多 ViewMode 切换 UI                   ← 然后
 |------|------|------|
 | 2026-04-28 | v0.1 草案初稿 | B3 milestone 启动 |
 | 2026-04-28 | v0.2 决议版 | 11 个待决议项分 4 组逐条决议（详见各节"决议状态"表）；可进入 B3.2 实现 |
+| 2026-04-28 | §5 路线图状态更新 | B3.2 + B3.3 完成（v1.6 + v1.7 已 tag），整个 B3 milestone 交付 |
