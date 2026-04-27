@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { SVGLoader } from 'three/examples/jsm/loaders/SVGLoader.js';
 import type { ContentRenderer } from '../interfaces';
 import { atomsToSvg, type Atom } from '../../../../lib/atom-serializers/svg';
-import { extractPlainText } from '../../engines/GraphEngine';
+import { extractPlainText } from '../../../../lib/atom-serializers/extract';
 import { LruCache } from '../../../../lib/atom-serializers/lru';
 
 const DEFAULT_FILL = 0xdddddd;

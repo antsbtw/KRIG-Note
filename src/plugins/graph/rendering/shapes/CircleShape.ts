@@ -1,61 +1,59 @@
 import * as THREE from 'three';
-import type { ShapeRenderer, HighlightMode } from '../interfaces';
-import type { GraphNode } from '../../engines/GraphEngine';
+import type { ShapeRenderer, ShapeVisual, HighlightMode } from '../interfaces';
 
 const DEFAULT_RADIUS = 24;
 const SEGMENTS = 32;
-const DEFAULT_COLOR = 0x4a90e2;
-const HIGHLIGHT_HOVER = 0xffaa3b;
-const HIGHLIGHT_SELECTED = 0x55cc88;
+const DEFAULT_FILL = '#4a90e2';
+const HIGHLIGHT_HOVER = '#ffaa3b';
+const HIGHLIGHT_SELECTED = '#55cc88';
 
 /**
- * 图谱默认形状：圆。
+ * 圆形 shape 渲染器。
  *
- * 内容锚点：圆心下方 (0, -radius - 4, 0.1)，内容垂直摆放。
- * fitToContent: no-op（圆固定半径，不随内容调整）。
+ * 视觉合成：
+ *   - radius 来自 visual.size.width / 2（默认 48 / 2 = 24）
+ *   - fill 来自 visual.fill.color（默认 #4a90e2）
+ *   - opacity 来自 visual.fill.opacity（默认 0.85）
+ *   - border 暂不实现（v1 圆不画边框，v1.5+ 加 LineLoop）
  *
- * 详见 docs/graph/Graph-3D-Rendering-Spec.md § 8.2。
+ * 内容锚点：圆心下方 -radius - 4。
  */
 export class CircleShape implements ShapeRenderer {
-  constructor(private radius = DEFAULT_RADIUS) {}
+  createMesh(visual: ShapeVisual): THREE.Object3D {
+    const radius = (visual.size?.width ?? DEFAULT_RADIUS * 2) / 2;
+    const fillColor = visual.fill?.color ?? DEFAULT_FILL;
+    const opacity = visual.fill?.opacity ?? 0.85;
 
-  createMesh(_node: GraphNode): THREE.Object3D {
-    const geom = new THREE.CircleGeometry(this.radius, SEGMENTS);
+    const geom = new THREE.CircleGeometry(radius, SEGMENTS);
     const mat = new THREE.MeshBasicMaterial({
-      color: DEFAULT_COLOR,
+      color: new THREE.Color(fillColor),
       transparent: true,
-      opacity: 0.85,
+      opacity,
     });
     const mesh = new THREE.Mesh(geom, mat);
     mesh.userData.shape = 'circle';
-    mesh.userData.radius = this.radius;
-    mesh.userData.defaultColor = DEFAULT_COLOR;
+    mesh.userData.radius = radius;
+    mesh.userData.defaultColor = fillColor;
     return mesh;
   }
 
   getContentAnchor(mesh: THREE.Object3D): THREE.Vector3 {
-    const r = (mesh.userData.radius as number) ?? this.radius;
+    const r = (mesh.userData.radius as number) ?? DEFAULT_RADIUS;
     return new THREE.Vector3(0, -r - 4, 0.1);
   }
 
-  /**
-   * 应用高亮（v1.3 § 7.3）。
-   * - default: 蓝
-   * - hover: 橙
-   * - selected: 绿
-   */
   setHighlight(mesh: THREE.Object3D, mode: HighlightMode): void {
     if (!(mesh instanceof THREE.Mesh)) return;
     const mat = mesh.material as THREE.MeshBasicMaterial;
     switch (mode) {
       case 'hover':
-        mat.color.setHex(HIGHLIGHT_HOVER);
+        mat.color.set(HIGHLIGHT_HOVER);
         break;
       case 'selected':
-        mat.color.setHex(HIGHLIGHT_SELECTED);
+        mat.color.set(HIGHLIGHT_SELECTED);
         break;
       default:
-        mat.color.setHex((mesh.userData.defaultColor as number) ?? DEFAULT_COLOR);
+        mat.color.set((mesh.userData.defaultColor as string) ?? DEFAULT_FILL);
     }
   }
 
