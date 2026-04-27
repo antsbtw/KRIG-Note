@@ -1,108 +1,64 @@
 /**
- * Tree Hierarchy 布局算法 — 按 contains 关系递归算每个节点的层级深度。
+ * Tree-Hierarchy 布局算法 — 基于 ELK 'mrtree' 算法（B3.4 换芯）。
  *
- * 算法（v1 简化版）：
- *   1. 用 intension atom 中 predicate='contains' 的边构造 父→子 关系图
- *   2. 找根节点（没有任何节点 contains 它的）；如有多个根，每个独立成树
- *   3. BFS 算每个节点的深度（depth）
- *   4. 同深度节点按 id 字典序横向排开（v1 简化，避免布局抖动）
- *   5. y = -depth × ROW_HEIGHT（深度越大 y 越小，根在顶部）
- *      x = (idx_in_row - row_count/2) × COL_WIDTH（每层居中分布）
+ * B3.3 阶段手写 BFS + 字典序，子树重叠、不紧凑。B3.4 替换为 ELK 'mrtree'：
+ *   - Reingold-Tilford "Tidy Tree" 风格（业界标准）
+ *   - 子树严格不重叠 / 紧凑 / 同构子树画法相同
+ *   - 多根树原生支持（KRIG 散户即多根）
+ *   - 边路由 ORTHOGONAL（直角折线，组织架构图风），输出 sections.bendPoints
  *
- * 限制（v1）：
- *   - 不识别 Pattern 容器（Pattern 容器 + 其 members 当作普通节点处理；
- *     B3.2 已经把 members 从 layout 输入剔除了，不会冲突）
- *   - 不处理"环"（contains 不应有环；如出现环，BFS 自动跳过已访问节点）
- *   - 散户节点（没参与任何 contains）放最底层
+ * 仅识别 `contains` 关系作为父→子边。其他关系（refs / relates-to / ...）
+ * tree projection 暂不显示（v1.9+ 可加 "show non-tree edges" 选项）。
  *
- * 给"节点中心"算位置，不区分节点尺寸（与 force/grid 一致）。
+ * 详见 docs/graph/KRIG-Graph-Layout-Spec.md §3 + §5
  */
 import { layoutRegistry } from './registry';
+import { runElkLayout } from './elk-adapter';
 import type { LayoutAlgorithm, LayoutInput, LayoutOutput } from './types';
-
-const ROW_HEIGHT = 180;     // 每层垂直间距
-const COL_WIDTH = 220;      // 同层水平间距
 
 const treeHierarchy: LayoutAlgorithm = {
   id: 'tree-hierarchy',
   label: 'Tree Hierarchy',
   supportsDimension: [2],
   async compute(input: LayoutInput): Promise<LayoutOutput> {
-    const positions = new Map<string, { x: number; y: number }>();
-    const points = input.geometries.filter((g) => g.kind === 'point');
-    if (points.length === 0) return { positions };
+    // 仅保留 contains 类 line：mrtree 把"边"当父→子方向
+    const containsLineIds = collectContainsLineIds(input);
+    const filteredInput: LayoutInput = {
+      ...input,
+      geometries: input.geometries.filter(
+        (g) => g.kind !== 'line' || containsLineIds.has(g.id),
+      ),
+    };
 
-    const pointIds = new Set(points.map((p) => p.id));
-
-    // 1. 构造 父→子 边
-    const childrenOf = new Map<string, string[]>();
-    const parentOf = new Map<string, string>();
-    for (const atom of input.intensions) {
-      if (atom.predicate !== 'contains') continue;
-      const parent = atom.subject_id;
-      const child = String(atom.value);
-      if (!pointIds.has(parent) || !pointIds.has(child)) continue;
-      let list = childrenOf.get(parent);
-      if (!list) {
-        list = [];
-        childrenOf.set(parent, list);
-      }
-      list.push(child);
-      parentOf.set(child, parent);
-    }
-
-    // 2. 找根节点（没有 parent 的）
-    const roots: string[] = [];
-    for (const p of points) {
-      if (!parentOf.has(p.id)) roots.push(p.id);
-    }
-    // 字典序，避免抖动
-    roots.sort();
-
-    // 3. BFS 算深度
-    const depthOf = new Map<string, number>();
-    const queue: Array<{ id: string; depth: number }> = roots.map((r) => ({ id: r, depth: 0 }));
-    while (queue.length > 0) {
-      const { id, depth } = queue.shift()!;
-      if (depthOf.has(id)) continue;
-      depthOf.set(id, depth);
-      const children = childrenOf.get(id);
-      if (!children) continue;
-      for (const c of [...children].sort()) {
-        if (!depthOf.has(c)) queue.push({ id: c, depth: depth + 1 });
-      }
-    }
-
-    // 散户（没在 contains 关系里）= 没 parent 也没 child → 已被当作 root 处理
-    // 但有可能是孤立节点（既不在 roots 也不在 BFS 链里，因为根本没 contains）
-    // 其实这种情况 roots 里已经有了 — 上面步骤 2 会把它当 root 加入
-
-    // 4. 按 depth 分组排列
-    const byDepth = new Map<number, string[]>();
-    for (const [id, depth] of depthOf) {
-      let row = byDepth.get(depth);
-      if (!row) {
-        row = [];
-        byDepth.set(depth, row);
-      }
-      row.push(id);
-    }
-    for (const row of byDepth.values()) row.sort();
-
-    // 5. 算坐标：根在顶部（y 大），深度越大 y 越小
-    for (const [depth, row] of byDepth) {
-      const count = row.length;
-      const startX = -((count - 1) * COL_WIDTH) / 2;
-      for (let i = 0; i < count; i++) {
-        positions.set(row[i], {
-          x: startX + i * COL_WIDTH,
-          y: -depth * ROW_HEIGHT,
-        });
-      }
-    }
-
-    return { positions };
+    return runElkLayout(filteredInput, {
+      elkAlgorithm: 'mrtree',
+      extraOptions: {
+        'elk.edgeRouting': 'ORTHOGONAL',
+        'elk.spacing.nodeNode': '60',
+        'elk.mrtree.spacing.nodeNode': '60',
+        'elk.spacing.edgeNode': '20',
+      },
+    });
   },
 };
+
+/** 找出所有"由 contains predicate 衍生"的 line geometry id。 */
+function collectContainsLineIds(input: LayoutInput): Set<string> {
+  // contains predicate 的 intension atom：subject = parent, value = child
+  // 对应的 line geometry：members = [parent, child]
+  // 简化：所有 line 的两端如果在 contains atom 中作为 (parent, child) 出现，则视为 contains 边
+  const containsPairs = new Set<string>();
+  for (const atom of input.intensions) {
+    if (atom.predicate !== 'contains') continue;
+    containsPairs.add(`${atom.subject_id}→${String(atom.value)}`);
+  }
+  const result = new Set<string>();
+  for (const g of input.geometries) {
+    if (g.kind !== 'line' || g.members.length < 2) continue;
+    const key = `${g.members[0]}→${g.members[1]}`;
+    if (containsPairs.has(key)) result.add(g.id);
+  }
+  return result;
+}
 
 layoutRegistry.register(treeHierarchy);

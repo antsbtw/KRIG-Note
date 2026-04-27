@@ -1,38 +1,31 @@
 /**
- * Grid 布局算法 — 把所有 Point 几何体按方阵排列。
+ * Grid 布局算法 — 基于 ELK 'box' 算法（B3.4 换芯）。
  *
- * 用途：调试 / fallback / 节点位置可预测的小图。
- * 行为：忽略 pin（grid 是结构化布局，pin 在 grid 下没意义）。
- *       但为了和 force 切换时不丢用户意图，pinned=true 的节点仍然按 grid 摆。
+ * v1.4 阶段手写固定网格；B3.4 替换为 ELK 'box'：
+ *   - 节点尺寸感知（不同尺寸节点紧凑排布）
+ *   - 自动选择行列数（不再硬编码 sqrt(N)）
+ *
+ * pinned 节点：'box' 算法不强尊重初始位置，但为了和 force 切换时不丢用户意图，
+ *               adapter 仍把 pinned 位置传进去（ELK 当 hint）。
+ *
+ * 详见 docs/graph/KRIG-Graph-Layout-Spec.md §3
  */
 import { layoutRegistry } from './registry';
+import { runElkLayout } from './elk-adapter';
 import type { LayoutAlgorithm, LayoutInput, LayoutOutput } from './types';
-
-const SPACING = 200;
 
 const grid: LayoutAlgorithm = {
   id: 'grid',
   label: 'Grid',
   supportsDimension: [2],
   async compute(input: LayoutInput): Promise<LayoutOutput> {
-    const points = input.geometries.filter((g) => g.kind === 'point');
-    const positions = new Map<string, { x: number; y: number }>();
-
-    if (points.length === 0) return { positions };
-
-    const cols = Math.ceil(Math.sqrt(points.length));
-    const offsetX = -((cols - 1) * SPACING) / 2;
-    const offsetY = -((Math.ceil(points.length / cols) - 1) * SPACING) / 2;
-
-    for (let i = 0; i < points.length; i++) {
-      const row = Math.floor(i / cols);
-      const col = i % cols;
-      positions.set(points[i].id, {
-        x: offsetX + col * SPACING,
-        y: offsetY + row * SPACING,
-      });
-    }
-    return { positions };
+    return runElkLayout(input, {
+      elkAlgorithm: 'box',
+      extraOptions: {
+        'elk.spacing.nodeNode': '40',
+        'elk.box.packingMode': 'GROUP_DEC',
+      },
+    });
   },
 };
 
