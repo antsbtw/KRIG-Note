@@ -23,6 +23,7 @@ substanceLibrary.register({
     text: { color: '#888', size: 10 },
     labelLayout: 'below-center',
     labelMargin: 8,
+    arrow: 'forward',
   },
 });
 
@@ -49,6 +50,7 @@ substanceLibrary.register({
     text: { color: '#60a5fa', size: 10 },
     labelLayout: 'below-center',
     labelMargin: 8,
+    arrow: 'both',
   },
 });
 
@@ -62,6 +64,8 @@ substanceLibrary.register({
     text: { color: '#888', size: 10 },
     labelLayout: 'below-center',
     labelMargin: 8,
+    arrow: 'forward',
+    arrowSize: 14,
   },
 });
 

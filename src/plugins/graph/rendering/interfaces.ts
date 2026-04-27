@@ -17,6 +17,10 @@ export interface ShapeVisual {
   border?: { color?: string; width?: number; style?: 'solid' | 'dashed' | 'dotted' };
   text?: { color?: string; size?: number; font?: string; weight?: number };
   size?: { width?: number; height?: number; depth?: number };
+  /** Line 类 shape 用：箭头方向 */
+  arrow?: 'none' | 'forward' | 'backward' | 'both';
+  /** 箭头大小（世界单位） */
+  arrowSize?: number;
 }
 
 // ── Point 类形状（圆 / 多边形 / 矩形 / 球等） ──
