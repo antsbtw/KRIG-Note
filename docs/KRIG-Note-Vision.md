@@ -278,11 +278,15 @@ KRIG-Note 的核心价值不在 Layer 1（OWL / Neo4j 已经做得很好），
 | Layer 1 — Markdown 导入图谱 | ✅ v1.4 完成 |
 | Layer 1 — 渲染基础（shape/label/substance） | ✅ v1.4 完成 |
 | Layer 3 — 视图层交互（缩放/平移/拖动） | ✅ v1.5 完成（B2 milestone） |
-| Layer 3 — Substance Pattern | ⏳ 设计中（B3 milestone） |
-| Layer 3 — View Mode（多视图切换） | ⏳ 规划中 |
-| Layer 2 — 模式识别（半自动） | ⏳ 远期 |
-| 用户自定义 Pattern / View Mode | ⏳ 远期（v2.x） |
-| 模式社区分享 | ⏳ 远期（v3.x） |
+| Layer 3 — Substance Pattern（组合性 Substance）| ✅ v1.6 完成（B3.2 milestone：workspace-pattern 试金石）|
+| Layer 3 — ViewMode（多视图切换）| ✅ v1.7 完成（B3.3 milestone：力导/层级树/网格）|
+| Layer 3 — Pattern + ViewMode Spec | ✅ v0.2 决议版（11/11 决议敲定，详见 docs/graph/KRIG-Graph-Pattern-Spec.md）|
+| Layer 2 — 内容填充框架文档 | ✅ 占位（详见 docs/graph/KRIG-Graph-Layer2-Vision.md，v2.0 启动）|
+| Layer 2 — AI 抽取笔记 → atom（来源 A） | ⏳ v2.0 |
+| Layer 2 — Wikidata 按需查询（来源 B） | ⏳ v2.x |
+| 用户自定义 Pattern / ViewMode（图谱文件 inline）| ⏳ v1.5+（接口已预留）|
+| 用户自定义 Pattern / ViewMode（社区包）| ⏳ v2.x（origin 覆盖机制接口已预留）|
+| 模式社区分享 | ⏳ v3.x |
 
 ---
 
@@ -303,3 +307,4 @@ KRIG-Note 的核心价值不在 Layer 1（OWL / Neo4j 已经做得很好），
 | 日期 | 修订 | 触发 |
 |------|------|------|
 | 2026-04-27 | v1.0 初版 | wenwu 在 B2 milestone 收尾时提出"知识图谱 vs 知识表示"的核心区分 |
+| 2026-04-28 | §7 状态更新 | B3 milestone 完整交付（spec v0.2 + Pattern + ViewMode）；6 条原则全部已落地 |
