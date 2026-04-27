@@ -360,6 +360,50 @@ Level 3：个人扩展层（用户 JSON）
 - 个人扩展 ≈ OWL 应用本体
 - KRIG 用 JSON 配置代替 OWL 公理，简化但保持本体扩展精神
 
+#### 1.3.9 变种继承约束（"basic 是公共资产"原则）
+
+**铁律**：所有图谱变种（variant：knowledge / mindmap / bpmn / timeline / canvas / ...）
+**必须继承** basic 视图元素，**不允许**自建 shape / label layout 实现。
+
+```
+basic 视图元素（系统级，所有变种共享）：
+  src/plugins/graph/rendering/shapes/      （pointShapeRegistry / lineShapeRegistry / surfaceShapeRegistry）
+  src/plugins/graph/rendering/labels/      （labelLayoutRegistry）
+  src/plugins/graph/rendering/contents/    （SvgGeometryContent — label 渲染）
+  src/plugins/graph/rendering/scene/       （SceneManager — 场景管理）
+```
+
+**变种能做**：
+- ✅ 引用 basic shape id（'circle' / 'hexagon' / ...）
+- ✅ 引用 basic label layout id（'inside-center' / 'below-center' / ...）
+- ✅ 注册自己的 substance（带特定视觉参数 / 物理属性）
+- ✅ 写自己的布局算法（如 MindMap 树状布局）
+- ✅ 定义自己的 default 节点 substance
+
+**变种不能做**：
+- ❌ 写新的 ShapeRenderer 实现
+- ❌ 写新的 LabelLayout 实现
+- ❌ 直接操作 Three.js mesh（必须走 basic 接口）
+- ❌ 绕过 substance 直接渲染
+
+**特例：变种发现需要新 shape**
+不是私藏到变种目录，而是**贡献到 basic 注册表**：
+```
+BPMN 需要 diamond → 加到 rendering/shapes/DiamondShape.ts
+                  → 注册到 pointShapeRegistry
+                  → 所有变种都能用 'diamond'
+```
+
+**Why（核心动机）**：
+1. **避免 shape 散落各处**：5 变种 × 5-10 shape = 30+ shape 散在变种目录是噩梦
+2. **substance 跨变种一致**：同一 substance 在任何变种里视觉一致
+3. **新 shape 立刻全局可用**：贡献到 basic 后所有变种受益
+4. **测试矩阵不爆炸**：basic 单元测试覆盖一切，变种仅测算法
+5. **OOP 继承的工程体现**：basic 是抽象基类，变种是子类，变种**不能**重写基类的核心职责
+
+**v1 强制方式**：约定（spec / memory），开发者遵守。
+**v1.5+ 可强制**：lint 规则禁止 `variants/<id>/` 目录里 import 任何 `rendering/shapes/` 或 `rendering/labels/` 的具体实现，只能 import 注册表 API。
+
 ### 1.4 `graph_intension_atom`（语义态：视图内涵）
 
 ```typescript
