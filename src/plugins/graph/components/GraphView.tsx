@@ -4,8 +4,9 @@ import { adapt } from '../rendering/adapter';
 import { substanceLibrary } from '../substance';
 import { layoutRegistry } from '../layout';
 import { viewModeRegistry } from '../viewmode';
-import '../projection';  // 副作用：注册 'graph' projection
+import '../projection';  // 副作用：注册 'graph' / 'tree' projection
 import { composePatterns } from '../pattern';
+import { measureLabels, readExistingBbox as readLabelBboxFromPresentations, type LabelBbox } from '../layout/label-measurer';
 import type {
   GraphRecord,
   GraphGeometryRecord,
@@ -178,12 +179,18 @@ export function GraphView() {
           (a) => !patternResult.members.has(a.subject_id),
         );
 
+        // ── B3.4.5: label-aware sizing ──
+        // 从 presentations 中读已存的 label_bbox，构造 measureLabel 函数喂给 layout
+        const labelBboxMap = readLabelBboxFromPresentations(data.presentations);
+        const measureLabel = (id: string): LabelBbox | undefined => labelBboxMap.get(id);
+
         const layoutResult = await algorithm.compute({
           geometries: geometriesForLayout,
           intensions: intensionsForLayout,
           presentations: data.presentations,
           substanceResolver: (id) => substanceLibrary.get(id),
           dimension: data.graph.dimension ?? 2,
+          measureLabel,
         });
 
         // 3. 合并：Pattern members 最终位置 = 容器 layout 位置 + 相对偏移
@@ -239,6 +246,30 @@ export function GraphView() {
         if (myToken !== loadTokenRef.current) return;
         setStats({ total: sceneData.instances.length, warnings: sceneData.warnings.length });
         setLoading(false);
+
+        // 5. B3.4.5: 异步测量 label bbox（背景任务，不阻塞首次渲染）。
+        //    测量完成且差异显著 → 触发 reloadTrigger，让 layout 用新尺寸重排
+        void (async () => {
+          const newMap = await measureLabels({
+            graphId: data.graph.id,
+            instances: sceneData.instances,
+            presentations: data.presentations,
+            writeBack: async (records) => {
+              await viewAPI.graphPresentationSetBulk(records);
+            },
+          });
+          if (myToken !== loadTokenRef.current) return;
+          // 检查新测量是否引入显著变化（与首次 layout 用的 labelBboxMap 比较）
+          let dirty = false;
+          for (const [id, bbox] of newMap) {
+            const prev = labelBboxMap.get(id);
+            if (!prev || Math.abs(prev.width - bbox.width) > 1 || Math.abs(prev.height - bbox.height) > 1) {
+              dirty = true;
+              break;
+            }
+          }
+          if (dirty) setReloadTrigger((n) => n + 1);
+        })();
       } catch (err) {
         console.error('[GraphView] load failed:', err);
         if (myToken === loadTokenRef.current) {

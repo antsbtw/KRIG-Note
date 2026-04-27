@@ -18,10 +18,7 @@
  */
 import { getElk, type ElkNode, type LayoutOptions } from './elk-runner';
 import type { LayoutInput, LayoutOutput, EdgeSection } from './types';
-
-/** 节点尺寸默认值（substance 没声明 size 时） */
-const DEFAULT_NODE_WIDTH = 120;
-const DEFAULT_NODE_HEIGHT = 60;
+import { getInstanceBoxSize, DEFAULT_NODE_WIDTH, DEFAULT_NODE_HEIGHT } from './instance-size';
 
 export interface ElkAdapterOptions {
   /** ELK 算法 id：'force' / 'box' / 'mrtree' / 'layered' / ... */
@@ -129,8 +126,8 @@ export async function runElkLayout(
 /**
  * 计算节点尺寸。
  *
- * B3.4.2 简化版：substance.visual.size > measureLabel > 默认值。
- * B3.4.5 升级：按 labelLayout 方位加 padding（详见 §7.7 getInstanceBoxSize）。
+ * B3.4.5：调 getInstanceBoxSize（按 labelLayout 方位加 padding）。
+ * 详见 docs/graph/KRIG-Graph-Layout-Spec.md §7.7
  */
 function getNodeSize(geometryId: string, input: LayoutInput): { width: number; height: number } {
   // 找 substance：从 intension atoms 找 'substance' predicate
@@ -142,21 +139,8 @@ function getNodeSize(geometryId: string, input: LayoutInput): { width: number; h
     }
   }
   const substance = substanceId ? input.substanceResolver(substanceId) : undefined;
-  const subW = substance?.visual?.size?.width;
-  const subH = substance?.visual?.size?.height;
-
-  // measureLabel 命中（B3.4.5 实装写入；B3.4.2 阶段一般 undefined）
   const labelBbox = input.measureLabel?.(geometryId);
-
-  const baseW = subW ?? DEFAULT_NODE_WIDTH;
-  const baseH = subH ?? DEFAULT_NODE_HEIGHT;
-  if (labelBbox) {
-    return {
-      width: Math.max(baseW, labelBbox.width + 16),
-      height: Math.max(baseH, labelBbox.height + 16),
-    };
-  }
-  return { width: baseW, height: baseH };
+  return getInstanceBoxSize(substance, labelBbox);
 }
 
 /** 从 presentations 读 pinned 节点的位置（'*' 或当前 layout）。 */
