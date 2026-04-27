@@ -63,14 +63,18 @@ export function buildSubstanceCatalogue(): CatalogueResult {
 
   pointSubstances.forEach((subId, i) => {
     const sub = substanceLibrary.get(subId);
-    if (!sub || !sub.visual) return;
+    if (!sub || !sub.visual) {
+      console.warn('[Catalogue] missing substance or visual:', subId);
+      return;
+    }
 
     const shapeId = sub.visual.shape ?? 'circle';
     const shape = pointShapeRegistry.get(shapeId);
     const mesh = shape.createMesh(sub.visual);
 
     // 定位
-    mesh.position.set(pointStartX + i * POINT_SPACING, POINT_ROW_Y, 0);
+    const x = pointStartX + i * POINT_SPACING;
+    mesh.position.set(x, POINT_ROW_Y, 0);
     root.add(mesh);
 
     // label 锚点：shape 的 contentAnchor + 实例位置

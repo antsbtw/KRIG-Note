@@ -82,6 +82,49 @@ export class SceneManager {
     this.dirty = true;
   }
 
+  /**
+   * 自动 fit 场景内容到视图。
+   *
+   * 算法：
+   *   1. 用 Box3.setFromObject(scene) 算所有几何体的整体包围盒
+   *   2. 算需要的 viewWorldHeight 让 box + padding 完全可见
+   *   3. 移相机 position 到 box 中心
+   *
+   * @param padding 视图边到内容边的世界单位距离（默认 80）
+   */
+  fitToContent(padding = 80): void {
+    if (!this.container) return;
+
+    const box = new THREE.Box3().setFromObject(this.scene);
+    if (box.isEmpty()) return;
+
+    const size = new THREE.Vector3();
+    box.getSize(size);
+    const center = new THREE.Vector3();
+    box.getCenter(center);
+
+    const rect = this.container.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    const aspect = rect.width / rect.height;
+
+    // 让 box 含 padding 完全可见：
+    //   按 aspect 取 max(boxH, boxW/aspect) 作为新 viewWorldHeight
+    const neededByH = size.y + padding * 2;
+    const neededByW = (size.x + padding * 2) / aspect;
+    this.viewWorldHeight = Math.max(neededByH, neededByW);
+
+    // 应用 frustum + camera position
+    const halfH = this.viewWorldHeight / 2;
+    const halfW = halfH * aspect;
+    this.camera.left = -halfW;
+    this.camera.right = halfW;
+    this.camera.top = halfH;
+    this.camera.bottom = -halfH;
+    this.camera.position.set(center.x, center.y, 10);
+    this.camera.updateProjectionMatrix();
+    this.markDirty();
+  }
+
   private handleResize(width: number, height: number): void {
     if (width <= 0 || height <= 0) return;
     this.renderer.setSize(width, height, false);

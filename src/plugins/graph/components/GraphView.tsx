@@ -32,7 +32,8 @@ export function GraphView() {
     const { root } = buildSubstanceCatalogue();
     scene.scene.add(root);
     demoRootRef.current = root;
-    scene.markDirty();
+    // fitToContent 必须在加几何体之后调 — 让画布一定完整显示所有内容
+    scene.fitToContent();
 
     return () => {
       if (demoRootRef.current) {
