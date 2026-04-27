@@ -354,6 +354,7 @@ export const IPC = {
   GRAPH_ACTIVE_CHANGED: 'graph:active-changed',  // main → renderer：activeGraphId 变化（GraphView/NavSide 监听）
   GRAPH_MOVE_TO_FOLDER: 'graph:move-to-folder',  // v1.4: 把图移动到指定 folder（null = 根）
   GRAPH_SET_ACTIVE_LAYOUT: 'graph:set-active-layout',  // v1.4 graph-import: 切换图谱当前布局算法
+  GRAPH_SET_ACTIVE_VIEW_MODE: 'graph:set-active-view-mode',  // v1.6 B3: 切换图谱当前 ViewMode
   // Graph Folder (v1.4 NavSide 重构)
   GRAPH_FOLDER_LIST: 'graph-folder:list',
   GRAPH_FOLDER_CREATE: 'graph-folder:create',

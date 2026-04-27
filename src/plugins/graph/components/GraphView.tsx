@@ -3,6 +3,8 @@ import { GraphRenderer } from '../rendering/GraphRenderer';
 import { adapt } from '../rendering/adapter';
 import { substanceLibrary } from '../substance';
 import { layoutRegistry } from '../layout';
+import { viewModeRegistry } from '../viewmode';
+import '../projection';  // 副作用：注册 'graph' projection
 import { composePatterns } from '../pattern';
 import type {
   GraphRecord,
@@ -43,6 +45,7 @@ declare const viewAPI: {
   graphLoadFull: (graphId: string) => Promise<LoadedGraph | null>;
   onGraphPresentationChanged?: (cb: (info: { graphId: string }) => void) => () => void;
   graphPresentationSetBulk: (records: unknown[]) => Promise<void>;
+  graphSetActiveViewMode: (graphId: string, viewModeId: string) => Promise<void>;
 };
 
 export function GraphView() {
@@ -50,6 +53,7 @@ export function GraphView() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [stats, setStats] = useState<{ total: number; warnings: number } | null>(null);
+  const [activeViewModeId, setActiveViewModeId] = useState<string>('force');
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const rendererRef = useRef<GraphRenderer | null>(null);
@@ -120,7 +124,8 @@ export function GraphView() {
     };
   }, []);
 
-  // ── 加载 + 渲染 graph 数据 ──
+  // ── 加载 + 渲染 graph 数据（依赖 reloadTrigger 让 ViewMode 切换也触发重载）──
+  const [reloadTrigger, setReloadTrigger] = useState(0);
   useEffect(() => {
     if (!activeGraphId) return;
     if (!rendererRef.current) return;
@@ -149,12 +154,19 @@ export function GraphView() {
 
         // 2. Layout 阶段（spec §3.1 ③）：剔除已被 Pattern 管理的子节点，
         //    剩余节点（容器 + 散户）走 ViewMode.layout
-        const activeLayout = data.graph.active_layout || 'force';
+        // ── 解析当前 ViewMode → 决定用哪个 layout 算法 ──
+        // 优先 active_view_mode（v1.6 B3）；为空 → 兼容 v1.4/v1.5 的 active_layout
+        const viewModeId = data.graph.active_view_mode
+          ?? data.graph.active_layout
+          ?? 'force';
+        const viewMode = viewModeRegistry.get(viewModeId);
+        const activeLayout = viewMode?.layout ?? data.graph.active_layout ?? 'force';
         activeGraphIdRef.current = data.graph.id;
         activeLayoutRef.current = activeLayout;
+        setActiveViewModeId(viewModeId);
         const algorithm = layoutRegistry.get(activeLayout);
         if (!algorithm) {
-          setError(`layout "${activeLayout}" not registered`);
+          setError(`layout "${activeLayout}" not registered (viewMode=${viewModeId})`);
           setLoading(false);
           return;
         }
@@ -233,7 +245,20 @@ export function GraphView() {
         }
       }
     })();
-  }, [activeGraphId]);
+  }, [activeGraphId, reloadTrigger]);
+
+  // ── ViewMode 切换处理 ──
+  const handleViewModeChange = async (newViewModeId: string) => {
+    if (!activeGraphId) return;
+    if (newViewModeId === activeViewModeId) return;
+    try {
+      await viewAPI.graphSetActiveViewMode(activeGraphId, newViewModeId);
+      setActiveViewModeId(newViewModeId);
+      setReloadTrigger((n) => n + 1);  // 触发数据重载（重新算 layout）
+    } catch (err) {
+      console.error('[GraphView] setActiveViewMode failed:', err);
+    }
+  };
 
   // ── 渲染 ──
   // 始终渲染 canvas 容器（让 GraphRenderer 在 mount 阶段就能拿到容器）。
@@ -256,6 +281,23 @@ export function GraphView() {
           {stats
             ? `${stats.total} 个几何体${stats.warnings > 0 ? ` · ${stats.warnings} 警告` : ''}`
             : 'Graph'}
+        </div>
+      )}
+      {activeGraphId && (
+        <div style={viewModeSwitcherStyle}>
+          {viewModeRegistry.list().map((vm) => (
+            <button
+              key={vm.id}
+              onClick={() => handleViewModeChange(vm.id)}
+              title={vm.description}
+              style={{
+                ...viewModeButtonStyle,
+                ...(vm.id === activeViewModeId ? viewModeButtonActiveStyle : {}),
+              }}
+            >
+              {vm.label}
+            </button>
+          ))}
         </div>
       )}
     </div>
@@ -301,4 +343,36 @@ const hintStyle: React.CSSProperties = {
   pointerEvents: 'none',
   userSelect: 'none',
   zIndex: 10,
+};
+
+const viewModeSwitcherStyle: React.CSSProperties = {
+  position: 'absolute',
+  top: 12,
+  right: 12,
+  display: 'flex',
+  gap: 4,
+  background: 'rgba(0,0,0,0.55)',
+  padding: 4,
+  borderRadius: 6,
+  zIndex: 10,
+  userSelect: 'none',
+};
+
+const viewModeButtonStyle: React.CSSProperties = {
+  background: 'transparent',
+  color: '#bbb',
+  borderWidth: 1,
+  borderStyle: 'solid',
+  borderColor: 'transparent',
+  fontSize: 12,
+  padding: '4px 10px',
+  borderRadius: 4,
+  cursor: 'pointer',
+  outline: 'none',
+};
+
+const viewModeButtonActiveStyle: React.CSSProperties = {
+  background: '#3b82f6',
+  color: '#fff',
+  borderColor: '#60a5fa',
 };

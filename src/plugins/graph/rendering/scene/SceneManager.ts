@@ -116,6 +116,18 @@ export class SceneManager {
     const box = new THREE.Box3().setFromObject(this.scene);
     if (box.isEmpty()) return;
 
+    // 防御 NaN / Infinity（label 退化几何 / SVG 解析问题可能导致）
+    const isFinite4 =
+      Number.isFinite(box.min.x) && Number.isFinite(box.min.y) &&
+      Number.isFinite(box.max.x) && Number.isFinite(box.max.y);
+    if (!isFinite4) {
+      console.warn('[SceneManager] fitBox skipped — non-finite box=', {
+        min: { x: box.min.x, y: box.min.y },
+        max: { x: box.max.x, y: box.max.y },
+      });
+      return;
+    }
+
     // 记下 box 给后续 resize 用
     this.fitBox = {
       minX: box.min.x,
