@@ -1,13 +1,10 @@
 /**
- * v1 内置 ViewMode 注册（spec §2.3）。
+ * 内置 ViewMode 注册（Pattern Spec §2.3）。
  *
  * 三种视角：
- *   force  力导节点边图（v1 默认）
- *   tree   树形层级图（按 contains 关系递归）
- *   grid   网格排布
- *
- * 三者都用 'graph' projection（v1.4 既有渲染管线）；
- * 区别仅在 layout 算法。tree projection 留 v1.5+。
+ *   force  力导节点边图（v1 默认） — ELK 'force' + 'graph' projection
+ *   tree   树形层级图               — ELK 'mrtree' + 'tree' projection（直角折线）
+ *   grid   网格排布                 — ELK 'box' + 'graph' projection
  */
 import { viewModeRegistry } from '../registry';
 
@@ -23,9 +20,9 @@ viewModeRegistry.register({
 viewModeRegistry.register({
   id: 'tree',
   label: '层级树',
-  description: '按 contains 关系递归展开；适合看层次结构',
+  description: '按 contains 关系递归展开 + 直角折线边路由；适合看层次结构',
   layout: 'tree-hierarchy',
-  projection: 'graph',
+  projection: 'tree',  // B3.4：用真树形 projection
   enable_patterns: true,
 });
 

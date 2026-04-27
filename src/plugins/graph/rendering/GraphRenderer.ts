@@ -28,6 +28,7 @@ import { labelLayoutRegistry } from './labels';
 import { SvgGeometryContent } from './contents/SvgGeometryContent';
 import { makeTextLabel } from '../../../lib/atom-serializers/extract';
 import { InteractionController, type NodeHit, type InteractionCallbacks } from './interaction/InteractionController';
+import { projectionRegistry } from '../projection';
 
 const LABEL_RENDER_ORDER = 1000;
 /** Line 的 z 平面：低于 point（z=0），高于 surface（z=-1）。让节点 shape 视觉上压在线之上 */
@@ -218,9 +219,13 @@ export class GraphRenderer {
     }
 
     // ── Pass 2: Line ──
+    // B3.4: 让 projection 介入折线/曲线渲染（tree projection 用 ELK ORTHOGONAL bendPoints）
+    const projection = sceneData.activeProjection
+      ? projectionRegistry.get(sceneData.activeProjection)
+      : undefined;
     for (const inst of sceneData.instances) {
       if (inst.kind !== 'line') continue;
-      this.renderLine(inst, byId);
+      this.renderLine(inst, byId, projection, sceneData.edgeSections);
     }
 
     // ── Pass 3: Surface ──
@@ -278,23 +283,35 @@ export class GraphRenderer {
 
   // ── 私有：渲染单个 Line ──
 
-  private renderLine(inst: RenderableInstance, byId: Map<string, RenderableInstance>): void {
+  private renderLine(
+    inst: RenderableInstance,
+    byId: Map<string, RenderableInstance>,
+    projection?: { customizeLine?: (i: RenderableInstance, sections: any) => Array<{ x: number; y: number }> | null },
+    edgeSections?: RenderableScene['edgeSections'],
+  ): void {
     if (inst.members.length < 2) return;
 
-    const centers: Array<{ x: number; y: number; z: number }> = [];
-    for (const memberId of inst.members) {
-      const member = byId.get(memberId);
-      if (!member) continue;
-      centers.push({
-        x: member.position.x,
-        y: member.position.y,
-        z: member.position.z ?? 0,
-      });
-    }
-    if (centers.length < 2) return;
+    let points: THREE.Vector3[];
 
-    // 端点裁到 shape 边缘（看起来"线连到节点边"而不是中心）
-    const points = this.clipLineEndpointsToShapes(inst.members, centers);
+    // B3.4: projection 介入折线/曲线（tree projection 取 ELK bendPoints）
+    const projectionPath = projection?.customizeLine?.(inst, edgeSections?.get(inst.id));
+    if (projectionPath && projectionPath.length >= 2) {
+      points = projectionPath.map((p) => new THREE.Vector3(p.x, p.y, LINE_Z));
+    } else {
+      // 原直线管线：member 中心 + 端点裁剪
+      const centers: Array<{ x: number; y: number; z: number }> = [];
+      for (const memberId of inst.members) {
+        const member = byId.get(memberId);
+        if (!member) continue;
+        centers.push({
+          x: member.position.x,
+          y: member.position.y,
+          z: member.position.z ?? 0,
+        });
+      }
+      if (centers.length < 2) return;
+      points = this.clipLineEndpointsToShapes(inst.members, centers);
+    }
 
     const shape = lineShapeRegistry.get('line');
     const lineObj = shape.createMesh(points, inst.visual);

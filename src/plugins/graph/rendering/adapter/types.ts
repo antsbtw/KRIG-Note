@@ -68,9 +68,25 @@ export interface RenderableScene {
   dimension: 2 | 3;
   /** 当前 active layout id */
   activeLayout: string;
+  /**
+   * B3.4 新增：当前 projection id（'graph' / 'tree' / ...）。
+   * GraphRenderer 据此决定是否调 projection.customizeLine 改造边渲染。
+   */
+  activeProjection?: string;
 
   /** 所有几何体实例（按 id 索引可在 Map 里查） */
   instances: RenderableInstance[];
+
+  /**
+   * B3.4 新增：layout 输出的边路由 sections（line geometry id → sections）。
+   * 由 GraphView 从 LayoutOutput.edgeSections 透传过来；GraphRenderer 调
+   * projection.customizeLine 时把对应 line 的 sections 传过去。
+   */
+  edgeSections?: Map<string, Array<{
+    startPoint: { x: number; y: number };
+    endPoint: { x: number; y: number };
+    bendPoints: Array<{ x: number; y: number }>;
+  }>>;
 
   /** 解析过程的警告（adapter 可能发现 ref 不存在等） */
   warnings: string[];

@@ -227,6 +227,8 @@ export function GraphView() {
           presentations: [...data.presentations, ...layoutPresentations],
           substanceResolver: (id) => substanceLibrary.get(id),
           activeLayout,
+          activeProjection: viewMode?.projection,
+          edgeSections: layoutResult.edgeSections,
         });
         if (myToken !== loadTokenRef.current) return;
         if (!rendererRef.current) return;

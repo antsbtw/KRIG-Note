@@ -40,10 +40,17 @@ export interface AdapterInput {
   substanceResolver: SubstanceResolver;
   /** 当前 active layout id（决定取哪些 presentation atoms） */
   activeLayout: string;
+  /** B3.4 新增：当前 active projection id（透传给 RenderableScene） */
+  activeProjection?: string;
+  /** B3.4 新增：layout 输出的边路由数据（透传给 RenderableScene） */
+  edgeSections?: RenderableScene['edgeSections'];
 }
 
 export function adapt(input: AdapterInput): RenderableScene {
-  const { graph, geometries, intensions, presentations, substanceResolver, activeLayout } = input;
+  const {
+    graph, geometries, intensions, presentations, substanceResolver,
+    activeLayout, activeProjection, edgeSections,
+  } = input;
   const warnings: string[] = [];
 
   // ── 按 subject_id 分组 atoms（O(N) 一次） ──
@@ -119,7 +126,9 @@ export function adapt(input: AdapterInput): RenderableScene {
     graphTitle: graph.title,
     dimension: graph.dimension ?? 2,
     activeLayout,
+    activeProjection,
     instances,
+    edgeSections,
     warnings,
   };
 }
