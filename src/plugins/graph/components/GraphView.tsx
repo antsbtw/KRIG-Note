@@ -31,6 +31,11 @@ interface LoadedGraph {
   presentations: GraphPresentationAtomRecord[];
 }
 
+interface GraphStats {
+  geometries: number;
+  isEmpty: boolean;
+}
+
 declare const viewAPI: {
   onRestoreWorkspaceState: (cb: (state: { activeGraphId?: string | null }) => void) => () => void;
   onGraphActiveChanged: (cb: (graphId: string | null) => void) => () => void;
@@ -42,6 +47,7 @@ export function GraphView() {
   const [activeGraphId, setActiveGraphId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [stats, setStats] = useState<GraphStats | null>(null);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const rendererRef = useRef<GraphRenderer | null>(null);
@@ -63,12 +69,23 @@ export function GraphView() {
   useEffect(() => {
     if (!activeGraphId || !containerRef.current) return;
 
-    const renderer = new GraphRenderer();
-    renderer.mount(containerRef.current);
-    rendererRef.current = renderer;
+    let renderer: GraphRenderer;
+    try {
+      renderer = new GraphRenderer();
+      renderer.mount(containerRef.current);
+      rendererRef.current = renderer;
+    } catch (err) {
+      console.error('[GraphView] failed to create/mount GraphRenderer:', err);
+      setError(`renderer init failed: ${String(err)}`);
+      return;
+    }
 
     return () => {
-      renderer.unmount();
+      try {
+        renderer.unmount();
+      } catch (err) {
+        console.error('[GraphView] unmount error:', err);
+      }
       rendererRef.current = null;
     };
   }, [activeGraphId]);
@@ -119,6 +136,7 @@ export function GraphView() {
         });
 
         if (myToken !== loadTokenRef.current) return;
+        setStats({ geometries: data.geometries.length, isEmpty: data.geometries.length === 0 });
         setLoading(false);
       } catch (err) {
         console.error('[GraphView] load failed:', err);
@@ -184,8 +202,17 @@ export function GraphView() {
       {error && (
         <div style={{ ...overlayStyle, color: '#f87171' }}>错误: {error}</div>
       )}
+      {!loading && !error && stats?.isEmpty && (
+        <div style={emptyGraphStyle}>
+          <div style={{ fontSize: 32, marginBottom: 12 }}>📭</div>
+          <div style={{ fontSize: 14, marginBottom: 4, color: '#aaa' }}>这张图还是空的</div>
+          <div style={{ fontSize: 12, opacity: 0.7 }}>
+            从 Markdown 导入（D11 实施）或手动添加节点（v1.5+）
+          </div>
+        </div>
+      )}
       <div style={hintStyle}>
-        滚轮缩放 · 中键/右键拖动平移 · {activeGraphId}
+        {stats && `${stats.geometries} 个几何体 · `}滚轮缩放 · 中键/右键拖动平移
       </div>
     </div>
   );
@@ -220,7 +247,24 @@ const hintStyle: React.CSSProperties = {
   bottom: 12,
   left: 12,
   fontSize: 11,
-  color: '#666',
+  color: '#888',
+  background: 'rgba(0,0,0,0.5)',
+  padding: '4px 10px',
+  borderRadius: 4,
   pointerEvents: 'none',
   userSelect: 'none',
+  zIndex: 10,
+};
+
+const emptyGraphStyle: React.CSSProperties = {
+  position: 'absolute',
+  inset: 0,
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'center',
+  justifyContent: 'center',
+  color: '#888',
+  userSelect: 'none',
+  pointerEvents: 'none',
+  zIndex: 5,
 };
