@@ -38,7 +38,7 @@ const force: LayoutAlgorithm = {
   id: 'force',
   label: 'Force',
   supportsDimension: [2],
-  compute(input: LayoutInput): LayoutOutput {
+  async compute(input: LayoutInput): Promise<LayoutOutput> {
     const points = input.geometries.filter((g) => g.kind === 'point');
     const lines = input.geometries.filter((g) => g.kind === 'line');
     const positions = new Map<string, { x: number; y: number }>();

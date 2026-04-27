@@ -14,7 +14,7 @@ const grid: LayoutAlgorithm = {
   id: 'grid',
   label: 'Grid',
   supportsDimension: [2],
-  compute(input: LayoutInput): LayoutOutput {
+  async compute(input: LayoutInput): Promise<LayoutOutput> {
     const points = input.geometries.filter((g) => g.kind === 'point');
     const positions = new Map<string, { x: number; y: number }>();
 

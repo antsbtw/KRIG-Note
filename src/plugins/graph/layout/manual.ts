@@ -17,7 +17,7 @@ const manual: LayoutAlgorithm = {
   id: 'manual',
   label: 'Manual',
   supportsDimension: [2, 3],
-  compute(input: LayoutInput): LayoutOutput {
+  async compute(input: LayoutInput): Promise<LayoutOutput> {
     const positions = new Map<string, { x: number; y: number; z?: number }>();
     const points = input.geometries.filter((g) => g.kind === 'point');
 

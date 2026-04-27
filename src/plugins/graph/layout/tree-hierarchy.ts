@@ -27,7 +27,7 @@ const treeHierarchy: LayoutAlgorithm = {
   id: 'tree-hierarchy',
   label: 'Tree Hierarchy',
   supportsDimension: [2],
-  compute(input: LayoutInput): LayoutOutput {
+  async compute(input: LayoutInput): Promise<LayoutOutput> {
     const positions = new Map<string, { x: number; y: number }>();
     const points = input.geometries.filter((g) => g.kind === 'point');
     if (points.length === 0) return { positions };

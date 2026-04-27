@@ -178,7 +178,7 @@ export function GraphView() {
           (a) => !patternResult.members.has(a.subject_id),
         );
 
-        const layoutResult = algorithm.compute({
+        const layoutResult = await algorithm.compute({
           geometries: geometriesForLayout,
           intensions: intensionsForLayout,
           presentations: data.presentations,
