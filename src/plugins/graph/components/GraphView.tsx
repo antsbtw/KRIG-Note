@@ -41,6 +41,7 @@ declare const viewAPI: {
   onGraphActiveChanged: (cb: (graphId: string | null) => void) => () => void;
   graphLoadFull: (graphId: string) => Promise<LoadedGraph | null>;
   onGraphPresentationChanged?: (cb: (info: { graphId: string }) => void) => () => void;
+  graphPresentationSetBulk: (records: unknown[]) => Promise<void>;
 };
 
 export function GraphView() {
@@ -52,6 +53,9 @@ export function GraphView() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const rendererRef = useRef<GraphRenderer | null>(null);
   const loadTokenRef = useRef(0);
+  /** 当前 graph 的活动 layout id（drag 写 atom 时用）；activeLayout 与 activeGraphId 同步更新 */
+  const activeLayoutRef = useRef<string>('force');
+  const activeGraphIdRef = useRef<string | null>(null);
 
   // ── activeGraphId 同步 ──
   useEffect(() => {
@@ -70,6 +74,45 @@ export function GraphView() {
     const renderer = new GraphRenderer();
     renderer.mount(containerRef.current);
     rendererRef.current = renderer;
+
+    // B2.3：拖动节点结束 → 写 presentation atom（pinned + position）
+    // 让节点固定在用户拖到的位置，下次打开图谱位置保持。
+    renderer.setInteractionCallbacks({
+      onNodeDragEnd: ({ instanceId, worldX, worldY }) => {
+        const graphId = activeGraphIdRef.current;
+        const layoutId = activeLayoutRef.current;
+        if (!graphId) return;
+        void viewAPI.graphPresentationSetBulk([
+          {
+            graph_id: graphId,
+            layout_id: layoutId,
+            subject_id: instanceId,
+            attribute: 'position.x',
+            value: String(worldX),
+            value_kind: 'number',
+          },
+          {
+            graph_id: graphId,
+            layout_id: layoutId,
+            subject_id: instanceId,
+            attribute: 'position.y',
+            value: String(worldY),
+            value_kind: 'number',
+          },
+          {
+            graph_id: graphId,
+            layout_id: layoutId,
+            subject_id: instanceId,
+            attribute: 'pinned',
+            value: 'true',
+            value_kind: 'text',
+          },
+        ]).catch((err) => {
+          console.error('[GraphView] persist drag failed:', err);
+        });
+      },
+    });
+
     return () => {
       renderer.unmount();
       rendererRef.current = null;
@@ -97,6 +140,8 @@ export function GraphView() {
 
         // 1. 算布局位置
         const activeLayout = data.graph.active_layout || 'force';
+        activeGraphIdRef.current = data.graph.id;
+        activeLayoutRef.current = activeLayout;
         const algorithm = layoutRegistry.get(activeLayout);
         if (!algorithm) {
           setError(`layout "${activeLayout}" not registered`);
