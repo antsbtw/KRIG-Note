@@ -38,13 +38,16 @@ export interface CatalogueResult {
 }
 
 const POINT_SPACING = 200;
-const POINT_ROW_Y = 200;
+const POINT_ROW_Y = 280;
 
-const LINE_ROW_Y = 0;
+const LAYOUT_DEMO_ROW_Y = 100;     // 第二行：6 种 layout 的 demo（inside-top / left-of / right-of）
+const LAYOUT_DEMO_SPACING = 240;
+
+const LINE_ROW_Y = -80;
 const LINE_SPACING = 240;
 const LINE_LENGTH = 180;
 
-const SURFACE_ROW_Y = -250;
+const SURFACE_ROW_Y = -300;
 const SURFACE_NODE_RADIUS = 20;
 
 export function buildSubstanceCatalogue(): CatalogueResult {
@@ -69,6 +72,29 @@ export function buildSubstanceCatalogue(): CatalogueResult {
 
     const x = pointStartX + i * POINT_SPACING;
     mesh.position.set(x, POINT_ROW_Y, 0);
+    root.add(mesh);
+
+    instances.push({
+      substanceId: subId,
+      label: sub.label,
+      object: mesh,
+    });
+  });
+
+  // ── 第二行：layout 演示（above-center / inside-top / left-of / right-of） ──
+  const layoutDemoSubstances = ['demo-above', 'demo-card', 'demo-left', 'demo-right'];
+  const layoutDemoStartX = -((layoutDemoSubstances.length - 1) * LAYOUT_DEMO_SPACING) / 2;
+
+  layoutDemoSubstances.forEach((subId, i) => {
+    const sub = substanceLibrary.get(subId);
+    if (!sub || !sub.visual) return;
+
+    const shapeId = sub.visual.shape ?? 'circle';
+    const shape = pointShapeRegistry.get(shapeId);
+    const mesh = shape.createMesh(sub.visual);
+
+    const x = layoutDemoStartX + i * LAYOUT_DEMO_SPACING;
+    mesh.position.set(x, LAYOUT_DEMO_ROW_Y, 0);
     root.add(mesh);
 
     instances.push({
@@ -189,6 +215,24 @@ export async function attachLabels(result: CatalogueResult): Promise<void> {
       const lcx = (labelBounds.min.x + labelBounds.max.x) / 2;
       const lcy = (labelBounds.min.y + labelBounds.max.y) / 2;
       labelObj.position.set(anchor.x - lcx, anchor.y - lcy, anchor.z);
+
+      // 让 label 永远渲染在最上层：
+      // 1. renderOrder 高（同 group 内后画）
+      // 2. material.depthTest = false（不参与深度测试，永远在前）
+      // 3. material.depthWrite = false（不写深度，不阻挡后画的）
+      labelObj.renderOrder = 1000;
+      labelObj.traverse((c) => {
+        c.renderOrder = 1000;
+        if (c instanceof THREE.Mesh) {
+          // 注意：SvgGeometryContent 用共享 material 缓存；这里改的是缓存对象，
+          // 影响后续所有 label 渲染（这正是想要的，所有 label 都在最上）
+          if (c.material instanceof THREE.Material) {
+            c.material.depthTest = false;
+            c.material.depthWrite = false;
+            c.material.transparent = true;
+          }
+        }
+      });
 
       result.root.add(labelObj);
     } catch (err) {
