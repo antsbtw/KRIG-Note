@@ -24,6 +24,8 @@ import {
   lineShapeRegistry,
   surfaceShapeRegistry,
 } from './shapes';
+import { SvgGeometryContent } from './contents/SvgGeometryContent';
+import { makeTextLabel } from '../../../lib/atom-serializers/extract';
 
 export interface CatalogueResult {
   /** 顶层 Group，含所有展示实例 */
@@ -51,7 +53,24 @@ const SURFACE_NODE_RADIUS = 20;
 /**
  * 构建对照表。
  * 调用方需把返回的 `root` 加到 SceneManager.scene。
+ *
+ * 注意：label 是异步的（SvgGeometryContent 需要等字体加载）。
+ * 调用 attachLabels() 后再调一次 fitToContent。
  */
+export async function attachLabels(result: CatalogueResult): Promise<void> {
+  const contentRenderer = new SvgGeometryContent();
+  for (const inst of result.instances) {
+    try {
+      const atoms = makeTextLabel(inst.label);
+      const labelObj = await contentRenderer.render(atoms);
+      labelObj.position.copy(inst.labelAnchor);
+      result.root.add(labelObj);
+    } catch (err) {
+      console.warn('[Catalogue] label render failed for', inst.substanceId, err);
+    }
+  }
+}
+
 export function buildSubstanceCatalogue(): CatalogueResult {
   const root = new THREE.Group();
   root.userData.kind = 'demo-catalogue';

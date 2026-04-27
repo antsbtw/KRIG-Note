@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { SceneManager } from '../rendering/scene/SceneManager';
-import { buildSubstanceCatalogue, disposeSubstanceCatalogue } from '../rendering/SubstanceCatalogueDemo';
+import { buildSubstanceCatalogue, disposeSubstanceCatalogue, attachLabels } from '../rendering/SubstanceCatalogueDemo';
 import type * as THREE from 'three';
 
 /**
@@ -29,13 +29,21 @@ export function GraphView() {
     sceneRef.current = scene;
 
     // 加载 substance 对照表
-    const { root } = buildSubstanceCatalogue();
-    scene.scene.add(root);
-    demoRootRef.current = root;
-    // fitToContent 必须在加几何体之后调 — 让画布一定完整显示所有内容
+    const result = buildSubstanceCatalogue();
+    scene.scene.add(result.root);
+    demoRootRef.current = result.root;
+    // 先 fit 一次（基础几何）
     scene.fitToContent();
 
+    // 异步加载 SVG 几何 label，加完再 fit 一次（label 会扩大包围盒）
+    let cancelled = false;
+    void attachLabels(result).then(() => {
+      if (cancelled) return;
+      scene.fitToContent();
+    });
+
     return () => {
+      cancelled = true;
       if (demoRootRef.current) {
         scene.scene.remove(demoRootRef.current);
         disposeSubstanceCatalogue(demoRootRef.current);
