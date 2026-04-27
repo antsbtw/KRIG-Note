@@ -87,7 +87,9 @@ export function GraphView() {
 
     void (async () => {
       try {
+        console.log('[GraphView] loading graph', activeGraphId);
         const data = await viewAPI.graphLoadFull(activeGraphId);
+        console.log('[GraphView] loaded', data ? `geometries=${data.geometries.length} intensions=${data.intensions.length} presentations=${data.presentations.length}` : 'null');
         if (myToken !== loadTokenRef.current) return;
         if (!data) {
           setError(`graph ${activeGraphId} not found`);
@@ -103,6 +105,7 @@ export function GraphView() {
           setLoading(false);
           return;
         }
+        console.log('[GraphView] running layout', activeLayout);
 
         const layoutResult = algorithm.compute({
           geometries: data.geometries,
@@ -111,6 +114,7 @@ export function GraphView() {
           substanceResolver: (id) => substanceLibrary.get(id),
           dimension: data.graph.dimension ?? 2,
         });
+        console.log('[GraphView] layout positions:', layoutResult.positions.size);
 
         // 2. 把 layout positions 注入 presentations（作为虚拟 position atom）
         // 仅当 presentation 中没有该 subject 的 position.x 才注入（pinned 优先）
@@ -142,12 +146,28 @@ export function GraphView() {
           substanceResolver: (id) => substanceLibrary.get(id),
           activeLayout,
         });
+        console.log('[GraphView] adapter done, instances=', sceneData.instances.length, 'warnings=', sceneData.warnings.length);
+        // 抽样位置
+        const points = sceneData.instances.filter(i => i.kind === 'point');
+        const lines = sceneData.instances.filter(i => i.kind === 'line');
+        const nonZero = points.filter(p => p.position.x !== 0 || p.position.y !== 0).length;
+        console.log('[GraphView] points:', points.length, 'with non-zero position:', nonZero);
+        if (points.length > 0) {
+          const p = points[0];
+          console.log('[GraphView] sample point:', p.id, 'pos=(', p.position.x.toFixed(0), p.position.y.toFixed(0), ') label=', p.label, 'shape=', p.visual.shape);
+        }
+        if (lines.length > 0) {
+          const l = lines[0];
+          console.log('[GraphView] sample line:', l.id, 'members=[', l.members.join(','), ']');
+        }
 
         if (myToken !== loadTokenRef.current) return;
         if (!rendererRef.current) return;
 
         // 4. 渲染
+        console.log('[GraphView] rendering...');
         await rendererRef.current.setData(sceneData);
+        console.log('[GraphView] render done');
 
         if (myToken !== loadTokenRef.current) return;
         setStats({ total: sceneData.instances.length, warnings: sceneData.warnings.length });
@@ -163,33 +183,35 @@ export function GraphView() {
   }, [activeGraphId]);
 
   // ── 渲染 ──
-
-  if (!activeGraphId) {
-    return (
-      <div style={emptyStyle}>
-        <div style={{ fontSize: 32 }}>🕸</div>
-        <div style={{ fontSize: 14 }}>GraphView</div>
-        <div style={{ fontSize: 12, opacity: 0.6 }}>从左侧选择或新建一个图</div>
-      </div>
-    );
-  }
+  // 始终渲染 canvas 容器（让 GraphRenderer 在 mount 阶段就能拿到容器）。
+  // !activeGraphId 时显示 empty overlay 覆盖在画布上。
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%', background: '#1e1e1e' }}>
       <div ref={containerRef} style={{ position: 'absolute', inset: 0 }} />
+      {!activeGraphId && (
+        <div style={emptyOverlayStyle}>
+          <div style={{ fontSize: 32 }}>🕸</div>
+          <div style={{ fontSize: 14 }}>GraphView</div>
+          <div style={{ fontSize: 12, opacity: 0.6 }}>从左侧选择或新建一个图</div>
+        </div>
+      )}
       {loading && <div style={overlayStyle}>加载中…</div>}
       {error && <div style={{ ...overlayStyle, color: '#f87171' }}>错误: {error}</div>}
-      <div style={hintStyle}>
-        {stats
-          ? `${stats.total} 个几何体${stats.warnings > 0 ? ` · ${stats.warnings} 警告` : ''}`
-          : 'Graph'}
-      </div>
+      {activeGraphId && (
+        <div style={hintStyle}>
+          {stats
+            ? `${stats.total} 个几何体${stats.warnings > 0 ? ` · ${stats.warnings} 警告` : ''}`
+            : 'Graph'}
+        </div>
+      )}
     </div>
   );
 }
 
-const emptyStyle: React.CSSProperties = {
-  height: '100%',
+const emptyOverlayStyle: React.CSSProperties = {
+  position: 'absolute',
+  inset: 0,
   display: 'flex',
   flexDirection: 'column',
   alignItems: 'center',
@@ -197,7 +219,8 @@ const emptyStyle: React.CSSProperties = {
   color: '#888',
   gap: 8,
   userSelect: 'none',
-  background: '#1e1e1e',
+  pointerEvents: 'none',
+  zIndex: 5,
 };
 
 const overlayStyle: React.CSSProperties = {

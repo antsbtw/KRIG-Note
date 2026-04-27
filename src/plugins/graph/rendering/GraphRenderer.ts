@@ -99,6 +99,7 @@ export class GraphRenderer {
     }
 
     // ── 第一次 fit（基础几何，无 label） ──
+    console.log('[GraphRenderer] before fit: scene children =', this.scene.scene.children.length, 'meshes=', this.meshes.size);
     this.scene.fitToContent();
 
     // ── Pass 4: label（异步） ──
@@ -122,16 +123,24 @@ export class GraphRenderer {
   private renderPoint(inst: RenderableInstance): void {
     const shapeId = inst.visual.shape ?? 'circle';
     const shape = pointShapeRegistry.get(shapeId);
-    const mesh = shape.createMesh(inst.visual);
-    mesh.position.set(
-      inst.position.x,
-      inst.position.y,
-      inst.position.z ?? 0,
-    );
-    mesh.userData.instanceId = inst.id;
-    mesh.userData.kind = 'point';
-    this.scene.scene.add(mesh);
-    this.meshes.set(inst.id, mesh);
+    if (!shape) {
+      console.error('[GraphRenderer] no shape for', shapeId);
+      return;
+    }
+    try {
+      const mesh = shape.createMesh(inst.visual);
+      mesh.position.set(
+        inst.position.x,
+        inst.position.y,
+        inst.position.z ?? 0,
+      );
+      mesh.userData.instanceId = inst.id;
+      mesh.userData.kind = 'point';
+      this.scene.scene.add(mesh);
+      this.meshes.set(inst.id, mesh);
+    } catch (err) {
+      console.error('[GraphRenderer] renderPoint failed for', inst.id, 'shape=', shapeId, err);
+    }
   }
 
   // ── 私有：渲染单个 Line ──
