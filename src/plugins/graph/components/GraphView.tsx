@@ -689,6 +689,37 @@ export function GraphView() {
     }
   };
 
+  // B4.6：从已凝结 substance 的 canvas_snapshot 删除一个几何体
+  // （不重新凝结，只改 snapshot；已经展开过的图谱不受影响 — 那些是独立 atom）
+  const handleRemoveSnapshotGeometry = async (substanceId: string, originalId: string) => {
+    try {
+      const existing = substanceLibrary.get(substanceId);
+      if (!existing || !existing.canvas_snapshot?.geometries) return;
+      const newGeometries = existing.canvas_snapshot.geometries.filter(
+        (g) => g.original_id !== originalId,
+      );
+      if (newGeometries.length === existing.canvas_snapshot.geometries.length) return;  // 没找到
+      const updated = {
+        ...existing,
+        canvas_snapshot: {
+          ...existing.canvas_snapshot,
+          geometries: newGeometries,
+        },
+      };
+      // 写 DB（仅更新 data，label 不变）
+      await viewAPI.graphUserSubstanceUpdate(substanceId, {
+        data: JSON.stringify(updated),
+      });
+      // 同步 substanceLibrary 和 state
+      substanceLibrary.register(updated);
+      setUserSubstances((prev) => prev.map((s) => (s.id === substanceId ? updated : s)));
+    } catch (err) {
+      console.error('[GraphView] remove snapshot geometry failed:', err);
+      setForgeToast(`删除失败：${String(err)}`);
+      setTimeout(() => setForgeToast(null), 3500);
+    }
+  };
+
   const handleDeleteUserSubstance = async (substanceId: string) => {
     try {
       await viewAPI.graphUserSubstanceDelete(substanceId);
@@ -898,6 +929,7 @@ export function GraphView() {
         userSubstances={userSubstances}
         onRenameUserSubstance={handleRenameUserSubstance}
         onDeleteUserSubstance={handleDeleteUserSubstance}
+        onRemoveSnapshotGeometry={handleRemoveSnapshotGeometry}
       />
       {/* B4.3 凝结操作反馈 toast */}
       {forgeToast && (

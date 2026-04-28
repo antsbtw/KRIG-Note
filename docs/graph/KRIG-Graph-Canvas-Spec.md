@@ -326,12 +326,12 @@ substance: user/wenwu/my-org-chart-20260427
 |---|---|---|---|
 | **B4.1** | LayoutInput 加 `layoutOptions` + 算法消费图谱级参数 + adapter 提取 | atom → ELK 选项管线打通；用户写 `layout.*` atom 影响渲染（无 UI）| ✅ 已完成 |
 | **B4.2.a** | Inspector 浮窗 + "画板" Tab（方向 / 边样式 / 间距）+ 节点选中机制 + 解冻 tree-layered + 虚拟 tree 派发 | 用户在画板调整图谱级参数；点节点高亮、框选、Esc 清空 | ✅ 已完成 |
-| **B4.2.b** | "节点" Tab：substance 替换 + 视觉覆盖 + 多选批量动作 + 边的 hit-test | 用户编辑选中节点/边的视觉 | ⏸ 待实施 |
+| **B4.2.b** | "节点" Tab：substance 替换 + 视觉覆盖 + 多选批量动作 + 边的 hit-test | 用户编辑选中节点/边的视觉 | ✅ 已完成 |
 | **B4.2.c** | "文字" Tab：label 内容 / 公式编辑 | 用户改 label 文字 | 推后 v1.5+ |
-| **B4.3** | 凝结协议：命令面板"凝结为 substance" + canvas_snapshot 字段 | 用户保存当前画板为 substance | ⏸ 待实施 |
-| **B4.4** | substance 调用：引用带 canvas_snapshot 的 substance 自动应用 | 其他图谱复用凝结结果 | ⏸ 待实施 |
-| **B4.5** | substance 库浏览面板 v1：列出 user 层 substance + 删除 | 用户管理已凝结的 substance | ⏸ 待实施 |
-| **B4.6** | substance 编辑模式：直接编辑已有 substance 的 canvas_snapshot | 用户修改而非新建 | ⏸ 待实施 |
+| **B4.3** | 凝结协议：节点 Tab "⬢ 凝结为 Substance" + canvas_snapshot 字段 + user_substance 表持久化 | 用户保存选区画板为 substance | ✅ 已完成 |
+| **B4.4** | substance 调用：单选引用含 snapshot 的 user substance 时展开（锚点替换 + 其他项新建 pinned） | 其他节点能复用凝结结果 | ✅ 已完成 |
+| **B4.5** | "库" Tab：列出 user 层 substance + 双击重命名 + 悬停删除（confirm）| 用户管理已凝结的 substance | ✅ 已完成 |
+| **B4.6** | "库" Tab 展开 ▸ 显示 snapshot 详情 + 删除单个几何体（不重新凝结）| 用户精简已凝结 substance 的内容 | ✅ 已完成 |
 
 ### §6.1 试金石：tree 多布局问题
 

@@ -53,6 +53,8 @@ export interface InspectorProps {
   userSubstances: Substance[];
   onRenameUserSubstance: (substanceId: string, newLabel: string) => Promise<void>;
   onDeleteUserSubstance: (substanceId: string) => Promise<void>;
+  /** B4.6：从 user substance 的 canvas_snapshot 中删除一个几何体（不重新凝结，只改 snapshot） */
+  onRemoveSnapshotGeometry: (substanceId: string, originalId: string) => Promise<void>;
 }
 
 export function Inspector({
@@ -71,6 +73,7 @@ export function Inspector({
   userSubstances,
   onRenameUserSubstance,
   onDeleteUserSubstance,
+  onRemoveSnapshotGeometry,
 }: InspectorProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [activeTab, setActiveTab] = useState<InspectorTab>('canvas');
@@ -174,6 +177,7 @@ export function Inspector({
             userSubstances={userSubstances}
             onRename={onRenameUserSubstance}
             onDelete={onDeleteUserSubstance}
+            onRemoveSnapshotGeometry={onRemoveSnapshotGeometry}
           />
         )}
         {activeTab === 'text' && (
