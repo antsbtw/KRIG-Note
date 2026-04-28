@@ -317,6 +317,7 @@ export class GraphRenderer {
         const pts = this.clipLineEndpointsToShapes(
           inst.members,
           livePositions.map((p) => ({ x: p.x, y: p.y, z: p.z ?? 0 })),
+          inst.visual,
         );
         newMesh = lineShapeRegistry.get('line').createMesh(pts, inst.visual);
       } else if (inst.kind === 'surface') {
@@ -446,6 +447,8 @@ export class GraphRenderer {
     if (projectionPath && projectionPath.length >= 2) {
       // 首末两端裁剪到节点 shape 边缘,中间 bendPoints / 曲线采样点不动。
       // 否则 bezier 曲线/直线的端点在节点中心,箭头会被节点 mesh 遮住。
+      // 有箭头的端额外退 arrowSize,让箭身完整显示在节点外(buildArrow 把
+      // tip 放在 toPt 处,身向反方向延伸,所以 toPt 必须在节点边缘外 arrowSize)。
       const clippedPath = [...projectionPath];
       const first = clippedPath[0];
       const second = clippedPath[1];
@@ -453,12 +456,16 @@ export class GraphRenderer {
       const secondLast = clippedPath[clippedPath.length - 2];
       const startMesh = this.meshes.get(inst.members[0]);
       const endMesh = this.meshes.get(inst.members[inst.members.length - 1]);
+      const arrowSize = inst.visual.arrowSize ?? 10;
+      const arrow = inst.visual.arrow ?? 'none';
+      const startBuffer = (arrow === 'backward' || arrow === 'both') ? arrowSize : 0;
+      const endBuffer = (arrow === 'forward' || arrow === 'both') ? arrowSize : 0;
       if (startMesh) {
-        const c = clipPointToBox(second, first, startMesh);
+        const c = clipPointToBox(second, first, startMesh, startBuffer);
         if (c) clippedPath[0] = c;
       }
       if (endMesh) {
-        const c = clipPointToBox(secondLast, last, endMesh);
+        const c = clipPointToBox(secondLast, last, endMesh, endBuffer);
         if (c) clippedPath[clippedPath.length - 1] = c;
       }
       points = clippedPath.map((p) => new THREE.Vector3(p.x, p.y, LINE_Z));
@@ -475,7 +482,7 @@ export class GraphRenderer {
         });
       }
       if (centers.length < 2) return;
-      points = this.clipLineEndpointsToShapes(inst.members, centers);
+      points = this.clipLineEndpointsToShapes(inst.members, centers, inst.visual);
     }
 
     const shape = lineShapeRegistry.get('line');
@@ -500,21 +507,27 @@ export class GraphRenderer {
   private clipLineEndpointsToShapes(
     memberIds: string[],
     centers: Array<{ x: number; y: number; z: number }>,
+    visual?: { arrow?: 'none' | 'forward' | 'backward' | 'both'; arrowSize?: number },
   ): THREE.Vector3[] {
     const result = centers.map((c) => new THREE.Vector3(c.x, c.y, LINE_Z));
     if (result.length < 2) return result;
 
+    const arrowSize = visual?.arrowSize ?? 10;
+    const arrow = visual?.arrow ?? 'none';
+    const startBuffer = (arrow === 'backward' || arrow === 'both') ? arrowSize : 0;
+    const endBuffer = (arrow === 'forward' || arrow === 'both') ? arrowSize : 0;
+
     // 首端：从 [1] 射向 [0]，求与 [0] 的 box 交点
     const startMesh = this.meshes.get(memberIds[0]);
     if (startMesh) {
-      const clipped = clipPointToBox(centers[1], centers[0], startMesh);
+      const clipped = clipPointToBox(centers[1], centers[0], startMesh, startBuffer);
       if (clipped) result[0].set(clipped.x, clipped.y, LINE_Z);
     }
     // 末端：从 [n-2] 射向 [n-1]，求与 [n-1] 的 box 交点
     const last = memberIds.length - 1;
     const endMesh = this.meshes.get(memberIds[last]);
     if (endMesh) {
-      const clipped = clipPointToBox(centers[last - 1], centers[last], endMesh);
+      const clipped = clipPointToBox(centers[last - 1], centers[last], endMesh, endBuffer);
       if (clipped) result[last].set(clipped.x, clipped.y, LINE_Z);
     }
     return result;
@@ -655,6 +668,7 @@ function clipPointToBox(
   from: { x: number; y: number },
   to: { x: number; y: number },
   toMesh: THREE.Object3D,
+  extraBuffer: number = 0,
 ): { x: number; y: number } | null {
   const dx = to.x - from.x;
   const dy = to.y - from.y;
@@ -675,7 +689,7 @@ function clipPointToBox(
   // 沿 x 方向 t_x = halfW / |ux|；沿 y 方向 t_y = halfH / |uy|；取较小
   const tx = Math.abs(ux) > 1e-6 ? halfW / Math.abs(ux) : Infinity;
   const ty = Math.abs(uy) > 1e-6 ? halfH / Math.abs(uy) : Infinity;
-  const t = Math.min(tx, ty);
+  const t = Math.min(tx, ty) + extraBuffer;
 
   return { x: to.x - ux * t, y: to.y - uy * t };
 }
