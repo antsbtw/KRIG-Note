@@ -1,11 +1,7 @@
 /**
- * 画板 Tab 内容 — 编辑全图属性（B4.2 第 4 步实装）。
+ * 全图布局参数子组件 — 编辑全图的方向 / 边样式 / 间距。
  *
- * 控件分组：
- *   方向       仅 tree 类 layout 显示（force/grid 不消费 direction）
- *   边样式     仅 tree 类 layout 显示（force 不画边、grid 边走默认）
- *   节点间距   全部 layout 都消费
- *   层间距     仅 tree 类（mrtree/layered）
+ * 用作 LayoutInspectorTab 的上栏（无卡片框，扁平流式布局，依赖外层分隔与下栏隔开）。
  *
  * 数据流：用户点按钮 → onSetLayoutOption 写 atom → 上层 reload → 新 atom
  *        进入 layoutOptions → 按钮高亮态更新。
@@ -112,7 +108,7 @@ export function CanvasInspectorTab({ layoutId, layoutOptions, onSetLayoutOption 
       )}
 
       {!isTree && (
-        <div style={{ fontSize: 11, color: '#666', marginTop: 8 }}>
+        <div style={hintStyle}>
           切到"层级树"以编辑方向 / 边样式 / 层间距
         </div>
       )}
@@ -171,9 +167,7 @@ function CustomNumberInput({
   onCommit: (value: string) => void;
 }) {
   const [draft, setDraft] = useState(value);
-  // 外部 value 变化时同步 draft（如别处也改了）
   if (draft !== value && document.activeElement?.tagName !== 'INPUT') {
-    // 仅当输入框未聚焦时才同步（避免输入打架）
     setTimeout(() => setDraft(value), 0);
   }
   const commit = () => {
@@ -242,4 +236,12 @@ const inputStyle: React.CSSProperties = {
   outline: 'none',
   width: '100%',
   boxSizing: 'border-box',
+};
+
+const hintStyle: React.CSSProperties = {
+  fontSize: 11,
+  color: '#666',
+  fontStyle: 'italic',
+  textAlign: 'center',
+  padding: '8px 0 0',
 };

@@ -19,7 +19,7 @@
  *
  * 多选（selectedIds.size > 1）：第 4 步实装；本步显示提示
  */
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type {
   GraphGeometryRecord,
   GraphIntensionAtomRecord,
@@ -29,6 +29,7 @@ import { substanceLibrary } from '../../substance';
 import type { Substance, SubstanceOrigin, SubstanceVisual } from '../../substance/types';
 import { isInLayoutFamily } from '../../layout/layout-family';
 import { NumberInput, ColorInput, SegRow, SegButton } from './InspectorWidgets';
+import { FloatingPanel } from '../../../../renderer/shell/components/FloatingPanel';
 
 export interface NodeInspectorTabProps {
   graphId: string;
@@ -95,22 +96,22 @@ export function NodeInspectorTab({
   const set = (attr: string, val: string) => onSetVisualOverride(ids, attr, val);
   const clr = (attr: string) => onClearVisualOverride(ids, attr);
 
+  // 单选时取节点 label（intension predicate='label'），未命名则显示占位
+  const singleLabel = !isMulti
+    ? (intensions.find((a) => a.subject_id === ids[0] && a.predicate === 'label')?.value as string | undefined)
+    : undefined;
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      {isMulti ? <MultiSelectionHeader count={ids.length} /> : <NodeIdRow id={ids[0]!} />}
+      {isMulti ? <MultiSelectionHeader count={ids.length} /> : <NodeLabelRow label={singleLabel} />}
 
-      <button onClick={() => onForgeSubstance(ids)} style={forgeButtonStyle} title="把当前选中凝结为可复用的 substance">
-        ⬢ 凝结为 Substance
-      </button>
-
-      <Section title="Substance">
-        <SubstancePicker
-          currentId={info.substanceId}
-          currentLabel={info.substanceLabel}
-          mixed={info.substanceMixed}
-          onPick={(newId) => onReplaceSubstance(ids, newId)}
-        />
-      </Section>
+      <SubstancePicker
+        currentId={info.substanceId}
+        currentLabel={info.substanceLabel}
+        mixed={info.substanceMixed}
+        onPick={(newId) => onReplaceSubstance(ids, newId)}
+        onForge={() => onForgeSubstance(ids)}
+      />
 
       {!onlyEdges && (<>
       <Section title="Layout">
@@ -438,13 +439,14 @@ function FieldRow({
   );
 }
 
-function NodeIdRow({ id }: { id: string }) {
+function NodeLabelRow({ label }: { label: string | undefined }) {
   return (
     <div style={nodeIdStyle}>
-      <span style={{ fontSize: 10, color: '#666' }}>NODE</span>
-      <span style={{ fontSize: 11, color: '#bbb', fontFamily: 'monospace', marginLeft: 6 }}>
-        {id.length > 18 ? id.slice(0, 8) + '…' + id.slice(-6) : id}
-      </span>
+      {label ? (
+        <span style={{ fontSize: 13, color: '#e8eaed' }}>{label}</span>
+      ) : (
+        <span style={{ fontSize: 12, color: '#666', fontStyle: 'italic' }}>(未命名)</span>
+      )}
     </div>
   );
 }
@@ -469,15 +471,19 @@ function SubstancePicker({
   currentLabel,
   mixed,
   onPick,
+  onForge,
 }: {
   currentId: string | undefined;
   currentLabel: string | undefined;
   mixed?: boolean;
   onPick: (newId: string) => void;
+  onForge: () => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const [anchor, setAnchor] = useState<HTMLElement | null>(null);
   const [query, setQuery] = useState('');
 
+  const open = anchor !== null;
   const all = substanceLibrary.list();
   const filtered = filterAndGroup(all, query);
 
@@ -490,20 +496,55 @@ function SubstancePicker({
   );
 
   return (
-    <div style={{ position: 'relative' }}>
+    <>
       <button
+        ref={triggerRef}
         onClick={() => {
-          setOpen((v) => !v);
-          if (!open) setQuery('');
+          if (open) {
+            setAnchor(null);
+          } else {
+            setQuery('');
+            setAnchor(triggerRef.current);
+          }
         }}
-        style={pickerTriggerStyle}
+        style={{
+          ...pickerTriggerStyle,
+          ...(open ? pickerTriggerActiveStyle : {}),
+        }}
+        onMouseEnter={(e) => {
+          if (!open) {
+            e.currentTarget.style.background = '#2f2f33';
+            e.currentTarget.style.borderColor = '#4a4a50';
+          }
+        }}
+        onMouseLeave={(e) => {
+          if (!open) {
+            e.currentTarget.style.background = pickerTriggerStyle.background as string;
+            e.currentTarget.style.borderColor = '#3a3a3f';
+          }
+        }}
       >
-        <span style={{ flex: 1, textAlign: 'left' }}>{display}</span>
-        <span style={{ color: '#666', marginLeft: 6 }}>{open ? '▴' : '▾'}</span>
+        {display}
       </button>
 
-      {open && (
-        <div style={popoverStyle}>
+      {anchor && (
+        <FloatingPanel
+          anchor={anchor}
+          onClose={() => setAnchor(null)}
+          title="Substance"
+          width={280}
+          maxHeight={400}
+        >
+          <button
+            onClick={() => {
+              onForge();
+              setAnchor(null);
+            }}
+            style={forgeRowStyle}
+            title="把当前选区凝结为可复用的 substance"
+          >
+            ⬢ 凝结当前选区为 Substance
+          </button>
           <input
             autoFocus
             type="text"
@@ -526,7 +567,7 @@ function SubstancePicker({
                     key={s.id}
                     onClick={() => {
                       onPick(s.id);
-                      setOpen(false);
+                      setAnchor(null);
                     }}
                     style={{
                       ...pickerItemStyle,
@@ -543,9 +584,9 @@ function SubstancePicker({
               </div>
             ))}
           </div>
-        </div>
+        </FloatingPanel>
       )}
-    </div>
+    </>
   );
 }
 
@@ -644,48 +685,43 @@ const hintStyle: React.CSSProperties = {
   textAlign: 'center',
 };
 
-const forgeButtonStyle: React.CSSProperties = {
+// ── SubstancePicker 样式 ──
+
+const forgeRowStyle: React.CSSProperties = {
+  display: 'block',
   width: '100%',
-  padding: '7px 10px',
-  background: 'linear-gradient(180deg, #3b82f6 0%, #2563eb 100%)',
-  color: '#fff',
-  border: '1px solid #60a5fa',
-  borderRadius: 4,
+  padding: '8px 10px',
+  background: 'transparent',
+  color: '#60a5fa',
+  border: 'none',
+  borderBottom: '1px solid #2a2a2a',
   fontSize: 12,
   fontWeight: 500,
   cursor: 'pointer',
   outline: 'none',
+  textAlign: 'left',
+  flexShrink: 0,
 };
-
-// ── SubstancePicker 样式 ──
 
 const pickerTriggerStyle: React.CSSProperties = {
   width: '100%',
-  display: 'flex',
-  alignItems: 'center',
-  background: '#0f0f10',
+  background: '#252528',
   color: '#e8eaed',
-  border: '1px solid #333',
-  borderRadius: 3,
+  border: '1px solid #3a3a3f',
+  borderRadius: 4,
   fontSize: 12,
-  padding: '5px 8px',
+  padding: '8px 12px',
   cursor: 'pointer',
   outline: 'none',
+  textAlign: 'left',
+  fontWeight: 500,
+  transition: 'background 0.12s, border-color 0.12s',
 };
 
-const popoverStyle: React.CSSProperties = {
-  position: 'absolute',
-  top: 'calc(100% + 4px)',
-  left: 0,
-  right: 0,
-  background: '#1a1a1c',
-  border: '1px solid #444',
-  borderRadius: 4,
-  zIndex: 20,
-  display: 'flex',
-  flexDirection: 'column',
-  maxHeight: 320,
-  boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+const pickerTriggerActiveStyle: React.CSSProperties = {
+  background: '#3b82f6',
+  borderColor: '#60a5fa',
+  color: '#fff',
 };
 
 const searchInputStyle: React.CSSProperties = {
@@ -693,16 +729,17 @@ const searchInputStyle: React.CSSProperties = {
   color: '#e8eaed',
   border: 'none',
   borderBottom: '1px solid #333',
-  borderRadius: '4px 4px 0 0',
   fontSize: 12,
   padding: '6px 8px',
   outline: 'none',
+  flexShrink: 0,
 };
 
 const popoverListStyle: React.CSSProperties = {
   overflowY: 'auto',
   flex: 1,
   padding: '4px 0',
+  minHeight: 0,
 };
 
 const originLabelStyle: React.CSSProperties = {

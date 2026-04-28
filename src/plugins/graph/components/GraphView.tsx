@@ -86,8 +86,6 @@ export function GraphView() {
   const [layoutOptions, setLayoutOptions] = useState<Record<string, string>>({});
   /** B4.3 凝结操作的反馈 toast（成功/失败提示，3.5 秒自动消失） */
   const [forgeToast, setForgeToast] = useState<string | null>(null);
-  /** B4.5 user substance 列表（库 Tab 显示用；凝结/重命名/删除时同步更新） */
-  const [userSubstances, setUserSubstances] = useState<import('../substance/types').Substance[]>([]);
   /** B4.2.b：原始 atom 数据（节点 Tab 读取用 — 当前 substance / 视觉 override） */
   const [graphAtoms, setGraphAtoms] = useState<{
     geometries: GraphGeometryRecord[];
@@ -113,17 +111,14 @@ export function GraphView() {
       try {
         const records = await viewAPI.graphUserSubstanceList();
         if (cancelled) return;
-        const parsedList: import('../substance/types').Substance[] = [];
         for (const rec of records) {
           try {
             const parsed = JSON.parse(rec.data) as import('../substance/types').Substance;
             substanceLibrary.register(parsed);
-            parsedList.push(parsed);
           } catch (err) {
             console.warn('[GraphView] failed to parse user_substance:', rec.substance_id, err);
           }
         }
-        setUserSubstances(parsedList);
       } catch (err) {
         console.warn('[GraphView] load user_substance failed:', err);
       }
@@ -663,79 +658,6 @@ export function GraphView() {
     setTimeout(() => setForgeToast(null), 3500);
   };
 
-  // ── B4.5 库 Tab：重命名 / 删除 user substance ──
-  const handleRenameUserSubstance = async (substanceId: string, newLabel: string) => {
-    try {
-      // 先在内存里改
-      const existing = substanceLibrary.get(substanceId);
-      if (!existing) return;
-      const updated = { ...existing, label: newLabel };
-      // 写 DB（label + data 同步）
-      await viewAPI.graphUserSubstanceUpdate(substanceId, {
-        label: newLabel,
-        data: JSON.stringify(updated),
-      });
-      // 同步 substanceLibrary 和 state
-      substanceLibrary.register(updated);  // 同 id 覆盖
-      setUserSubstances((prev) =>
-        prev.map((s) => (s.id === substanceId ? updated : s)),
-      );
-      // 触发重载，让节点显示的 substance label 也刷新
-      setReloadTrigger((n) => n + 1);
-    } catch (err) {
-      console.error('[GraphView] rename user substance failed:', err);
-      setForgeToast(`重命名失败：${String(err)}`);
-      setTimeout(() => setForgeToast(null), 3500);
-    }
-  };
-
-  // B4.6：从已凝结 substance 的 canvas_snapshot 删除一个几何体
-  // （不重新凝结，只改 snapshot；已经展开过的图谱不受影响 — 那些是独立 atom）
-  const handleRemoveSnapshotGeometry = async (substanceId: string, originalId: string) => {
-    try {
-      const existing = substanceLibrary.get(substanceId);
-      if (!existing || !existing.canvas_snapshot?.geometries) return;
-      const newGeometries = existing.canvas_snapshot.geometries.filter(
-        (g) => g.original_id !== originalId,
-      );
-      if (newGeometries.length === existing.canvas_snapshot.geometries.length) return;  // 没找到
-      const updated = {
-        ...existing,
-        canvas_snapshot: {
-          ...existing.canvas_snapshot,
-          geometries: newGeometries,
-        },
-      };
-      // 写 DB（仅更新 data，label 不变）
-      await viewAPI.graphUserSubstanceUpdate(substanceId, {
-        data: JSON.stringify(updated),
-      });
-      // 同步 substanceLibrary 和 state
-      substanceLibrary.register(updated);
-      setUserSubstances((prev) => prev.map((s) => (s.id === substanceId ? updated : s)));
-    } catch (err) {
-      console.error('[GraphView] remove snapshot geometry failed:', err);
-      setForgeToast(`删除失败：${String(err)}`);
-      setTimeout(() => setForgeToast(null), 3500);
-    }
-  };
-
-  const handleDeleteUserSubstance = async (substanceId: string) => {
-    try {
-      await viewAPI.graphUserSubstanceDelete(substanceId);
-      substanceLibrary.unregister(substanceId);
-      setUserSubstances((prev) => prev.filter((s) => s.id !== substanceId));
-      // 触发重载，让引用此 substance 的节点显示兜底视觉
-      setReloadTrigger((n) => n + 1);
-      setForgeToast(`已删除`);
-      setTimeout(() => setForgeToast(null), 2500);
-    } catch (err) {
-      console.error('[GraphView] delete user substance failed:', err);
-      setForgeToast(`删除失败：${String(err)}`);
-      setTimeout(() => setForgeToast(null), 3500);
-    }
-  };
-
   // ── B4.3 画板凝结：选区 → user_substance ──
   // 用户在 Inspector 节点 Tab 点"凝结为 Substance"按钮 → 走这里
   // 1. 收集选区几何体的 substance + 视觉 override + 相对位置
@@ -821,7 +743,6 @@ export function GraphView() {
         data: JSON.stringify(newSubstance),
       });
       substanceLibrary.register(newSubstance);
-      setUserSubstances((prev) => [...prev, newSubstance]);
 
       // Toast 提示
       setForgeToast(`已凝结为「${newLabel}」`);
@@ -912,7 +833,7 @@ export function GraphView() {
           ))}
         </div>
       )}
-      {/* B4.2.a Inspector 编辑器浮窗 */}
+      {/* Inspector 编辑器浮窗 */}
       <Inspector
         graphId={activeGraphId}
         layoutId={viewModeRegistry.get(activeViewModeId)?.layout ?? 'force'}
@@ -926,10 +847,6 @@ export function GraphView() {
         onSetVisualOverride={handleSetVisualOverride}
         onClearVisualOverride={handleClearVisualOverride}
         onForgeSubstance={handleForgeSubstance}
-        userSubstances={userSubstances}
-        onRenameUserSubstance={handleRenameUserSubstance}
-        onDeleteUserSubstance={handleDeleteUserSubstance}
-        onRemoveSnapshotGeometry={handleRemoveSnapshotGeometry}
       />
       {/* B4.3 凝结操作反馈 toast */}
       {forgeToast && (

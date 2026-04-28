@@ -1,60 +1,50 @@
 /**
- * Inspector — 画板编辑器浮窗（B4.2.a 框架）。
+ * Inspector — 画板编辑器浮窗。
  *
- * 画板模型核心 UI：用户在自动布局产物上做调整的入口。
- * 三个 Tab 按"作用域"分（不是按"功能"）：
+ * 两个 Tab：
+ *   布局  全图布局参数（方向 / 边样式 / 间距）
+ *   属性  选中点/边的属性（substance / 视觉 override）
  *
- *   画板  无需选中，编辑全图属性（方向 / 间距 / 边样式 / ...）
- *   节点  选中节点/边后，编辑 substance / 视觉覆盖（B4.2.b 实施）
- *   文字  选中节点后，编辑 label 内容 / 公式（推后到 v1.5+）
+ * 设计原则：
+ *   - 用户主动切 Tab，不做自动跳转（选中态变化时保持当前 Tab）
+ *   - 库（user substance 管理）从 Tab 中移除：picker 弹独立浮窗承载选择，管理动作待加
  *
  * 位置：固定右侧，绝对定位浮在画布上（不挤压画布）。
- * 状态：默认展开（首次使用易发现）；用户折叠后保留细边条作为入口。
- *
- * 详见 docs/graph/KRIG-Graph-Canvas-Spec.md §2 + §3
  */
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import type {
   GraphGeometryRecord,
   GraphIntensionAtomRecord,
   GraphPresentationAtomRecord,
 } from '../../../main/storage/types';
-import type { Substance } from '../substance/types';
-import { CanvasInspectorTab } from './inspector/CanvasInspectorTab';
-import { NodeInspectorTab } from './inspector/NodeInspectorTab';
-import { LibraryInspectorTab } from './inspector/LibraryInspectorTab';
+import { LayoutInspectorTab } from './inspector/LayoutInspectorTab';
+import { PropertiesInspectorTab } from './inspector/PropertiesInspectorTab';
 
-export type InspectorTab = 'canvas' | 'node' | 'library' | 'text';
+export type InspectorTab = 'layout' | 'properties';
 
 export interface InspectorProps {
   /** 当前 graph id（图谱级 atom 写入用） */
   graphId: string | null;
   /** 当前 layout id（图谱级 atom 写入用） */
   layoutId: string;
-  /** 当前选中节点 ids（决定默认 Tab + 节点 Tab 内容） */
+  /** 当前选中节点 ids（属性 Tab 内容） */
   selectedIds: ReadonlySet<string>;
   /** 当前生效的图谱级 layout 参数（用于按钮"亮"哪个状态显示） */
   layoutOptions: Record<string, string>;
-  /** B4.2.b：原始 atom 数据（节点 Tab 读取当前 substance / 视觉 override） */
+  /** 原始 atom 数据（属性 Tab 读取当前 substance / 视觉 override） */
   geometries: GraphGeometryRecord[];
   intensions: GraphIntensionAtomRecord[];
   presentations: GraphPresentationAtomRecord[];
   /** 写入图谱级 layout 参数 atom（reload 由调用方触发） */
   onSetLayoutOption: (attribute: string, value: string) => Promise<void>;
-  /** B4.2.b：替换 N 个节点的 substance（单选传 [id]，多选传所有选中） */
+  /** 替换 N 个节点的 substance（单选传 [id]，多选传所有选中） */
   onReplaceSubstance: (geometryIds: string[], newSubstanceId: string) => Promise<void>;
-  /** B4.2.b：写 N 个节点的视觉 override（layout_id='*'） */
+  /** 写 N 个节点的视觉 override（layout_id='*'） */
   onSetVisualOverride: (geometryIds: string[], attribute: string, value: string) => Promise<void>;
-  /** B4.2.b：删除 N 个节点的视觉 override（重置为 substance 默认值） */
+  /** 删除 N 个节点的视觉 override（重置为 substance 默认值） */
   onClearVisualOverride: (geometryIds: string[], attribute: string) => Promise<void>;
-  /** B4.3：凝结选中几何体为新的 user 层 substance */
+  /** 凝结选中几何体为新的 user 层 substance */
   onForgeSubstance: (geometryIds: string[]) => Promise<void>;
-  /** B4.5：user substance 列表（库 Tab 显示）+ 重命名/删除回调 */
-  userSubstances: Substance[];
-  onRenameUserSubstance: (substanceId: string, newLabel: string) => Promise<void>;
-  onDeleteUserSubstance: (substanceId: string) => Promise<void>;
-  /** B4.6：从 user substance 的 canvas_snapshot 中删除一个几何体（不重新凝结，只改 snapshot） */
-  onRemoveSnapshotGeometry: (substanceId: string, originalId: string) => Promise<void>;
 }
 
 export function Inspector({
@@ -70,30 +60,9 @@ export function Inspector({
   onSetVisualOverride,
   onClearVisualOverride,
   onForgeSubstance,
-  userSubstances,
-  onRenameUserSubstance,
-  onDeleteUserSubstance,
-  onRemoveSnapshotGeometry,
 }: InspectorProps) {
   const [collapsed, setCollapsed] = useState(false);
-  const [activeTab, setActiveTab] = useState<InspectorTab>('canvas');
-
-  // 选中变化时，自动切到合适 Tab（仅当用户从"无选中→有选中"时跳转）
-  // 避免反复打架：用户主动切 Tab 后不再被覆盖
-  const [userOverrideTab, setUserOverrideTab] = useState(false);
-  useEffect(() => {
-    if (userOverrideTab) return;
-    if (selectedIds.size > 0 && activeTab === 'canvas') {
-      setActiveTab('node');
-    } else if (selectedIds.size === 0 && activeTab !== 'canvas') {
-      setActiveTab('canvas');
-    }
-  }, [selectedIds, activeTab, userOverrideTab]);
-
-  const handleTabClick = (tab: InspectorTab) => {
-    setActiveTab(tab);
-    setUserOverrideTab(true);
-  };
+  const [activeTab, setActiveTab] = useState<InspectorTab>('layout');
 
   if (!graphId) return null;
 
@@ -128,21 +97,18 @@ export function Inspector({
 
       {/* Tab 栏 */}
       <div style={tabBarStyle}>
-        {(['canvas', 'node', 'library', 'text'] as InspectorTab[]).map((tab) => (
+        {(['layout', 'properties'] as InspectorTab[]).map((tab) => (
           <button
             key={tab}
-            onClick={() => handleTabClick(tab)}
+            onClick={() => setActiveTab(tab)}
             style={{
               ...tabButtonStyle,
               ...(activeTab === tab ? tabButtonActiveStyle : {}),
             }}
           >
             {TAB_LABELS[tab]}
-            {tab === 'node' && selectedIds.size > 0 && (
+            {tab === 'properties' && selectedIds.size > 0 && (
               <span style={tabBadgeStyle}>{selectedIds.size}</span>
-            )}
-            {tab === 'library' && userSubstances.length > 0 && (
-              <span style={tabBadgeStyle}>{userSubstances.length}</span>
             )}
           </button>
         ))}
@@ -150,40 +116,24 @@ export function Inspector({
 
       {/* Tab 内容 */}
       <div style={tabContentStyle}>
-        {activeTab === 'canvas' && (
-          <CanvasInspectorTab
-            graphId={graphId}
-            layoutId={layoutId}
-            layoutOptions={layoutOptions}
-            onSetLayoutOption={onSetLayoutOption}
-          />
-        )}
-        {activeTab === 'node' && (
-          <NodeInspectorTab
+        {activeTab === 'layout' && (
+          <LayoutInspectorTab
             graphId={graphId}
             layoutId={layoutId}
             selectedIds={selectedIds}
+            layoutOptions={layoutOptions}
             geometries={geometries}
             intensions={intensions}
             presentations={presentations}
+            onSetLayoutOption={onSetLayoutOption}
             onReplaceSubstance={onReplaceSubstance}
             onSetVisualOverride={onSetVisualOverride}
             onClearVisualOverride={onClearVisualOverride}
             onForgeSubstance={onForgeSubstance}
           />
         )}
-        {activeTab === 'library' && (
-          <LibraryInspectorTab
-            userSubstances={userSubstances}
-            onRename={onRenameUserSubstance}
-            onDelete={onDeleteUserSubstance}
-            onRemoveSnapshotGeometry={onRemoveSnapshotGeometry}
-          />
-        )}
-        {activeTab === 'text' && (
-          <div style={placeholderStyle}>
-            文字 / 公式编辑推后到后续阶段
-          </div>
+        {activeTab === 'properties' && (
+          <PropertiesInspectorTab selectedIds={selectedIds} />
         )}
       </div>
     </div>
@@ -191,10 +141,8 @@ export function Inspector({
 }
 
 const TAB_LABELS: Record<InspectorTab, string> = {
-  canvas: '画板',
-  node: '节点',
-  library: '库',
-  text: '文字',
+  layout: '布局',
+  properties: '属性',
 };
 
 const PANEL_WIDTH = 260;
@@ -293,12 +241,4 @@ const tabContentStyle: React.CSSProperties = {
   padding: 10,
   overflowY: 'auto',
   flex: 1,
-};
-
-const placeholderStyle: React.CSSProperties = {
-  color: '#666',
-  fontSize: 12,
-  padding: '20px 0',
-  textAlign: 'center',
-  fontStyle: 'italic',
 };
