@@ -25,10 +25,10 @@ const DIRECTIONS = [
 ] as const;
 
 const EDGE_STYLES = [
-  { value: 'straight', label: '直线' },
-  { value: 'orthogonal', label: '直角' },
-  { value: 'polyline', label: '折线' },
-  { value: 'splines', label: '曲线' },
+  { value: 'straight', label: 'Straight' },
+  { value: 'step', label: 'Step' },
+  { value: 'smoothstep', label: 'Smoothstep' },
+  { value: 'bezier', label: 'Bezier' },
 ] as const;
 
 const SPACING_PRESETS = [
@@ -42,7 +42,9 @@ export function CanvasInspectorTab({ layoutId, layoutOptions, onSetLayoutOption 
   const isTree = layoutId === 'tree' || layoutId === 'tree-hierarchy' || layoutId === 'tree-layered';
 
   const currentDirection = layoutOptions['layout.direction'] ?? 'DOWN';
-  const currentEdgeStyle = layoutOptions['layout.edge-style'] ?? 'straight';
+  // 老值兼容:之前的 orthogonal/polyline/splines 三个废弃值在 UI 上映射到最接近的新值,
+  // 让按钮高亮态正确;实际渲染时 edge-paths.ts 也会用同样规则 fallback。
+  const currentEdgeStyle = normalizeEdgeStyle(layoutOptions['layout.edge-style']);
   const currentNodeSpacing = layoutOptions['layout.spacing.node'] ?? defaultNodeSpacing(layoutId);
   const currentLayerSpacing = layoutOptions['layout.spacing.layer'] ?? '80';
 
@@ -120,6 +122,35 @@ function defaultNodeSpacing(layoutId: string): string {
   if (layoutId === 'force') return '80';
   if (layoutId === 'grid') return '40';
   return '60';  // tree 类默认
+}
+
+/**
+ * 把存量 / 历史 layout.edge-style 值映射到 4 档新值。
+ *
+ * 之前 4 档:straight / orthogonal / polyline / splines(基于 ELK 边路由)
+ * 现在 4 档:straight / step      / smoothstep / bezier (基于 React Flow 公式)
+ *
+ * 映射规则(取视觉最接近):
+ *   orthogonal → step       (都是直角折线)
+ *   polyline   → step       (都是多段直线;React Flow 不区分 polyline/orthogonal)
+ *   splines    → bezier     (都是平滑曲线)
+ *   undefined  → bezier     (新默认值)
+ */
+function normalizeEdgeStyle(raw: string | undefined): string {
+  switch (raw) {
+    case 'straight':
+    case 'step':
+    case 'smoothstep':
+    case 'bezier':
+      return raw;
+    case 'orthogonal':
+    case 'polyline':
+      return 'step';
+    case 'splines':
+      return 'bezier';
+    default:
+      return 'bezier';
+  }
 }
 
 // ── 子组件 ──

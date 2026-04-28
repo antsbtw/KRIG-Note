@@ -56,11 +56,14 @@ export const KNOWN_LAYOUT_OPTION_KEYS = [
  * 把画板模型 key 映射为 ELK 选项。
  *
  * 算法消费规则：
- *   - tree 类（mrtree / layered）消费所有 4 个
+ *   - tree 类(mrtree / layered)消费 direction + spacing.node + spacing.layer
  *   - force 仅消费 spacing.node
- *   - grid（box）仅消费 spacing.node
+ *   - grid(box)仅消费 spacing.node
  *
- * 未识别的 key 静默忽略（forward-compat：用户未来可能写 v1.5+ 才支持的 key）。
+ * 不再消费 layout.edge-style:边样式由渲染层公式控制(edge-paths.ts),
+ * ELK 边路由(elk.edgeRouting)不再使用。
+ *
+ * 未识别的 key 静默忽略(forward-compat:用户未来可能写 v1.5+ 才支持的 key)。
  */
 export function resolveLayoutOptions(
   options: Record<string, string> | undefined,
@@ -74,18 +77,6 @@ export function resolveLayoutOptions(
     if (direction === 'DOWN' || direction === 'UP' || direction === 'LEFT' || direction === 'RIGHT') {
       out['elk.direction'] = direction;
     }
-  }
-
-  const edgeStyle = options['layout.edge-style'];
-  if (edgeStyle && algorithm === 'layered') {
-    const map: Record<string, string> = {
-      orthogonal: 'ORTHOGONAL',
-      polyline: 'POLYLINE',
-      splines: 'SPLINES',
-      straight: 'UNDEFINED',
-    };
-    const elkValue = map[edgeStyle];
-    if (elkValue) out['elk.edgeRouting'] = elkValue;
   }
 
   const spacingNode = options['layout.spacing.node'];

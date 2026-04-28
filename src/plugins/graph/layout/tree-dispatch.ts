@@ -1,21 +1,19 @@
 /**
- * Tree 派发器 — 虚拟 layout id `tree`（B4.2 解冻 layered）。
+ * Tree 派发器 — 虚拟 layout id `tree`。
  *
- * 单一对外入口：ViewMode "层级树" 引用 `tree`。
- * 派发逻辑（根据 layoutOptions['layout.edge-style']）：
- *   - 'orthogonal' / 'polyline' / 'splines' → tree-layered（layered 算法）
- *   - 'straight' / 未设置                   → tree-hierarchy（mrtree 算法）
+ * 单一对外入口:ViewMode "层级树" 引用 `tree`,内部转发到 `tree-hierarchy`(mrtree)。
  *
- * 用户通过 Inspector 切边样式，本派发器自动选最合适的底层算法 —— 用户不
- * 感知 mrtree / layered 的区别，只关心"我想要直角边 / 曲线 / 直线"。
+ * 历史遗留:之前根据 layout.edge-style 在 mrtree / layered 之间分派,试图借
+ * ELK 不同算法的边路由实现 4 种边样式。现在边样式完全由渲染层公式控制
+ * (edge-paths.ts 移植自 React Flow),不再依赖 ELK 边路由,所以始终用 mrtree
+ * (更紧凑的 Tidy Tree)做布局。
  *
- * 详见 docs/graph/KRIG-Graph-Canvas-Spec.md（画板模型，"切边样式 = 切算法"
- * 是实现细节，对用户透明）
+ * tree-layered 仍保留作为独立 layout id,留给后续场景(DAG / 多父节点)用。
  */
 import { layoutRegistry } from './registry';
 import type { LayoutAlgorithm, LayoutInput, LayoutOutput } from './types';
 
-// 副作用导入 — 确保两个底层算法都已注册（顺序无关）
+// 副作用导入 — 确保底层算法已注册
 import './tree-hierarchy';
 import './tree-layered';
 
@@ -24,23 +22,12 @@ const tree: LayoutAlgorithm = {
   label: 'Tree (auto-dispatch)',
   supportsDimension: [2],
   async compute(input: LayoutInput): Promise<LayoutOutput> {
-    const targetId = pickTreeLayout(input.layoutOptions);
-    const target = layoutRegistry.get(targetId);
+    const target = layoutRegistry.get('tree-hierarchy');
     if (!target) {
-      throw new Error(`[tree-dispatch] target layout "${targetId}" not registered`);
+      throw new Error('[tree-dispatch] tree-hierarchy not registered');
     }
     return target.compute(input);
   },
 };
-
-/** 根据边样式选底层 layout id。 */
-export function pickTreeLayout(options: Record<string, string> | undefined): string {
-  const edgeStyle = options?.['layout.edge-style'];
-  if (edgeStyle === 'orthogonal' || edgeStyle === 'polyline' || edgeStyle === 'splines') {
-    return 'tree-layered';
-  }
-  // 'straight' 或未设置 → mrtree（默认，更紧凑）
-  return 'tree-hierarchy';
-}
 
 layoutRegistry.register(tree);
