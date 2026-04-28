@@ -19,6 +19,7 @@
 import { getElk, type ElkNode, type LayoutOptions } from './elk-runner';
 import type { LayoutInput, LayoutOutput, EdgeSection } from './types';
 import { getInstanceBoxSize, DEFAULT_NODE_WIDTH, DEFAULT_NODE_HEIGHT } from './instance-size';
+import { isInLayoutFamily } from './layout-family';
 
 export interface ElkAdapterOptions {
   /** ELK 算法 id：'force' / 'box' / 'mrtree' / 'layered' / ... */
@@ -166,7 +167,7 @@ function readPinnedPosition(
   let pinned = false;
   for (const p of input.presentations) {
     if (p.subject_id !== geometryId) continue;
-    if (p.layout_id !== '*' && p.layout_id !== currentLayoutId) continue;
+    if (!isInLayoutFamily(p.layout_id, currentLayoutId)) continue;
     if (p.attribute === 'position.x') x = parseFloat(p.value);
     else if (p.attribute === 'position.y') y = parseFloat(p.value);
     else if (p.attribute === 'pinned') pinned = p.value === 'true';

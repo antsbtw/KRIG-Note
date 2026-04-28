@@ -11,16 +11,17 @@
  */
 import type { GraphPresentationAtomRecord } from '../../../main/storage/types';
 import type { LayoutOptions } from './elk-runner';
+import { isInLayoutFamily } from './layout-family';
 
 /**
  * 从 presentation atom 中提取图谱级 layout 参数（B4.1）。
  *
  * 命中规则：
  *   - subject_id === graphId（图谱本身的属性，不是节点的）
- *   - layout_id === activeLayoutId 或 '*'（'*' 跨布局共享，特定 layout 优先）
+ *   - layout_id 与 activeLayoutId 同家族（含 '*' 跨布局通用，详见 layout-family.ts）
  *   - attribute 以 'layout.' 开头
  *
- * 同 attribute 多条命中时：activeLayoutId 优先于 '*'（更具体覆盖通用）。
+ * 同 attribute 多条命中时：activeLayoutId 精确匹配 > tree 家族其他成员 > '*'。
  *
  * 详见 docs/graph/KRIG-Graph-Canvas-Spec.md §3.2
  */
@@ -30,14 +31,17 @@ export function readGraphLevelLayoutOptions(
   activeLayoutId: string,
 ): Record<string, string> {
   const wildcard: Record<string, string> = {};
+  const family: Record<string, string> = {};
   const specific: Record<string, string> = {};
   for (const p of presentations) {
     if (p.subject_id !== graphId) continue;
     if (!p.attribute.startsWith('layout.')) continue;
+    if (!isInLayoutFamily(p.layout_id, activeLayoutId)) continue;
     if (p.layout_id === '*') wildcard[p.attribute] = p.value;
     else if (p.layout_id === activeLayoutId) specific[p.attribute] = p.value;
+    else family[p.attribute] = p.value;
   }
-  return { ...wildcard, ...specific };
+  return { ...wildcard, ...family, ...specific };
 }
 
 /** 已识别的图谱级 layout 参数 key（v1）。 */

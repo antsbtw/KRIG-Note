@@ -8,6 +8,7 @@ import '../projection';  // 副作用：注册 'graph' / 'tree' projection
 import { composePatterns } from '../pattern';
 import { measureLabels, readExistingBbox as readLabelBboxFromPresentations, type LabelBbox } from '../layout/label-measurer';
 import { readGraphLevelLayoutOptions } from '../layout/layout-options';
+import { isInLayoutFamily } from '../layout/layout-family';
 import type {
   GraphRecord,
   GraphGeometryRecord,
@@ -216,7 +217,7 @@ export function GraphView() {
         // 仅当 presentation 中没有该 subject 的 position.x 才注入（pinned 优先）
         const existingPositionSubjects = new Set(
           data.presentations
-            .filter((p) => p.attribute === 'position.x' && (p.layout_id === '*' || p.layout_id === activeLayout))
+            .filter((p) => p.attribute === 'position.x' && isInLayoutFamily(p.layout_id, activeLayout))
             .map((p) => p.subject_id),
         );
         const layoutPresentations: GraphPresentationAtomRecord[] = [];
@@ -365,7 +366,10 @@ export function GraphView() {
         </div>
       )}
       {/* B4.1 临时调试：tree 类布局可切换方向。B4.2 接正式属性面板后删除。 */}
-      {activeGraphId && viewModeRegistry.get(activeViewModeId)?.layout === 'tree-hierarchy' && (
+      {activeGraphId && (() => {
+        const layoutId = viewModeRegistry.get(activeViewModeId)?.layout;
+        return layoutId === 'tree-hierarchy' || layoutId === 'tree-layered' || layoutId === 'tree';
+      })() && (
         <div style={debugDirectionStyle}>
           <span style={{ opacity: 0.6, fontSize: 11 }}>方向</span>
           {(['DOWN', 'UP', 'LEFT', 'RIGHT'] as const).map((dir) => (

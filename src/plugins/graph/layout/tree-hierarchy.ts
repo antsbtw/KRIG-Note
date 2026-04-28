@@ -24,7 +24,8 @@ const treeHierarchy: LayoutAlgorithm = {
   async compute(input: LayoutInput): Promise<LayoutOutput> {
     return runElkLayout(filterToContainsTree(input), {
       elkAlgorithm: 'mrtree',
-      currentLayoutId: 'tree-hierarchy',
+      // pinned 用虚拟 'tree' 作为命名空间，让 mrtree/layered 切换时 pin 共享
+      currentLayoutId: 'tree',
       extraOptions: {
         // ELK y 向下 + adapter 翻 y → DOWN 后根在上、子在下
         'elk.direction': 'DOWN',

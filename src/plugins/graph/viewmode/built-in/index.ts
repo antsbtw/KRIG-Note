@@ -20,9 +20,10 @@ viewModeRegistry.register({
 viewModeRegistry.register({
   id: 'tree',
   label: '层级树',
-  description: '按 contains 关系递归展开 + 直角折线边路由；适合看层次结构',
-  layout: 'tree-hierarchy',
-  projection: 'tree',  // B3.4：用真树形 projection
+  description: '按 contains 关系递归展开；边样式可在画板上切换（直线/直角/折线/曲线）',
+  // B4.2：虚拟 layout `tree` 内部根据 layout.edge-style 派发到 mrtree 或 layered
+  layout: 'tree',
+  projection: 'tree',
   enable_patterns: true,
 });
 

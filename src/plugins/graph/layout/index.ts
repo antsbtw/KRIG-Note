@@ -15,4 +15,5 @@ export type {
 import './force';
 import './grid';
 import './manual';
-import './tree-hierarchy';
+// tree-dispatch 内部副作用注册 tree-hierarchy + tree-layered + tree
+import './tree-dispatch';

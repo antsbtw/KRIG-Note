@@ -28,6 +28,7 @@ import type {
 import type { Substance } from '../../substance/types';
 import type { RenderableInstance, RenderableScene } from './types';
 import { composeVisual } from './composer';
+import { isInLayoutFamily } from '../../layout/layout-family';
 
 export type SubstanceResolver = (id: string) => Substance | undefined;
 
@@ -63,8 +64,8 @@ export function adapt(input: AdapterInput): RenderableScene {
 
   const presentationsBySubject = new Map<string, GraphPresentationAtomRecord[]>();
   for (const p of presentations) {
-    // 仅保留 layout='*' 或 activeLayout 的（spec §1.5）
-    if (p.layout_id !== '*' && p.layout_id !== activeLayout) continue;
+    // 仅保留 layout='*' 或 activeLayout 家族的 atom（spec §1.5；B4.2 加 family 兼容）
+    if (!isInLayoutFamily(p.layout_id, activeLayout)) continue;
     const list = presentationsBySubject.get(p.subject_id) ?? [];
     list.push(p);
     presentationsBySubject.set(p.subject_id, list);
