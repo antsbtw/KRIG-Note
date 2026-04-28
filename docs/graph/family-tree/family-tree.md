@@ -63,19 +63,28 @@ KRIG views (顶层视图):
 
 ### 0.5 family-tree 与 BasicView 的关系
 
-family-tree variant **不直接用 Three.js**。它通过 **BasicView 共享底座**(详见 [docs/graph/basic/BasicView.md](../basic/BasicView.md))拿到:
-- **Shape**(rounded-rect / line / arrow / 等)
-- **Substance 注册**(family/person 等语义模板)
-- **Label 系统**(SVG 文字渲染)
-- **交互**(pan / zoom / click / drag)
+**两者严格分两个里程碑实施**:
+
+| 里程碑 | 内容 | 完成标志 |
+|---|---|---|
+| **里程碑 1** | BasicView v1(可见可编辑画板) | 用户按 [BasicView.md §1.2 验证清单](../basic/BasicView.md) 14 项操作全部通过 |
+| **里程碑 2** | family-tree variant | 红楼梦 markdown 渲染为族谱,本 spec §8 验收清单全部通过 |
+
+**硬隔离**:里程碑 1 完成 + 用户验证通过后,才进入里程碑 2。
+
+### 0.6 family-tree 通过 BasicView 拿什么
+
+family-tree variant **不直接用 Three.js**。它通过 BasicView 注册中心拿到:
+- **Shape**:`rounded-rect`(节点)/ `line`(边)/ `text-label`(姓名 + 日期)
+- **Substance**:`family/person`(人物)/ `family-tree/spouse-line`(婚姻线)/ `family-tree/parent-edge`(父子边)
+- **Label 系统**:SVG → Three.js mesh(InsideCenter 布局)
+- **交互**:pan / zoom / click / drag
 
 family-tree 自己实现的:
 - markdown parser(从 note 内容抽取人物 + 关系)
 - layout 算法(Walker tidy tree)
-- 视觉规则(嫡庶 / 已故 / 占位等族谱专属规则,通过 BasicView 注册中心查 shape + substance)
-- 特殊几何(drop+sibling-bar+stub 父子边)
-
-**family-tree 是 BasicView v1 的第一个消费者** — 它的需求驱动 BasicView 注册接口的暴露,同时验证 BasicView 接口是否好用。
+- 视觉规则(嫡庶 / 已故 / 占位等族谱专属规则,通过 BasicView shape 的属性表达)
+- 特殊几何(drop+sibling-bar+stub 父子边的多段路径生成)
 
 ## 1. 设计原则
 
@@ -471,31 +480,31 @@ NavSide 里 note 列表显示族谱 note 时,用专属图标(👨‍👩‍👧)
 
 ## 7. v1 实施分阶段
 
-### M1:BasicView 共享底座(1.5-2 天,从零构建)
+**两个里程碑严格硬隔离**:里程碑 1 完成 + 用户验证通过,才进入里程碑 2。
 
-- **不** cherry-pick 旧代码(避免历史包袱),从零构建 `src/plugins/graph/basic/`:
-  - M1a: 注册中心接口设计 + Three.js SceneManager(scene/camera/RAF)— 0.5 天
-  - M1b: 5 个原始 shape(rect / circle / line / arrow / rounded-rect)+ ShapeRegistry — 0.5 天
-  - M1c: SVG label 系统(SvgGeometryContent + 1-2 种 label 布局)+ LabelRegistry — 0.5 天
-  - M1d: InteractionController(pan / zoom / 单选 / drag)+ Substance 注册中心 — 0.5 天
-- 主动应用 KRIG memory 里的踩坑经验(Retina setSize / fitToContent NaN 等)
-- 详见 [docs/graph/basic/BasicView.md §1 + §4](../basic/BasicView.md)
+### 里程碑 1 — BasicView v1(~3.75 天)
 
-**交付**:能 import basic 模块并注册一个 variant(空 variant,只验证接口可用)
+**完整内容详见 [BasicView.md §4 里程碑 1](../basic/BasicView.md)**。
 
-### M2:family-tree parser(0.5 天)
+简述:从零构建 BasicView,只做 family-tree 用得到的 3 种 shape(rounded-rect / line / text-label)+ 1 种 label 布局(InsideCenter)+ 注册中心 + 工具栏 + 属性面板 + 序列化。
+
+**用户验证**:按 [BasicView.md §1.2 验证清单](../basic/BasicView.md) 14 项操作逐条通过。**未通过不得进入里程碑 2**。
+
+### 里程碑 2 — family-tree variant(~3 天)
+
+#### M2a:family-tree parser(0.5 天)
 
 - 写 `variants/family-tree/parser/parse-note.ts`:输入 markdown 字符串,输出 `{ nodes, edges }`
 - 写 unit test:红楼梦小子集(贾政 + 王夫人 + 贾宝玉 + 贾环 等 5-6 人)
 - 验证:解析输出符合 §2 数据契约
 
-### M3:family-tree 布局算法(1 天)
+#### M2b:family-tree 布局算法(1 天)
 
 - 写 `variants/family-tree/layout/walker-tidy.ts`:输入 `{ nodes, edges }`,输出 `positions Map<nodeId, {x,y}>`
 - 处理:多代分层 + 配偶并排 + sibling bar 共享 + 多配偶 + Walker apportion 防重叠
 - 单元测试:同上小子集,验证 5-6 人位置合理
 
-### M4:family-tree projection + 视觉(1 天)
+#### M2c:family-tree projection + 视觉(1 天)
 
 - 写 `variants/family-tree/projection/visual-rules.ts`:节点属性 → BasicView shape/style 映射
   - 性别色 / 嫡庶尺寸 / 已故斜线 / 占位虚线
@@ -503,24 +512,33 @@ NavSide 里 note 列表显示族谱 note 时,用专属图标(👨‍👩‍👧)
 - 写 `variants/family-tree/projection/parent-edge.ts`:drop+sibling-bar+stub 三段直角
 - 写 `variants/family-tree/FamilyTreeView.tsx`:集成 parser + layout + projection,通过 BasicView 注册中心拿 shape 渲染
 
-### M5:Graph view 注册 + NavSide 入口 + markdown 导入(0.5 天)
+#### M2d:family-tree variant 注册 + 红楼梦验收(0.5 天)
 
-- 注册 Graph view 类型 + family-tree variant
+- 注册为 Graph 的 family-tree variant
 - NavSide 识别 frontmatter `view: graph` + `variant: family-tree`,用专属图标
 - markdown 导入 frontmatter 校验
-
-### M6:红楼梦 CSV → markdown 转换 + 调优(0.5 天)
-
 - 写一次性转换脚本:`docs/test-data/honglou/relation_refined.csv` → markdown
 - 关系类型归一(父亲/儿子等 → parent;夫人/丈夫 → spouse;丫环/朋友等 → 略)
 - 嫡庶 + 已故清单(参考红楼梦原著手工补)
-- 完整渲染验收
+- 完整渲染按 §8 验收清单测试
 
-**合计 4.5-5 天**(BasicView 从零构建 1.5-2 天 + family-tree variant 3 天)。
+**里程碑 2 合计**:**~3 天**
 
-注:M1 BasicView 工作量计入 family-tree v1,因为 family-tree 是 BasicView v1 的第一个消费者(也是验证用例)。后续 variants(knowledge / mindmap)实施时,BasicView 复用,不再计入。
+### 总计
 
-为什么"从零构建"比 cherry-pick 旧代码慢 0.5 天却仍然选择:旧代码隐含已删除模块的架构假设,重构成本经常比从零写还大;且 KRIG 关键经验已在记忆里,代码不需要继承。详见 [BasicView.md §1.2](../basic/BasicView.md)。
+| 阶段 | 时间 |
+|---|---|
+| 里程碑 1: BasicView v1(从零构建) | ~3.75 天 |
+| 用户验证里程碑 1(14 项操作清单) | 0.5 天 |
+| 里程碑 2: family-tree variant | ~3 天 |
+| 用户验证里程碑 2(红楼梦验收) | 0.5 天 |
+| **合计** | **~7.5-8 天** |
+
+为什么这个节奏:
+1. **聚焦**:BasicView v1 只做 family-tree 用得到的 shape,工时可控
+2. **可验证**:每个里程碑完成后用户能直接打开看到效果,不用看代码 / log
+3. **降低风险**:里程碑 2 用的是已经在里程碑 1 验证过的接口
+4. **不留技术债**:从零构建 BasicView,不带历史包袱(详见 [BasicView.md §1.3](../basic/BasicView.md))
 
 ## 8. 验收标准
 
