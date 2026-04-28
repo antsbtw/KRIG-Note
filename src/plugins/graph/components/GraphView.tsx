@@ -65,6 +65,8 @@ export function GraphView() {
   const [boxSelectRect, setBoxSelectRect] = useState<
     { x: number; y: number; w: number; h: number } | null
   >(null);
+  /** 当前生效的图谱级 layout 参数（Inspector 显示按钮高亮态用） */
+  const [layoutOptions, setLayoutOptions] = useState<Record<string, string>>({});
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const rendererRef = useRef<GraphRenderer | null>(null);
@@ -260,6 +262,7 @@ export function GraphView() {
         // 从 presentations 中提取 subject_id=graph_id、attribute='layout.*' 的 atom，
         // 作为图谱级用户调整传给 layout 算法。
         const layoutOptions = readGraphLevelLayoutOptions(data.presentations, data.graph.id, activeLayout);
+        setLayoutOptions(layoutOptions);
 
         const layoutResult = await algorithm.compute({
           geometries: geometriesForLayout,
@@ -457,6 +460,7 @@ export function GraphView() {
         graphId={activeGraphId}
         layoutId={viewModeRegistry.get(activeViewModeId)?.layout ?? 'force'}
         selectedIds={selectedIds}
+        layoutOptions={layoutOptions}
         onSetLayoutOption={handleSetLayoutOption}
       />
     </div>

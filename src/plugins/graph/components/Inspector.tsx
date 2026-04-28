@@ -25,11 +25,13 @@ export interface InspectorProps {
   layoutId: string;
   /** 当前选中节点 ids（决定默认 Tab + 节点 Tab 内容） */
   selectedIds: ReadonlySet<string>;
+  /** 当前生效的图谱级 layout 参数（用于按钮"亮"哪个状态显示） */
+  layoutOptions: Record<string, string>;
   /** 写入图谱级 layout 参数 atom（reload 由调用方触发） */
   onSetLayoutOption: (attribute: string, value: string) => Promise<void>;
 }
 
-export function Inspector({ graphId, layoutId, selectedIds, onSetLayoutOption }: InspectorProps) {
+export function Inspector({ graphId, layoutId, selectedIds, layoutOptions, onSetLayoutOption }: InspectorProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [activeTab, setActiveTab] = useState<InspectorTab>('canvas');
 
@@ -106,6 +108,7 @@ export function Inspector({ graphId, layoutId, selectedIds, onSetLayoutOption }:
           <CanvasInspectorTab
             graphId={graphId}
             layoutId={layoutId}
+            layoutOptions={layoutOptions}
             onSetLayoutOption={onSetLayoutOption}
           />
         )}
