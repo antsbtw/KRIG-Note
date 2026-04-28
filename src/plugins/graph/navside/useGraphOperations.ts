@@ -17,17 +17,6 @@ import {
 } from './useGraphSync';
 import type { TreeNode, FolderNode, ItemNode, ContextMenuItem } from '../../../renderer/navside/components/FolderTree';
 
-interface ImportSuccessResult {
-  graphId: string;
-  stats: { geometries: number; intensions: number };
-  warnings: string[];
-}
-
-interface ImportFailResult {
-  error?: string;
-  canceled?: boolean;
-}
-
 declare const navSideAPI: {
   switchWorkMode: (id: string) => Promise<void>;
   executeAction: (actionId: string, params?: Record<string, unknown>) => Promise<unknown>;
@@ -40,7 +29,6 @@ declare const navSideAPI: {
   graphFolderRename: (id: string, title: string) => Promise<void>;
   graphFolderDelete: (id: string) => Promise<void>;
   graphFolderMove: (id: string, parentId: string | null) => Promise<void>;
-  graphImportFromFile: (path?: string) => Promise<ImportSuccessResult | ImportFailResult>;
   closeRightSlot: () => Promise<void>;
 };
 
@@ -208,27 +196,6 @@ export function useGraphOperations() {
   const handleSwitchMode = useCallback((id: string) => {
     void navSideAPI.closeRightSlot();
     void navSideAPI.switchWorkMode(id);
-  }, []);
-
-  /** 从 Markdown 文件导入图谱（弹文件对话框） */
-  const handleImport = useCallback(async () => {
-    const result = await navSideAPI.graphImportFromFile();
-    if (!result) return;
-    if ('canceled' in result && result.canceled) return;
-    if ('error' in result && result.error) {
-      console.error('[GraphOps] import failed:', result.error);
-      alert(`导入失败：${result.error}`);
-      return;
-    }
-    if ('graphId' in result) {
-      const stats = result.stats;
-      const warnings = result.warnings.length;
-      console.log(`[GraphOps] imported ${result.graphId}: ${stats.geometries} geometries, ${stats.intensions} intensions, ${warnings} warnings`);
-      // 自动激活新图（NavSide 列表广播 + GraphView 加载）
-      void navSideAPI.closeRightSlot();
-      void navSideAPI.graphSetActive(result.graphId);
-      activeStateStore.setActiveGraphIdLocal(result.graphId);
-    }
   }, []);
 
   // ── 重命名 ──
@@ -436,7 +403,6 @@ export function useGraphOperations() {
     handleSwitchMode,
     handleCreateGraph,
     handleCreateFolder,
-    handleImport,
     activeGraphId,
     folderSortMap,
     variantIcon: (variant: string) => VARIANT_ICONS[variant] ?? '○',

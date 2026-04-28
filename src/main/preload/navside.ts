@@ -166,8 +166,4 @@ contextBridge.exposeInMainWorld('navSideAPI', {
     ipcRenderer.on(IPC.GRAPH_FOLDER_LIST_CHANGED, listener);
     return () => ipcRenderer.removeListener(IPC.GRAPH_FOLDER_LIST_CHANGED, listener);
   },
-
-  // ── v1.4 graph-import：从 Markdown 文件导入图谱 ──
-  // 不传 path 时弹文件对话框；传 path 时直接读（自动化测试用）
-  graphImportFromFile: (path?: string) => ipcRenderer.invoke(IPC.GRAPH_IMPORT_FROM_FILE, path),
 });

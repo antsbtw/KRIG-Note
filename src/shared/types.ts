@@ -377,7 +377,6 @@ export const IPC = {
   GRAPH_PRESENTATION_DELETE: 'graph:presentation-delete',
   GRAPH_PRESENTATION_CLEAR_LAYOUT: 'graph:presentation-clear-layout',  // 清空指定 layout 所有 atom
   GRAPH_PRESENTATION_CHANGED: 'graph:presentation-changed',           // main → renderer 广播
-  GRAPH_IMPORT_FROM_FILE: 'graph:import-from-file',                    // D11 实施
   GRAPH_SUBSTANCE_LIST: 'graph:substance-list',                        // 列出所有可用 substance（v1.5 详情面板用）
   GRAPH_SUBSTANCE_GET: 'graph:substance-get',
   // B4.3 user_substance（凝结产物持久化）

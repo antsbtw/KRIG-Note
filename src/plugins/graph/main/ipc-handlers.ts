@@ -1,4 +1,4 @@
-import { ipcMain, dialog } from 'electron';
+import { ipcMain } from 'electron';
 import { IPC } from '../../../shared/types';
 import type { PluginContext } from '../../../shared/plugin-types';
 import { workspaceManager } from '../../../main/workspace/manager';
@@ -17,7 +17,6 @@ import type {
   GraphPresentationAtomRecord,
 } from '../../../main/storage/types';
 import { substanceLibrary } from '../substance';
-import { importFromMarkdown } from './import/handler';
 
 export function registerGraphIpcHandlers(ctx: PluginContext): void {
   const getMainWindow = ctx.getMainWindow;
@@ -312,42 +311,5 @@ export function registerGraphIpcHandlers(ctx: PluginContext): void {
   ipcMain.handle(IPC.GRAPH_USER_SUBSTANCE_DELETE, async (_event, substance_id: string) => {
     if (!isDBReady()) return;
     await userSubstanceStore.delete(substance_id);
-  });
-
-  // ── 从 Markdown 文件导入图谱 ──
-  //
-  // 流程：
-  //   1. 弹文件对话框选 .md 文件（无路径参数时）/ 直接读传入路径（自动化测试用）
-  //   2. parser → handler → 写 4 张表
-  //   3. 广播 GRAPH_LIST_CHANGED（NavSide 自动 refetch 列表 + 显示新图）
-  //   4. 返回 { graphId, stats, warnings }
-  ipcMain.handle(IPC.GRAPH_IMPORT_FROM_FILE, async (_event, providedPath?: string) => {
-    if (!isDBReady()) return { error: 'DB not ready' };
-
-    let filePath = providedPath;
-    if (!filePath) {
-      const win = getMainWindow();
-      const result = await dialog.showOpenDialog(win as any, {
-        title: '导入 Markdown 图谱',
-        filters: [{ name: 'Markdown', extensions: ['md', 'markdown'] }],
-        properties: ['openFile'],
-      });
-      if (result.canceled || result.filePaths.length === 0) return { canceled: true };
-      filePath = result.filePaths[0];
-    }
-
-    try {
-      const importResult = await importFromMarkdown(filePath);
-      activityStore.log('graph.import', importResult.graphId, {
-        path: filePath,
-        ...importResult.stats,
-        warnings: importResult.warnings.length,
-      });
-      broadcastList();
-      return importResult;
-    } catch (err) {
-      console.error('[Graph IPC] import failed:', err);
-      return { error: String(err) };
-    }
   });
 }
