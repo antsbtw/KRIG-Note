@@ -60,6 +60,7 @@ declare const viewAPI: {
   graphPresentationDelete: (graphId: string, layoutId: string, subjectId: string, attribute: string) => Promise<void>;
   graphIntensionUpdate: (id: string, fields: unknown) => Promise<void>;
   graphIntensionCreate: (record: unknown) => Promise<unknown>;
+  graphGeometryCreate: (record: unknown) => Promise<unknown>;
   graphSetActiveViewMode: (graphId: string, viewModeId: string) => Promise<void>;
   // B4.3 user_substance
   graphUserSubstanceList: () => Promise<Array<{ id: string; substance_id: string; label: string; data: string }>>;
@@ -475,6 +476,18 @@ export function GraphView() {
     const graphId = activeGraphIdRef.current;
     if (!graphId || geometryIds.length === 0) return;
     try {
+      // B4.4：检查目标 substance 是否含 canvas_snapshot
+      const targetSubstance = substanceLibrary.get(newSubstanceId);
+      const snapshot = targetSubstance?.canvas_snapshot;
+
+      // 单选 + 含 snapshot → 展开（B4.4）
+      if (geometryIds.length === 1 && snapshot && snapshot.geometries && snapshot.geometries.length > 0) {
+        await expandCanvasSnapshot(graphId, geometryIds[0]!, newSubstanceId, snapshot);
+        setReloadTrigger((n) => n + 1);
+        return;
+      }
+
+      // 多选或无 snapshot → 走原有"仅替换引用"路径
       const tasks: Promise<unknown>[] = [];
       for (const gid of geometryIds) {
         const existing = graphAtoms.intensions.find(
@@ -495,10 +508,152 @@ export function GraphView() {
         }
       }
       await Promise.all(tasks);
+
+      // 多选时若是 user substance 含 snapshot，提示用户没展开
+      if (geometryIds.length > 1 && snapshot) {
+        setForgeToast('多选时仅替换引用，未展开 canvas_snapshot');
+        setTimeout(() => setForgeToast(null), 3500);
+      }
+
       setReloadTrigger((n) => n + 1);
     } catch (err) {
       console.error('[GraphView] replace substance failed:', err);
     }
+  };
+
+  /**
+   * B4.4 expansion：把 user substance 的 canvas_snapshot 展开到当前图谱。
+   *
+   * 规则：
+   *   - 锚点：snapshot.geometries 第一项 = 当前节点 N（仅替换 substance + visual override）
+   *   - 其他项：新建 geometry + atoms，位置 = N.position + relative_position
+   *   - 仅展开 point；line/surface 由用户手动连（v1 不复制 connector）
+   */
+  const expandCanvasSnapshot = async (
+    graphId: string,
+    anchorGeometryId: string,
+    refSubstanceId: string,
+    snapshot: NonNullable<import('../substance/types').CanvasSnapshot>,
+  ) => {
+    if (!snapshot.geometries || snapshot.geometries.length === 0) return;
+
+    // 找当前 anchor 节点位置（layoutPresentations 已注入虚拟 atom，graphAtoms 里也有真值）
+    const layoutId = activeLayoutRef.current;
+    let anchorX = 0, anchorY = 0;
+    for (const p of graphAtoms.presentations) {
+      if (p.subject_id !== anchorGeometryId) continue;
+      if (!isInLayoutFamily(p.layout_id, layoutId)) continue;
+      if (p.attribute === 'position.x') anchorX = parseFloat(p.value);
+      else if (p.attribute === 'position.y') anchorY = parseFloat(p.value);
+    }
+
+    const tasks: Promise<unknown>[] = [];
+
+    // [0] anchor：snapshot 第一项应用到当前 N 节点
+    const [first, ...rest] = snapshot.geometries;
+    if (first) {
+      // 替换 substance 引用（指向 first.substance；若无则用 user substance 自身 id）
+      const targetSubId = first.substance ?? refSubstanceId;
+      const existing = graphAtoms.intensions.find(
+        (a) => a.subject_id === anchorGeometryId && a.predicate === 'substance',
+      );
+      if (existing) {
+        tasks.push(viewAPI.graphIntensionUpdate(existing.id, { value: targetSubId }));
+      } else {
+        tasks.push(
+          viewAPI.graphIntensionCreate({
+            graph_id: graphId,
+            subject_id: anchorGeometryId,
+            predicate: 'substance',
+            value: targetSubId,
+            value_kind: 'string',
+          }),
+        );
+      }
+      // 写 first 的 visual_overrides（layout_id='*'）
+      if (first.visual_overrides) {
+        const records = Object.entries(first.visual_overrides).map(([attr, val]) => ({
+          graph_id: graphId,
+          layout_id: '*',
+          subject_id: anchorGeometryId,
+          attribute: attr,
+          value: val,
+          value_kind: inferValueKind(attr),
+        }));
+        if (records.length > 0) {
+          tasks.push(viewAPI.graphPresentationSetBulk(records));
+        }
+      }
+    }
+
+    // [1..N] 其他项：新建 geometry + atoms
+    for (const g of rest) {
+      const newId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      // 新建 geometry
+      tasks.push(
+        viewAPI.graphGeometryCreate({
+          id: newId,
+          graph_id: graphId,
+          kind: g.kind,
+          members: g.members ?? [],
+        }),
+      );
+      // 写 substance 引用
+      if (g.substance) {
+        tasks.push(
+          viewAPI.graphIntensionCreate({
+            graph_id: graphId,
+            subject_id: newId,
+            predicate: 'substance',
+            value: g.substance,
+            value_kind: 'string',
+          }),
+        );
+      }
+      // 写 label
+      if (g.label) {
+        tasks.push(
+          viewAPI.graphIntensionCreate({
+            graph_id: graphId,
+            subject_id: newId,
+            predicate: 'label',
+            value: g.label,
+            value_kind: 'string',
+          }),
+        );
+      }
+      // 视觉 override + 位置（pinned 在 anchor 周围）
+      const presentationRecords: Array<Record<string, unknown>> = [];
+      if (g.visual_overrides) {
+        for (const [attr, val] of Object.entries(g.visual_overrides)) {
+          presentationRecords.push({
+            graph_id: graphId,
+            layout_id: '*',
+            subject_id: newId,
+            attribute: attr,
+            value: val,
+            value_kind: inferValueKind(attr),
+          });
+        }
+      }
+      // 位置 = anchor + relative_position（pinned，避免布局算法挪走）
+      if (g.relative_position) {
+        const x = anchorX + g.relative_position.x;
+        const y = anchorY + g.relative_position.y;
+        presentationRecords.push(
+          { graph_id: graphId, layout_id: layoutId, subject_id: newId, attribute: 'position.x', value: String(x), value_kind: 'number' },
+          { graph_id: graphId, layout_id: layoutId, subject_id: newId, attribute: 'position.y', value: String(y), value_kind: 'number' },
+          { graph_id: graphId, layout_id: layoutId, subject_id: newId, attribute: 'pinned', value: 'true', value_kind: 'string' },
+        );
+      }
+      if (presentationRecords.length > 0) {
+        tasks.push(viewAPI.graphPresentationSetBulk(presentationRecords));
+      }
+    }
+
+    await Promise.all(tasks);
+    setForgeToast(`已展开「${substanceLibrary.get(refSubstanceId)?.label ?? refSubstanceId}」(${snapshot.geometries.length} 项)`);
+    setTimeout(() => setForgeToast(null), 3500);
   };
 
   // ── B4.3 画板凝结：选区 → user_substance ──
