@@ -421,11 +421,11 @@ basic/ 渲染 Three.js 场景(shape mesh + label + 边几何)
 
 ### 5.3 渲染技术选型
 
-**Three.js + HTML overlay 文字**(由 BasicView 共享底座提供)。理由:
+**Three.js + SVG label**(由 BasicView 共享底座提供)。理由:
 - 与 KRIG Graph 顶层 view 技术栈统一(BasicView 定义)
 - 后续其他 variants(knowledge / mindmap)同样基于 Three.js,共享底座
-- 文字渲染用 HTML overlay(CSS2DRenderer)— 解决 retina / 中英混排 / 字体回退等问题
-- KRIG 已有 Three.js 经验积累(fitToContent / setSize Retina 等踩坑)
+- 文字渲染用 SVG → Three.js mesh(KRIG 实战检验过的方案,HTML overlay 实测效果不好已被否决)
+- KRIG 已有 Three.js 经验积累(fitToContent / setSize Retina / SVG label 退化几何防御等)
 
 详见 [docs/graph/basic/BasicView.md §2.3 决策 3](../basic/BasicView.md)。
 
@@ -471,14 +471,15 @@ NavSide 里 note 列表显示族谱 note 时,用专属图标(👨‍👩‍👧)
 
 ## 7. v1 实施分阶段
 
-### M1:BasicView 共享底座(1-1.5 天)
+### M1:BasicView 共享底座(1.5-2 天,从零构建)
 
-- 从 `backup/before-pg-refactor-2026-04-28` 分支 cherry-pick Three.js 底座代码到 `src/plugins/graph/basic/`
-  - SceneManager / shapes / labels / SvgGeometryContent / InteractionController
-- 清理与已删除模块(GraphRenderer / adapter / projection 等旧 GraphView 模块)的耦合
-- 整理为注册中心模式:`shapeRegistry` / `substanceRegistry` / `labelRegistry` / `graphVariantRegistry`
-- 暴露 `src/plugins/graph/basic/index.ts` 公开 API
-- 详见 [docs/graph/basic/BasicView.md §1.1 v1 实施清单](../basic/BasicView.md)
+- **不** cherry-pick 旧代码(避免历史包袱),从零构建 `src/plugins/graph/basic/`:
+  - M1a: 注册中心接口设计 + Three.js SceneManager(scene/camera/RAF)— 0.5 天
+  - M1b: 5 个原始 shape(rect / circle / line / arrow / rounded-rect)+ ShapeRegistry — 0.5 天
+  - M1c: SVG label 系统(SvgGeometryContent + 1-2 种 label 布局)+ LabelRegistry — 0.5 天
+  - M1d: InteractionController(pan / zoom / 单选 / drag)+ Substance 注册中心 — 0.5 天
+- 主动应用 KRIG memory 里的踩坑经验(Retina setSize / fitToContent NaN 等)
+- 详见 [docs/graph/basic/BasicView.md §1 + §4](../basic/BasicView.md)
 
 **交付**:能 import basic 模块并注册一个 variant(空 variant,只验证接口可用)
 
@@ -515,9 +516,11 @@ NavSide 里 note 列表显示族谱 note 时,用专属图标(👨‍👩‍👧)
 - 嫡庶 + 已故清单(参考红楼梦原著手工补)
 - 完整渲染验收
 
-**合计 4-4.5 天**(BasicView 1-1.5 天 + family-tree variant 3 天)。
+**合计 4.5-5 天**(BasicView 从零构建 1.5-2 天 + family-tree variant 3 天)。
 
 注:M1 BasicView 工作量计入 family-tree v1,因为 family-tree 是 BasicView v1 的第一个消费者(也是验证用例)。后续 variants(knowledge / mindmap)实施时,BasicView 复用,不再计入。
+
+为什么"从零构建"比 cherry-pick 旧代码慢 0.5 天却仍然选择:旧代码隐含已删除模块的架构假设,重构成本经常比从零写还大;且 KRIG 关键经验已在记忆里,代码不需要继承。详见 [BasicView.md §1.2](../basic/BasicView.md)。
 
 ## 8. 验收标准
 
