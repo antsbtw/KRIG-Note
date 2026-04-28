@@ -43,12 +43,23 @@ interface LoadedGraph {
   presentations: GraphPresentationAtomRecord[];
 }
 
+/** 根据 attribute 推断 atom value_kind（B4.2.b 视觉 override 写入用） */
+function inferValueKind(attribute: string): 'string' | 'number' {
+  if (attribute.endsWith('.width') || attribute.endsWith('.height') || attribute.endsWith('.size') || attribute.endsWith('.opacity') || attribute.endsWith('arrowSize')) {
+    return 'number';
+  }
+  return 'string';
+}
+
 declare const viewAPI: {
   onRestoreWorkspaceState: (cb: (state: { activeGraphId?: string | null }) => void) => () => void;
   onGraphActiveChanged: (cb: (graphId: string | null) => void) => () => void;
   graphLoadFull: (graphId: string) => Promise<LoadedGraph | null>;
   onGraphPresentationChanged?: (cb: (info: { graphId: string }) => void) => () => void;
   graphPresentationSetBulk: (records: unknown[]) => Promise<void>;
+  graphPresentationDelete: (graphId: string, layoutId: string, subjectId: string, attribute: string) => Promise<void>;
+  graphIntensionUpdate: (id: string, fields: unknown) => Promise<void>;
+  graphIntensionCreate: (record: unknown) => Promise<unknown>;
   graphSetActiveViewMode: (graphId: string, viewModeId: string) => Promise<void>;
 };
 
@@ -67,6 +78,12 @@ export function GraphView() {
   >(null);
   /** 当前生效的图谱级 layout 参数（Inspector 显示按钮高亮态用） */
   const [layoutOptions, setLayoutOptions] = useState<Record<string, string>>({});
+  /** B4.2.b：原始 atom 数据（节点 Tab 读取用 — 当前 substance / 视觉 override） */
+  const [graphAtoms, setGraphAtoms] = useState<{
+    geometries: GraphGeometryRecord[];
+    intensions: GraphIntensionAtomRecord[];
+    presentations: GraphPresentationAtomRecord[];
+  }>({ geometries: [], intensions: [], presentations: [] });
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const rendererRef = useRef<GraphRenderer | null>(null);
@@ -264,6 +281,13 @@ export function GraphView() {
         const layoutOptions = readGraphLevelLayoutOptions(data.presentations, data.graph.id, activeLayout);
         setLayoutOptions(layoutOptions);
 
+        // B4.2.b：保存原始 atom 数据供 Inspector 节点 Tab 读取
+        setGraphAtoms({
+          geometries: data.geometries,
+          intensions: data.intensions,
+          presentations: data.presentations,
+        });
+
         const layoutResult = await algorithm.compute({
           geometries: geometriesForLayout,
           intensions: intensionsForLayout,
@@ -376,6 +400,77 @@ export function GraphView() {
     }
   };
 
+  // ── B4.2.b Inspector 节点 Tab：写/删节点视觉 override ──
+  // 视觉 override atom 使用 layout_id='*'（跨布局，符合 §3.2 A 类约定）
+  // 接受 geometryIds 数组：单选传 [id]，多选传所有选中 ids → 批量写一次 IPC
+  const handleSetVisualOverride = async (geometryIds: string[], attribute: string, value: string) => {
+    const graphId = activeGraphIdRef.current;
+    if (!graphId || geometryIds.length === 0) return;
+    try {
+      await viewAPI.graphPresentationSetBulk(
+        geometryIds.map((gid) => ({
+          graph_id: graphId,
+          layout_id: '*',
+          subject_id: gid,
+          attribute,
+          value,
+          value_kind: inferValueKind(attribute),
+        })),
+      );
+      setReloadTrigger((n) => n + 1);
+    } catch (err) {
+      console.error('[GraphView] set visual override failed:', err);
+    }
+  };
+
+  const handleClearVisualOverride = async (geometryIds: string[], attribute: string) => {
+    const graphId = activeGraphIdRef.current;
+    if (!graphId || geometryIds.length === 0) return;
+    try {
+      // graphPresentationDelete 一次只删一条 → 并发删多条
+      await Promise.all(
+        geometryIds.map((gid) =>
+          viewAPI.graphPresentationDelete(graphId, '*', gid, attribute),
+        ),
+      );
+      setReloadTrigger((n) => n + 1);
+    } catch (err) {
+      console.error('[GraphView] clear visual override failed:', err);
+    }
+  };
+
+  // ── B4.2.b Inspector 节点 Tab：替换 substance（支持多选）──
+  // 每个节点单独处理：有 substance atom → update，没有 → create
+  const handleReplaceSubstance = async (geometryIds: string[], newSubstanceId: string) => {
+    const graphId = activeGraphIdRef.current;
+    if (!graphId || geometryIds.length === 0) return;
+    try {
+      const tasks: Promise<unknown>[] = [];
+      for (const gid of geometryIds) {
+        const existing = graphAtoms.intensions.find(
+          (a) => a.subject_id === gid && a.predicate === 'substance',
+        );
+        if (existing) {
+          tasks.push(viewAPI.graphIntensionUpdate(existing.id, { value: newSubstanceId }));
+        } else {
+          tasks.push(
+            viewAPI.graphIntensionCreate({
+              graph_id: graphId,
+              subject_id: gid,
+              predicate: 'substance',
+              value: newSubstanceId,
+              value_kind: 'string',
+            }),
+          );
+        }
+      }
+      await Promise.all(tasks);
+      setReloadTrigger((n) => n + 1);
+    } catch (err) {
+      console.error('[GraphView] replace substance failed:', err);
+    }
+  };
+
   // ── B4.2 Inspector 写入图谱级 layout 参数 ──
   // 用户在画板 Tab 调整 → 写 atom → 触发重载
   const handleSetLayoutOption = async (attribute: string, value: string) => {
@@ -461,7 +556,13 @@ export function GraphView() {
         layoutId={viewModeRegistry.get(activeViewModeId)?.layout ?? 'force'}
         selectedIds={selectedIds}
         layoutOptions={layoutOptions}
+        geometries={graphAtoms.geometries}
+        intensions={graphAtoms.intensions}
+        presentations={graphAtoms.presentations}
         onSetLayoutOption={handleSetLayoutOption}
+        onReplaceSubstance={handleReplaceSubstance}
+        onSetVisualOverride={handleSetVisualOverride}
+        onClearVisualOverride={handleClearVisualOverride}
       />
     </div>
   );

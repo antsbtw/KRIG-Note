@@ -27,15 +27,17 @@ const ZOOM_MAX_VIEW_HEIGHT = 50000;         // 最大视野（最小缩小）
 
 /** 命中结果：拖动开始时返回的节点信息 */
 export interface NodeHit {
+  /** 'point' 节点（可拖动） / 'line' 边（仅选中） / 'surface' 面（仅选中） */
+  kind: 'point' | 'line' | 'surface';
   instanceId: string;
-  /** 节点在世界坐标的初始位置（用于 drag 起点） */
+  /** 节点在世界坐标的初始位置（用于 drag 起点；line/surface 不用） */
   worldX: number;
   worldY: number;
-  /** 命中的 Object3D（拖动时直接更新它的 .position 实时反馈） */
+  /** 命中的 Object3D（拖动时直接更新它的 .position 实时反馈；line/surface 不用） */
   object: THREE.Object3D;
 }
 
-/** 命中测试器：上层把"屏幕坐标 → 节点"的查询逻辑注入进来 */
+/** 命中测试器：上层把"屏幕坐标 → 节点/边"的查询逻辑注入进来 */
 export type NodeHitTester = (worldX: number, worldY: number) => NodeHit | null;
 
 export interface InteractionCallbacks {
@@ -248,7 +250,8 @@ export class InteractionController {
       }
       const world = this.worldFromScreen(screen.x, screen.y);
       const hit = this.hitTester(world.x, world.y);
-      if (hit) {
+      if (hit && hit.kind === 'point') {
+        // 节点：进入拖动准备（小位移 = 单击选中）
         e.preventDefault();
         this.mode = 'dragging';
         this.dragNode = hit;
@@ -256,6 +259,15 @@ export class InteractionController {
         this.dragStartWorld = world;
         this.dragMoved = false;
         if (this.dom) this.dom.style.cursor = 'grabbing';
+      } else if (hit) {
+        // 边/面：mousedown 不进任何模式，等 mouseup 触发 onSelect
+        // 这里临时记到 dragNode（复用单击分发逻辑），但 dragMoved 永远不会变 true
+        e.preventDefault();
+        this.mode = 'dragging';
+        this.dragNode = hit;
+        this.dragStartScreen = screen;
+        this.dragStartWorld = world;
+        this.dragMoved = false;
       } else {
         e.preventDefault();
         // 进入"待定"框选 — 超过阈值才真正开始画框，否则视为点空白
@@ -325,6 +337,8 @@ export class InteractionController {
       const dy = screen.y - this.dragStartScreen.y;
       // 阈值前不动：避免单击触发 onNodeDrag 改变位置
       if (!this.dragMoved && Math.hypot(dx, dy) < InteractionController.DRAG_THRESHOLD) return;
+      // 边/面：阈值后不进入拖动（仅 point 类支持拖动）
+      if (this.dragNode.kind !== 'point') return;
       this.dragMoved = true;
       const world = this.worldFromScreen(screen.x, screen.y);
       const newX = this.dragNode.worldX + (world.x - this.dragStartWorld.x);

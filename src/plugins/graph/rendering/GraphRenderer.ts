@@ -34,6 +34,24 @@ const LABEL_RENDER_ORDER = 1000;
 /** Line 的 z 平面：低于 point（z=0），高于 surface（z=-1）。让节点 shape 视觉上压在线之上 */
 const LINE_Z = -0.5;
 
+/** 点 (px, py) 到线段 [(ax, ay), (bx, by)] 的最短距离（B4.2.b 边 hit-test 用） */
+function pointToSegmentDistance(
+  px: number, py: number,
+  ax: number, ay: number,
+  bx: number, by: number,
+): number {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  if (len2 === 0) return Math.hypot(px - ax, py - ay);
+  // 投影参数 t（限制到 [0,1]）
+  let t = ((px - ax) * dx + (py - ay) * dy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  const cx = ax + t * dx;
+  const cy = ay + t * dy;
+  return Math.hypot(px - cx, py - cy);
+}
+
 export class GraphRenderer {
   readonly scene: SceneManager;
 
@@ -66,7 +84,7 @@ export class GraphRenderer {
     this.scene.mount(container);
     this.interaction = new InteractionController(
       this.scene,
-      (worldX, worldY) => this.hitTestPoint(worldX, worldY),
+      (worldX, worldY) => this.hitTestAny(worldX, worldY),
     );
     this.interaction.attach(this.scene.renderer.domElement);
   }
@@ -99,6 +117,14 @@ export class GraphRenderer {
   // ── 命中测试 ──
 
   /**
+   * 综合命中：先尝试节点，再尝试边/面。
+   * 节点优先 — 如果点击位置同时在节点和边上，返回节点（节点总是浮在边之上）。
+   */
+  private hitTestAny(worldX: number, worldY: number): NodeHit | null {
+    return this.hitTestPoint(worldX, worldY) ?? this.hitTestEdge(worldX, worldY);
+  }
+
+  /**
    * 找到包含 (worldX, worldY) 的最上层 Point。
    *
    * 简化策略：遍历 points，用 mesh 的世界 Box3 测试包含；
@@ -120,6 +146,7 @@ export class GraphRenderer {
         if (!best || area < best.area) {
           best = {
             hit: {
+              kind: 'point',
               instanceId: id,
               worldX: mesh.position.x,
               worldY: mesh.position.y,
@@ -131,6 +158,49 @@ export class GraphRenderer {
       }
     }
     return best?.hit ?? null;
+  }
+
+  /**
+   * 找到距离 (worldX, worldY) 足够近的边（line connector）。
+   *
+   * 算法：遍历 line connectors，对每条 line 的连续顶点对求"点到线段距离"，
+   * 取最小距离 < EDGE_HIT_THRESHOLD 的那条。
+   * 阈值用世界单位 — 跟当前缩放有关；理想情况下应换屏幕像素，但 v1 简化用固定值。
+   */
+  private hitTestEdge(worldX: number, worldY: number): NodeHit | null {
+    const EDGE_HIT_THRESHOLD = 8;  // 世界单位
+    let best: { id: string; mesh: THREE.Object3D; dist: number } | null = null;
+
+    for (const [id, inst] of this.connectors) {
+      if (inst.kind !== 'line') continue;  // surface 命中暂不支持
+      const mesh = this.meshes.get(id);
+      if (!mesh) continue;
+      // 拿 line 的实际顶点（用 inst.members 末位置作为端点；bendPoints 在 mesh 内不易取，
+      // 这里用 members 端点连成的折线近似 — 直角折线情况下不准但够用，曲线情况会偏差大）
+      const pts: Array<{ x: number; y: number }> = [];
+      for (const mid of inst.members) {
+        const m = this.meshes.get(mid);
+        if (m) pts.push({ x: m.position.x, y: m.position.y });
+      }
+      if (pts.length < 2) continue;
+      // 逐段算最小距离
+      let minSeg = Infinity;
+      for (let i = 0; i < pts.length - 1; i++) {
+        const d = pointToSegmentDistance(worldX, worldY, pts[i]!.x, pts[i]!.y, pts[i + 1]!.x, pts[i + 1]!.y);
+        if (d < minSeg) minSeg = d;
+      }
+      if (minSeg < EDGE_HIT_THRESHOLD && (!best || minSeg < best.dist)) {
+        best = { id, mesh, dist: minSeg };
+      }
+    }
+    if (!best) return null;
+    return {
+      kind: 'line',
+      instanceId: best.id,
+      worldX,
+      worldY,
+      object: best.mesh,
+    };
   }
 
   // ── B4.2 选中状态（视觉反馈） ──

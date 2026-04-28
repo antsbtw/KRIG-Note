@@ -14,7 +14,13 @@
  * 详见 docs/graph/KRIG-Graph-Canvas-Spec.md §2 + §3
  */
 import { useEffect, useState } from 'react';
+import type {
+  GraphGeometryRecord,
+  GraphIntensionAtomRecord,
+  GraphPresentationAtomRecord,
+} from '../../../main/storage/types';
 import { CanvasInspectorTab } from './inspector/CanvasInspectorTab';
+import { NodeInspectorTab } from './inspector/NodeInspectorTab';
 
 export type InspectorTab = 'canvas' | 'node' | 'text';
 
@@ -27,11 +33,33 @@ export interface InspectorProps {
   selectedIds: ReadonlySet<string>;
   /** 当前生效的图谱级 layout 参数（用于按钮"亮"哪个状态显示） */
   layoutOptions: Record<string, string>;
+  /** B4.2.b：原始 atom 数据（节点 Tab 读取当前 substance / 视觉 override） */
+  geometries: GraphGeometryRecord[];
+  intensions: GraphIntensionAtomRecord[];
+  presentations: GraphPresentationAtomRecord[];
   /** 写入图谱级 layout 参数 atom（reload 由调用方触发） */
   onSetLayoutOption: (attribute: string, value: string) => Promise<void>;
+  /** B4.2.b：替换 N 个节点的 substance（单选传 [id]，多选传所有选中） */
+  onReplaceSubstance: (geometryIds: string[], newSubstanceId: string) => Promise<void>;
+  /** B4.2.b：写 N 个节点的视觉 override（layout_id='*'） */
+  onSetVisualOverride: (geometryIds: string[], attribute: string, value: string) => Promise<void>;
+  /** B4.2.b：删除 N 个节点的视觉 override（重置为 substance 默认值） */
+  onClearVisualOverride: (geometryIds: string[], attribute: string) => Promise<void>;
 }
 
-export function Inspector({ graphId, layoutId, selectedIds, layoutOptions, onSetLayoutOption }: InspectorProps) {
+export function Inspector({
+  graphId,
+  layoutId,
+  selectedIds,
+  layoutOptions,
+  geometries,
+  intensions,
+  presentations,
+  onSetLayoutOption,
+  onReplaceSubstance,
+  onSetVisualOverride,
+  onClearVisualOverride,
+}: InspectorProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [activeTab, setActiveTab] = useState<InspectorTab>('canvas');
 
@@ -113,11 +141,17 @@ export function Inspector({ graphId, layoutId, selectedIds, layoutOptions, onSet
           />
         )}
         {activeTab === 'node' && (
-          <div style={placeholderStyle}>
-            {selectedIds.size === 0
-              ? '点击节点以编辑'
-              : `已选 ${selectedIds.size} 个节点（编辑功能 B4.2.b 实装）`}
-          </div>
+          <NodeInspectorTab
+            graphId={graphId}
+            layoutId={layoutId}
+            selectedIds={selectedIds}
+            geometries={geometries}
+            intensions={intensions}
+            presentations={presentations}
+            onReplaceSubstance={onReplaceSubstance}
+            onSetVisualOverride={onSetVisualOverride}
+            onClearVisualOverride={onClearVisualOverride}
+          />
         )}
         {activeTab === 'text' && (
           <div style={placeholderStyle}>
