@@ -107,47 +107,8 @@ const SCHEMA_QUERIES = [
   `DEFINE TABLE IF NOT EXISTS thought_of SCHEMALESS;`,
   // 边属性：anchor_type, anchor_pos, created_at
 
-  // ── GraphView 主表 ──
-
-  // graph 表（图主体元数据）
-  `DEFINE TABLE IF NOT EXISTS graph SCHEMALESS;`,
-  `DEFINE INDEX IF NOT EXISTS graph_host_note ON graph FIELDS host_note_id;`,
-  `DEFINE INDEX IF NOT EXISTS graph_updated ON graph FIELDS updated_at;`,
-  // v1.4 NavSide 重构：graph 加 folder_id 字段（schemaless 自动支持，索引加速查询）
-  `DEFINE INDEX IF NOT EXISTS graph_folder_id ON graph FIELDS folder_id;`,
-
-  // graph_folder 表（图谱文件夹，v1.4 NavSide 重构）
-  `DEFINE TABLE IF NOT EXISTS graph_folder SCHEMALESS;`,
-  `DEFINE INDEX IF NOT EXISTS graph_folder_parent ON graph_folder FIELDS parent_id;`,
-  `DEFINE INDEX IF NOT EXISTS graph_folder_sort ON graph_folder FIELDS sort_order;`,
-
-  // ── v1.4 Graph 数据模型重构（feature/graph-import）──
-  //
-  // 四态分立：
-  //   数学态 → graph_geometry（几何骨架，统一 4 种几何体）
-  //   物理态 → Substance Library（声明式资源，不入库）
-  //   语义态 → graph_intension_atom（描述属性 atom）
-  //   视觉态 → graph_presentation_atom（视觉属性 atom，按 layout 分组）
-  //
-  // v1.3 graph_node / graph_edge 已彻底删除（无技术债，无兼容包袱）。
-
-  // graph_geometry 表（几何骨架：point / line / surface / volume）
-  `DEFINE TABLE IF NOT EXISTS graph_geometry SCHEMALESS;`,
-  `DEFINE INDEX IF NOT EXISTS graph_geom_graph ON graph_geometry FIELDS graph_id;`,
-  `DEFINE INDEX IF NOT EXISTS graph_geom_kind ON graph_geometry FIELDS kind;`,
-
-  // graph_intension_atom 表（语义属性：predicate :: value）
-  `DEFINE TABLE IF NOT EXISTS graph_intension_atom SCHEMALESS;`,
-  `DEFINE INDEX IF NOT EXISTS gia_graph ON graph_intension_atom FIELDS graph_id;`,
-  `DEFINE INDEX IF NOT EXISTS gia_subject ON graph_intension_atom FIELDS subject_id;`,
-  `DEFINE INDEX IF NOT EXISTS gia_predicate ON graph_intension_atom FIELDS predicate;`,
-
-  // graph_presentation_atom 表（视觉属性：layout_id + attribute :: value）
-  `DEFINE TABLE IF NOT EXISTS graph_presentation_atom SCHEMALESS;`,
-  `DEFINE INDEX IF NOT EXISTS gpa_graph ON graph_presentation_atom FIELDS graph_id;`,
-  `DEFINE INDEX IF NOT EXISTS gpa_layout ON graph_presentation_atom FIELDS layout_id;`,
-  `DEFINE INDEX IF NOT EXISTS gpa_subject ON graph_presentation_atom FIELDS subject_id;`,
-  `DEFINE INDEX IF NOT EXISTS gpa_attr ON graph_presentation_atom FIELDS attribute;`,
+  // ── GraphView (L5) — 全部移除,等待 Property Graph 重构 ──
+  // 见 backup/before-pg-refactor-2026-04-28 分支保留旧 schema
 ];
 
 export async function initSchema(): Promise<void> {
