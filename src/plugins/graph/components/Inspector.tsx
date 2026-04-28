@@ -19,10 +19,12 @@ import type {
   GraphIntensionAtomRecord,
   GraphPresentationAtomRecord,
 } from '../../../main/storage/types';
+import type { Substance } from '../substance/types';
 import { CanvasInspectorTab } from './inspector/CanvasInspectorTab';
 import { NodeInspectorTab } from './inspector/NodeInspectorTab';
+import { LibraryInspectorTab } from './inspector/LibraryInspectorTab';
 
-export type InspectorTab = 'canvas' | 'node' | 'text';
+export type InspectorTab = 'canvas' | 'node' | 'library' | 'text';
 
 export interface InspectorProps {
   /** 当前 graph id（图谱级 atom 写入用） */
@@ -47,6 +49,10 @@ export interface InspectorProps {
   onClearVisualOverride: (geometryIds: string[], attribute: string) => Promise<void>;
   /** B4.3：凝结选中几何体为新的 user 层 substance */
   onForgeSubstance: (geometryIds: string[]) => Promise<void>;
+  /** B4.5：user substance 列表（库 Tab 显示）+ 重命名/删除回调 */
+  userSubstances: Substance[];
+  onRenameUserSubstance: (substanceId: string, newLabel: string) => Promise<void>;
+  onDeleteUserSubstance: (substanceId: string) => Promise<void>;
 }
 
 export function Inspector({
@@ -62,6 +68,9 @@ export function Inspector({
   onSetVisualOverride,
   onClearVisualOverride,
   onForgeSubstance,
+  userSubstances,
+  onRenameUserSubstance,
+  onDeleteUserSubstance,
 }: InspectorProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [activeTab, setActiveTab] = useState<InspectorTab>('canvas');
@@ -116,7 +125,7 @@ export function Inspector({
 
       {/* Tab 栏 */}
       <div style={tabBarStyle}>
-        {(['canvas', 'node', 'text'] as InspectorTab[]).map((tab) => (
+        {(['canvas', 'node', 'library', 'text'] as InspectorTab[]).map((tab) => (
           <button
             key={tab}
             onClick={() => handleTabClick(tab)}
@@ -128,6 +137,9 @@ export function Inspector({
             {TAB_LABELS[tab]}
             {tab === 'node' && selectedIds.size > 0 && (
               <span style={tabBadgeStyle}>{selectedIds.size}</span>
+            )}
+            {tab === 'library' && userSubstances.length > 0 && (
+              <span style={tabBadgeStyle}>{userSubstances.length}</span>
             )}
           </button>
         ))}
@@ -157,6 +169,13 @@ export function Inspector({
             onForgeSubstance={onForgeSubstance}
           />
         )}
+        {activeTab === 'library' && (
+          <LibraryInspectorTab
+            userSubstances={userSubstances}
+            onRename={onRenameUserSubstance}
+            onDelete={onDeleteUserSubstance}
+          />
+        )}
         {activeTab === 'text' && (
           <div style={placeholderStyle}>
             文字 / 公式编辑推后到后续阶段
@@ -170,6 +189,7 @@ export function Inspector({
 const TAB_LABELS: Record<InspectorTab, string> = {
   canvas: '画板',
   node: '节点',
+  library: '库',
   text: '文字',
 };
 
