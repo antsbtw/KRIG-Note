@@ -1,12 +1,10 @@
 /**
  * Tree-Layered 布局算法 — 基于 ELK 'layered' 算法(Sugiyama 分层)。
  *
- * 与 tree-hierarchy(mrtree)的区别:
- *   - mrtree:紧凑 Tidy Tree,纯树
- *   - layered:能扛 DAG(节点多 parent),分层等距
+ * 与 tree-hierarchy(mrtree)的区别:能扛 DAG(节点多 parent),分层等距。
  *
- * 边路由:同 tree-hierarchy,跑完 ELK 后用 rewriteTreeEdgeSections 重写。
- * ELK 内部边路由不再消费(layout.edge-style 由渲染层公式实现)。
+ * 边路由:同 tree-hierarchy,layout 输出 edgeSections 不消费,GraphView 用
+ * React Flow 公式 generateTreeEdgeSections 重新生成。
  *
  * 仅识别 `contains` 关系作为父→子边(同 tree-hierarchy)。
  *
@@ -16,7 +14,6 @@ import { layoutRegistry } from './registry';
 import { runElkLayout } from './elk-adapter';
 import { filterToContainsTree } from './tree-shared';
 import { resolveLayoutOptions } from './layout-options';
-import { rewriteTreeEdgeSections } from './tree-edge-routing';
 import type { LayoutAlgorithm, LayoutInput, LayoutOutput } from './types';
 
 const treeLayered: LayoutAlgorithm = {
@@ -24,8 +21,7 @@ const treeLayered: LayoutAlgorithm = {
   label: 'Tree Layered',
   supportsDimension: [2],
   async compute(input: LayoutInput): Promise<LayoutOutput> {
-    const filtered = filterToContainsTree(input);
-    const elkOutput = await runElkLayout(filtered, {
+    return runElkLayout(filterToContainsTree(input), {
       elkAlgorithm: 'layered',
       currentLayoutId: 'tree',
       extraOptions: {
@@ -37,7 +33,6 @@ const treeLayered: LayoutAlgorithm = {
         ...resolveLayoutOptions(input.layoutOptions, 'layered'),
       },
     });
-    return rewriteTreeEdgeSections(filtered, elkOutput);
   },
 };
 

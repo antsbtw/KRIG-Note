@@ -1,43 +1,41 @@
 /**
- * Tree 边路由后处理 — 用 React Flow 公式重新生成 edgeSections。
+ * Tree 边路由公式生成 — 用 React Flow 公式生成 edgeSections。
  *
- * 流程：
- *   1. ELK 跑完拿到节点位置（LayoutOutput.positions）
- *   2. 对 input 中每条 line geometry,查 source/target 节点中心位置
- *   3. 根据 edgeStyle + direction 调 generateEdgePath 生成采样点
- *   4. 把采样点封装为 EdgeSection,覆盖 ELK 给的 edgeSections
+ * 调用时机:GraphView 拿到节点最终位置(layout 输出 + pinned override 合并)后,
+ * 用最终位置算边的采样点。这样保证边和节点用**同一坐标**,不会脱节。
  *
- * 这样 ELK 只决定节点位置,边的形态由我们的渲染层完全控制。
+ * 公式来源 edge-paths.ts(移植自 React Flow MIT)。4 档:
+ *   straight / step / smoothstep / bezier
  */
 import { generateEdgePath, positionsFromDirection, type EdgeStyle } from './edge-paths';
-import type { EdgeSection, LayoutInput, LayoutOutput } from './types';
+import type { GraphGeometryRecord } from '../../../main/storage/types';
+import type { EdgeSection } from './types';
 
 /**
- * 后处理 layout 输出:用 edgeStyle 公式重写 edgeSections。
+ * 根据最终节点位置 + 用户的 edge-style 选择,生成所有 line 几何体的边采样点。
  *
- * - input: 原 LayoutInput(拿 line geometries / layoutOptions)
- * - output: ELK 跑完的 LayoutOutput(拿 positions)
- * - 返回: 新 LayoutOutput,positions 不变,edgeSections 替换为公式生成的采样点序列
+ * - lines: 所有 line geometry(只算 members.length >= 2 的)
+ * - positions: 节点最终位置(已合并 pinned override)
+ * - layoutOptions: 当前图谱级 layout 参数(读 layout.edge-style + layout.direction)
+ * - 返回: line.id → EdgeSection[](首末 + 中间采样点)
  */
-export function rewriteTreeEdgeSections(
-  input: LayoutInput,
-  output: LayoutOutput,
-): LayoutOutput {
-  const opts = input.layoutOptions ?? {};
+export function generateTreeEdgeSections(
+  lines: GraphGeometryRecord[],
+  positions: Map<string, { x: number; y: number; z?: number }>,
+  layoutOptions: Record<string, string> | undefined,
+): Map<string, EdgeSection[]> {
+  const opts = layoutOptions ?? {};
   const style = normalizeEdgeStyle(opts['layout.edge-style']);
-
   const direction = (opts['layout.direction'] as 'DOWN' | 'UP' | 'LEFT' | 'RIGHT' | undefined) ?? 'DOWN';
-  const positions = positionsFromDirection(direction);
+  const handlePositions = positionsFromDirection(direction);
 
-  const newSections = new Map<string, EdgeSection[]>();
-  const lines = input.geometries.filter((g) => g.kind === 'line');
-
+  const out = new Map<string, EdgeSection[]>();
   for (const line of lines) {
     if (line.members.length < 2) continue;
     const srcId = line.members[0];
     const tgtId = line.members[1];
-    const srcPos = output.positions.get(srcId);
-    const tgtPos = output.positions.get(tgtId);
+    const srcPos = positions.get(srcId);
+    const tgtPos = positions.get(tgtId);
     if (!srcPos || !tgtPos) continue;
 
     const points = generateEdgePath(style, {
@@ -45,12 +43,12 @@ export function rewriteTreeEdgeSections(
       sourceY: srcPos.y,
       targetX: tgtPos.x,
       targetY: tgtPos.y,
-      sourcePosition: positions.source,
-      targetPosition: positions.target,
+      sourcePosition: handlePositions.source,
+      targetPosition: handlePositions.target,
     });
     if (points.length < 2) continue;
 
-    newSections.set(line.id, [
+    out.set(line.id, [
       {
         startPoint: points[0],
         endPoint: points[points.length - 1],
@@ -59,10 +57,7 @@ export function rewriteTreeEdgeSections(
     ]);
   }
 
-  return {
-    positions: output.positions,
-    edgeSections: newSections,
-  };
+  return out;
 }
 
 /**

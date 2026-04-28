@@ -9,6 +9,7 @@ import { composePatterns } from '../pattern';
 import { measureLabels, readExistingBbox as readLabelBboxFromPresentations, type LabelBbox } from '../layout/label-measurer';
 import { readGraphLevelLayoutOptions } from '../layout/layout-options';
 import { isInLayoutFamily } from '../layout/layout-family';
+import { generateTreeEdgeSections } from '../layout/tree-edge-routing';
 import { Inspector } from './Inspector';
 import type {
   GraphRecord,
@@ -146,8 +147,9 @@ export function GraphView() {
     renderer.mount(containerRef.current);
     rendererRef.current = renderer;
 
-    // B2.3：拖动节点结束 → 写 presentation atom（pinned + position）
-    // 让节点固定在用户拖到的位置，下次打开图谱位置保持。
+    // B2.3：拖动节点结束 → 写 presentation atom（pinned + position）+ 触发 reload
+    // 让节点固定在用户拖到的位置;reload 让边按 finalPositions 重新计算
+    // (否则拖动期间是直线兜底,松手后边样式会卡在直线状态)。
     renderer.setInteractionCallbacks({
       onNodeDragEnd: ({ instanceId, worldX, worldY }) => {
         const graphId = activeGraphIdRef.current;
@@ -178,9 +180,14 @@ export function GraphView() {
             value: 'true',
             value_kind: 'text',
           },
-        ]).catch((err) => {
-          console.error('[GraphView] persist drag failed:', err);
-        });
+        ])
+          .then(() => {
+            // 拖动结束后让 layout 用新 pinned 位置重算 + 边按 React Flow 公式重画
+            setReloadTrigger((n) => n + 1);
+          })
+          .catch((err) => {
+            console.error('[GraphView] persist drag failed:', err);
+          });
       },
       // B4.2 单击选中
       onSelect: ({ instanceId, modifier }) => {
@@ -364,7 +371,19 @@ export function GraphView() {
           }
         }
 
-        // 3. adapter
+        // 3. 边采样点:tree 类 layout 用 React Flow 公式根据 finalPositions
+        //    重新生成,确保边和节点用同一坐标(避免拖动后脱节)。
+        //    其他 layout(force/grid)用 layout 算法自带的 edgeSections。
+        const isTreeLayout = activeLayout === 'tree' || activeLayout === 'tree-hierarchy' || activeLayout === 'tree-layered';
+        const finalEdgeSections = isTreeLayout
+          ? generateTreeEdgeSections(
+              data.geometries.filter((g) => g.kind === 'line'),
+              finalPositions,
+              layoutOptions,
+            )
+          : layoutResult.edgeSections;
+
+        // 4. adapter
         const sceneData = adapt({
           graph: data.graph,
           geometries: data.geometries,
@@ -373,7 +392,7 @@ export function GraphView() {
           substanceResolver: (id) => substanceLibrary.get(id),
           activeLayout,
           activeProjection: viewMode?.projection,
-          edgeSections: layoutResult.edgeSections,
+          edgeSections: finalEdgeSections,
         });
         if (myToken !== loadTokenRef.current) return;
         if (!rendererRef.current) return;
