@@ -9,6 +9,7 @@ import { composePatterns } from '../pattern';
 import { measureLabels, readExistingBbox as readLabelBboxFromPresentations, type LabelBbox } from '../layout/label-measurer';
 import { readGraphLevelLayoutOptions } from '../layout/layout-options';
 import { isInLayoutFamily } from '../layout/layout-family';
+import { Inspector } from './Inspector';
 import type {
   GraphRecord,
   GraphGeometryRecord,
@@ -372,10 +373,9 @@ export function GraphView() {
     }
   };
 
-  // ── B4.1 临时调试：图谱级 layout 参数（方向切换） ──
-  // 写入 layout.direction atom，重载触发重算 layout。
-  // TODO B4.2：替换为正式属性面板 UI。
-  const handleDirectionChange = async (direction: 'DOWN' | 'UP' | 'LEFT' | 'RIGHT') => {
+  // ── B4.2 Inspector 写入图谱级 layout 参数 ──
+  // 用户在画板 Tab 调整 → 写 atom → 触发重载
+  const handleSetLayoutOption = async (attribute: string, value: string) => {
     const graphId = activeGraphIdRef.current;
     const layoutId = activeLayoutRef.current;
     if (!graphId || !layoutId) return;
@@ -385,14 +385,14 @@ export function GraphView() {
           graph_id: graphId,
           layout_id: layoutId,
           subject_id: graphId,
-          attribute: 'layout.direction',
-          value: direction,
+          attribute,
+          value,
           value_kind: 'string',
         },
       ]);
       setReloadTrigger((n) => n + 1);
     } catch (err) {
-      console.error('[GraphView] set layout.direction failed:', err);
+      console.error('[GraphView] set layout option failed:', err, { attribute, value });
     }
   };
 
@@ -452,24 +452,13 @@ export function GraphView() {
           ))}
         </div>
       )}
-      {/* B4.1 临时调试：tree 类布局可切换方向。B4.2 接正式属性面板后删除。 */}
-      {activeGraphId && (() => {
-        const layoutId = viewModeRegistry.get(activeViewModeId)?.layout;
-        return layoutId === 'tree-hierarchy' || layoutId === 'tree-layered' || layoutId === 'tree';
-      })() && (
-        <div style={debugDirectionStyle}>
-          <span style={{ opacity: 0.6, fontSize: 11 }}>方向</span>
-          {(['DOWN', 'UP', 'LEFT', 'RIGHT'] as const).map((dir) => (
-            <button
-              key={dir}
-              onClick={() => handleDirectionChange(dir)}
-              style={debugDirectionButtonStyle}
-            >
-              {dir}
-            </button>
-          ))}
-        </div>
-      )}
+      {/* B4.2.a Inspector 编辑器浮窗 */}
+      <Inspector
+        graphId={activeGraphId}
+        layoutId={viewModeRegistry.get(activeViewModeId)?.layout ?? 'force'}
+        selectedIds={selectedIds}
+        onSetLayoutOption={handleSetLayoutOption}
+      />
     </div>
   );
 }
@@ -545,31 +534,4 @@ const viewModeButtonActiveStyle: React.CSSProperties = {
   background: '#3b82f6',
   color: '#fff',
   borderColor: '#60a5fa',
-};
-
-const debugDirectionStyle: React.CSSProperties = {
-  position: 'absolute',
-  top: 56,
-  right: 12,
-  display: 'flex',
-  alignItems: 'center',
-  gap: 4,
-  background: 'rgba(0,0,0,0.55)',
-  padding: '4px 8px',
-  borderRadius: 6,
-  zIndex: 10,
-  userSelect: 'none',
-};
-
-const debugDirectionButtonStyle: React.CSSProperties = {
-  background: 'transparent',
-  color: '#bbb',
-  borderWidth: 1,
-  borderStyle: 'solid',
-  borderColor: '#444',
-  fontSize: 11,
-  padding: '2px 6px',
-  borderRadius: 3,
-  cursor: 'pointer',
-  outline: 'none',
 };
