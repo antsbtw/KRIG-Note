@@ -23,6 +23,12 @@ import { getInstanceBoxSize, DEFAULT_NODE_WIDTH, DEFAULT_NODE_HEIGHT } from './i
 export interface ElkAdapterOptions {
   /** ELK 算法 id：'force' / 'box' / 'mrtree' / 'layered' / ... */
   elkAlgorithm: string;
+  /**
+   * KRIG layout id（'force' / 'grid' / 'tree-hierarchy' / ...）。
+   * 用于 readPinnedPosition 识别"当前 layout 专属"的 presentation atom。
+   * 不传 → 仅识别 layout_id='*'。
+   */
+  currentLayoutId?: string;
   /** 额外 layoutOptions（每个算法可定制） */
   extraOptions?: LayoutOptions;
 }
@@ -54,7 +60,7 @@ export async function runElkLayout(
   // ── 构造 ELK 节点 ──
   const elkChildren: ElkNode[] = points.map((p) => {
     const size = getNodeSize(p.id, input);
-    const pinPos = readPinnedPosition(p.id, input);
+    const pinPos = readPinnedPosition(p.id, input, opts.currentLayoutId);
     const node: ElkNode = {
       id: p.id,
       width: size.width,
@@ -143,17 +149,24 @@ function getNodeSize(geometryId: string, input: LayoutInput): { width: number; h
   return getInstanceBoxSize(substance, labelBbox);
 }
 
-/** 从 presentations 读 pinned 节点的位置（'*' 或当前 layout）。 */
+/**
+ * 从 presentations 读 pinned 节点的位置（'*' 或当前 layout 专属）。
+ *
+ * - layout_id === '*'：跨布局共享，所有 layout 都消费
+ * - layout_id === currentLayoutId：当前 layout 专属
+ * - 其他 layout_id：忽略（避免 force 的 pinned 干扰 tree 布局）
+ */
 function readPinnedPosition(
   geometryId: string,
   input: LayoutInput,
+  currentLayoutId: string | undefined,
 ): { x: number; y: number } | null {
   let x: number | undefined;
   let y: number | undefined;
   let pinned = false;
   for (const p of input.presentations) {
     if (p.subject_id !== geometryId) continue;
-    if (p.layout_id !== '*' && p.layout_id !== 'force' && p.layout_id !== 'grid' && p.layout_id !== 'tree-hierarchy') continue;
+    if (p.layout_id !== '*' && p.layout_id !== currentLayoutId) continue;
     if (p.attribute === 'position.x') x = parseFloat(p.value);
     else if (p.attribute === 'position.y') y = parseFloat(p.value);
     else if (p.attribute === 'pinned') pinned = p.value === 'true';

@@ -7,6 +7,7 @@ import { viewModeRegistry } from '../viewmode';
 import '../projection';  // 副作用：注册 'graph' / 'tree' projection
 import { composePatterns } from '../pattern';
 import { measureLabels, readExistingBbox as readLabelBboxFromPresentations, type LabelBbox } from '../layout/label-measurer';
+import { readGraphLevelLayoutOptions } from '../layout/layout-options';
 import type {
   GraphRecord,
   GraphGeometryRecord,
@@ -184,6 +185,11 @@ export function GraphView() {
         const labelBboxMap = readLabelBboxFromPresentations(data.presentations);
         const measureLabel = (id: string): LabelBbox | undefined => labelBboxMap.get(id);
 
+        // ── B4.1: 画板模型 — 图谱级 layout 参数 ──
+        // 从 presentations 中提取 subject_id=graph_id、attribute='layout.*' 的 atom，
+        // 作为图谱级用户调整传给 layout 算法。
+        const layoutOptions = readGraphLevelLayoutOptions(data.presentations, data.graph.id, activeLayout);
+
         const layoutResult = await algorithm.compute({
           geometries: geometriesForLayout,
           intensions: intensionsForLayout,
@@ -191,6 +197,7 @@ export function GraphView() {
           substanceResolver: (id) => substanceLibrary.get(id),
           dimension: data.graph.dimension ?? 2,
           measureLabel,
+          layoutOptions,
         });
 
         // 3. 合并：Pattern members 最终位置 = 容器 layout 位置 + 相对偏移
@@ -293,6 +300,30 @@ export function GraphView() {
     }
   };
 
+  // ── B4.1 临时调试：图谱级 layout 参数（方向切换） ──
+  // 写入 layout.direction atom，重载触发重算 layout。
+  // TODO B4.2：替换为正式属性面板 UI。
+  const handleDirectionChange = async (direction: 'DOWN' | 'UP' | 'LEFT' | 'RIGHT') => {
+    const graphId = activeGraphIdRef.current;
+    const layoutId = activeLayoutRef.current;
+    if (!graphId || !layoutId) return;
+    try {
+      await viewAPI.graphPresentationSetBulk([
+        {
+          graph_id: graphId,
+          layout_id: layoutId,
+          subject_id: graphId,
+          attribute: 'layout.direction',
+          value: direction,
+          value_kind: 'string',
+        },
+      ]);
+      setReloadTrigger((n) => n + 1);
+    } catch (err) {
+      console.error('[GraphView] set layout.direction failed:', err);
+    }
+  };
+
   // ── 渲染 ──
   // 始终渲染 canvas 容器（让 GraphRenderer 在 mount 阶段就能拿到容器）。
   // !activeGraphId 时显示 empty overlay 覆盖在画布上。
@@ -329,6 +360,21 @@ export function GraphView() {
               }}
             >
               {vm.label}
+            </button>
+          ))}
+        </div>
+      )}
+      {/* B4.1 临时调试：tree 类布局可切换方向。B4.2 接正式属性面板后删除。 */}
+      {activeGraphId && viewModeRegistry.get(activeViewModeId)?.layout === 'tree-hierarchy' && (
+        <div style={debugDirectionStyle}>
+          <span style={{ opacity: 0.6, fontSize: 11 }}>方向</span>
+          {(['DOWN', 'UP', 'LEFT', 'RIGHT'] as const).map((dir) => (
+            <button
+              key={dir}
+              onClick={() => handleDirectionChange(dir)}
+              style={debugDirectionButtonStyle}
+            >
+              {dir}
             </button>
           ))}
         </div>
@@ -408,4 +454,31 @@ const viewModeButtonActiveStyle: React.CSSProperties = {
   background: '#3b82f6',
   color: '#fff',
   borderColor: '#60a5fa',
+};
+
+const debugDirectionStyle: React.CSSProperties = {
+  position: 'absolute',
+  top: 56,
+  right: 12,
+  display: 'flex',
+  alignItems: 'center',
+  gap: 4,
+  background: 'rgba(0,0,0,0.55)',
+  padding: '4px 8px',
+  borderRadius: 6,
+  zIndex: 10,
+  userSelect: 'none',
+};
+
+const debugDirectionButtonStyle: React.CSSProperties = {
+  background: 'transparent',
+  color: '#bbb',
+  borderWidth: 1,
+  borderStyle: 'solid',
+  borderColor: '#444',
+  fontSize: 11,
+  padding: '2px 6px',
+  borderRadius: 3,
+  cursor: 'pointer',
+  outline: 'none',
 };

@@ -14,6 +14,7 @@
 import { layoutRegistry } from './registry';
 import { runElkLayout } from './elk-adapter';
 import { filterToContainsTree } from './tree-shared';
+import { resolveLayoutOptions } from './layout-options';
 import type { LayoutAlgorithm, LayoutInput, LayoutOutput } from './types';
 
 const treeHierarchy: LayoutAlgorithm = {
@@ -23,12 +24,15 @@ const treeHierarchy: LayoutAlgorithm = {
   async compute(input: LayoutInput): Promise<LayoutOutput> {
     return runElkLayout(filterToContainsTree(input), {
       elkAlgorithm: 'mrtree',
+      currentLayoutId: 'tree-hierarchy',
       extraOptions: {
         // ELK y 向下 + adapter 翻 y → DOWN 后根在上、子在下
         'elk.direction': 'DOWN',
         'elk.spacing.nodeNode': '60',
         'elk.mrtree.spacing.nodeNode': '60',
         'elk.spacing.edgeNode': '20',
+        // 用户在画板上的图谱级参数覆盖默认（B4.1）
+        ...resolveLayoutOptions(input.layoutOptions, 'mrtree'),
       },
     });
   },

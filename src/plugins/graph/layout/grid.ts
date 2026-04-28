@@ -12,6 +12,7 @@
  */
 import { layoutRegistry } from './registry';
 import { runElkLayout } from './elk-adapter';
+import { resolveLayoutOptions } from './layout-options';
 import type { LayoutAlgorithm, LayoutInput, LayoutOutput } from './types';
 
 const grid: LayoutAlgorithm = {
@@ -21,9 +22,11 @@ const grid: LayoutAlgorithm = {
   async compute(input: LayoutInput): Promise<LayoutOutput> {
     return runElkLayout(input, {
       elkAlgorithm: 'box',
+      currentLayoutId: 'grid',
       extraOptions: {
         'elk.spacing.nodeNode': '40',
         'elk.box.packingMode': 'GROUP_DEC',
+        ...resolveLayoutOptions(input.layoutOptions, 'box'),
       },
     });
   },

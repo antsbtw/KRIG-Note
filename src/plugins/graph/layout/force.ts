@@ -13,6 +13,7 @@
  */
 import { layoutRegistry } from './registry';
 import { runElkLayout } from './elk-adapter';
+import { resolveLayoutOptions } from './layout-options';
 import type { LayoutAlgorithm, LayoutInput, LayoutOutput } from './types';
 
 const force: LayoutAlgorithm = {
@@ -22,10 +23,12 @@ const force: LayoutAlgorithm = {
   async compute(input: LayoutInput): Promise<LayoutOutput> {
     return runElkLayout(input, {
       elkAlgorithm: 'force',
+      currentLayoutId: 'force',
       extraOptions: {
         'elk.spacing.nodeNode': '80',
         'elk.force.iterations': '300',
         'elk.force.repulsion': '5.0',
+        ...resolveLayoutOptions(input.layoutOptions, 'force'),
       },
     });
   },

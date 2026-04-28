@@ -29,6 +29,21 @@ export interface LayoutInput {
    * 详见 docs/graph/KRIG-Graph-Layout-Spec.md §7
    */
   measureLabel?: (geometryId: string) => { width: number; height: number } | undefined;
+
+  /**
+   * B4.1 新增：图谱级 layout 参数（画板模型 — 用户可调）。
+   * 来源：subject_id = graph_id 的 presentation atom，attribute 以 'layout.' 开头。
+   * 算法在内部默认值上覆盖这些参数（用户值优先）。
+   *
+   * 已识别 key（v1）：
+   *   layout.direction         'DOWN' / 'UP' / 'LEFT' / 'RIGHT'（仅 tree 类消费）
+   *   layout.edge-style        'orthogonal' / 'splines' / 'polyline' / 'straight'（v1.5+ 消费）
+   *   layout.spacing.node      节点间距
+   *   layout.spacing.layer     层间距（仅 tree / layered 类消费）
+   *
+   * 详见 docs/graph/KRIG-Graph-Canvas-Spec.md §3.2
+   */
+  layoutOptions?: Record<string, string>;
 }
 
 /** B3.4 新增：边路由产物，由 ELK 输出 */
