@@ -444,7 +444,24 @@ export class GraphRenderer {
     // B3.4: projection 介入折线/曲线（tree projection 取 ELK bendPoints）
     const projectionPath = projection?.customizeLine?.(inst, edgeSections?.get(inst.id));
     if (projectionPath && projectionPath.length >= 2) {
-      points = projectionPath.map((p) => new THREE.Vector3(p.x, p.y, LINE_Z));
+      // 首末两端裁剪到节点 shape 边缘,中间 bendPoints / 曲线采样点不动。
+      // 否则 bezier 曲线/直线的端点在节点中心,箭头会被节点 mesh 遮住。
+      const clippedPath = [...projectionPath];
+      const first = clippedPath[0];
+      const second = clippedPath[1];
+      const last = clippedPath[clippedPath.length - 1];
+      const secondLast = clippedPath[clippedPath.length - 2];
+      const startMesh = this.meshes.get(inst.members[0]);
+      const endMesh = this.meshes.get(inst.members[inst.members.length - 1]);
+      if (startMesh) {
+        const c = clipPointToBox(second, first, startMesh);
+        if (c) clippedPath[0] = c;
+      }
+      if (endMesh) {
+        const c = clipPointToBox(secondLast, last, endMesh);
+        if (c) clippedPath[clippedPath.length - 1] = c;
+      }
+      points = clippedPath.map((p) => new THREE.Vector3(p.x, p.y, LINE_Z));
     } else {
       // 原直线管线：member 中心 + 端点裁剪
       const centers: Array<{ x: number; y: number; z: number }> = [];
