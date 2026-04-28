@@ -1,22 +1,22 @@
 /**
- * InteractionController — Basic Graph 视图层交互控制器（B2）。
+ * InteractionController — Basic Graph 视图层交互控制器（B2 + B4.2 选中）。
  *
- * 三种交互模式：
- *   idle      默认状态
- *   panning   中键 / 右键按下 → 平移相机
- *   dragging  左键命中 Point → 拖动单个节点（mouseup 触发 onNodeDragEnd）
+ * 交互模式（Figma 标准）：
+ *   idle         默认状态
+ *   panning      中键 / 右键按下，或 空格+左键 → 平移相机
+ *   dragging     左键命中 Point → 拖动单个节点（mouseup 触发 onNodeDragEnd）
+ *   boxSelecting 左键空白拖动 → 框选（mouseup 触发 onBoxSelectEnd）
  *
- * 滚轮缩放（zoom）独立于模式，任何时候都可触发；
- * 以鼠标位置为锚点：缩放后世界坐标下鼠标指向的点保持不动。
+ * 关键交互（B4.2 改）：
+ *   - 左键点节点         单选 + 进入拖动
+ *   - 左键点空白         取消所有选中
+ *   - 左键拖空白         框选（不再 pan，跟 Figma 一致）
+ *   - Shift/Cmd/Ctrl 点  加选/差选
+ *   - 空格 + 左键拖      平移
+ *   - 中键 / 右键拖      平移
+ *   - Esc                清空选中（GraphView 监听 keydown）
  *
- * 不职责：
- *   - 不管 mesh 表（GraphRenderer 通过 hitTestNode 回调暴露）
- *   - 不写 presentation atom（onNodeDragEnd 把 (id, x, y) 抛给上层，由 GraphView 调 IPC）
- *   - 不动 SceneManager 的 RAF / 渲染（只调 markDirty）
- *
- * 设计：
- *   InteractionController 只读 SceneManager.camera + .markDirty + .invalidateFit；
- *   不直接访问 SceneManager.scene；命中测试由调用方注入 hitTester（避免环依赖）。
+ * 滚轮缩放（zoom）独立于模式，任何时候都可触发；以鼠标位置为锚点。
  */
 import * as THREE from 'three';
 import type { SceneManager } from '../scene/SceneManager';
@@ -49,6 +49,33 @@ export interface InteractionCallbacks {
    * 上层可用来更新连接到该节点的边端点。
    */
   onNodeDrag?: (info: { instanceId: string; worldX: number; worldY: number }) => void;
+
+  /**
+   * B4.2 选中事件：左键点击松手时触发。
+   *
+   * @param instanceId  点中的 instance id；空白处点击为 null
+   * @param modifier    'replace' 替换选中集；'toggle' 加入/移出（Shift/Cmd/Ctrl）
+   *
+   * 调用方负责维护 selectedIds 状态 + 调 GraphRenderer.setSelectedIds 同步视觉。
+   */
+  onSelect?: (info: { instanceId: string | null; modifier: 'replace' | 'toggle' }) => void;
+
+  /**
+   * B4.2 框选过程中调用（每帧）：让上层渲染屏幕坐标的虚线矩形。
+   * 屏幕坐标是 canvas 内左上原点像素。
+   */
+  onBoxSelectUpdate?: (info: { startScreen: { x: number; y: number }; currentScreen: { x: number; y: number } }) => void;
+
+  /**
+   * B4.2 框选结束（mouseup）：上层根据 worldRect 找命中节点，更新选中集。
+   */
+  onBoxSelectEnd?: (info: {
+    worldRect: { minX: number; minY: number; maxX: number; maxY: number };
+    modifier: 'replace' | 'toggle';
+  }) => void;
+
+  /** B4.2 框选取消（如鼠标拖出又拖回未触发命中），让上层清掉 overlay。 */
+  onBoxSelectCancel?: () => void;
 }
 
 export class InteractionController {
@@ -57,7 +84,7 @@ export class InteractionController {
   private hitTester: NodeHitTester;
   private callbacks: InteractionCallbacks;
 
-  private mode: 'idle' | 'panning' | 'dragging' = 'idle';
+  private mode: 'idle' | 'panning' | 'dragging' | 'boxSelecting' = 'idle';
   private spaceHeld = false;
 
   // panning 状态
@@ -68,6 +95,21 @@ export class InteractionController {
   private dragNode: NodeHit | null = null;
   private dragStartScreen = { x: 0, y: 0 };
   private dragStartWorld = { x: 0, y: 0 };
+  /** B4.2: 拖动节点是否已超过点击阈值（小于阈值松手 = 单击，不算拖动） */
+  private dragMoved = false;
+
+  // B4.2 框选状态
+  private boxStartScreen = { x: 0, y: 0 };
+  private boxStartWorld = { x: 0, y: 0 };
+  /** 框选是否已超过启动阈值（小于阈值松手 = 点空白，不算框选） */
+  private boxMoved = false;
+  /** 框选/单击时按下的修饰键（mouseup 时用） */
+  private clickModifier: 'replace' | 'toggle' = 'replace';
+
+  /** 鼠标按下点（空白）后是否已经决定进入哪种模式：'pending' = 还没决定 */
+  private pendingClick = false;
+  /** 单击 vs 拖动的像素阈值 */
+  private static readonly DRAG_THRESHOLD = 3;
 
   // 绑定的事件 handler 引用（unmount 时移除）
   private onWheel = this.handleWheel.bind(this);
@@ -183,18 +225,21 @@ export class InteractionController {
   private handleMouseDown(e: MouseEvent): void {
     if (this.mode !== 'idle') return;
     const screen = this.screenFromEvent(e);
+    const modifier: 'replace' | 'toggle' =
+      e.shiftKey || e.metaKey || e.ctrlKey ? 'toggle' : 'replace';
+    this.clickModifier = modifier;
 
-    // 中键（1）/ 右键（2）：直接进入 panning（鼠标用户的快捷路径）
+    // 中键（1）/ 右键（2）：直接进入 panning
     if (e.button === 1 || e.button === 2) {
       e.preventDefault();
       this.startPan(screen);
       return;
     }
 
-    // 左键（0）：
-    //   1) 空格按住 → 强制 panning（避开误碰节点的修饰键）
-    //   2) 命中节点 → dragging
-    //   3) 未命中（点空白）→ panning（macOS 触摸板友好的默认）
+    // 左键（0）— Figma 标准：
+    //   1) 空格按住 → 平移
+    //   2) 命中节点 → dragging（小位移松手 = 单击选中）
+    //   3) 未命中（点空白）→ boxSelecting（小位移松手 = 取消选中）
     if (e.button === 0) {
       if (this.spaceHeld) {
         e.preventDefault();
@@ -209,10 +254,17 @@ export class InteractionController {
         this.dragNode = hit;
         this.dragStartScreen = screen;
         this.dragStartWorld = world;
+        this.dragMoved = false;
         if (this.dom) this.dom.style.cursor = 'grabbing';
       } else {
         e.preventDefault();
-        this.startPan(screen);
+        // 进入"待定"框选 — 超过阈值才真正开始画框，否则视为点空白
+        this.mode = 'boxSelecting';
+        this.boxStartScreen = screen;
+        this.boxStartWorld = world;
+        this.boxMoved = false;
+        this.pendingClick = true;
+        if (this.dom) this.dom.style.cursor = 'crosshair';
       }
     }
   }
@@ -269,8 +321,12 @@ export class InteractionController {
 
     if (this.mode === 'dragging' && this.dragNode) {
       const screen = this.screenFromEvent(e);
+      const dx = screen.x - this.dragStartScreen.x;
+      const dy = screen.y - this.dragStartScreen.y;
+      // 阈值前不动：避免单击触发 onNodeDrag 改变位置
+      if (!this.dragMoved && Math.hypot(dx, dy) < InteractionController.DRAG_THRESHOLD) return;
+      this.dragMoved = true;
       const world = this.worldFromScreen(screen.x, screen.y);
-      // 节点新位置 = 节点起始位置 + (鼠标当前 world - 鼠标按下时 world)
       const newX = this.dragNode.worldX + (world.x - this.dragStartWorld.x);
       const newY = this.dragNode.worldY + (world.y - this.dragStartWorld.y);
       this.dragNode.object.position.x = newX;
@@ -280,6 +336,20 @@ export class InteractionController {
         instanceId: this.dragNode.instanceId,
         worldX: newX,
         worldY: newY,
+      });
+      return;
+    }
+
+    if (this.mode === 'boxSelecting') {
+      const screen = this.screenFromEvent(e);
+      const dx = screen.x - this.boxStartScreen.x;
+      const dy = screen.y - this.boxStartScreen.y;
+      if (!this.boxMoved && Math.hypot(dx, dy) < InteractionController.DRAG_THRESHOLD) return;
+      this.boxMoved = true;
+      this.pendingClick = false;
+      this.callbacks.onBoxSelectUpdate?.({
+        startScreen: this.boxStartScreen,
+        currentScreen: screen,
       });
     }
   }
@@ -313,23 +383,63 @@ export class InteractionController {
 
   private handleMouseUp(e: MouseEvent): void {
     if (this.mode === 'panning') {
-      // 任何按键起来都结束 panning（不挑剔哪个键开始的）
       this.mode = 'idle';
       if (this.dom) this.dom.style.cursor = this.spaceHeld ? 'grab' : '';
       return;
     }
+
     if (this.mode === 'dragging' && e.button === 0) {
       const node = this.dragNode;
+      const moved = this.dragMoved;
       this.mode = 'idle';
       this.dragNode = null;
+      this.dragMoved = false;
       if (this.dom) this.dom.style.cursor = '';
-      if (node) {
+      if (!node) return;
+      if (moved) {
         this.callbacks.onNodeDragEnd?.({
           instanceId: node.instanceId,
           worldX: node.object.position.x,
           worldY: node.object.position.y,
         });
+      } else {
+        // 单击节点 = 选中
+        this.callbacks.onSelect?.({
+          instanceId: node.instanceId,
+          modifier: this.clickModifier,
+        });
       }
+      return;
+    }
+
+    if (this.mode === 'boxSelecting' && e.button === 0) {
+      const wasMoved = this.boxMoved;
+      const startWorld = this.boxStartWorld;
+      this.mode = 'idle';
+      this.boxMoved = false;
+      this.pendingClick = false;
+      if (this.dom) this.dom.style.cursor = '';
+
+      if (!wasMoved) {
+        // 点空白 = 取消选中（modifier 不影响）
+        this.callbacks.onSelect?.({
+          instanceId: null,
+          modifier: 'replace',
+        });
+        return;
+      }
+
+      // 框选结束 — 算 world rect
+      const screen = this.screenFromEvent(e);
+      const endWorld = this.worldFromScreen(screen.x, screen.y);
+      const minX = Math.min(startWorld.x, endWorld.x);
+      const maxX = Math.max(startWorld.x, endWorld.x);
+      const minY = Math.min(startWorld.y, endWorld.y);
+      const maxY = Math.max(startWorld.y, endWorld.y);
+      this.callbacks.onBoxSelectEnd?.({
+        worldRect: { minX, minY, maxX, maxY },
+        modifier: this.clickModifier,
+      });
     }
   }
 

@@ -58,12 +58,22 @@ export function GraphView() {
   const [stats, setStats] = useState<{ total: number; warnings: number } | null>(null);
   const [activeViewModeId, setActiveViewModeId] = useState<string>('force');
 
+  // B4.2 选中状态
+  const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(() => new Set());
+  /** 框选 overlay：null 表示无；否则是 canvas 内屏幕坐标矩形 */
+  const [boxSelectRect, setBoxSelectRect] = useState<
+    { x: number; y: number; w: number; h: number } | null
+  >(null);
+
   const containerRef = useRef<HTMLDivElement | null>(null);
   const rendererRef = useRef<GraphRenderer | null>(null);
   const loadTokenRef = useRef(0);
   /** 当前 graph 的活动 layout id（drag 写 atom 时用）；activeLayout 与 activeGraphId 同步更新 */
   const activeLayoutRef = useRef<string>('force');
   const activeGraphIdRef = useRef<string | null>(null);
+  /** 选中 ref（事件回调里读最新值用） */
+  const selectedIdsRef = useRef<ReadonlySet<string>>(selectedIds);
+  selectedIdsRef.current = selectedIds;
 
   // ── activeGraphId 同步 ──
   useEffect(() => {
@@ -119,12 +129,71 @@ export function GraphView() {
           console.error('[GraphView] persist drag failed:', err);
         });
       },
+      // B4.2 单击选中
+      onSelect: ({ instanceId, modifier }) => {
+        if (instanceId === null) {
+          // 点空白 = 取消选中（toggle 时也清空，跟 Figma 一致）
+          setSelectedIds(new Set());
+          return;
+        }
+        if (modifier === 'replace') {
+          setSelectedIds(new Set([instanceId]));
+        } else {
+          // toggle
+          const next = new Set(selectedIdsRef.current);
+          if (next.has(instanceId)) next.delete(instanceId);
+          else next.add(instanceId);
+          setSelectedIds(next);
+        }
+      },
+      // B4.2 框选过程（屏幕坐标 overlay）
+      onBoxSelectUpdate: ({ startScreen, currentScreen }) => {
+        const x = Math.min(startScreen.x, currentScreen.x);
+        const y = Math.min(startScreen.y, currentScreen.y);
+        const w = Math.abs(currentScreen.x - startScreen.x);
+        const h = Math.abs(currentScreen.y - startScreen.y);
+        setBoxSelectRect({ x, y, w, h });
+      },
+      // B4.2 框选结束
+      onBoxSelectEnd: ({ worldRect, modifier }) => {
+        setBoxSelectRect(null);
+        const r = rendererRef.current;
+        if (!r) return;
+        const hits = r.hitTestRect(worldRect.minX, worldRect.minY, worldRect.maxX, worldRect.maxY);
+        if (modifier === 'replace') {
+          setSelectedIds(new Set(hits));
+        } else {
+          const next = new Set(selectedIdsRef.current);
+          for (const id of hits) {
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+          }
+          setSelectedIds(next);
+        }
+      },
+      onBoxSelectCancel: () => {
+        setBoxSelectRect(null);
+      },
     });
 
     return () => {
       renderer.unmount();
       rendererRef.current = null;
     };
+  }, []);
+
+  // B4.2 状态变更 → 同步 GraphRenderer 高亮
+  useEffect(() => {
+    rendererRef.current?.setSelectedIds(selectedIds);
+  }, [selectedIds]);
+
+  // B4.2 Esc 清空选中
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setSelectedIds(new Set());
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
   }, []);
 
   // ── 加载 + 渲染 graph 数据（依赖 reloadTrigger 让 ViewMode 切换也触发重载）──
@@ -252,6 +321,8 @@ export function GraphView() {
         await rendererRef.current.setData(sceneData);
 
         if (myToken !== loadTokenRef.current) return;
+        // B4.2 重新渲染后，把当前选中状态同步给 Renderer（mesh 是新建的，需要重新 highlight）
+        rendererRef.current.setSelectedIds(selectedIdsRef.current);
         setStats({ total: sceneData.instances.length, warnings: sceneData.warnings.length });
         setLoading(false);
 
@@ -344,9 +415,25 @@ export function GraphView() {
       {activeGraphId && (
         <div style={hintStyle}>
           {stats
-            ? `${stats.total} 个几何体${stats.warnings > 0 ? ` · ${stats.warnings} 警告` : ''}`
+            ? `${stats.total} 个几何体${stats.warnings > 0 ? ` · ${stats.warnings} 警告` : ''}${selectedIds.size > 0 ? ` · 已选 ${selectedIds.size}` : ''}`
             : 'Graph'}
         </div>
+      )}
+      {/* B4.2 框选 overlay */}
+      {boxSelectRect && (
+        <div
+          style={{
+            position: 'absolute',
+            left: boxSelectRect.x,
+            top: boxSelectRect.y,
+            width: boxSelectRect.w,
+            height: boxSelectRect.h,
+            border: '1px dashed #60a5fa',
+            background: 'rgba(96, 165, 250, 0.1)',
+            pointerEvents: 'none',
+            zIndex: 8,
+          }}
+        />
       )}
       {activeGraphId && (
         <div style={viewModeSwitcherStyle}>

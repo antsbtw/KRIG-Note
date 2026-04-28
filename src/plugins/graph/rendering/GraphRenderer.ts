@@ -55,6 +55,8 @@ export class GraphRenderer {
   private loadToken = 0;
   /** B2 交互控制器（mount 时创建，unmount 时销毁） */
   private interaction: InteractionController | null = null;
+  /** B4.2 当前选中的 instance id 集合（视觉反馈用，状态主存在 GraphView） */
+  private selectedIds = new Set<string>();
 
   constructor() {
     this.scene = new SceneManager();
@@ -86,6 +88,11 @@ export class GraphRenderer {
         callbacks.onNodeDrag?.(info);
       },
       onNodeDragEnd: callbacks.onNodeDragEnd,
+      // B4.2 选中事件透传
+      onSelect: callbacks.onSelect,
+      onBoxSelectUpdate: callbacks.onBoxSelectUpdate,
+      onBoxSelectEnd: callbacks.onBoxSelectEnd,
+      onBoxSelectCancel: callbacks.onBoxSelectCancel,
     });
   }
 
@@ -124,6 +131,76 @@ export class GraphRenderer {
       }
     }
     return best?.hit ?? null;
+  }
+
+  // ── B4.2 选中状态（视觉反馈） ──
+
+  /**
+   * 同步选中状态：旧选中的恢复 default，新选中的设为 selected。
+   * 调用方（GraphView）维护 selectedIds 主状态，每次变更全量传过来。
+   */
+  setSelectedIds(ids: Iterable<string>): void {
+    const next = new Set(ids);
+    // 取消旧选中
+    for (const id of this.selectedIds) {
+      if (next.has(id)) continue;
+      this.applyHighlight(id, 'default');
+    }
+    // 应用新选中
+    for (const id of next) {
+      if (this.selectedIds.has(id)) continue;
+      this.applyHighlight(id, 'selected');
+    }
+    this.selectedIds = next;
+    this.scene.markDirty();
+  }
+
+  /** 取出当前选中（只读）。 */
+  getSelectedIds(): ReadonlySet<string> {
+    return this.selectedIds;
+  }
+
+  /** 调用 shape 的 setHighlight 改材质。 */
+  private applyHighlight(instanceId: string, mode: 'default' | 'hover' | 'selected'): void {
+    const mesh = this.meshes.get(instanceId);
+    if (!mesh) return;
+    const point = this.points.get(instanceId);
+    if (point) {
+      const shapeId = point.visual.shape ?? 'circle';
+      const renderer = pointShapeRegistry.get(shapeId);
+      renderer.setHighlight(mesh, mode);
+      return;
+    }
+    // line / surface 选中（B4.2 边选中预留，本步暂不暴露 UI）
+    const conn = this.connectors.get(instanceId);
+    if (conn) {
+      const registry = conn.kind === 'line' ? lineShapeRegistry : surfaceShapeRegistry;
+      const shapeId = conn.visual.shape ?? (conn.kind === 'line' ? 'line' : 'convex-hull');
+      const renderer = registry.get(shapeId);
+      renderer.setHighlight(mesh, mode);
+    }
+  }
+
+  /**
+   * 把世界坐标矩形内的所有 Point instance id 找出来（用于框选）。
+   *
+   * 简单实现：遍历 points，用 mesh 的世界 Box3 跟矩形交集判断。
+   * 触碰即算命中（不要求节点完全在框内 —— Figma 默认行为）。
+   */
+  hitTestRect(minX: number, minY: number, maxX: number, maxY: number): string[] {
+    const out: string[] = [];
+    const tmp = new THREE.Box3();
+    for (const [id] of this.points) {
+      const mesh = this.meshes.get(id);
+      if (!mesh) continue;
+      tmp.setFromObject(mesh);
+      if (tmp.isEmpty()) continue;
+      // AABB 与选区矩形相交（不要求完全包含）
+      if (tmp.max.x < minX || tmp.min.x > maxX) continue;
+      if (tmp.max.y < minY || tmp.min.y > maxY) continue;
+      out.push(id);
+    }
+    return out;
   }
 
   /** 拖动节点时把 label 跟着挪（label 与 shape 的相对偏移 = labelOffsets） */
