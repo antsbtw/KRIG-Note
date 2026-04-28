@@ -10,6 +10,7 @@ import { measureLabels, readExistingBbox as readLabelBboxFromPresentations, type
 import { readGraphLevelLayoutOptions } from '../layout/layout-options';
 import { isInLayoutFamily } from '../layout/layout-family';
 import { generateTreeEdgeSections } from '../layout/tree-edge-routing';
+import { getInstanceBoxSize } from '../layout/instance-size';
 import { Inspector } from './Inspector';
 import type {
   GraphRecord,
@@ -393,6 +394,16 @@ export function GraphView() {
               data.geometries.filter((g) => g.kind === 'line'),
               renderPositions,
               layoutOptions,
+              // 节点尺寸查询:用 substance + label_bbox 算"含 label 的节点占位框",
+              // 与 layout 算法用的 size 一致(elk-adapter 也走同样的 getInstanceBoxSize)。
+              (nodeId: string) => {
+                const subAtom = data.intensions.find(
+                  (a) => a.subject_id === nodeId && a.predicate === 'substance',
+                );
+                const sub = subAtom ? substanceLibrary.get(String(subAtom.value)) : undefined;
+                const bbox = labelBboxMap.get(nodeId);
+                return getInstanceBoxSize(sub, bbox);
+              },
             )
           : layoutResult.edgeSections;
 

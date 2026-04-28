@@ -443,32 +443,11 @@ export class GraphRenderer {
     let points: THREE.Vector3[];
 
     // B3.4: projection 介入折线/曲线（tree projection 取 ELK bendPoints）
+    // 端点裁剪已经在 generateTreeEdgeSections 里完成（采样点首末已是
+    // "节点边缘外 + arrowSize"）,这里直接用,不再裁。
     const projectionPath = projection?.customizeLine?.(inst, edgeSections?.get(inst.id));
     if (projectionPath && projectionPath.length >= 2) {
-      // 首末两端裁剪到节点 shape 边缘,中间 bendPoints / 曲线采样点不动。
-      // 否则 bezier 曲线/直线的端点在节点中心,箭头会被节点 mesh 遮住。
-      // 有箭头的端额外退 arrowSize,让箭身完整显示在节点外(buildArrow 把
-      // tip 放在 toPt 处,身向反方向延伸,所以 toPt 必须在节点边缘外 arrowSize)。
-      const clippedPath = [...projectionPath];
-      const first = clippedPath[0];
-      const second = clippedPath[1];
-      const last = clippedPath[clippedPath.length - 1];
-      const secondLast = clippedPath[clippedPath.length - 2];
-      const startMesh = this.meshes.get(inst.members[0]);
-      const endMesh = this.meshes.get(inst.members[inst.members.length - 1]);
-      const arrowSize = inst.visual.arrowSize ?? 10;
-      const arrow = inst.visual.arrow ?? 'none';
-      const startBuffer = (arrow === 'backward' || arrow === 'both') ? arrowSize : 0;
-      const endBuffer = (arrow === 'forward' || arrow === 'both') ? arrowSize : 0;
-      if (startMesh) {
-        const c = clipPointToBox(second, first, startMesh, startBuffer);
-        if (c) clippedPath[0] = c;
-      }
-      if (endMesh) {
-        const c = clipPointToBox(secondLast, last, endMesh, endBuffer);
-        if (c) clippedPath[clippedPath.length - 1] = c;
-      }
-      points = clippedPath.map((p) => new THREE.Vector3(p.x, p.y, LINE_Z));
+      points = projectionPath.map((p) => new THREE.Vector3(p.x, p.y, LINE_Z));
     } else {
       // 原直线管线：member 中心 + 端点裁剪
       const centers: Array<{ x: number; y: number; z: number }> = [];
