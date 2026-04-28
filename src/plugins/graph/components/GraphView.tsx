@@ -371,14 +371,27 @@ export function GraphView() {
           }
         }
 
-        // 3. 边采样点:tree 类 layout 用 React Flow 公式根据 finalPositions
+        // 3. 节点最终渲染位置:用户 pinned position 覆盖 layout 算的位置。
+        //    finalPositions 此时只有 layout 算的(+ Pattern 偏移),还没合并 pinned。
+        //    把 pinned 用户位置抠出来覆盖,得到"真·最终位置"用于算边采样点。
+        const renderPositions = new Map(finalPositions);
+        for (const p of data.presentations) {
+          if (!isInLayoutFamily(p.layout_id, activeLayout)) continue;
+          if (p.attribute !== 'position.x' && p.attribute !== 'position.y') continue;
+          const cur = renderPositions.get(p.subject_id) ?? { x: 0, y: 0 };
+          if (p.attribute === 'position.x') cur.x = parseFloat(p.value);
+          else cur.y = parseFloat(p.value);
+          renderPositions.set(p.subject_id, cur);
+        }
+
+        // 4. 边采样点:tree 类 layout 用 React Flow 公式根据 renderPositions
         //    重新生成,确保边和节点用同一坐标(避免拖动后脱节)。
         //    其他 layout(force/grid)用 layout 算法自带的 edgeSections。
         const isTreeLayout = activeLayout === 'tree' || activeLayout === 'tree-hierarchy' || activeLayout === 'tree-layered';
         const finalEdgeSections = isTreeLayout
           ? generateTreeEdgeSections(
               data.geometries.filter((g) => g.kind === 'line'),
-              finalPositions,
+              renderPositions,
               layoutOptions,
             )
           : layoutResult.edgeSections;
