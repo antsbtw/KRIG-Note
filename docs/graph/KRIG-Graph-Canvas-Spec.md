@@ -1,6 +1,6 @@
 # KRIG Graph Canvas Spec
 
-> **状态**：v0.2 草稿（2026-04-27）
+> **状态**：v0.3（2026-04-27，B4.2.a 实施完毕后修订）
 > **作用域**：定义图谱画板模型 —— 自动布局是起点，用户编辑是核心，凝结为 substance 是产物
 > **关联文档**：
 > - [KRIG-Graph-Layout-Spec.md](./KRIG-Graph-Layout-Spec.md)（自动布局算法 / projection / presentation atom）
@@ -49,14 +49,16 @@
 
 画板上用户可编辑的维度，按"v1 必做 / v1 兜底 / v1.5+"分级：
 
-### §2.1 v1 必做（已部分实现）
+### §2.1 v1 必做（B4.2.a 已交付大半）
 
 | 维度 | 操作 | 现状 |
 |---|---|---|
-| **节点位置** | 拖拽移动 | ✅ 已实现（pinned position atom）|
-| **节点视觉** | 改颜色 / 大小 / 形状 / 边框 | ⚠️ schema 已支持，UI 缺失 |
-| **边视觉** | 改颜色 / 粗细 / 箭头 | ⚠️ schema 已支持，UI 缺失 |
-| **图谱级参数** | 改方向（DOWN/UP/LEFT/RIGHT）/ 边样式（直角/弧/直线）/ 节点间距 | ❌ 无机制（本 spec 重点）|
+| **节点位置** | 拖拽移动 | ✅ 已实现（pinned position atom，B2 阶段）|
+| **节点选中** | 单选/框选/Shift 加选/Esc 清空 | ✅ 已实现（B4.2.a 第 2 步，Figma 标准交互）|
+| **图谱级参数** | 方向 / 边样式 / 节点间距 / 层间距 | ✅ 已实现（B4.2.a，Inspector "画板" Tab）|
+| **节点视觉** | 改颜色 / 大小 / 形状 / 边框 | ⚠️ schema + resolver 已通（adapter/composer），UI 缺失 → B4.2.b |
+| **边视觉** | 改颜色 / 粗细 / 箭头 | ⚠️ schema + resolver 已通，UI 缺失 → B4.2.b |
+| **substance 替换** | 改 `substance :: [[X]]` → `[[Y]]` | ❌ 无机制 → B4.2.b |
 
 ### §2.2 v1 兜底
 
@@ -118,16 +120,18 @@ edge.arrow           箭头样式（仅 line geometry）
 
 存储约定：layout_id = `'*'`（跨布局共享视觉覆盖）。
 
-#### B. 图谱级布局参数（subject_id = 图谱 id，新增）
+#### B. 图谱级布局参数（subject_id = 图谱 id，B4.2.a 已实现）
 
 ```
 layout.direction         布局方向（DOWN / UP / LEFT / RIGHT）
-layout.edge-style        边路由样式（orthogonal / splines / polyline / straight）
+layout.edge-style        边路由样式（straight / orthogonal / polyline / splines）
 layout.spacing.node      节点间距
 layout.spacing.layer     层间距（仅 layered/tree 类）
 ```
 
-存储约定：layout_id = 当前 layout id（如 `'tree-hierarchy'`），不跨布局（不同布局的方向语义不同）。
+**存储约定**：layout_id = 当前 layout id（如 `'tree'`），按 §3.5 的 layout family 规则共享。
+**消费**：算法在内部默认值上覆盖（用户值优先）；详见 [layout-options.ts](../../src/plugins/graph/layout/layout-options.ts) 的 `resolveLayoutOptions` 翻译表。
+**写入端**：Inspector "画板" Tab（B4.2.a 实装）。
 
 ### §3.3 写入时机
 
@@ -144,6 +148,57 @@ layout.spacing.layer     层间距（仅 layered/tree 类）
 1. 几何体的 position.x/y 存在 → pinned，不参与自动布局
 2. 几何体的 fill.color 等存在 → 覆盖 substance.visual 默认值
 3. 图谱的 layout.direction 等存在 → 作为 layout 算法的参数传入
+
+### §3.5 Layout 命名空间与 family（B4.2.a 引入）
+
+**问题**：用户切换"边样式"时，KRIG 在两个底层算法之间派发：
+- `straight` 边 → ELK `mrtree`（紧凑 Tidy Tree）
+- `orthogonal` / `polyline` / `splines` 边 → ELK `layered`（支持边路由）
+
+但**用户感知是同一个"层级树"**，不应该因为切边样式就丢失之前调整的方向、节点位置等。
+
+**解决**：引入"虚拟 layout id" + "family 命名空间"。
+
+#### §3.5.1 虚拟 layout id
+
+新增 `tree` 作为虚拟 layout id：用户和 ViewMode 引用 `'tree'`，内部根据 `layout.edge-style` atom 派发到 `tree-hierarchy`（mrtree）或 `tree-layered`（layered）。
+
+派发规则见 [tree-dispatch.ts](../../src/plugins/graph/layout/tree-dispatch.ts) `pickTreeLayout`：
+
+```
+'orthogonal' / 'polyline' / 'splines' → tree-layered
+'straight' / 未设置                   → tree-hierarchy（默认更紧凑）
+```
+
+#### §3.5.2 Layout Family
+
+`'tree' / 'tree-hierarchy' / 'tree-layered'` 三个 layout id **共享 atom 命名空间**（family）。
+
+判断由 [layout-family.ts](../../src/plugins/graph/layout/layout-family.ts) 的 `isInLayoutFamily` 集中处理：
+
+```typescript
+function isInLayoutFamily(atomLayoutId: string, currentLayoutId: string | undefined): boolean {
+  if (atomLayoutId === '*') return true;                   // 跨布局通用
+  if (atomLayoutId === currentLayoutId) return true;       // 同 layout
+  if (TREE_FAMILY.has(atomLayoutId) && TREE_FAMILY.has(currentLayoutId!)) return true;  // 家族
+  return false;
+}
+```
+
+**消费点**（B4.2.a 全部接入）：
+- `elk-adapter.ts` 的 `readPinnedPosition` —— 决定哪些 pinned atom 进入当前布局
+- `adapter/index.ts` 的 presentation 过滤 —— 决定哪些视觉覆盖被渲染消费
+- `layout-options.ts` 的 `readGraphLevelLayoutOptions` —— 决定哪些图谱级参数进入算法
+
+**作用**：
+1. 用户切边样式（mrtree↔layered）时 pinned/方向/间距等调整不丢
+2. 旧版本（B4.1 前）写过 `layout_id='tree-hierarchy'` 的 atom 自动向后兼容
+
+#### §3.5.3 后端不再按 layout_id 过滤
+
+`GRAPH_LOAD_FULL` IPC handler 加载**全部** layout 的 presentation atom（不再 `['*', activeLayout]` 过滤）—— 前端用 `isInLayoutFamily` 做精细过滤。
+
+理由：一张图谱的 atom 量级不大（典型 < 1k 条），全 load 让 family 派发由前端统一处理更干净，避免后端写 family 规则。
 
 ---
 
@@ -267,25 +322,28 @@ substance: user/wenwu/my-org-chart-20260427
 
 ## §6 Phase 拆分
 
-| Phase | 工作 | 用户可见效果 | 依赖 |
+| Phase | 工作 | 用户可见效果 | 状态 |
 |---|---|---|---|
-| **B4.1** | presentation atom 扩展（§3.2 A 类视觉 + B 类布局参数）+ resolver 消费 | 节点视觉 / 边视觉 / 图谱方向 等 atom 能影响渲染 | — |
-| **B4.2** | 画板编辑 UI v1：节点/边右键菜单 + 图谱级属性面板 | 用户能改视觉、改方向 | B4.1 |
-| **B4.3** | 凝结协议 v1：命令面板"凝结为 substance" + 写入 user 层 | 用户能保存当前画板为 substance | B4.1, B4.2 |
-| **B4.4** | substance 调用：引用带 canvas_snapshot 的 substance 自动应用 | 其他图谱能复用凝结结果 | B4.3 |
-| **B4.5** | substance 库浏览面板 v1：列出 user 层 substance + 删除 | 用户能管理已凝结的 substance | B4.3 |
-| **B4.6** | substance 编辑模式：直接编辑已有 substance 的 canvas_snapshot | 用户能修改而非新建 | B4.5 |
+| **B4.1** | LayoutInput 加 `layoutOptions` + 算法消费图谱级参数 + adapter 提取 | atom → ELK 选项管线打通；用户写 `layout.*` atom 影响渲染（无 UI）| ✅ 已完成 |
+| **B4.2.a** | Inspector 浮窗 + "画板" Tab（方向 / 边样式 / 间距）+ 节点选中机制 + 解冻 tree-layered + 虚拟 tree 派发 | 用户在画板调整图谱级参数；点节点高亮、框选、Esc 清空 | ✅ 已完成 |
+| **B4.2.b** | "节点" Tab：substance 替换 + 视觉覆盖 + 多选批量动作 + 边的 hit-test | 用户编辑选中节点/边的视觉 | ⏸ 待实施 |
+| **B4.2.c** | "文字" Tab：label 内容 / 公式编辑 | 用户改 label 文字 | 推后 v1.5+ |
+| **B4.3** | 凝结协议：命令面板"凝结为 substance" + canvas_snapshot 字段 | 用户保存当前画板为 substance | ⏸ 待实施 |
+| **B4.4** | substance 调用：引用带 canvas_snapshot 的 substance 自动应用 | 其他图谱复用凝结结果 | ⏸ 待实施 |
+| **B4.5** | substance 库浏览面板 v1：列出 user 层 substance + 删除 | 用户管理已凝结的 substance | ⏸ 待实施 |
+| **B4.6** | substance 编辑模式：直接编辑已有 substance 的 canvas_snapshot | 用户修改而非新建 | ⏸ 待实施 |
 
 ### §6.1 试金石：tree 多布局问题
 
 最初的需求："想让 tree 布局支持多种风格（方向 / 边样式 / 算法）"。
 
-**画板模型下的解法**：
-- 不需要新增 layout 算法
-- 不需要新增 ViewMode
-- 用户在画板上改 `layout.direction = 'DOWN'` / `layout.edge-style = 'orthogonal'` 等参数 → 凝结为"我的树状图风格" substance → 下次直接引用
+**画板模型下的解法**（B4.2.a 已验证）：
+- ✅ 不需要新增 layout id（用户视角只有"层级树"一个，内部 `tree` 虚拟派发器根据 edge-style 选 mrtree/layered）
+- ✅ 不需要新增 ViewMode
+- ✅ 用户在画板上改 `layout.direction` / `layout.edge-style` → 立即生效
+- ⏸ 凝结为"我的树状图风格" substance → B4.3 完成后
 
-**B4.1 + B4.3 完成后这个需求就被自动覆盖。** 如果发现还得写新代码，说明 §3.2 attribute 列表漏了什么，回头补。
+**结论**：本试金石 B4.2.a 阶段验证通过 —— 加 layered 算法 + 虚拟派发器 + 4 个 Inspector 控件即覆盖原始需求，**无需写新 layout 算法**。
 
 ---
 
@@ -321,7 +379,7 @@ substance: user/wenwu/my-org-chart-20260427
 
 ## §9 关键决议记录
 
-本 spec 起草过程中达成的决议（用户已拍板）：
+### §9.1 v0.2 起草阶段决议（spec 定型）
 
 1. **画板模型**作为核心模型：自动布局是起点，编辑是核心，凝结是产物 ✅
 2. **大幅精简**：删除 v0.1 的 composes / external_interface / 命名空间 / 版本族等所有"未来章节"，仅保留编辑+凝结基础闭环 ✅
@@ -331,23 +389,76 @@ substance: user/wenwu/my-org-chart-20260427
 6. **凝结自动替换原图 v1 不做**：用户手动决定哪些图谱改用新 substance ✅
 7. **写入实时**：编辑操作立刻 persist atom，不要"显式保存" ✅
 
+### §9.2 B4.2.a 实施阶段决议（v0.3 补）
+
+8. **"层级树"暴露给用户的是单一概念**，内部 mrtree/layered 算法切换对用户透明 —— 通过 `layout.edge-style` atom 自动派发（虚拟 layout id `tree`）。详见 §3.5
+9. **Layout family 命名空间**：`'tree' / 'tree-hierarchy' / 'tree-layered'` 共享 atom 命名空间，切边样式时 pinned/方向/间距等不丢；同时承担 B4.1 前历史 atom 的向后兼容
+10. **后端不按 layout_id 过滤 presentation atom**：`GRAPH_LOAD_FULL` 全量加载，前端用 `isInLayoutFamily` 精细过滤。理由：图谱 atom 量级小，前端统一派发更干净
+11. **Inspector Tab 按"作用域"分**（画板/节点/文字），不按"功能"分。用户认知是"我在改什么"，不是"我用哪种功能"
+12. **Inspector 默认展开**（首次易发现）；折叠后保留细边条作为入口；位置固定右侧绝对定位浮在画布上，不挤压画布
+13. **Inspector Tab 自动跟随选中状态**（无选中→画板 Tab；有选中→节点 Tab），用户主动切换后保留选择不再覆盖
+14. **画布交互对齐 Figma 标准**：左键拖空白=框选（不再平移）、空格+拖=平移、Shift/Cmd/Ctrl=加选/差选、Esc=清空。**破坏性变更**：旧"左键拖空白=平移"改为新行为，对齐专业编辑器肌肉记忆
+15. **单击 vs 拖动用 3px 阈值区分**：避免单击改位置；mousedown 后位移 < 3px 视为单击，≥ 3px 才进入拖动 / 框选模式
+16. **边样式 4 个选项 v1 全实现**（直线/直角/折线/曲线）：用户提出"先实现 4 个，有什么再改，都不实现怎么知道哪个更好" —— 实施成本低（ELK 已支持），先开放再裁剪比从 1 慢慢加便宜
+17. **节点视觉 override 路径已通**（B4.1 前已实现）：composer.ts 的 applyPresentation 支持 fill/border/text/size/labelLayout 等所有 visual 字段。B4.2.b 只缺写入端 UI
+
 ---
 
-## §10 后续
+## §10 实施记录
 
-### §10.1 进入实施前
+### §10.1 B4.1（图谱级 layout 参数管线，2026-04-27）
 
-1. ~~用户审 v0.2~~（本次对话已完成核心方向确认）
-2. 进入 B4.1 实施
-3. 每个 Phase 完成后回头核对：本 spec 是否需要补充
+**Commit**：`7f5e2d41 feat(graph/layout): B4.1 图谱级 layout 参数管线（画板模型基础）`
 
-### §10.2 待补章节（v0.3+）
+**关键改动**：
+- `LayoutInput` 加 `layoutOptions` 字段
+- 新增 [layout-options.ts](../../src/plugins/graph/layout/layout-options.ts)：从 atom 提取 + 翻译为 ELK 选项
+- `tree-hierarchy` / `force` / `grid` 三个算法消费 layoutOptions
+- `elk-adapter` 移除 layout id 白名单硬编码，改用 `currentLayoutId` 显式参数
+- `GraphView` 提取 layoutOptions 注入 LayoutInput
 
-- §2 编辑维度的具体 UI 草图
+**用户可见**：无（B4.1 只搭管线，UI 在 B4.2.a）
+
+### §10.2 B4.2.a（Inspector + 选中机制 + 多 tree 布局，2026-04-27）
+
+**Commit 链**（5 个独立 commit）：
+- `003349a6 feat: 第1步 — 解冻 tree-layered + 虚拟 tree 派发`
+- `ef2468ca feat: 第2步 — 节点选中机制（Figma 标准）`
+- `cfe798b5 feat: 第3步 — Inspector 浮窗框架`
+- `1325ce67 feat: 第4步 — 画板 Tab 完整实装`
+- `5d828db5 fix(graph/ipc): GRAPH_LOAD_FULL 加载全部 atom`
+
+**关键文件**：
+- 新增 [tree-layered.ts](../../src/plugins/graph/layout/tree-layered.ts)：layered 算法
+- 新增 [tree-dispatch.ts](../../src/plugins/graph/layout/tree-dispatch.ts)：虚拟 `tree` 派发器
+- 新增 [layout-family.ts](../../src/plugins/graph/layout/layout-family.ts)：`isInLayoutFamily` 工具
+- 新增 [components/Inspector.tsx](../../src/plugins/graph/components/Inspector.tsx)：浮窗框架
+- 新增 [components/inspector/CanvasInspectorTab.tsx](../../src/plugins/graph/components/inspector/CanvasInspectorTab.tsx)：画板 Tab
+- 改 [InteractionController.ts](../../src/plugins/graph/rendering/interaction/InteractionController.ts)：4 模式 + 阈值机制 + 选中回调
+- 改 [GraphRenderer.ts](../../src/plugins/graph/rendering/GraphRenderer.ts)：`setSelectedIds` / `hitTestRect`
+- 改 [GraphView.tsx](../../src/plugins/graph/components/GraphView.tsx)：选中 state + 框选 overlay + Inspector 接入
+- 改 [viewmode/built-in/index.ts](../../src/plugins/graph/viewmode/built-in/index.ts)："层级树" 引用虚拟 `tree`
+- 改 [ipc-handlers.ts](../../src/plugins/graph/main/ipc-handlers.ts)：GRAPH_LOAD_FULL 全量加载
+
+**用户可见**：
+- 切到"层级树"：右侧 Inspector "画板" Tab 出现 4 组控件（方向 / 边样式 / 节点间距 / 层间距）
+- 节点选中（点击/框选/Shift 加选/Esc 清空）+ 绿色高亮
+- 画布交互对齐 Figma：左键拖空白=框选、空格+拖=平移
+- 调整即写 atom 持久化，下次打开还原
+
+### §10.3 待实施
+
+- **B4.2.b**（节点 Tab）：substance 替换 + 视觉覆盖 + 多选批量动作 + 边的 hit-test
+- **B4.3**（凝结协议）：命令面板"凝结为 substance" + canvas_snapshot 字段
+- **B4.4 - B4.6**：substance 调用 / 库浏览 / 编辑模式
+
+### §10.4 待补章节（v0.4+）
+
 - §4 凝结对话框 UI 草图
 - §5 调用流程的边界情况（图谱已有 override vs substance 提供值的优先级）
+- B4.2.b 节点 Tab UI 草图
 - 测试样例集
 
 ---
 
-**v0.2 起草完成。核心模型 = 画板。**
+**v0.3：B4.2.a 实施完毕，画板模型核心闭环跑通编辑环节，凝结环节待 B4.3。**
