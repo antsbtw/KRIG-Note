@@ -380,6 +380,11 @@ export const IPC = {
   GRAPH_IMPORT_FROM_FILE: 'graph:import-from-file',                    // D11 实施
   GRAPH_SUBSTANCE_LIST: 'graph:substance-list',                        // 列出所有可用 substance（v1.5 详情面板用）
   GRAPH_SUBSTANCE_GET: 'graph:substance-get',
+  // B4.3 user_substance（凝结产物持久化）
+  GRAPH_USER_SUBSTANCE_LIST: 'graph:user-substance-list',
+  GRAPH_USER_SUBSTANCE_CREATE: 'graph:user-substance-create',
+  GRAPH_USER_SUBSTANCE_UPDATE: 'graph:user-substance-update',
+  GRAPH_USER_SUBSTANCE_DELETE: 'graph:user-substance-delete',
 
   // Web Translate
   WEB_TRANSLATE_FETCH_ELEMENT_JS: 'web-translate:fetch-element-js',

@@ -148,6 +148,11 @@ const SCHEMA_QUERIES = [
   `DEFINE INDEX IF NOT EXISTS gpa_layout ON graph_presentation_atom FIELDS layout_id;`,
   `DEFINE INDEX IF NOT EXISTS gpa_subject ON graph_presentation_atom FIELDS subject_id;`,
   `DEFINE INDEX IF NOT EXISTS gpa_attr ON graph_presentation_atom FIELDS attribute;`,
+
+  // user_substance 表（B4.3：用户凝结的 substance；origin='user' 持久化）
+  // 详见 docs/graph/KRIG-Graph-Canvas-Spec.md §4
+  `DEFINE TABLE IF NOT EXISTS user_substance SCHEMALESS;`,
+  `DEFINE INDEX IF NOT EXISTS usub_label ON user_substance FIELDS label;`,
 ];
 
 export async function initSchema(): Promise<void> {

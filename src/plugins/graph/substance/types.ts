@@ -170,4 +170,47 @@ export interface Substance {
    * 与 roles 同时填或同时不填（v1 简化要求）。
    */
   pattern_layout?: PatternLayout;
+
+  // ── B4.3 画板凝结：canvas_snapshot ──
+  /**
+   * 画板快照：用户从画板凝结此 substance 时，记录选区的几何体 + 视觉编排。
+   * 仅 origin='user' 的 substance 填。
+   *
+   * 应用时机：B4.4 实施 — 引用此 substance 的节点会按 snapshot 替换/扩展。
+   * 详见 docs/graph/KRIG-Graph-Canvas-Spec.md §4 / §5
+   */
+  canvas_snapshot?: CanvasSnapshot;
+}
+
+/**
+ * Canvas Spec §4.4：画板快照数据结构。
+ *
+ * v1 实装：
+ *   - layout_id：凝结时的活动 layout（'tree' / 'force' / 'grid'）
+ *   - layout_params：凝结时图谱级 layout.* atom（方向 / 边样式 / 间距）
+ *   - geometries：选区内的几何体列表（含 substance 引用 + 视觉 override + 相对位置）
+ */
+export interface CanvasSnapshot {
+  /** 凝结时的活动 layout id */
+  layout_id: string;
+  /** 凝结时的图谱级 layout 参数（layout.direction 等） */
+  layout_params?: Record<string, string>;
+  /** 选区内的几何体（v1 仅 point；line/surface 留 v1.5+） */
+  geometries?: SnapshotGeometry[];
+}
+
+export interface SnapshotGeometry {
+  /** 凝结时的原始 id（仅参考，引用时会重新生成新 id） */
+  original_id: string;
+  kind: GeometryKind;
+  /** line/surface 的成员引用（指向同 snapshot 内的 original_id） */
+  members?: string[];
+  /** 该几何体引用的 substance id */
+  substance?: string;
+  /** label 内容（来自 intension predicate=label） */
+  label?: string;
+  /** 视觉 override（layout_id='*' 类的 attribute → value） */
+  visual_overrides?: Record<string, string>;
+  /** 相对位置（凝结时以选区中心为原点） */
+  relative_position?: { x: number; y: number };
 }

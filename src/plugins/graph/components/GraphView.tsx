@@ -61,6 +61,9 @@ declare const viewAPI: {
   graphIntensionUpdate: (id: string, fields: unknown) => Promise<void>;
   graphIntensionCreate: (record: unknown) => Promise<unknown>;
   graphSetActiveViewMode: (graphId: string, viewModeId: string) => Promise<void>;
+  // B4.3 user_substance
+  graphUserSubstanceList: () => Promise<Array<{ id: string; substance_id: string; label: string; data: string }>>;
+  graphUserSubstanceCreate: (input: { substance_id: string; label: string; data: string }) => Promise<unknown>;
 };
 
 export function GraphView() {
@@ -78,6 +81,8 @@ export function GraphView() {
   >(null);
   /** 当前生效的图谱级 layout 参数（Inspector 显示按钮高亮态用） */
   const [layoutOptions, setLayoutOptions] = useState<Record<string, string>>({});
+  /** B4.3 凝结操作的反馈 toast（成功/失败提示，3.5 秒自动消失） */
+  const [forgeToast, setForgeToast] = useState<string | null>(null);
   /** B4.2.b：原始 atom 数据（节点 Tab 读取用 — 当前 substance / 视觉 override） */
   const [graphAtoms, setGraphAtoms] = useState<{
     geometries: GraphGeometryRecord[];
@@ -94,6 +99,31 @@ export function GraphView() {
   /** 选中 ref（事件回调里读最新值用） */
   const selectedIdsRef = useRef<ReadonlySet<string>>(selectedIds);
   selectedIdsRef.current = selectedIds;
+
+  // ── B4.3 启动时加载 user_substance 注册到 substanceLibrary ──
+  // 用 ref 跟踪是否已加载，避免 GraphView 卸载/重挂时重复 register
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const records = await viewAPI.graphUserSubstanceList();
+        if (cancelled) return;
+        for (const rec of records) {
+          try {
+            const parsed = JSON.parse(rec.data);
+            substanceLibrary.register(parsed);
+          } catch (err) {
+            console.warn('[GraphView] failed to parse user_substance:', rec.substance_id, err);
+          }
+        }
+      } catch (err) {
+        console.warn('[GraphView] load user_substance failed:', err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // ── activeGraphId 同步 ──
   useEffect(() => {
@@ -471,6 +501,102 @@ export function GraphView() {
     }
   };
 
+  // ── B4.3 画板凝结：选区 → user_substance ──
+  // 用户在 Inspector 节点 Tab 点"凝结为 Substance"按钮 → 走这里
+  // 1. 收集选区几何体的 substance + 视觉 override + 相对位置
+  // 2. 拼 Substance 对象（含 canvas_snapshot）
+  // 3. 写 user_substance 表 + 运行时 register 到 substanceLibrary
+  // 4. setForgeToast 提示成功
+  const handleForgeSubstance = async (geometryIds: string[]) => {
+    const graphId = activeGraphIdRef.current;
+    const layoutId = activeLayoutRef.current;
+    if (!graphId || geometryIds.length === 0) return;
+
+    try {
+      // 收集选区数据
+      const selectedGeoms = graphAtoms.geometries.filter((g) => geometryIds.includes(g.id));
+      if (selectedGeoms.length === 0) return;
+
+      // 算选区中心（仅含 point，line/surface 由 members 派生位置）
+      const positions = new Map<string, { x: number; y: number }>();
+      for (const p of graphAtoms.presentations) {
+        if (!geometryIds.includes(p.subject_id)) continue;
+        if (!isInLayoutFamily(p.layout_id, layoutId)) continue;
+        const cur = positions.get(p.subject_id) ?? { x: 0, y: 0 };
+        if (p.attribute === 'position.x') cur.x = parseFloat(p.value);
+        else if (p.attribute === 'position.y') cur.y = parseFloat(p.value);
+        positions.set(p.subject_id, cur);
+      }
+      let cx = 0, cy = 0, n = 0;
+      for (const pos of positions.values()) {
+        cx += pos.x; cy += pos.y; n++;
+      }
+      if (n > 0) { cx /= n; cy /= n; }
+
+      // 拼 SnapshotGeometry 列表
+      const snapshotGeometries = selectedGeoms.map((g) => {
+        const subAtom = graphAtoms.intensions.find(
+          (a) => a.subject_id === g.id && a.predicate === 'substance',
+        );
+        const labelAtom = graphAtoms.intensions.find(
+          (a) => a.subject_id === g.id && a.predicate === 'label',
+        );
+        const overrides: Record<string, string> = {};
+        for (const p of graphAtoms.presentations) {
+          if (p.subject_id !== g.id) continue;
+          if (!isInLayoutFamily(p.layout_id, layoutId)) continue;
+          // 跳过位置、pinned 类（由 relative_position 单独承载）
+          if (p.attribute === 'position.x' || p.attribute === 'position.y' || p.attribute === 'position.z') continue;
+          if (p.attribute === 'pinned') continue;
+          if (p.attribute.startsWith('label_bbox.')) continue;
+          overrides[p.attribute] = p.value;
+        }
+        const pos = positions.get(g.id);
+        return {
+          original_id: g.id,
+          kind: g.kind,
+          members: g.members && g.members.length > 0 ? g.members : undefined,
+          substance: subAtom ? String(subAtom.value) : undefined,
+          label: labelAtom ? String(labelAtom.value) : undefined,
+          visual_overrides: Object.keys(overrides).length > 0 ? overrides : undefined,
+          relative_position: pos ? { x: pos.x - cx, y: pos.y - cy } : undefined,
+        };
+      });
+
+      // 拼 Substance 对象
+      const newSubstanceId = `user/forged-${Date.now().toString(36)}`;
+      const labelN = (await viewAPI.graphUserSubstanceList()).length + 1;
+      const newLabel = `未命名 Substance ${labelN}`;
+      const newSubstance = {
+        id: newSubstanceId,
+        label: newLabel,
+        description: `从画板凝结于 ${new Date().toLocaleString()}`,
+        origin: 'user' as const,
+        canvas_snapshot: {
+          layout_id: layoutId,
+          layout_params: layoutOptions,
+          geometries: snapshotGeometries,
+        },
+      };
+
+      // 写 DB + 运行时 register
+      await viewAPI.graphUserSubstanceCreate({
+        substance_id: newSubstanceId,
+        label: newLabel,
+        data: JSON.stringify(newSubstance),
+      });
+      substanceLibrary.register(newSubstance);
+
+      // Toast 提示
+      setForgeToast(`已凝结为「${newLabel}」`);
+      setTimeout(() => setForgeToast(null), 3500);
+    } catch (err) {
+      console.error('[GraphView] forge substance failed:', err);
+      setForgeToast(`凝结失败：${String(err)}`);
+      setTimeout(() => setForgeToast(null), 3500);
+    }
+  };
+
   // ── B4.2 Inspector 写入图谱级 layout 参数 ──
   // 用户在画板 Tab 调整 → 写 atom → 触发重载
   const handleSetLayoutOption = async (attribute: string, value: string) => {
@@ -563,7 +689,12 @@ export function GraphView() {
         onReplaceSubstance={handleReplaceSubstance}
         onSetVisualOverride={handleSetVisualOverride}
         onClearVisualOverride={handleClearVisualOverride}
+        onForgeSubstance={handleForgeSubstance}
       />
+      {/* B4.3 凝结操作反馈 toast */}
+      {forgeToast && (
+        <div style={forgeToastStyle}>{forgeToast}</div>
+      )}
     </div>
   );
 }
@@ -639,4 +770,21 @@ const viewModeButtonActiveStyle: React.CSSProperties = {
   background: '#3b82f6',
   color: '#fff',
   borderColor: '#60a5fa',
+};
+
+// B4.3 凝结操作反馈 toast
+const forgeToastStyle: React.CSSProperties = {
+  position: 'absolute',
+  bottom: 50,
+  left: '50%',
+  transform: 'translateX(-50%)',
+  background: 'rgba(20, 20, 22, 0.95)',
+  color: '#e8eaed',
+  fontSize: 12,
+  padding: '8px 16px',
+  borderRadius: 4,
+  border: '1px solid #3b82f6',
+  boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+  zIndex: 20,
+  pointerEvents: 'none',
 };

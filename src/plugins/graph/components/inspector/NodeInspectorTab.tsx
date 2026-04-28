@@ -40,6 +40,7 @@ export interface NodeInspectorTabProps {
   onReplaceSubstance: (geometryIds: string[], newSubstanceId: string) => Promise<void>;
   onSetVisualOverride: (geometryIds: string[], attribute: string, value: string) => Promise<void>;
   onClearVisualOverride: (geometryIds: string[], attribute: string) => Promise<void>;
+  onForgeSubstance: (geometryIds: string[]) => Promise<void>;
 }
 
 export function NodeInspectorTab({
@@ -51,6 +52,7 @@ export function NodeInspectorTab({
   onReplaceSubstance,
   onSetVisualOverride,
   onClearVisualOverride,
+  onForgeSubstance,
 }: NodeInspectorTabProps) {
   if (selectedIds.size === 0) {
     return (
@@ -96,6 +98,10 @@ export function NodeInspectorTab({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       {isMulti ? <MultiSelectionHeader count={ids.length} /> : <NodeIdRow id={ids[0]!} />}
+
+      <button onClick={() => onForgeSubstance(ids)} style={forgeButtonStyle} title="把当前选中凝结为可复用的 substance">
+        ⬢ 凝结为 Substance
+      </button>
 
       <Section title="Substance">
         <SubstancePicker
@@ -636,6 +642,19 @@ const hintStyle: React.CSSProperties = {
   fontStyle: 'italic',
   marginTop: 4,
   textAlign: 'center',
+};
+
+const forgeButtonStyle: React.CSSProperties = {
+  width: '100%',
+  padding: '7px 10px',
+  background: 'linear-gradient(180deg, #3b82f6 0%, #2563eb 100%)',
+  color: '#fff',
+  border: '1px solid #60a5fa',
+  borderRadius: 4,
+  fontSize: 12,
+  fontWeight: 500,
+  cursor: 'pointer',
+  outline: 'none',
 };
 
 // ── SubstancePicker 样式 ──

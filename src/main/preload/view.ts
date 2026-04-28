@@ -116,6 +116,14 @@ contextBridge.exposeInMainWorld('viewAPI', {
   // Substance（GraphView 需要查询渲染默认值）
   graphSubstanceList: () => ipcRenderer.invoke(IPC.GRAPH_SUBSTANCE_LIST),
   graphSubstanceGet: (id: string) => ipcRenderer.invoke(IPC.GRAPH_SUBSTANCE_GET, id),
+  // B4.3 user_substance（画板凝结产物持久化）
+  graphUserSubstanceList: () => ipcRenderer.invoke(IPC.GRAPH_USER_SUBSTANCE_LIST),
+  graphUserSubstanceCreate: (input: { substance_id: string; label: string; data: string }) =>
+    ipcRenderer.invoke(IPC.GRAPH_USER_SUBSTANCE_CREATE, input),
+  graphUserSubstanceUpdate: (substance_id: string, fields: { label?: string; data?: string }) =>
+    ipcRenderer.invoke(IPC.GRAPH_USER_SUBSTANCE_UPDATE, substance_id, fields),
+  graphUserSubstanceDelete: (substance_id: string) =>
+    ipcRenderer.invoke(IPC.GRAPH_USER_SUBSTANCE_DELETE, substance_id),
 
   // 文件对话框 + 媒体操作（通用服务）
   fileSaveDialog: (options: { defaultName: string; data: string; filters?: { name: string; extensions: string[] }[] }) =>

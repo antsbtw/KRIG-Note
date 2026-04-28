@@ -6,6 +6,7 @@ import { graphViewStore } from '../../../main/storage/graphview-store';
 import { graphGeometryStore } from '../../../main/storage/graph-geometry-store';
 import { graphIntensionAtomStore } from '../../../main/storage/graph-intension-atom-store';
 import { graphPresentationAtomStore } from '../../../main/storage/graph-presentation-atom-store';
+import { userSubstanceStore } from '../../../main/storage/user-substance-store';
 import { graphFolderStore } from '../../../main/storage/graph-folder-store';
 import { activityStore } from '../../../main/storage/activity-store';
 import { isDBReady } from '../../../main/storage/client';
@@ -278,6 +279,39 @@ export function registerGraphIpcHandlers(ctx: PluginContext): void {
 
   ipcMain.handle(IPC.GRAPH_SUBSTANCE_GET, async (_event, id: string) => {
     return substanceLibrary.get(id) ?? null;
+  });
+
+  // ── B4.3 user_substance（凝结产物持久化） ──
+
+  ipcMain.handle(IPC.GRAPH_USER_SUBSTANCE_LIST, async () => {
+    if (!isDBReady()) return [];
+    return userSubstanceStore.list();
+  });
+
+  ipcMain.handle(
+    IPC.GRAPH_USER_SUBSTANCE_CREATE,
+    async (_event, input: { substance_id: string; label: string; data: string }) => {
+      if (!isDBReady()) return null;
+      // 检查 substance_id 唯一
+      const existing = await userSubstanceStore.getBySubstanceId(input.substance_id);
+      if (existing) {
+        throw new Error(`substance_id '${input.substance_id}' already exists`);
+      }
+      return userSubstanceStore.create(input);
+    },
+  );
+
+  ipcMain.handle(
+    IPC.GRAPH_USER_SUBSTANCE_UPDATE,
+    async (_event, substance_id: string, fields: { label?: string; data?: string }) => {
+      if (!isDBReady()) return;
+      await userSubstanceStore.update(substance_id, fields);
+    },
+  );
+
+  ipcMain.handle(IPC.GRAPH_USER_SUBSTANCE_DELETE, async (_event, substance_id: string) => {
+    if (!isDBReady()) return;
+    await userSubstanceStore.delete(substance_id);
   });
 
   // ── 从 Markdown 文件导入图谱 ──

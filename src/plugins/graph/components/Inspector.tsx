@@ -45,6 +45,8 @@ export interface InspectorProps {
   onSetVisualOverride: (geometryIds: string[], attribute: string, value: string) => Promise<void>;
   /** B4.2.b：删除 N 个节点的视觉 override（重置为 substance 默认值） */
   onClearVisualOverride: (geometryIds: string[], attribute: string) => Promise<void>;
+  /** B4.3：凝结选中几何体为新的 user 层 substance */
+  onForgeSubstance: (geometryIds: string[]) => Promise<void>;
 }
 
 export function Inspector({
@@ -59,6 +61,7 @@ export function Inspector({
   onReplaceSubstance,
   onSetVisualOverride,
   onClearVisualOverride,
+  onForgeSubstance,
 }: InspectorProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [activeTab, setActiveTab] = useState<InspectorTab>('canvas');
@@ -151,6 +154,7 @@ export function Inspector({
             onReplaceSubstance={onReplaceSubstance}
             onSetVisualOverride={onSetVisualOverride}
             onClearVisualOverride={onClearVisualOverride}
+            onForgeSubstance={onForgeSubstance}
           />
         )}
         {activeTab === 'text' && (
