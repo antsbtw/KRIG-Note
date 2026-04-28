@@ -178,11 +178,13 @@ export function registerGraphIpcHandlers(ctx: PluginContext): void {
     if (!isDBReady()) return null;
     const graph = await graphViewStore.get(graphId);
     if (!graph) return null;
-    const activeLayout = graph.active_layout || 'force';
+    // B4.2：加载全部 layout 的 presentation atom，前端按 family 过滤。
+    // 旧实现只取 ['*', activeLayout] 对虚拟 layout（如 'tree' 派发到 mrtree/layered）
+    // 不友好，且家族成员（tree-hierarchy / tree-layered）的 atom 也需要前端能看到。
     const [geometries, intensions, presentations] = await Promise.all([
       graphGeometryStore.list(graphId),
       graphIntensionAtomStore.list(graphId),
-      graphPresentationAtomStore.list(graphId, ['*', activeLayout]),
+      graphPresentationAtomStore.list(graphId),
     ]);
     return { graph, geometries, intensions, presentations };
   });
