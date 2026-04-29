@@ -67,7 +67,9 @@ export function CanvasView() {
       <div style={styles.toolbar}>
         <span style={styles.toolbarTitle}>Canvas</span>
         <div style={{ flex: 1 }} />
-        <span style={styles.toolbarHint}>{sceneReady ? 'scene ready' : 'loading…'}</span>
+        <span style={styles.toolbarHint}>
+          dev: 1=rect 2=diamond 3=person · click/shift-click select · drag move · DEL delete · drag space=pan · scroll=zoom · ESC cancel
+        </span>
       </div>
 
       {/* Canvas 容器:始终 mount,SceneManager 在 useEffect 里挂 renderer */}

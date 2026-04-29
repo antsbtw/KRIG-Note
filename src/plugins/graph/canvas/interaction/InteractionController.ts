@@ -1,7 +1,9 @@
 import * as THREE from 'three';
 import type { SceneManager } from '../scene/SceneManager';
 import type { NodeRenderer, RenderedNode } from '../scene/NodeRenderer';
-import type { Instance } from '../../library/types';
+import type { Instance, InstanceKind } from '../../library/types';
+import { ShapeRegistry } from '../../library/shapes';
+import { SubstanceRegistry } from '../../library/substances';
 
 /**
  * InteractionController — 鼠标 / 键盘交互
@@ -53,6 +55,11 @@ export class InteractionController {
     startViewWidth: number;
   } | null = null;
 
+  /** 添加模式 — 用户从 Picker 选了一个 shape/substance,等点击画布放置 */
+  private addMode: AddModeSpec | null = null;
+  /** 添加模式状态变化回调(给 UI 同步光标 / 提示) */
+  private onAddModeChange?: (spec: AddModeSpec | null) => void;
+
   /** 待清理的 listener 取消器 */
   private unsubscribers: Array<() => void> = [];
 
@@ -62,12 +69,14 @@ export class InteractionController {
     nodeRenderer: NodeRenderer;
     getInstance: (id: string) => Instance | undefined;
     onChange?: () => void;
+    onAddModeChange?: (spec: AddModeSpec | null) => void;
   }) {
     this.container = opts.container;
     this.sceneManager = opts.sceneManager;
     this.nodeRenderer = opts.nodeRenderer;
     this.getInstance = opts.getInstance;
     this.onChange = opts.onChange;
+    this.onAddModeChange = opts.onAddModeChange;
     this.attachListeners();
   }
 
@@ -91,6 +100,29 @@ export class InteractionController {
     this.setSelection([]);
   }
 
+  /**
+   * 进入添加模式:用户在 Picker 选了一个 shape/substance,等点击画布放置
+   * UI 通常会:把光标变 crosshair、show 一个提示("Click to place")
+   */
+  enterAddMode(spec: AddModeSpec): void {
+    this.addMode = spec;
+    this.container.style.cursor = 'crosshair';
+    this.onAddModeChange?.(spec);
+  }
+
+  /** 退出添加模式(ESC / 点空白外、点完一次后自动调用) */
+  exitAddMode(): void {
+    if (!this.addMode) return;
+    this.addMode = null;
+    this.container.style.cursor = '';
+    this.onAddModeChange?.(null);
+  }
+
+  /** 当前是否在添加模式 */
+  isAddMode(): boolean {
+    return this.addMode !== null;
+  }
+
   /** 移除所有 listener;CanvasView unmount 时调用 */
   dispose(): void {
     for (const u of this.unsubscribers) u();
@@ -104,6 +136,11 @@ export class InteractionController {
     this.overlays.clear();
     this.selected.clear();
     this.dragging = null;
+    this.panning = null;
+    if (this.addMode) {
+      this.container.style.cursor = '';
+      this.addMode = null;
+    }
   }
 
   // ─────────────────────────────────────────────────────────
@@ -143,12 +180,18 @@ export class InteractionController {
 
   private handleMouseDown(e: MouseEvent): void {
     if (e.button !== 0) return;  // 只处理左键
-    this.container.focus();      // 抢键盘焦点(用于 Delete)
+    this.container.focus();      // 抢键盘焦点(用于 Delete / Escape)
 
     const screen = this.toContainerCoords(e);
     const world = this.sceneManager.screenToWorld(screen.x, screen.y);
-    const hit = this.hitTest(world);
 
+    // 添加模式:优先级最高,无论命中节点还是空白都视作"放置"
+    if (this.addMode) {
+      this.placeInstance(world);
+      return;
+    }
+
+    const hit = this.hitTest(world);
     const additive = e.shiftKey || e.metaKey;
     if (hit) {
       if (additive) {
@@ -168,6 +211,31 @@ export class InteractionController {
       if (!additive) this.clearSelection();
       this.startPan(screen);
     }
+  }
+
+  /** 添加模式下点击画布:把当前 spec 实例化到点击的世界坐标 */
+  private placeInstance(world: { x: number; y: number }): void {
+    const spec = this.addMode;
+    if (!spec) return;
+
+    const size = resolveDefaultSize(spec);
+    const id = this.nodeRenderer.nextInstanceId();
+    const instance: Instance = {
+      id,
+      type: spec.kind,
+      ref: spec.ref,
+      // 居中对齐到点击位置(用户感知"放在我点的地方")
+      position: { x: world.x - size.w / 2, y: world.y - size.h / 2 },
+      size,
+    };
+    this.nodeRenderer.add(instance);
+
+    // 选中新建的 instance,退出添加模式,通知数据变化
+    this.selected.clear();
+    this.selected.add(id);
+    this.refreshOverlays();
+    this.exitAddMode();
+    this.onChange?.();
   }
 
   private handleMouseMove(e: MouseEvent): void {
@@ -279,7 +347,16 @@ export class InteractionController {
       }
       this.onChange?.();
     } else if (e.key === 'Escape') {
-      this.clearSelection();
+      // 优先级:取消添加模式 → 清选区
+      if (this.addMode) {
+        this.exitAddMode();
+      } else {
+        this.clearSelection();
+      }
+    } else if (DEV_ADD_SHORTCUTS[e.key] && !this.addMode) {
+      // M1.3c dev:1/2/3 快速进入添加模式(M1.4 完成 LibraryPicker 后删)
+      e.preventDefault();
+      this.enterAddMode(DEV_ADD_SHORTCUTS[e.key]);
     }
   }
 
@@ -378,6 +455,53 @@ export class InteractionController {
 }
 
 // ─────────────────────────────────────────────────────────
+// 添加模式
+// ─────────────────────────────────────────────────────────
+
+/**
+ * 描述"要添加什么":由 UI(LibraryPicker)交给 InteractionController
+ *
+ * - kind:'shape' 或 'substance'
+ * - ref:Library 中的资源 id(krig.basic.roundRect / library.family.person 等)
+ * - defaultSize:可选;省略时按 shape.viewBox 或 substance 推断尺寸
+ */
+export interface AddModeSpec {
+  kind: InstanceKind;
+  ref: string;
+  defaultSize?: { w: number; h: number };
+}
+
+/** 解析新实例的 size:优先 defaultSize,其次按资源类型推断 */
+function resolveDefaultSize(spec: AddModeSpec): { w: number; h: number } {
+  if (spec.defaultSize) return spec.defaultSize;
+  if (spec.kind === 'shape') {
+    const shape = ShapeRegistry.get(spec.ref);
+    if (shape) {
+      // 大多数 shape 用 100x100 太小,放大到一个对用户视觉合适的默认值
+      // line 类比较特殊:start/end 默认拉开 200 像素
+      if (shape.category === 'line') return { w: 200, h: 100 };
+      return { w: 160, h: 100 };
+    }
+  } else {
+    // substance:从 components 估 bbox
+    const def = SubstanceRegistry.get(spec.ref);
+    if (def) {
+      let maxX = 0, maxY = 0;
+      for (const c of def.components) {
+        const w = c.transform.w ?? 0;
+        const h = c.transform.h ?? 0;
+        const right = c.transform.x + (c.transform.anchor === 'center' ? w / 2 : w);
+        const bottom = c.transform.y + (c.transform.anchor === 'center' ? h / 2 : h);
+        if (right > maxX) maxX = right;
+        if (bottom > maxY) maxY = bottom;
+      }
+      if (maxX > 0 && maxY > 0) return { w: maxX, h: maxY };
+    }
+  }
+  return { w: 100, h: 100 };
+}
+
+// ─────────────────────────────────────────────────────────
 // helpers
 // ─────────────────────────────────────────────────────────
 
@@ -391,6 +515,16 @@ const WHEEL_ZOOM_SENSITIVITY = 0.001;
 const MAX_ZOOM = 50;
 /** 最大缩小:画板内容相对容器最大缩小 20 倍(viewWidth = container*20) */
 const MAX_ZOOM_OUT = 20;
+
+/**
+ * Dev-only 添加模式快捷键(M1.4 LibraryPicker 接入后删除)
+ * 1 → roundRect / 2 → diamond / 3 → family person
+ */
+const DEV_ADD_SHORTCUTS: Record<string, AddModeSpec> = {
+  '1': { kind: 'shape', ref: 'krig.basic.roundRect' },
+  '2': { kind: 'shape', ref: 'krig.basic.diamond' },
+  '3': { kind: 'substance', ref: 'library.family.person' },
+};
 
 function isLineKind(node: RenderedNode): boolean {
   return !!node.shapeRef && node.shapeRef.startsWith('krig.line.');

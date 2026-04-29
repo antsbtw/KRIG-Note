@@ -154,6 +154,17 @@ export class NodeRenderer {
     return Array.from(this.byId.keys());
   }
 
+  /** 生成一个不冲突的 instance id(M1.3c 添加模式 / M1.4d Combine 用) */
+  nextInstanceId(prefix = 'i'): string {
+    let n = this.byId.size + 1;
+    let id = `${prefix}-${n}`;
+    while (this.byId.has(id)) {
+      n++;
+      id = `${prefix}-${n}`;
+    }
+    return id;
+  }
+
   /** fit camera 到所有节点 */
   fitAll(): void {
     const ids = Array.from(this.byId.keys());
