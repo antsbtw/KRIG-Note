@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { SceneManager } from './scene/SceneManager';
 import { NodeRenderer } from './scene/NodeRenderer';
-import { InteractionController } from './interaction/InteractionController';
+import { InteractionController, type AddModeSpec } from './interaction/InteractionController';
+import { Toolbar } from './ui/Toolbar/Toolbar';
 import { ShapeRegistry } from '../library/shapes';
 import { SubstanceRegistry } from '../library/substances';
 import type { Instance } from '../library/types';
@@ -22,7 +23,10 @@ export function CanvasView() {
   const sceneManagerRef = useRef<SceneManager | null>(null);
   const nodeRendererRef = useRef<NodeRenderer | null>(null);
   const interactionRef = useRef<InteractionController | null>(null);
-  const [sceneReady, setSceneReady] = useState(false);
+
+  // Toolbar 显示用的 React state(从 imperative SceneManager / InteractionController 同步)
+  const [zoomLevel, setZoomLevel] = useState(1);
+  const [addMode, setAddMode] = useState<AddModeSpec | null>(null);
 
   // SceneManager / NodeRenderer / InteractionController 生命周期
   useEffect(() => {
@@ -41,36 +45,73 @@ export function CanvasView() {
       onChange: () => {
         // M1.5 接持久化时,这里 schedule save
       },
+      onAddModeChange: (spec) => setAddMode(spec),
     });
     sceneManagerRef.current = sm;
     nodeRendererRef.current = nr;
     interactionRef.current = ic;
-    setSceneReady(true);
 
     // M1.2b dev self-check:走真实 instance JSON → NodeRenderer 全管线
     nr.setInstances(devSelfCheckInstances());
 
+    // Zoom 显示:轮询 sceneManager.getView()(SceneManager 没暴露事件)
+    // 用 setInterval(150ms)而非 RAF — toolbar 上 % 数字不需要 60fps 精度,
+    // setInterval 比 RAF setState 开销更可控;只在实际变化时 setState 减少 React 工作
+    let lastReported = -1;
+    const baseViewWidth = sm.getView().viewWidth || 1;
+    const zoomTimer = window.setInterval(() => {
+      const cur = sm.getView();
+      if (cur.viewWidth <= 0) return;
+      const z = baseViewWidth / cur.viewWidth;
+      // 只在 % 取整后变化时更新,避免高频微调
+      const pct = Math.round(z * 100);
+      if (pct === lastReported) return;
+      lastReported = pct;
+      setZoomLevel(z);
+    }, 150);
+
     return () => {
+      window.clearInterval(zoomTimer);
       ic.dispose();
       nr.clear();
       sm.dispose();
       sceneManagerRef.current = null;
       nodeRendererRef.current = null;
       interactionRef.current = null;
-      setSceneReady(false);
     };
+  }, []);
+
+  // ── Toolbar 回调 ──
+  const handleAddShape = useCallback(() => {
+    interactionRef.current?.enterAddMode({
+      kind: 'shape',
+      ref: 'krig.basic.roundRect',  // M1.4b 接通 LibraryPicker 后改成 picker 选什么用什么
+    });
+  }, []);
+  const handleAddSubstance = useCallback(() => {
+    interactionRef.current?.enterAddMode({
+      kind: 'substance',
+      ref: 'library.text-card',     // M1.4b 接通 LibraryPicker 后改成 picker 选什么用什么
+    });
+  }, []);
+  const handleFit = useCallback(() => {
+    nodeRendererRef.current?.fitAll();
+  }, []);
+  const handleClose = useCallback(() => {
+    (window as { viewAPI?: { closeSelf?: () => void } }).viewAPI?.closeSelf?.();
   }, []);
 
   return (
     <div style={styles.container}>
-      {/* Toolbar — M1.4a 完成,这里先占位 */}
-      <div style={styles.toolbar}>
-        <span style={styles.toolbarTitle}>Canvas</span>
-        <div style={{ flex: 1 }} />
-        <span style={styles.toolbarHint}>
-          dev: 1=rect 2=diamond 3=person · click/shift-click select · drag move · DEL delete · drag space=pan · scroll=zoom · ESC cancel
-        </span>
-      </div>
+      <Toolbar
+        title="Canvas"
+        zoomLevel={zoomLevel}
+        addModeRef={addMode?.ref ?? null}
+        onAddShape={handleAddShape}
+        onAddSubstance={handleAddSubstance}
+        onFit={handleFit}
+        onClose={handleClose}
+      />
 
       {/* Canvas 容器:始终 mount,SceneManager 在 useEffect 里挂 renderer */}
       <div style={styles.canvasWrap}>
@@ -161,25 +202,6 @@ const styles: Record<string, React.CSSProperties> = {
     height: '100%',
     background: '#1e1e1e',
     color: '#e8eaed',
-  },
-  // Toolbar:对齐 NoteView 视觉(36px / #252525 / #333 边框 / 4px gap)
-  toolbar: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 4,
-    height: 36,
-    padding: '0 12px',
-    borderBottom: '1px solid #333',
-    background: '#252525',
-    flexShrink: 0,
-  },
-  toolbarTitle: {
-    fontSize: 13,
-    fontWeight: 500,
-  },
-  toolbarHint: {
-    fontSize: 11,
-    color: '#888',
   },
   canvasWrap: {
     flex: 1,
