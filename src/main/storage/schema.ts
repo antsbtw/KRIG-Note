@@ -109,6 +109,20 @@ const SCHEMA_QUERIES = [
 
   // ── GraphView (L5) — 全部移除,等待 Property Graph 重构 ──
   // 见 backup/before-pg-refactor-2026-04-28 分支保留旧 schema
+
+  // ── Graph 画板系统(rebuild from scratch — see docs/graph/) ──
+
+  // graph_canvas 表(画板;v1 仅 variant=canvas,M2+ 加 family-tree / knowledge / mindmap)
+  `DEFINE TABLE IF NOT EXISTS graph_canvas SCHEMALESS;`,
+  `DEFINE INDEX IF NOT EXISTS graph_canvas_title ON graph_canvas FIELDS title;`,
+  `DEFINE INDEX IF NOT EXISTS graph_canvas_updated ON graph_canvas FIELDS updated_at;`,
+  `DEFINE INDEX IF NOT EXISTS graph_canvas_folder ON graph_canvas FIELDS folder_id;`,
+  `DEFINE INDEX IF NOT EXISTS graph_canvas_variant ON graph_canvas FIELDS variant;`,
+
+  // graph_folder 表(画板文件夹 — 独立分类树,不与 note folder 共享)
+  `DEFINE TABLE IF NOT EXISTS graph_folder SCHEMALESS;`,
+  `DEFINE INDEX IF NOT EXISTS graph_folder_parent ON graph_folder FIELDS parent_id;`,
+  `DEFINE INDEX IF NOT EXISTS graph_folder_sort ON graph_folder FIELDS sort_order;`,
 ];
 
 export async function initSchema(): Promise<void> {
