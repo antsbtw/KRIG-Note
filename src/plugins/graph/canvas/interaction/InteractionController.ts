@@ -59,6 +59,8 @@ export class InteractionController {
   private addMode: AddModeSpec | null = null;
   /** 添加模式状态变化回调(给 UI 同步光标 / 提示) */
   private onAddModeChange?: (spec: AddModeSpec | null) => void;
+  /** 选区变化回调(给 Inspector 同步显隐) */
+  private onSelectionChange?: (ids: string[]) => void;
 
   /** 待清理的 listener 取消器 */
   private unsubscribers: Array<() => void> = [];
@@ -70,6 +72,7 @@ export class InteractionController {
     getInstance: (id: string) => Instance | undefined;
     onChange?: () => void;
     onAddModeChange?: (spec: AddModeSpec | null) => void;
+    onSelectionChange?: (ids: string[]) => void;
   }) {
     this.container = opts.container;
     this.sceneManager = opts.sceneManager;
@@ -77,6 +80,7 @@ export class InteractionController {
     this.getInstance = opts.getInstance;
     this.onChange = opts.onChange;
     this.onAddModeChange = opts.onAddModeChange;
+    this.onSelectionChange = opts.onSelectionChange;
     this.attachListeners();
   }
 
@@ -94,10 +98,16 @@ export class InteractionController {
     this.selected.clear();
     for (const id of ids) this.selected.add(id);
     this.refreshOverlays();
+    this.notifySelectionChanged();
   }
 
   clearSelection(): void {
     this.setSelection([]);
+  }
+
+  /** 通知监听者选区变化(选择 / 多选 / 删除 / 添加模式新建后都要) */
+  private notifySelectionChanged(): void {
+    this.onSelectionChange?.(Array.from(this.selected));
   }
 
   /**
@@ -197,17 +207,19 @@ export class InteractionController {
       if (additive) {
         if (this.selected.has(hit)) this.selected.delete(hit);
         else this.selected.add(hit);
+        this.notifySelectionChanged();
       } else {
         if (!this.selected.has(hit)) {
           this.selected.clear();
           this.selected.add(hit);
+          this.notifySelectionChanged();
         }
         // 已选中且非 additive:不变(下面拖动)
       }
       this.refreshOverlays();
       this.startDrag(world);
     } else {
-      // 空白处:非 additive 清选区,然后进入 pan
+      // 空白处:非 additive 清选区(setSelection 内已 notify),然后进入 pan
       if (!additive) this.clearSelection();
       this.startPan(screen);
     }
@@ -234,6 +246,7 @@ export class InteractionController {
     this.selected.clear();
     this.selected.add(id);
     this.refreshOverlays();
+    this.notifySelectionChanged();
     this.exitAddMode();
     this.onChange?.();
   }
@@ -345,6 +358,7 @@ export class InteractionController {
         // NodeRenderer.remove 会级联删引用 line
         this.nodeRenderer.remove(id);
       }
+      this.notifySelectionChanged();
       this.onChange?.();
     } else if (e.key === 'Escape') {
       // 优先级:取消添加模式 → 清选区

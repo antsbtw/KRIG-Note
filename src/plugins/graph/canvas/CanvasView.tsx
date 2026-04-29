@@ -4,6 +4,7 @@ import { NodeRenderer } from './scene/NodeRenderer';
 import { InteractionController, type AddModeSpec } from './interaction/InteractionController';
 import { Toolbar } from './ui/Toolbar/Toolbar';
 import { LibraryPicker } from './ui/LibraryPicker/LibraryPicker';
+import { FloatingInspector } from './ui/Inspector/FloatingInspector';
 import { ShapeRegistry } from '../library/shapes';
 import { SubstanceRegistry } from '../library/substances';
 import type { Instance } from '../library/types';
@@ -36,6 +37,9 @@ export function CanvasView() {
     anchorRect: DOMRect | null;
   }>({ open: false, section: 'shape', anchorRect: null });
 
+  // Inspector 显示用:当前选区
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
   // SceneManager / NodeRenderer / InteractionController 生命周期
   useEffect(() => {
     if (!containerRef.current) return;
@@ -54,6 +58,7 @@ export function CanvasView() {
         // M1.5 接持久化时,这里 schedule save
       },
       onAddModeChange: (spec) => setAddMode(spec),
+      onSelectionChange: (ids) => setSelectedIds(ids),
     });
     sceneManagerRef.current = sm;
     nodeRendererRef.current = nr;
@@ -112,6 +117,32 @@ export function CanvasView() {
     setPickerState((s) => ({ ...s, open: false }));
   }, []);
 
+  // ── Inspector 回调:patch 现有 instance,触发 NodeRenderer.update ──
+  const handleInstanceUpdate = useCallback((id: string, patch: Partial<Instance>) => {
+    const nr = nodeRendererRef.current;
+    if (!nr) return;
+    const inst = nr.getInstance(id);
+    if (!inst) return;
+    // 浅合并 + style_overrides 单独深合并(避免覆盖未触及字段)
+    const merged: Instance = {
+      ...inst,
+      ...patch,
+      style_overrides: patch.style_overrides
+        ? {
+            ...inst.style_overrides,
+            ...patch.style_overrides,
+          }
+        : inst.style_overrides,
+    };
+    nr.update(merged);
+    // M1.5 接持久化时,onChange 回调
+  }, []);
+
+  const handleInstanceGet = useCallback(
+    (id: string) => nodeRendererRef.current?.getInstance(id),
+    [],
+  );
+
   return (
     <div style={styles.container}>
       <Toolbar
@@ -145,6 +176,13 @@ export function CanvasView() {
         initialSection={pickerState.section}
         onPick={handlePickerPick}
         onClose={handlePickerClose}
+      />
+
+      {/* Floating Inspector(浮层,选中节点时显示) */}
+      <FloatingInspector
+        selectedIds={selectedIds}
+        getInstance={handleInstanceGet}
+        onUpdate={handleInstanceUpdate}
       />
     </div>
   );

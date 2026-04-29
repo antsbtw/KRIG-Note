@@ -74,6 +74,33 @@ export class NodeRenderer {
     // 时才会发生 — M1 不支持悬空 line,先不处理
   }
 
+  /**
+   * 原地替换 instance(Inspector 改属性后调)
+   * 重新渲染 mesh + 保留 lineRefs 反向索引(避免引用 line 丢失跟随)
+   * 自动 updateLinesFor 让引用 line 跟随尺寸/位置变化
+   */
+  update(updated: Instance): void {
+    const oldNode = this.byId.get(updated.id);
+    if (!oldNode) {
+      console.warn(`[NodeRenderer] update: instance ${updated.id} not found, falling back to add`);
+      this.add(updated);
+      return;
+    }
+    // 销毁旧 mesh,重建新 mesh
+    this.sceneManager.scene.remove(oldNode.group);
+    disposeGroup(oldNode.group);
+    this.byId.delete(updated.id);
+    this.instances.set(updated.id, updated);
+
+    const node = this.renderInstance(updated);
+    if (!node) return;
+    this.sceneManager.scene.add(node.group);
+    this.byId.set(updated.id, node);
+
+    // 引用它的 line 重新解析端点
+    this.updateLinesFor(updated.id);
+  }
+
   /** 删除某个 instance(M1.3a Delete 用) */
   remove(id: string): void {
     const node = this.byId.get(id);
