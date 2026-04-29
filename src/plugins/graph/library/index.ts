@@ -3,4 +3,5 @@
  * 详见 docs/graph/library/Library.md
  */
 export { ShapeRegistry } from './shapes/registry';
+export { SubstanceRegistry } from './substances/registry';
 export type * from './types';
