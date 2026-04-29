@@ -6,6 +6,8 @@ import {
 import { SubstanceRegistry } from '../../library/substances';
 import type { Instance, InstanceKind, SubstanceComponent } from '../../library/types';
 import type { SceneManager } from './SceneManager';
+import { renderLine, updateLineGeometry } from './LineRenderer';
+import { resolveLineEndpoints } from '../interaction/magnet-snap';
 
 /**
  * NodeRenderer — Canvas instance JSON → Three.js mesh 渲染管线
@@ -26,13 +28,23 @@ import type { SceneManager } from './SceneManager';
 export class NodeRenderer {
   /** instanceId → 渲染产物(用于增量更新 / 删除 / 跟随) */
   private byId = new Map<string, RenderedNode>();
+  /** 原始 Instance 数据(渲染产物只保存简化的 position/size,line 跟随需要原始 endpoints) */
+  private instances = new Map<string, Instance>();
+  /** 反向索引:被引用的 instance id → 引用它的 line instance id 集合 */
+  private lineRefs = new Map<string, Set<string>>();
 
   constructor(private sceneManager: SceneManager) {}
 
   /** 全量替换:清掉现有节点,渲染新的 instances 列表 */
   setInstances(instances: Instance[]): void {
     this.clear();
-    for (const inst of instances) this.add(inst);
+    // 先渲染非 line 实例,line 实例最后(端点解析需要其他 instance 已就位)
+    const lines: Instance[] = [];
+    for (const inst of instances) {
+      if (isLineInstance(inst)) lines.push(inst);
+      else this.add(inst);
+    }
+    for (const inst of lines) this.add(inst);
     this.fitAll();
   }
 
@@ -46,6 +58,20 @@ export class NodeRenderer {
     if (!node) return;
     this.sceneManager.scene.add(node.group);
     this.byId.set(inst.id, node);
+    this.instances.set(inst.id, inst);
+
+    // line 实例通过 endpoints 引用其他 instance:登记反向索引
+    if (isLineInstance(inst) && inst.endpoints) {
+      for (const ep of inst.endpoints) {
+        let set = this.lineRefs.get(ep.instance);
+        if (!set) { set = new Set(); this.lineRefs.set(ep.instance, set); }
+        set.add(inst.id);
+      }
+    }
+
+    // 新加的非 line instance 可能让某些已有 line(尚未解析端点)能渲染了
+    // 但因为 setInstances 已强制 line 后渲染,这种情况只在用户先加 line 后加 shape
+    // 时才会发生 — M1 不支持悬空 line,先不处理
   }
 
   /** 删除某个 instance(M1.3a Delete 用) */
@@ -55,11 +81,57 @@ export class NodeRenderer {
     this.sceneManager.scene.remove(node.group);
     disposeGroup(node.group);
     this.byId.delete(id);
+    this.instances.delete(id);
+
+    // 找出引用这个 instance 的所有 line(被删时这些 line 失去端点 → 一并删除避免悬空)
+    // ⚠️ 必须先抓 orphans 再清 lineRefs[id],否则 delete 后查不到了
+    const orphans = Array.from(this.lineRefs.get(id) ?? []);
+
+    // 1. 这个 instance 被哪些 line 引用,反向索引清掉
+    this.lineRefs.delete(id);
+    // 2. 这个 instance 自己若是 line,从所有"被它引用的 instance 的反向集合"里移除
+    for (const set of this.lineRefs.values()) set.delete(id);
+
+    // 3. 递归删除悬空的 line
+    for (const orphanId of orphans) this.remove(orphanId);
+  }
+
+  /**
+   * 通知:某个 instance 的 position/size 变了
+   * 重新计算所有引用它的 line 的端点几何(M1.3a 拖动时高频调用)
+   */
+  updateLinesFor(instanceId: string): void {
+    // 1. 同步 byId 里 node.position(若该 instance 还存在)
+    const node = this.byId.get(instanceId);
+    const inst = this.instances.get(instanceId);
+    if (node && inst && inst.position) {
+      node.position.x = inst.position.x;
+      node.position.y = inst.position.y;
+      node.group.position.set(inst.position.x, inst.position.y, 0);
+    }
+
+    // 2. 重渲染引用它的所有 line
+    const lineIds = this.lineRefs.get(instanceId);
+    if (!lineIds) return;
+    for (const lineId of lineIds) {
+      const lineInst = this.instances.get(lineId);
+      const lineNode = this.byId.get(lineId);
+      if (!lineInst || !lineNode) continue;
+      const ep = resolveLineEndpoints(lineInst, (id) => {
+        const n = this.byId.get(id);
+        const i = this.instances.get(id);
+        return n && i ? { node: n, instance: i } : null;
+      });
+      if (!ep) continue;
+      updateLineGeometry(lineNode.group, lineInst.ref, ep.start, ep.end);
+    }
   }
 
   /** 清空所有节点 */
   clear(): void {
     for (const id of Array.from(this.byId.keys())) this.remove(id);
+    this.lineRefs.clear();
+    this.instances.clear();
   }
 
   /** 查询 instance 的渲染产物 */
@@ -110,13 +182,19 @@ export class NodeRenderer {
     }
   }
 
-  /** 单个 shape 实例:走 shapeToThree 直接渲染 */
+  /** 单个 shape 实例:走 shapeToThree 直接渲染;line 类走端点驱动 */
   private renderShapeInstance(inst: Instance): RenderedNode | null {
     const shape = ShapeRegistry.get(inst.ref);
     if (!shape) {
       console.warn(`[NodeRenderer] shape not found: ${inst.ref} (instance ${inst.id})`);
       return null;
     }
+
+    // line 类 shape:走端点驱动,不用 path-to-three(后者只会渲染 viewBox 内的固定几何)
+    if (shape.category === 'line') {
+      return this.renderLineShape(inst, shape);
+    }
+
     const { position, size } = ensurePositionSize(inst, shape);
     const out = shapeToThree(shape, {
       width: size.w,
@@ -134,6 +212,37 @@ export class NodeRenderer {
       shapeRef: inst.ref,
       position: { ...position },
       size: { ...size },
+    };
+  }
+
+  /** line shape 实例:解析两端世界坐标 → LineRenderer */
+  private renderLineShape(inst: Instance, shape: ShapeDef): RenderedNode | null {
+    const ep = resolveLineEndpoints(inst, (id) => {
+      const n = this.byId.get(id);
+      const i = this.instances.get(id);
+      return n && i ? { node: n, instance: i } : null;
+    });
+    if (!ep) {
+      console.warn(`[NodeRenderer] line ${inst.id} cannot resolve endpoints`);
+      return null;
+    }
+    const group = renderLine(inst.ref, {
+      start: ep.start,
+      end: ep.end,
+      style: mergeLine(shape.default_style?.line, inst.style_overrides?.line),
+    });
+    group.userData.instanceId = inst.id;
+    return {
+      instanceId: inst.id,
+      kind: 'shape',
+      group,
+      shapeRef: inst.ref,
+      // line 的 position/size 用 bbox 表达(M1.3a 选中态 / 删除可能用)
+      position: { x: Math.min(ep.start.x, ep.end.x), y: Math.min(ep.start.y, ep.end.y) },
+      size: {
+        w: Math.abs(ep.end.x - ep.start.x),
+        h: Math.abs(ep.end.y - ep.start.y),
+      },
     };
   }
 
@@ -176,6 +285,13 @@ export class NodeRenderer {
 // ─────────────────────────────────────────────────────────
 // helpers
 // ─────────────────────────────────────────────────────────
+
+/** 该 instance 是不是 line 类 shape */
+function isLineInstance(inst: Instance): boolean {
+  if (inst.type !== 'shape') return false;
+  const shape = ShapeRegistry.get(inst.ref);
+  return shape?.category === 'line';
+}
 
 /** 渲染 substance 的一个 shape component */
 function renderComponent(comp: SubstanceComponent, inst: Instance): THREE.Group | null {

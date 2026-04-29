@@ -115,6 +115,26 @@ function devSelfCheckInstances(): Instance[] {
       position: { x: 280, y: 220 },
       props: { label: 'Hello' },
     },
+    // 6. line 实例:elbow 连 dev-1(roundRect)→ dev-3(ellipse),验证 magnet 吸附
+    {
+      id: 'dev-line-1',
+      type: 'shape',
+      ref: 'krig.line.elbow',
+      endpoints: [
+        { instance: 'dev-1', magnet: 'E' },
+        { instance: 'dev-3', magnet: 'W' },
+      ],
+    },
+    // 7. line 实例:straight 连 dev-4 → dev-5(substance 间连线,走 frame 的 magnets)
+    {
+      id: 'dev-line-2',
+      type: 'shape',
+      ref: 'krig.line.straight',
+      endpoints: [
+        { instance: 'dev-4', magnet: 'E' },
+        { instance: 'dev-5', magnet: 'W' },
+      ],
+    },
   ];
 }
 
