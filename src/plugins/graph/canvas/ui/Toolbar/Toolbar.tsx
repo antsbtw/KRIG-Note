@@ -1,4 +1,4 @@
-import type { CSSProperties } from 'react';
+import type { CSSProperties, MouseEvent as ReactMouseEvent } from 'react';
 
 /**
  * Canvas Toolbar — 顶部 36px 横条,对齐 NoteView 视觉
@@ -20,8 +20,9 @@ export interface ToolbarProps {
   /** 添加模式中:高亮对应工具按钮 */
   addModeRef?: string | null;
 
-  onAddShape: () => void;
-  onAddSubstance: () => void;
+  /** 触发按钮被点击,回调带 anchorRect(给 LibraryPicker 定位) */
+  onAddShape: (anchorRect: DOMRect) => void;
+  onAddSubstance: (anchorRect: DOMRect) => void;
   onFit: () => void;
   onCombine?: () => void;
   onClose: () => void;
@@ -61,8 +62,10 @@ export function Toolbar(props: ToolbarProps) {
           ...styles.actionBtn,
           ...(addingShape ? styles.actionBtnActive : null),
         }}
-        onClick={props.onAddShape}
-        title="添加 Shape(M1.4b 接 Library Picker)"
+        onClick={(e: ReactMouseEvent<HTMLButtonElement>) =>
+          props.onAddShape(e.currentTarget.getBoundingClientRect())
+        }
+        title="添加 Shape — 从 Library 选择一个图元"
       >
         + Shape
       </button>
@@ -71,8 +74,10 @@ export function Toolbar(props: ToolbarProps) {
           ...styles.actionBtn,
           ...(addingSubstance ? styles.actionBtnActive : null),
         }}
-        onClick={props.onAddSubstance}
-        title="添加 Substance(M1.4b 接 Library Picker)"
+        onClick={(e: ReactMouseEvent<HTMLButtonElement>) =>
+          props.onAddSubstance(e.currentTarget.getBoundingClientRect())
+        }
+        title="添加 Substance — 从 Library 选择一个组合资源"
       >
         ◇ Substance
       </button>

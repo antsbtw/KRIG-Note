@@ -353,11 +353,9 @@ export class InteractionController {
       } else {
         this.clearSelection();
       }
-    } else if (DEV_ADD_SHORTCUTS[e.key] && !this.addMode) {
-      // M1.3c dev:1/2/3 快速进入添加模式(M1.4 完成 LibraryPicker 后删)
-      e.preventDefault();
-      this.enterAddMode(DEV_ADD_SHORTCUTS[e.key]);
     }
+    // M1.3c dev 快捷键(1/2/3 = roundRect/diamond/family.person)已删除 —
+    // M1.4b LibraryPicker 上线后,picker 是规范入口
   }
 
   // ─────────────────────────────────────────────────────────
@@ -515,16 +513,6 @@ const WHEEL_ZOOM_SENSITIVITY = 0.001;
 const MAX_ZOOM = 50;
 /** 最大缩小:画板内容相对容器最大缩小 20 倍(viewWidth = container*20) */
 const MAX_ZOOM_OUT = 20;
-
-/**
- * Dev-only 添加模式快捷键(M1.4 LibraryPicker 接入后删除)
- * 1 → roundRect / 2 → diamond / 3 → family person
- */
-const DEV_ADD_SHORTCUTS: Record<string, AddModeSpec> = {
-  '1': { kind: 'shape', ref: 'krig.basic.roundRect' },
-  '2': { kind: 'shape', ref: 'krig.basic.diamond' },
-  '3': { kind: 'substance', ref: 'library.family.person' },
-};
 
 function isLineKind(node: RenderedNode): boolean {
   return !!node.shapeRef && node.shapeRef.startsWith('krig.line.');

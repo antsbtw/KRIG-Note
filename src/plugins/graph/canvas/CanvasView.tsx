@@ -3,6 +3,7 @@ import { SceneManager } from './scene/SceneManager';
 import { NodeRenderer } from './scene/NodeRenderer';
 import { InteractionController, type AddModeSpec } from './interaction/InteractionController';
 import { Toolbar } from './ui/Toolbar/Toolbar';
+import { LibraryPicker } from './ui/LibraryPicker/LibraryPicker';
 import { ShapeRegistry } from '../library/shapes';
 import { SubstanceRegistry } from '../library/substances';
 import type { Instance } from '../library/types';
@@ -27,6 +28,13 @@ export function CanvasView() {
   // Toolbar 显示用的 React state(从 imperative SceneManager / InteractionController 同步)
   const [zoomLevel, setZoomLevel] = useState(1);
   const [addMode, setAddMode] = useState<AddModeSpec | null>(null);
+
+  // LibraryPicker 状态
+  const [pickerState, setPickerState] = useState<{
+    open: boolean;
+    section: 'shape' | 'substance';
+    anchorRect: DOMRect | null;
+  }>({ open: false, section: 'shape', anchorRect: null });
 
   // SceneManager / NodeRenderer / InteractionController 生命周期
   useEffect(() => {
@@ -82,23 +90,26 @@ export function CanvasView() {
   }, []);
 
   // ── Toolbar 回调 ──
-  const handleAddShape = useCallback(() => {
-    interactionRef.current?.enterAddMode({
-      kind: 'shape',
-      ref: 'krig.basic.roundRect',  // M1.4b 接通 LibraryPicker 后改成 picker 选什么用什么
-    });
+  const handleAddShape = useCallback((anchorRect: DOMRect) => {
+    setPickerState({ open: true, section: 'shape', anchorRect });
   }, []);
-  const handleAddSubstance = useCallback(() => {
-    interactionRef.current?.enterAddMode({
-      kind: 'substance',
-      ref: 'library.text-card',     // M1.4b 接通 LibraryPicker 后改成 picker 选什么用什么
-    });
+  const handleAddSubstance = useCallback((anchorRect: DOMRect) => {
+    setPickerState({ open: true, section: 'substance', anchorRect });
   }, []);
   const handleFit = useCallback(() => {
     nodeRendererRef.current?.fitAll();
   }, []);
   const handleClose = useCallback(() => {
     (window as { viewAPI?: { closeSelf?: () => void } }).viewAPI?.closeSelf?.();
+  }, []);
+
+  // ── LibraryPicker 回调 ──
+  const handlePickerPick = useCallback((spec: AddModeSpec) => {
+    setPickerState((s) => ({ ...s, open: false }));
+    interactionRef.current?.enterAddMode(spec);
+  }, []);
+  const handlePickerClose = useCallback(() => {
+    setPickerState((s) => ({ ...s, open: false }));
   }, []);
 
   return (
@@ -117,6 +128,24 @@ export function CanvasView() {
       <div style={styles.canvasWrap}>
         <div ref={containerRef} style={styles.canvasContainer} />
       </div>
+
+      {/* Library Picker(浮层) */}
+      <LibraryPicker
+        open={pickerState.open}
+        anchorRect={
+          pickerState.anchorRect
+            ? {
+                left: pickerState.anchorRect.left,
+                top: pickerState.anchorRect.top,
+                width: pickerState.anchorRect.width,
+                height: pickerState.anchorRect.height,
+              }
+            : null
+        }
+        initialSection={pickerState.section}
+        onPick={handlePickerPick}
+        onClose={handlePickerClose}
+      />
     </div>
   );
 }
