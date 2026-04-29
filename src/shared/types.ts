@@ -343,8 +343,30 @@ export const IPC = {
   THOUGHT_RELATE: 'thought:relate',
   THOUGHT_UNRELATE: 'thought:unrelate',
 
-  // Graph (L5) — 全部移除,等待 Property Graph 重构
-  // 见 backup/before-pg-refactor-2026-04-28 分支保留旧实现
+  // Graph 画板(rebuild from scratch — see docs/graph/canvas/Canvas.md)
+  // 与 ebook 形态对齐:独立 IPC namespace,自有 store(graph_canvas + graph_folder)
+  GRAPH_LIST: 'graph:list',                         // 列画板(GraphCanvasListItem[])
+  GRAPH_CREATE: 'graph:create',                     // 新建画板,返回 GraphCanvasRecord
+  GRAPH_LOAD: 'graph:load',                         // 加载画板(取 doc_content)
+  GRAPH_SAVE: 'graph:save',                         // 保存画板(doc_content + title)
+  GRAPH_DELETE: 'graph:delete',
+  GRAPH_RENAME: 'graph:rename',
+  GRAPH_MOVE_TO_FOLDER: 'graph:move-to-folder',
+  GRAPH_DUPLICATE: 'graph:duplicate',
+  GRAPH_LIST_CHANGED: 'graph:list-changed',         // main → renderer:画板列表变更广播
+
+  // Graph 文件夹(独立分类树,不与 note folder 共享)
+  GRAPH_FOLDER_CREATE: 'graph:folder-create',
+  GRAPH_FOLDER_RENAME: 'graph:folder-rename',
+  GRAPH_FOLDER_DELETE: 'graph:folder-delete',
+  GRAPH_FOLDER_MOVE: 'graph:folder-move',
+  GRAPH_FOLDER_LIST: 'graph:folder-list',
+
+  // Graph view 工作流(类比 NOTE_OPEN_IN_EDITOR / EBOOK_BOOKSHELF_OPEN)
+  GRAPH_OPEN_IN_VIEW: 'graph:open-in-view',         // NavSide / 其他 → CanvasView:加载某画板
+  GRAPH_PENDING_OPEN: 'graph:pending-open',         // CanvasView ready 后拉取待打开的 graphId
+  GRAPH_DELETED: 'graph:deleted',                   // main → CanvasView:画板已删除,view 需清空
+  GRAPH_TITLE_CHANGED: 'graph:title-changed',       // NavSide → CanvasView:标题变更同步
 
 
   // Web Translate

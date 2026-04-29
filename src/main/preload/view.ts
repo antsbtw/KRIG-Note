@@ -82,9 +82,30 @@ contextBridge.exposeInMainWorld('viewAPI', {
     ipcRenderer.on(IPC.LOAD_TEST_DOC, listener);
     return () => ipcRenderer.removeListener(IPC.LOAD_TEST_DOC, listener);
   },
-  // ── Graph (L5) — 全部移除,等待 Property Graph 重构 ──
-  // 见 backup/before-pg-refactor-2026-04-28 分支保留旧实现
+  // ── Graph 画板(rebuild — see docs/graph/canvas/Canvas.md) ──
+  graphLoad: (id: string) => ipcRenderer.invoke(IPC.GRAPH_LOAD, id),
+  graphSave: (id: string, docContent: unknown, title: string) =>
+    ipcRenderer.invoke(IPC.GRAPH_SAVE, id, docContent, title),
+  graphRename: (id: string, title: string) =>
+    ipcRenderer.invoke(IPC.GRAPH_RENAME, id, title),
+  graphPendingOpen: () => ipcRenderer.invoke(IPC.GRAPH_PENDING_OPEN),
+  graphOpenInView: (id: string) => ipcRenderer.invoke(IPC.GRAPH_OPEN_IN_VIEW, id),
 
+  onGraphOpenInView: (callback: (graphId: string) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, graphId: string) => callback(graphId);
+    ipcRenderer.on(IPC.GRAPH_OPEN_IN_VIEW, listener);
+    return () => ipcRenderer.removeListener(IPC.GRAPH_OPEN_IN_VIEW, listener);
+  },
+  onGraphDeleted: (callback: (graphId: string) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, graphId: string) => callback(graphId);
+    ipcRenderer.on(IPC.GRAPH_DELETED, listener);
+    return () => ipcRenderer.removeListener(IPC.GRAPH_DELETED, listener);
+  },
+  onGraphTitleChanged: (callback: (data: { graphId: string; title: string }) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, data: { graphId: string; title: string }) => callback(data);
+    ipcRenderer.on(IPC.GRAPH_TITLE_CHANGED, listener);
+    return () => ipcRenderer.removeListener(IPC.GRAPH_TITLE_CHANGED, listener);
+  },
 
   // 文件对话框 + 媒体操作（通用服务）
   fileSaveDialog: (options: { defaultName: string; data: string; filters?: { name: string; extensions: string[] }[] }) =>

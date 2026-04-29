@@ -130,6 +130,34 @@ contextBridge.exposeInMainWorld('navSideAPI', {
     return () => ipcRenderer.removeListener(IPC.WEB_BOOKMARK_CHANGED, listener);
   },
 
-  // ── Graph (L5) — 全部移除,等待 Property Graph 重构 ──
-  // 见 backup/before-pg-refactor-2026-04-28 分支保留旧实现
+  // ── Graph 画板(rebuild — see docs/graph/canvas/Canvas.md) ──
+
+  graphList: () => ipcRenderer.invoke(IPC.GRAPH_LIST),
+  graphCreate: (title?: string, variant?: string, folderId?: string | null) =>
+    ipcRenderer.invoke(IPC.GRAPH_CREATE, title, variant, folderId),
+  graphDelete: (id: string) => ipcRenderer.invoke(IPC.GRAPH_DELETE, id),
+  graphRename: (id: string, title: string) =>
+    ipcRenderer.invoke(IPC.GRAPH_RENAME, id, title),
+  graphMoveToFolder: (id: string, folderId: string | null) =>
+    ipcRenderer.invoke(IPC.GRAPH_MOVE_TO_FOLDER, id, folderId),
+  graphDuplicate: (id: string, targetFolderId?: string | null) =>
+    ipcRenderer.invoke(IPC.GRAPH_DUPLICATE, id, targetFolderId),
+  graphOpenInView: (id: string) => ipcRenderer.invoke(IPC.GRAPH_OPEN_IN_VIEW, id),
+
+  // Graph 文件夹
+  graphFolderList: () => ipcRenderer.invoke(IPC.GRAPH_FOLDER_LIST),
+  graphFolderCreate: (title: string, parentId?: string | null) =>
+    ipcRenderer.invoke(IPC.GRAPH_FOLDER_CREATE, title, parentId),
+  graphFolderRename: (id: string, title: string) =>
+    ipcRenderer.invoke(IPC.GRAPH_FOLDER_RENAME, id, title),
+  graphFolderDelete: (id: string) =>
+    ipcRenderer.invoke(IPC.GRAPH_FOLDER_DELETE, id),
+  graphFolderMove: (id: string, parentId: string | null) =>
+    ipcRenderer.invoke(IPC.GRAPH_FOLDER_MOVE, id, parentId),
+
+  onGraphListChanged: (callback: (list: unknown[]) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, list: unknown[]) => callback(list);
+    ipcRenderer.on(IPC.GRAPH_LIST_CHANGED, listener);
+    return () => ipcRenderer.removeListener(IPC.GRAPH_LIST_CHANGED, listener);
+  },
 });
