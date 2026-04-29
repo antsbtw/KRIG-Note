@@ -139,6 +139,16 @@ export class NodeRenderer {
     return this.byId.get(id);
   }
 
+  /** 查询原始 Instance(M1.3 拖动时改 position 用,M1.5 序列化用) */
+  getInstance(id: string): Instance | undefined {
+    return this.instances.get(id);
+  }
+
+  /** 列出所有已渲染的 instance(原始数据) */
+  listInstances(): Instance[] {
+    return Array.from(this.instances.values());
+  }
+
   /** 当前所有已渲染的 instance id */
   ids(): string[] {
     return Array.from(this.byId.keys());

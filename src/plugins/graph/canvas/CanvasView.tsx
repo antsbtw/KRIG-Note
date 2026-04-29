@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { SceneManager } from './scene/SceneManager';
 import { NodeRenderer } from './scene/NodeRenderer';
+import { InteractionController } from './interaction/InteractionController';
 import { ShapeRegistry } from '../library/shapes';
 import { SubstanceRegistry } from '../library/substances';
 import type { Instance } from '../library/types';
@@ -20,9 +21,10 @@ export function CanvasView() {
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneManagerRef = useRef<SceneManager | null>(null);
   const nodeRendererRef = useRef<NodeRenderer | null>(null);
+  const interactionRef = useRef<InteractionController | null>(null);
   const [sceneReady, setSceneReady] = useState(false);
 
-  // SceneManager 生命周期
+  // SceneManager / NodeRenderer / InteractionController 生命周期
   useEffect(() => {
     if (!containerRef.current) return;
     // bootstrap library(幂等,多次调用安全)
@@ -31,18 +33,30 @@ export function CanvasView() {
 
     const sm = new SceneManager(containerRef.current);
     const nr = new NodeRenderer(sm);
+    const ic = new InteractionController({
+      container: containerRef.current,
+      sceneManager: sm,
+      nodeRenderer: nr,
+      getInstance: (id) => nr.getInstance(id),
+      onChange: () => {
+        // M1.5 接持久化时,这里 schedule save
+      },
+    });
     sceneManagerRef.current = sm;
     nodeRendererRef.current = nr;
+    interactionRef.current = ic;
     setSceneReady(true);
 
     // M1.2b dev self-check:走真实 instance JSON → NodeRenderer 全管线
     nr.setInstances(devSelfCheckInstances());
 
     return () => {
+      ic.dispose();
       nr.clear();
       sm.dispose();
       sceneManagerRef.current = null;
       nodeRendererRef.current = null;
+      interactionRef.current = null;
       setSceneReady(false);
     };
   }, []);
