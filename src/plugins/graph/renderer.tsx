@@ -1,5 +1,6 @@
 import { createRoot } from 'react-dom/client';
 import { CanvasView } from './canvas/CanvasView';
+import './graph.css';   // 触发引入 shared/theme/tokens.css
 
 /**
  * Graph view 入口 — 挂载到 graph.html 的 #root

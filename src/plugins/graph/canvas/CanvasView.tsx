@@ -315,8 +315,8 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     flexDirection: 'column',
     height: '100%',
-    background: '#1e1e1e',
-    color: '#e8eaed',
+    background: 'var(--krig-bg-base)',
+    color: 'var(--krig-text-primary)',
   },
   canvasWrap: {
     flex: 1,

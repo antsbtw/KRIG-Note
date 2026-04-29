@@ -41,6 +41,8 @@ export class SceneManager {
     this.container = container;
 
     this.scene = new THREE.Scene();
+    // Three.js scene 不能直接吃 CSS var,这里用 token 同源色值(--krig-bg-base);
+    // v1.x 优化方向:启动时 getComputedStyle 读 token 同步给 scene,主题切换跟随
     this.scene.background = new THREE.Color('#1e1e1e');
 
     // 正交相机(2D 画板专用)。frustum 由 fitToContent 或 setView 决定;

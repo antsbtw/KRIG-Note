@@ -1,0 +1,2 @@
+/* Graph view 主题 — 引入全局 tokens,inline styles 通过 var(--krig-*) 消费 */
+@import '../../shared/theme/tokens.css';

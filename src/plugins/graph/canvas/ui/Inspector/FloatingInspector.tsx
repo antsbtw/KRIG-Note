@@ -357,7 +357,7 @@ const styles: Record<string, CSSProperties> = {
     border: '1px solid rgba(255, 255, 255, 0.1)',
     borderRadius: 8,
     boxShadow: '0 8px 24px rgba(0, 0, 0, 0.4)',
-    color: '#e8eaed',
+    color: 'var(--krig-text-primary)',
     overflow: 'hidden',
     fontSize: 12,
   },
@@ -378,7 +378,7 @@ const styles: Record<string, CSSProperties> = {
   },
   headerHint: {
     fontSize: 11,
-    color: '#666',
+    color: 'var(--krig-text-faint)',
   },
   body: {
     padding: 10,
@@ -390,7 +390,7 @@ const styles: Record<string, CSSProperties> = {
   },
   sectionTitle: {
     fontSize: 10,
-    color: '#888',
+    color: 'var(--krig-text-dim)',
     textTransform: 'uppercase',
     letterSpacing: '0.5px',
     marginBottom: 6,
@@ -408,14 +408,14 @@ const styles: Record<string, CSSProperties> = {
   },
   fieldLabelText: {
     fontSize: 10,
-    color: '#aaa',
+    color: 'var(--krig-text-muted)',
   },
   fieldInput: {
     background: 'rgba(255, 255, 255, 0.06)',
     border: '1px solid rgba(255, 255, 255, 0.08)',
     borderRadius: 4,
     padding: '4px 6px',
-    color: '#e8eaed',
+    color: 'var(--krig-text-primary)',
     fontSize: 12,
     width: '100%',
     outline: 'none',
@@ -437,14 +437,14 @@ const styles: Record<string, CSSProperties> = {
   },
   multiHint: {
     fontSize: 11,
-    color: '#aaa',
+    color: 'var(--krig-text-muted)',
     lineHeight: 1.6,
     marginBottom: 12,
   },
   combineBtn: {
     width: '100%',
-    background: '#3a5a9e',
-    border: '1px solid #6b8ec6',
+    background: 'var(--krig-accent-bg)',
+    border: '1px solid var(--krig-accent-border)',
     borderRadius: 4,
     color: '#fff',
     fontSize: 12,
