@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { SceneManager } from './scene/SceneManager';
-import { ShapeRegistry, shapeToThree } from '../library/shapes';
+import { NodeRenderer } from './scene/NodeRenderer';
+import { ShapeRegistry } from '../library/shapes';
 import { SubstanceRegistry } from '../library/substances';
+import type { Instance } from '../library/types';
 
 /**
  * CanvasView — Graph view 主组件(canvas variant)
@@ -17,6 +19,7 @@ import { SubstanceRegistry } from '../library/substances';
 export function CanvasView() {
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneManagerRef = useRef<SceneManager | null>(null);
+  const nodeRendererRef = useRef<NodeRenderer | null>(null);
   const [sceneReady, setSceneReady] = useState(false);
 
   // SceneManager 生命周期
@@ -27,15 +30,19 @@ export function CanvasView() {
     SubstanceRegistry.bootstrap();
 
     const sm = new SceneManager(containerRef.current);
+    const nr = new NodeRenderer(sm);
     sceneManagerRef.current = sm;
+    nodeRendererRef.current = nr;
     setSceneReady(true);
 
-    // M1.2a 自检:挂一个测试 mesh(M1.2b 完成后改成真正的 instance 渲染)
-    addDevSelfCheck(sm);
+    // M1.2b dev self-check:走真实 instance JSON → NodeRenderer 全管线
+    nr.setInstances(devSelfCheckInstances());
 
     return () => {
+      nr.clear();
       sm.dispose();
       sceneManagerRef.current = null;
+      nodeRendererRef.current = null;
       setSceneReady(false);
     };
   }, []);
@@ -58,31 +65,57 @@ export function CanvasView() {
 }
 
 /**
- * Dev self-check:挂一个 roundRect 测试 mesh + fitToContent
- * M1.2b 完成后改成基于 instance JSON 的真渲染管线。
+ * Dev self-check:用真实 instance JSON 走 NodeRenderer 全管线
+ * 包含 shape 实例 + substance 实例 + style override + params override
+ * M1.5 接通 Canvas note 持久化后,这部分由反序列化产物替代
  */
-function addDevSelfCheck(sm: SceneManager): void {
-  const shape = ShapeRegistry.get('krig.basic.roundRect');
-  if (!shape) {
-    console.warn('[CanvasView dev-self-check] roundRect missing');
-    return;
-  }
-  const out = shapeToThree(shape, { width: 200, height: 100 });
-  // 摆在画板坐标 (100, 80) 处
-  out.group.position.set(100, 80, 0);
-  sm.scene.add(out.group);
-
-  // 再加一个 ellipse 在右边
-  const ellipse = ShapeRegistry.get('krig.basic.ellipse');
-  if (ellipse) {
-    const out2 = shapeToThree(ellipse, { width: 120, height: 120 });
-    out2.group.position.set(380, 80, 0);
-    sm.scene.add(out2.group);
-  }
-
-  // 一定要主动 fit(memory: feedback_canvas_must_show_all_content)
-  // 用包含两个 mesh 的 box;不直接 fitToContent(scene) 因为 scene 还有 background/light
-  sm.fitToBox({ minX: 50, minY: 50, maxX: 550, maxY: 250 });
+function devSelfCheckInstances(): Instance[] {
+  return [
+    // 1. shape 实例(roundRect)
+    {
+      id: 'dev-1',
+      type: 'shape',
+      ref: 'krig.basic.roundRect',
+      position: { x: 50, y: 50 },
+      size: { w: 200, h: 100 },
+      params: { r: 0.2 },
+    },
+    // 2. shape 实例 + style override(diamond,自定义颜色)
+    {
+      id: 'dev-2',
+      type: 'shape',
+      ref: 'krig.basic.diamond',
+      position: { x: 320, y: 50 },
+      size: { w: 120, h: 100 },
+      style_overrides: {
+        fill: { color: '#e8a8c0' },
+      },
+    },
+    // 3. shape 实例(ellipse)
+    {
+      id: 'dev-3',
+      type: 'shape',
+      ref: 'krig.basic.ellipse',
+      position: { x: 500, y: 50 },
+      size: { w: 100, h: 100 },
+    },
+    // 4. substance 实例(family.person — 多 component 组合)
+    {
+      id: 'dev-4',
+      type: 'substance',
+      ref: 'library.family.person',
+      position: { x: 50, y: 220 },
+      props: { label: '贾宝玉', gender: 'M' },
+    },
+    // 5. substance 实例(text-card)
+    {
+      id: 'dev-5',
+      type: 'substance',
+      ref: 'library.text-card',
+      position: { x: 280, y: 220 },
+      props: { label: 'Hello' },
+    },
+  ];
 }
 
 const styles: Record<string, React.CSSProperties> = {

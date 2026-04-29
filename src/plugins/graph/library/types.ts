@@ -219,3 +219,51 @@ export interface SubstancePack {
   id: string;
   substances: SubstanceDef[];
 }
+
+// ─────────────────────────────────────────────────────────
+// Canvas instance(画板上的"实例" — 已实例化的 shape / substance)
+// 严格对齐 docs/graph/canvas/Canvas.md §4.1
+// ─────────────────────────────────────────────────────────
+
+export type InstanceKind = 'shape' | 'substance';
+
+export interface InstanceEndpoint {
+  /** 连接到哪个 instance 的 id */
+  instance: string;
+  /** 连到该 instance 的哪个 magnet(N/S/E/W/START/END/...) */
+  magnet: string;
+}
+
+/**
+ * Canvas note 中的一个节点实例。
+ *
+ * shape / substance 实例:用 position + size 定位
+ * line 实例:可用 endpoints(由两端 magnet 驱动,M1.2c)
+ *           也可用 position + size(用户手动定位,无 magnet 跟随)
+ */
+export interface Instance {
+  id: string;
+  type: InstanceKind;
+  /** 引用 Library 中的 shape / substance id */
+  ref: string;
+
+  /** 非 line 实例必备;line 实例若有 endpoints 可省略 */
+  position?: { x: number; y: number };
+  size?: { w: number; h: number };
+
+  /** line 实例两端连接 */
+  endpoints?: [InstanceEndpoint, InstanceEndpoint];
+
+  /** 用户调整的参数(覆盖 ShapeDef.params 的 default) */
+  params?: Record<string, number>;
+
+  /** 覆盖默认样式(对齐 Canvas.md §4.1) */
+  style_overrides?: {
+    fill?: Partial<FillStyle>;
+    line?: Partial<LineStyle>;
+    arrow?: Partial<ArrowStyle>;
+  };
+
+  /** substance 实例的业务属性(姓名 / gender / birth / death 等) */
+  props?: Record<string, unknown>;
+}
