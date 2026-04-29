@@ -5,6 +5,8 @@ import { InteractionController, type AddModeSpec } from './interaction/Interacti
 import { Toolbar } from './ui/Toolbar/Toolbar';
 import { LibraryPicker } from './ui/LibraryPicker/LibraryPicker';
 import { FloatingInspector } from './ui/Inspector/FloatingInspector';
+import { CreateSubstanceDialog, type CreateSubstanceFormResult } from './ui/dialogs/CreateSubstanceDialog';
+import { combineSelectedToSubstance } from './combine';
 import { ShapeRegistry } from '../library/shapes';
 import { SubstanceRegistry } from '../library/substances';
 import type { Instance } from '../library/types';
@@ -39,6 +41,9 @@ export function CanvasView() {
 
   // Inspector 显示用:当前选区
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
+  // CreateSubstanceDialog 状态(M1.4d)
+  const [combineDialogOpen, setCombineDialogOpen] = useState(false);
 
   // SceneManager / NodeRenderer / InteractionController 生命周期
   useEffect(() => {
@@ -143,15 +148,49 @@ export function CanvasView() {
     [],
   );
 
+  // ── Combine to Substance(M1.4d) ──
+  const handleOpenCombine = useCallback(() => {
+    if (selectedIds.length < 2) return;
+    setCombineDialogOpen(true);
+  }, [selectedIds]);
+
+  const handleCombineCreate = useCallback(
+    (form: CreateSubstanceFormResult) => {
+      const nr = nodeRendererRef.current;
+      const ic = interactionRef.current;
+      if (!nr || !ic) return;
+      const result = combineSelectedToSubstance(nr, {
+        selectedIds,
+        name: form.name,
+        category: form.category,
+        description: form.description,
+      });
+      setCombineDialogOpen(false);
+      if (!result) {
+        console.warn('[Canvas] Combine failed: no eligible shape instances');
+        return;
+      }
+      // 选中新建的 substance 实例
+      ic.setSelection([result.newInstanceId]);
+    },
+    [selectedIds],
+  );
+
+  const handleCombineCancel = useCallback(() => {
+    setCombineDialogOpen(false);
+  }, []);
+
   return (
     <div style={styles.container}>
       <Toolbar
         title="Canvas"
         zoomLevel={zoomLevel}
         addModeRef={addMode?.ref ?? null}
+        multiSelected={selectedIds.length >= 2}
         onAddShape={handleAddShape}
         onAddSubstance={handleAddSubstance}
         onFit={handleFit}
+        onCombine={handleOpenCombine}
         onClose={handleClose}
       />
 
@@ -183,6 +222,15 @@ export function CanvasView() {
         selectedIds={selectedIds}
         getInstance={handleInstanceGet}
         onUpdate={handleInstanceUpdate}
+        onCombine={handleOpenCombine}
+      />
+
+      {/* Combine to Substance 对话框 */}
+      <CreateSubstanceDialog
+        open={combineDialogOpen}
+        defaultName={`Substance ${selectedIds.length} items`}
+        onCreate={handleCombineCreate}
+        onCancel={handleCombineCancel}
       />
     </div>
   );
