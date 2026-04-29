@@ -11,15 +11,16 @@ import type { Instance } from '../../library/types';
  * - 拖动 selected nodes(line 实例不能直接拖,要靠两端 instance 移动)
  * - 删除 selected(Delete / Backspace)
  * - 选中态视觉:一层 LineSegments 矩形线框 overlay
+ * - **pan**:空白处拖动平移视口
+ * - **zoom**:滚轮缩放,光标位置作为缩放中心
  *
  * 不做(留 v1.1):
- * - 框选(drag-select)
+ * - 框选(drag-select)— 与 pan 在空白拖动语义冲突,以 modifier 区分留 v1.1
  * - 拖动 line 端点(line 端点拾取)
  * - Cmd+Z 撤销 / Cmd+C/V 复制粘贴
  *
- * 不做(M1.3b/c 接管):
- * - pan / zoom(M1.3b)
- * - "添加模式"点击空白实例化(M1.3c)
+ * 不做(M1.3c 接管):
+ * - "添加模式"点击空白实例化
  */
 export class InteractionController {
   private container: HTMLElement;
@@ -35,11 +36,21 @@ export class InteractionController {
   /** instanceId → overlay group(选中态线框) */
   private overlays = new Map<string, THREE.LineSegments>();
 
-  /** 拖动状态 */
+  /** 拖动节点状态 */
   private dragging: {
     startWorld: { x: number; y: number };
     /** 拖动开始时各 selected instance 的原始 position 快照 */
     snapshots: Map<string, { x: number; y: number }>;
+  } | null = null;
+
+  /** Pan 视口状态 */
+  private panning: {
+    /** mouse-down 时的容器内屏幕坐标 */
+    startScreen: { x: number; y: number };
+    /** mouse-down 时 SceneManager 的 viewCenter 快照(世界坐标) */
+    startCenter: { x: number; y: number };
+    /** mouse-down 时 viewWidth(用于把 screen delta 转世界 delta) */
+    startViewWidth: number;
   } | null = null;
 
   /** 待清理的 listener 取消器 */
@@ -107,18 +118,22 @@ export class InteractionController {
     const onMouseMove = (e: MouseEvent) => this.handleMouseMove(e);
     const onMouseUp   = (e: MouseEvent) => this.handleMouseUp(e);
     const onKeyDown   = (e: KeyboardEvent) => this.handleKeyDown(e);
+    const onWheel     = (e: WheelEvent) => this.handleWheel(e);
 
     this.container.addEventListener('mousedown', onMouseDown);
     // mousemove / mouseup 挂到 window:鼠标拖出容器仍要继续接收
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
     this.container.addEventListener('keydown', onKeyDown);
+    // wheel passive=false 才能 preventDefault(否则 macOS 双指会触发 history navigation)
+    this.container.addEventListener('wheel', onWheel, { passive: false });
 
     this.unsubscribers.push(
       () => this.container.removeEventListener('mousedown', onMouseDown),
       () => window.removeEventListener('mousemove', onMouseMove),
       () => window.removeEventListener('mouseup', onMouseUp),
       () => this.container.removeEventListener('keydown', onKeyDown),
+      () => this.container.removeEventListener('wheel', onWheel),
     );
   }
 
@@ -149,27 +164,50 @@ export class InteractionController {
       this.refreshOverlays();
       this.startDrag(world);
     } else {
-      // 空白处:清选区(下一步 M1.3b 接管成 pan)
+      // 空白处:非 additive 清选区,然后进入 pan
       if (!additive) this.clearSelection();
+      this.startPan(screen);
     }
   }
 
   private handleMouseMove(e: MouseEvent): void {
-    if (!this.dragging) return;
-    const screen = this.toContainerCoords(e);
-    const world = this.sceneManager.screenToWorld(screen.x, screen.y);
-    const dx = world.x - this.dragging.startWorld.x;
-    const dy = world.y - this.dragging.startWorld.y;
-
-    for (const [id, snap] of this.dragging.snapshots) {
-      const inst = this.getInstance(id);
-      if (!inst || !inst.position) continue;
-      inst.position.x = snap.x + dx;
-      inst.position.y = snap.y + dy;
-      // 通知 NodeRenderer 同步 group.position 并重渲染引用 line
-      this.nodeRenderer.updateLinesFor(id);
+    if (this.dragging) {
+      const screen = this.toContainerCoords(e);
+      const world = this.sceneManager.screenToWorld(screen.x, screen.y);
+      const dx = world.x - this.dragging.startWorld.x;
+      const dy = world.y - this.dragging.startWorld.y;
+      for (const [id, snap] of this.dragging.snapshots) {
+        const inst = this.getInstance(id);
+        if (!inst || !inst.position) continue;
+        inst.position.x = snap.x + dx;
+        inst.position.y = snap.y + dy;
+        this.nodeRenderer.updateLinesFor(id);
+      }
+      this.refreshOverlays();
+      return;
     }
-    this.refreshOverlays();
+
+    if (this.panning) {
+      const screen = this.toContainerCoords(e);
+      const dxScreen = screen.x - this.panning.startScreen.x;
+      const dyScreen = screen.y - this.panning.startScreen.y;
+      // 屏幕 → 世界比例:viewWidth / containerWidth
+      const containerW = this.container.clientWidth;
+      const containerH = this.container.clientHeight;
+      if (containerW === 0 || containerH === 0) return;
+      const aspect = containerW / containerH;
+      const viewW = this.panning.startViewWidth;
+      const viewH = viewW / aspect;
+      const dxWorld = (dxScreen / containerW) * viewW;
+      const dyWorld = (dyScreen / containerH) * viewH;
+      // pan:鼠标向右拖,viewCenter 应向左移(画面跟手指走)
+      this.sceneManager.setView(
+        this.panning.startCenter.x - dxWorld,
+        this.panning.startCenter.y - dyWorld,
+        viewW,
+      );
+      return;
+    }
   }
 
   private handleMouseUp(e: MouseEvent): void {
@@ -179,6 +217,41 @@ export class InteractionController {
       this.dragging = null;
       if (moved) this.onChange?.();
     }
+    if (this.panning) {
+      this.panning = null;
+      // pan 不影响数据,不触发 onChange
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────
+  // 滚轮(zoom-to-cursor)
+  // ─────────────────────────────────────────────────────────
+
+  private handleWheel(e: WheelEvent): void {
+    e.preventDefault();   // 阻止 macOS 双指 history navigation
+    const view = this.sceneManager.getView();
+    if (view.viewWidth <= 0) return;
+
+    // deltaY > 0:向下滚 = 缩小(zoom out,viewWidth 增大)
+    // deltaY < 0:向上滚 = 放大(zoom in,viewWidth 减小)
+    const factor = Math.exp(e.deltaY * WHEEL_ZOOM_SENSITIVITY);
+    const newViewWidth = view.viewWidth * factor;
+
+    // 限制 zoom 范围(防止数值爆炸或归零)
+    const containerW = this.container.clientWidth || 1;
+    const minViewWidth = containerW / MAX_ZOOM;     // 最大放大倍数
+    const maxViewWidth = containerW * MAX_ZOOM_OUT; // 最大缩小倍数
+    const clampedViewWidth = Math.max(minViewWidth, Math.min(maxViewWidth, newViewWidth));
+    if (clampedViewWidth === view.viewWidth) return;
+
+    // zoom-to-cursor:让鼠标下世界点保持在原屏幕位置
+    const screen = this.toContainerCoords(e);
+    const cursorWorld = this.sceneManager.screenToWorld(screen.x, screen.y);
+    const ratio = clampedViewWidth / view.viewWidth;
+    const newCenterX = cursorWorld.x - (cursorWorld.x - view.centerX) * ratio;
+    const newCenterY = cursorWorld.y - (cursorWorld.y - view.centerY) * ratio;
+    this.sceneManager.setView(newCenterX, newCenterY, clampedViewWidth);
+    // overlay 顶点是世界坐标,zoom 不需要刷新它们(camera 自然把它们映射到屏幕)
   }
 
   // ─────────────────────────────────────────────────────────
@@ -251,6 +324,15 @@ export class InteractionController {
     this.dragging = { startWorld, snapshots };
   }
 
+  private startPan(startScreen: { x: number; y: number }): void {
+    const view = this.sceneManager.getView();
+    this.panning = {
+      startScreen,
+      startCenter: { x: view.centerX, y: view.centerY },
+      startViewWidth: view.viewWidth,
+    };
+  }
+
   /** 同步 overlays 到当前 selected 集合 */
   private refreshOverlays(): void {
     // 删掉不在 selected 里的 overlay
@@ -302,6 +384,13 @@ export class InteractionController {
 const SELECTION_Z = 0.02;            // 比 stroke(0.01)高,确保覆盖在最上
 const SELECTION_COLOR = 0x4A90E2;
 const SELECTION_PADDING = 4;          // 选中线框比节点本身略大,视觉清楚
+
+/** 滚轮灵敏度:exp(deltaY * k) 是 zoom factor。k=0.001 时 deltaY=100 → 1.105x */
+const WHEEL_ZOOM_SENSITIVITY = 0.001;
+/** 最大放大:画板内容相对容器最大放大 50 倍(viewWidth = container/50) */
+const MAX_ZOOM = 50;
+/** 最大缩小:画板内容相对容器最大缩小 20 倍(viewWidth = container*20) */
+const MAX_ZOOM_OUT = 20;
 
 function isLineKind(node: RenderedNode): boolean {
   return !!node.shapeRef && node.shapeRef.startsWith('krig.line.');
