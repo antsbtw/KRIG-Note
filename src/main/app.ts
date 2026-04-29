@@ -50,7 +50,7 @@ function registerPlugins(): void {
   registerEBookPlugin(ctx);
   registerWebPlugin(ctx);
   registerThoughtPlugin();
-  registerGraphPlugin();
+  registerGraphPlugin(ctx);
 }
 
 // ── L2 框架菜单注册（View / Window / Help — 不含任何 View 专属逻辑） ──

@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { SceneManager } from './scene/SceneManager';
 import { NodeRenderer } from './scene/NodeRenderer';
@@ -70,7 +71,10 @@ export function CanvasView() {
     interactionRef.current = ic;
 
     // M1.2b dev self-check:走真实 instance JSON → NodeRenderer 全管线
-    nr.setInstances(devSelfCheckInstances());
+    // 仅 dev 构建启用;M1.5b 接通 graph-store 持久化后,这里改成从 noteId 反序列化
+    if (import.meta.env.DEV) {
+      nr.setInstances(devSelfCheckInstances());
+    }
 
     // Zoom 显示:轮询 sceneManager.getView()(SceneManager 没暴露事件)
     // 用 setInterval(150ms)而非 RAF — toolbar 上 % 数字不需要 60fps 精度,
