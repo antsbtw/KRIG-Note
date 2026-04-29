@@ -194,11 +194,9 @@ export function CanvasView() {
     if (pending) {
       pendingGraphIdRef.current = null;
       void loadGraph(pending);
-    } else if (import.meta.env.DEV) {
-      // Dev fallback:没有持久化 graph 时,挂上 dev self-check 内容
-      // 一旦 graphPendingOpen / onGraphOpenInView 触发就会被 loadGraph 替换
-      nr.setInstances(devSelfCheckInstances());
     }
+    // 没有持久化 graph 时,canvas 保持空白,empty overlay 显示提示;
+    // dev fixture 已删除(M1.5b.6 接通真实持久化后不再需要)
 
     // Zoom 显示:轮询 sceneManager.getView(),取整变化才 setState
     let lastReported = -1;
@@ -356,7 +354,7 @@ export function CanvasView() {
     setCombineDialogOpen(false);
   }, []);
 
-  const hasActiveGraph = activeGraphId !== null || import.meta.env.DEV;
+  const hasActiveGraph = activeGraphId !== null;
 
   return (
     <div style={styles.container}>
@@ -419,74 +417,6 @@ export function CanvasView() {
       />
     </div>
   );
-}
-
-/**
- * Dev self-check fixture:仅 import.meta.env.DEV 启用,在没有 activeGraphId 时
- * 提供"开箱即看到内容"的体验。一旦 graphPendingOpen / onGraphOpenInView 来了,
- * loadGraph 会清空 + 加载真实画板,fixture 被替换。
- *
- * M1 验收完成后,可以彻底删除这个函数(届时所有进入路径都从 NavSide create
- * 画板 走持久化)。
- */
-function devSelfCheckInstances(): Instance[] {
-  return [
-    {
-      id: 'dev-1',
-      type: 'shape',
-      ref: 'krig.basic.roundRect',
-      position: { x: 50, y: 50 },
-      size: { w: 200, h: 100 },
-      params: { r: 0.2 },
-    },
-    {
-      id: 'dev-2',
-      type: 'shape',
-      ref: 'krig.basic.diamond',
-      position: { x: 320, y: 50 },
-      size: { w: 120, h: 100 },
-      style_overrides: { fill: { color: '#e8a8c0' } },
-    },
-    {
-      id: 'dev-3',
-      type: 'shape',
-      ref: 'krig.basic.ellipse',
-      position: { x: 500, y: 50 },
-      size: { w: 100, h: 100 },
-    },
-    {
-      id: 'dev-4',
-      type: 'substance',
-      ref: 'library.family.person',
-      position: { x: 50, y: 220 },
-      props: { label: '贾宝玉', gender: 'M' },
-    },
-    {
-      id: 'dev-5',
-      type: 'substance',
-      ref: 'library.text-card',
-      position: { x: 280, y: 220 },
-      props: { label: 'Hello' },
-    },
-    {
-      id: 'dev-line-1',
-      type: 'shape',
-      ref: 'krig.line.elbow',
-      endpoints: [
-        { instance: 'dev-1', magnet: 'E' },
-        { instance: 'dev-3', magnet: 'W' },
-      ],
-    },
-    {
-      id: 'dev-line-2',
-      type: 'shape',
-      ref: 'krig.line.straight',
-      endpoints: [
-        { instance: 'dev-4', magnet: 'E' },
-        { instance: 'dev-5', magnet: 'W' },
-      ],
-    },
-  ];
 }
 
 const styles: Record<string, React.CSSProperties> = {
