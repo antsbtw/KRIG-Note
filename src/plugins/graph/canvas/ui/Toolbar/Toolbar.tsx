@@ -196,7 +196,7 @@ const styles: Record<string, CSSProperties> = {
   },
   actionBtnActive: {
     background: 'var(--krig-accent-bg)',
-    borderColor: 'var(--krig-accent-border)',
+    border: '1px solid var(--krig-accent-border)',
   },
   iconBtnLg: {
     background: 'transparent',

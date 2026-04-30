@@ -121,8 +121,12 @@ export function deserialize(
   // 3. 装配画板
   nr.setInstances(validInstances);
 
-  // 4. 恢复视口(viewBox → setView)
-  if (doc.viewBox && Number.isFinite(doc.viewBox.w) && doc.viewBox.w > 0) {
+  // 4. 恢复视口
+  // 空画板:不调 setView,让 SceneManager 保持 1:1 容器映射(避免 view 与
+  // container 比例错位导致鼠标位置和 mesh 位置不一致)
+  // 有内容:从 doc.viewBox 恢复用户上次的视口
+  const hasContent = validInstances.length > 0;
+  if (hasContent && doc.viewBox && Number.isFinite(doc.viewBox.w) && doc.viewBox.w > 0) {
     const cx = doc.viewBox.x + doc.viewBox.w / 2;
     const cy = doc.viewBox.y + doc.viewBox.h / 2;
     sm.setView(cx, cy, doc.viewBox.w);

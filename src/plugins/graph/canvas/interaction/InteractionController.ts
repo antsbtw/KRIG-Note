@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 import * as THREE from 'three';
 import type { SceneManager } from '../scene/SceneManager';
 import type { NodeRenderer, RenderedNode } from '../scene/NodeRenderer';
@@ -202,6 +203,26 @@ export class InteractionController {
     }
 
     const hit = this.hitTest(world);
+    // 调试用:M1 验收期保留,确认 hit-test 链路通畅后可删
+    if (import.meta.env.DEV) {
+      const ids = this.nodeRenderer.ids();
+      const bboxes = ids.map((id) => {
+        const n = this.nodeRenderer.get(id);
+        if (!n) return `${id}=null`;
+        return `${id}@(${n.position.x.toFixed(0)},${n.position.y.toFixed(0)}) ${n.size.w.toFixed(0)}x${n.size.h.toFixed(0)}`;
+      }).join(' | ');
+      const v = this.sceneManager.getView();
+      const c = this.container;
+      // eslint-disable-next-line no-console
+      console.log(
+        `[mouseDown] screen=(${screen.x.toFixed(0)},${screen.y.toFixed(0)}) ` +
+        `world=(${world.x.toFixed(0)},${world.y.toFixed(0)}) ` +
+        `hit=${hit ?? 'null'} ` +
+        `view=center(${v.centerX.toFixed(0)},${v.centerY.toFixed(0)}) ${v.viewWidth.toFixed(0)}x${v.viewHeight.toFixed(0)} ` +
+        `container=${c.clientWidth}x${c.clientHeight} ` +
+        `instances=[${bboxes}]`
+      );
+    }
     const additive = e.shiftKey || e.metaKey;
     if (hit) {
       if (additive) {
