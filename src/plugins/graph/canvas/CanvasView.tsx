@@ -186,6 +186,7 @@ export function CanvasView() {
       container: containerRef.current,
       sceneManager: sm,
       nodeRenderer: nr,
+      handlesOverlay: handles,
       getInstance: (id) => nr.getInstance(id),
       onChange: () => scheduleSave(),
       onAddModeChange: (spec) => setAddMode(spec),

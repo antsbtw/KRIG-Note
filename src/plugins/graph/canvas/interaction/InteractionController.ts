@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import type { SceneManager } from '../scene/SceneManager';
 import type { NodeRenderer, RenderedNode } from '../scene/NodeRenderer';
+import type { HandlesOverlay, HandleKind } from '../scene/HandlesOverlay';
 import type { Instance, InstanceKind } from '../../library/types';
 import { ShapeRegistry } from '../../library/shapes';
 import { SubstanceRegistry } from '../../library/substances';
@@ -29,6 +30,7 @@ export class InteractionController {
   private container: HTMLElement;
   private sceneManager: SceneManager;
   private nodeRenderer: NodeRenderer;
+  private handlesOverlay: HandlesOverlay;
   /** id → 原始 Instance(供拖动时改 position 用) */
   private getInstance: (id: string) => Instance | undefined;
   /** 拖动结束的回调(M1.5 持久化用) */
@@ -36,8 +38,8 @@ export class InteractionController {
 
   /** 当前选中的 instance id 集合 */
   private selected = new Set<string>();
-  /** instanceId → overlay group(选中态线框) */
-  private overlays = new Map<string, THREE.Group>();
+  /** instanceId → overlay LineLoop(选中态线框) */
+  private overlays = new Map<string, THREE.LineLoop>();
 
   /** 拖动节点状态 */
   private dragging: {
@@ -56,6 +58,29 @@ export class InteractionController {
     startZoom: number;
   } | null = null;
 
+  /** Resize 状态(8 个边/角 handle 之一) */
+  private resizing: {
+    instanceId: string;
+    handle: Exclude<HandleKind, 'rotate'>;
+    /** mouse-down 时的世界坐标 */
+    startWorld: { x: number; y: number };
+    /** mouse-down 时节点 position / size / rotation 快照 */
+    startPos: { x: number; y: number };
+    startSize: { w: number; h: number };
+    startRotation: number;
+  } | null = null;
+
+  /** Rotation 状态(rotation handle) */
+  private rotating: {
+    instanceId: string;
+    /** 节点 bbox 中心(世界坐标) */
+    centerWorld: { x: number; y: number };
+    /** mouse-down 时鼠标 → 中心连线的角度(度数,顺时针,与 Instance.rotation 同向) */
+    startAngle: number;
+    /** mouse-down 时节点的 rotation 快照 */
+    startRotation: number;
+  } | null = null;
+
   /** 添加模式 — 用户从 Picker 选了一个 shape/substance,等点击画布放置 */
   private addMode: AddModeSpec | null = null;
   /** 添加模式状态变化回调(给 UI 同步光标 / 提示) */
@@ -68,10 +93,23 @@ export class InteractionController {
   /** 待清理的 listener 取消器 */
   private unsubscribers: Array<() => void> = [];
 
+  /**
+   * Undo/Redo 历史栈
+   * 每个原子操作(add / delete / drag end / resize end / rotate end)前调
+   * pushHistory() 记录当前 instances 全量快照(v1 数据小,直接全量复制)
+   *
+   * Cmd+Z 弹 undoStack 顶部 → 应用,把"当前状态"压到 redoStack
+   * Cmd+Shift+Z 反之
+   */
+  private undoStack: Instance[][] = [];
+  private redoStack: Instance[][] = [];
+  private static readonly HISTORY_LIMIT = 50;
+
   constructor(opts: {
     container: HTMLElement;
     sceneManager: SceneManager;
     nodeRenderer: NodeRenderer;
+    handlesOverlay: HandlesOverlay;
     getInstance: (id: string) => Instance | undefined;
     onChange?: () => void;
     onAddModeChange?: (spec: AddModeSpec | null) => void;
@@ -81,6 +119,7 @@ export class InteractionController {
     this.container = opts.container;
     this.sceneManager = opts.sceneManager;
     this.nodeRenderer = opts.nodeRenderer;
+    this.handlesOverlay = opts.handlesOverlay;
     this.getInstance = opts.getInstance;
     this.onChange = opts.onChange;
     this.onAddModeChange = opts.onAddModeChange;
@@ -217,6 +256,18 @@ export class InteractionController {
       return;
     }
 
+    // Handle 命中优先(只有单选时 HandlesOverlay 有 target)
+    const handleHit = this.handlesOverlay.hitTest(screen.x, screen.y);
+    const handleTarget = this.handlesOverlay.getTarget();
+    if (handleHit && handleTarget) {
+      if (handleHit === 'rotate') {
+        this.startRotate(handleTarget, world);
+      } else {
+        this.startResize(handleTarget, handleHit, world);
+      }
+      return;
+    }
+
     const hit = this.hitTest(world);
     const additive = e.shiftKey || e.metaKey;
     if (hit) {
@@ -245,6 +296,7 @@ export class InteractionController {
   private placeInstance(world: { x: number; y: number }, _clickScreen?: { x: number; y: number }): void {
     const spec = this.addMode;
     if (!spec) return;
+    this.pushHistory();
 
     const size = resolveDefaultSize(spec);
     const id = this.nodeRenderer.nextInstanceId();
@@ -271,6 +323,22 @@ export class InteractionController {
   }
 
   private handleMouseMove(e: MouseEvent): void {
+    if (this.resizing) {
+      this.setCursor('grabbing');
+      const screen = this.toContainerCoords(e);
+      const world = this.sceneManager.screenToWorld(screen.x, screen.y);
+      this.applyResize(world);
+      return;
+    }
+
+    if (this.rotating) {
+      this.setCursor('grabbing');
+      const screen = this.toContainerCoords(e);
+      const world = this.sceneManager.screenToWorld(screen.x, screen.y);
+      this.applyRotate(world, e.shiftKey);
+      return;
+    }
+
     if (this.dragging) {
       this.setCursor('grabbing');
       const screen = this.toContainerCoords(e);
@@ -305,7 +373,7 @@ export class InteractionController {
       return;
     }
 
-    // 既不在 drag 也不在 pan:hover hit-test 切 cursor(grab vs default)
+    // 既不在 drag 也不在 pan:hover hit-test 切 cursor(handle / grab / default)
     // 添加模式由 enterAddMode/exitAddMode 设 crosshair,不在这里覆盖
     if (this.addMode) return;
     // 鼠标在容器外时 toContainerCoords 会给负值,此时不切;只在容器内
@@ -313,6 +381,12 @@ export class InteractionController {
     if (e.clientX < rect.left || e.clientX > rect.right ||
         e.clientY < rect.top || e.clientY > rect.bottom) return;
     const screen = this.toContainerCoords(e);
+    // handle hover 优先于节点 hover
+    const handleHit = this.handlesOverlay.hitTest(screen.x, screen.y);
+    if (handleHit) {
+      this.setCursor(cursorForHandle(handleHit, this.handlesOverlay.getTarget()?.rotation ?? 0));
+      return;
+    }
     const world = this.sceneManager.screenToWorld(screen.x, screen.y);
     const hit = this.hitTest(world);
     this.setCursor(hit ? 'grab' : 'default');
@@ -320,6 +394,14 @@ export class InteractionController {
 
   private handleMouseUp(e: MouseEvent): void {
     if (e.button !== 0) return;
+    if (this.resizing) {
+      this.resizing = null;
+      this.onChange?.();
+    }
+    if (this.rotating) {
+      this.rotating = null;
+      this.onChange?.();
+    }
     if (this.dragging) {
       const moved = !!this.dragging.snapshots.size;
       this.dragging = null;
@@ -374,9 +456,18 @@ export class InteractionController {
   // ─────────────────────────────────────────────────────────
 
   private handleKeyDown(e: KeyboardEvent): void {
+    // Cmd/Ctrl + Z / Shift+Z(undo / redo)
+    if ((e.metaKey || e.ctrlKey) && (e.key === 'z' || e.key === 'Z')) {
+      e.preventDefault();
+      if (e.shiftKey) this.redo();
+      else this.undo();
+      return;
+    }
+
     if (e.key === 'Delete' || e.key === 'Backspace') {
       if (this.selected.size === 0) return;
       e.preventDefault();
+      this.pushHistory();
       const ids = Array.from(this.selected);
       this.selected.clear();
       for (const id of ids) {
@@ -408,7 +499,11 @@ export class InteractionController {
   // hit-test / 拖动 / overlay
   // ─────────────────────────────────────────────────────────
 
-  /** AABB hit-test;返回最上层(后渲染)被命中的 instance id,否则 null */
+  /**
+   * OBB hit-test:把 world 点逆变换到节点本地坐标(中心为原点),再做 AABB 测试。
+   * 这样旋转后的节点也能精确命中,不会出现"鼠标在 shape 内但点不中"。
+   * 返回最上层(后渲染)被命中的 instance id,否则 null
+   */
   private hitTest(world: { x: number; y: number }): string | null {
     let best: { id: string; area: number } | null = null;
     for (const id of this.nodeRenderer.ids()) {
@@ -418,11 +513,22 @@ export class InteractionController {
       // line 的 size 可能是 0(start==end),用一个 padding 让命中带容忍
       if (size.w === 0 && size.h === 0) continue;
       const padding = isLineKind(node) ? 8 : 0;
-      const x1 = position.x - padding;
-      const y1 = position.y - padding;
-      const x2 = position.x + size.w + padding;
-      const y2 = position.y + size.h + padding;
-      if (world.x >= x1 && world.x <= x2 && world.y >= y1 && world.y <= y2) {
+
+      // bbox 中心(世界坐标)
+      const cx = position.x + size.w / 2;
+      const cy = position.y + size.h / 2;
+      // world → 本地:平移到中心 + 逆旋转
+      const dx = world.x - cx;
+      const dy = world.y - cy;
+      const rad = -((node.rotation ?? 0) * Math.PI) / 180;
+      const cos = Math.cos(rad);
+      const sin = Math.sin(rad);
+      const lx = dx * cos - dy * sin;
+      const ly = dx * sin + dy * cos;
+      // 本地 AABB 测试
+      const halfW = size.w / 2 + padding;
+      const halfH = size.h / 2 + padding;
+      if (lx >= -halfW && lx <= halfW && ly >= -halfH && ly <= halfH) {
         // 选最小面积(假设小的在更上层 / 更精确)
         const area = size.w * size.h;
         if (!best || area < best.area) best = { id, area };
@@ -442,6 +548,7 @@ export class InteractionController {
       this.dragging = null;
       return;
     }
+    this.pushHistory();
     this.dragging = { startWorld, snapshots };
   }
 
@@ -452,6 +559,204 @@ export class InteractionController {
       startCenter: { x: view.centerX, y: view.centerY },
       startZoom: view.zoom,
     };
+  }
+
+  /** 进入 resize 状态:记录起始尺寸/位置/旋转,后续 mousemove 应用 delta */
+  private startResize(
+    node: RenderedNode,
+    handle: Exclude<HandleKind, 'rotate'>,
+    startWorld: { x: number; y: number },
+  ): void {
+    this.pushHistory();
+    this.resizing = {
+      instanceId: node.instanceId,
+      handle,
+      startWorld,
+      startPos: { x: node.position.x, y: node.position.y },
+      startSize: { w: node.size.w, h: node.size.h },
+      startRotation: node.rotation ?? 0,
+    };
+  }
+
+  /** 进入 rotate 状态:记录中心 + 起始角度 */
+  private startRotate(node: RenderedNode, startWorld: { x: number; y: number }): void {
+    this.pushHistory();
+    const cx = node.position.x + node.size.w / 2;
+    const cy = node.position.y + node.size.h / 2;
+    // atan2 在 Y-flip 世界里:角度 = atan2(world.y - cy, world.x - cx) * 180/π
+    // (Y 向下 = 度数顺时针增长,与 Instance.rotation 同向)
+    const startAngle = (Math.atan2(startWorld.y - cy, startWorld.x - cx) * 180) / Math.PI;
+    this.rotating = {
+      instanceId: node.instanceId,
+      centerWorld: { x: cx, y: cy },
+      startAngle,
+      startRotation: node.rotation ?? 0,
+    };
+  }
+
+  /**
+   * 应用 resize:支持 8 个 handle + 已旋转节点
+   * 算法:把 mouse delta 转回节点本地坐标(去 startRotation),按 handle 类型
+   * 调整 local 半宽/半高 + 中心位移,再把中心位移转回世界坐标更新 position
+   */
+  private applyResize(world: { x: number; y: number }): void {
+    const r = this.resizing;
+    if (!r) return;
+    const inst = this.getInstance(r.instanceId);
+    if (!inst || !inst.position || !inst.size) return;
+
+    // 起始 bbox 中心(世界)
+    const startCx = r.startPos.x + r.startSize.w / 2;
+    const startCy = r.startPos.y + r.startSize.h / 2;
+
+    // 鼠标 delta(世界)
+    const dx = world.x - r.startWorld.x;
+    const dy = world.y - r.startWorld.y;
+
+    // delta 转本地坐标(逆 rotation)
+    const rad = (-r.startRotation * Math.PI) / 180;
+    const cos = Math.cos(rad);
+    const sin = Math.sin(rad);
+    const ldx = dx * cos - dy * sin;
+    const ldy = dx * sin + dy * cos;
+
+    // handle → 该 handle 在本地坐标的方向(sx/sy ∈ {-1, 0, 1})
+    // sx=-1 表示 west 边(左),+1 表示 east 边(右);sy 同理 north/south
+    const dir = handleDir(r.handle);
+    const isCorner = dir.x !== 0 && dir.y !== 0;
+
+    // 起始本地半宽/半高
+    const startHW = r.startSize.w / 2;
+    const startHH = r.startSize.h / 2;
+    const minHalf = 5; // 最小半宽,避免缩到 0/负
+    let newHW = startHW;
+    let newHH = startHH;
+    let centerShiftX = 0;  // 本地中心位移
+    let centerShiftY = 0;
+
+    if (isCorner) {
+      // 角 handle = 等比缩放:沿对角线方向投影
+      const startHX = dir.x * startHW;
+      const startHY = dir.y * startHH;
+      const newHX = startHX + ldx;
+      const newHY = startHY + ldy;
+      const startLen = Math.hypot(startHX, startHY);
+      const proj = (newHX * startHX + newHY * startHY) / startLen;
+      const ratio = Math.max(minHalf / Math.min(startHW, startHH), proj / startLen);
+      newHW = startHW * ratio;
+      newHH = startHH * ratio;
+      centerShiftX = dir.x * (newHW - startHW) / 2;
+      centerShiftY = dir.y * (newHH - startHH) / 2;
+    } else {
+      // 边 handle = 单边缩放
+      if (dir.x !== 0) {
+        newHW = Math.max(minHalf, startHW + dir.x * ldx);
+        centerShiftX = dir.x * (newHW - startHW) / 2;
+      }
+      if (dir.y !== 0) {
+        newHH = Math.max(minHalf, startHH + dir.y * ldy);
+        centerShiftY = dir.y * (newHH - startHH) / 2;
+      }
+    }
+
+    // 本地中心位移转回世界
+    const cosBack = Math.cos((r.startRotation * Math.PI) / 180);
+    const sinBack = Math.sin((r.startRotation * Math.PI) / 180);
+    const wShiftX = centerShiftX * cosBack - centerShiftY * sinBack;
+    const wShiftY = centerShiftX * sinBack + centerShiftY * cosBack;
+
+    const newCx = startCx + wShiftX;
+    const newCy = startCy + wShiftY;
+    const newW = newHW * 2;
+    const newH = newHH * 2;
+
+    inst.size.w = newW;
+    inst.size.h = newH;
+    inst.position.x = newCx - newW / 2;
+    inst.position.y = newCy - newH / 2;
+    this.nodeRenderer.update(inst);
+    // update 重建了 group,HandlesOverlay 持有的旧 RenderedNode 失效 → 刷新
+    this.handlesOverlay.setTarget(this.nodeRenderer.get(r.instanceId) ?? null);
+    this.refreshOverlays();
+  }
+
+  /** 应用 rotate:计算当前角度 - 起始角度,加到 startRotation 上 */
+  private applyRotate(world: { x: number; y: number }, snap: boolean): void {
+    const r = this.rotating;
+    if (!r) return;
+    const inst = this.getInstance(r.instanceId);
+    if (!inst) return;
+
+    const curAngle = (Math.atan2(world.y - r.centerWorld.y, world.x - r.centerWorld.x) * 180) / Math.PI;
+    let newRot = r.startRotation + (curAngle - r.startAngle);
+    // 归一化到 [-180, 180]
+    while (newRot > 180) newRot -= 360;
+    while (newRot < -180) newRot += 360;
+    if (snap) {
+      // Shift 按住 → 吸附到 15 度倍数
+      newRot = Math.round(newRot / 15) * 15;
+    }
+
+    inst.rotation = newRot;
+    this.nodeRenderer.update(inst);
+    this.handlesOverlay.setTarget(this.nodeRenderer.get(r.instanceId) ?? null);
+    this.refreshOverlays();
+  }
+
+  // ─────────────────────────────────────────────────────────
+  // Undo / Redo
+  // ─────────────────────────────────────────────────────────
+
+  /** 在原子操作前调:把当前 instances 全量快照压入 undo stack,清 redo stack */
+  private pushHistory(): void {
+    const snap = this.nodeRenderer.listInstances().map(cloneInstance);
+    this.undoStack.push(snap);
+    if (this.undoStack.length > InteractionController.HISTORY_LIMIT) {
+      this.undoStack.shift();
+    }
+    // 新分支操作 → redo 栈作废
+    this.redoStack = [];
+  }
+
+  private undo(): void {
+    const prev = this.undoStack.pop();
+    if (!prev) return;
+    // 当前状态进 redo
+    this.redoStack.push(this.nodeRenderer.listInstances().map(cloneInstance));
+    this.applySnapshot(prev);
+  }
+
+  private redo(): void {
+    const next = this.redoStack.pop();
+    if (!next) return;
+    this.undoStack.push(this.nodeRenderer.listInstances().map(cloneInstance));
+    this.applySnapshot(next);
+  }
+
+  /** 把一份 instances 快照加载回画板:清空,逐个 add,清选区,触发持久化 */
+  private applySnapshot(snap: Instance[]): void {
+    // 1. 中断进行中的拖动 / resize / rotate(避免回放后状态错乱)
+    this.dragging = null;
+    this.resizing = null;
+    this.rotating = null;
+
+    // 2. 清画板
+    this.nodeRenderer.clear();
+    // 3. 重新 add(NodeRenderer.add 会走完整渲染管线)
+    for (const inst of snap) this.nodeRenderer.add(cloneInstance(inst));
+
+    // 4. 清选区 + handles + overlays
+    this.selected.clear();
+    for (const [, overlay] of this.overlays) {
+      this.sceneManager.scene.remove(overlay);
+      disposeOverlayGroup(overlay);
+    }
+    this.overlays.clear();
+    this.handlesOverlay.setTarget(null);
+    this.notifySelectionChanged();
+
+    // 5. 触发持久化(把回放后的状态保存)
+    this.onChange?.();
   }
 
   /** 同步 overlays 到当前 selected 集合 */
@@ -470,7 +775,7 @@ export class InteractionController {
       if (!node) continue;
       const existing = this.overlays.get(id);
       if (existing) {
-        // 复用 group,重建 4 条边 mesh(node.position/size 可能变了)
+        // 复用 LineLoop,更新 4 个顶点(node.position/size 可能变了)
         rebuildSelectionBorder(existing, node);
       } else {
         const overlay = makeSelectionOverlay(node);
@@ -540,10 +845,7 @@ function resolveDefaultSize(spec: AddModeSpec): { w: number; h: number } {
 
 const SELECTION_Z = 0.02;            // 比 stroke(0.01)高,确保覆盖在最上
 const SELECTION_COLOR = 0x4A90E2;
-const SELECTION_PADDING = 4;          // 选中线框比节点本身略大,视觉清楚
-const SELECTION_BORDER_WIDTH = 2;    // 边框线宽(世界坐标);用 mesh 拼实现,
-                                      // 不依赖 LineBasicMaterial.linewidth(macOS
-                                      // WebGL 多数实现忽略这个属性,永远 1px)
+const SELECTION_PADDING = 0;          // 边框紧贴 shape 边
 
 /** 滚轮灵敏度:exp(-deltaY * k) 是 zoom factor。k=0.001 时 deltaY=100 → 0.905x(缩小) */
 const WHEEL_ZOOM_SENSITIVITY = 0.001;
@@ -556,60 +858,94 @@ function isLineKind(node: RenderedNode): boolean {
   return !!node.shapeRef && node.shapeRef.startsWith('krig.line.');
 }
 
-/** 释放 overlay group 内所有子 mesh 的 geometry/material */
-function disposeOverlayGroup(group: THREE.Group): void {
-  for (const child of group.children) {
-    const mesh = child as THREE.Mesh;
-    if (mesh.geometry) mesh.geometry.dispose();
-    const m = mesh.material;
-    if (Array.isArray(m)) for (const x of m) x.dispose(); else (m as THREE.Material).dispose();
+/** Instance 深拷贝(undo/redo 快照用;v1 数据结构简单,structuredClone 够用) */
+function cloneInstance(inst: Instance): Instance {
+  return structuredClone(inst);
+}
+
+/** Handle 的方向向量(本地坐标;Y 向下) */
+function handleDir(h: Exclude<HandleKind, 'rotate'>): { x: number; y: number } {
+  switch (h) {
+    case 'nw': return { x: -1, y: -1 };
+    case 'n':  return { x:  0, y: -1 };
+    case 'ne': return { x:  1, y: -1 };
+    case 'e':  return { x:  1, y:  0 };
+    case 'se': return { x:  1, y:  1 };
+    case 's':  return { x:  0, y:  1 };
+    case 'sw': return { x: -1, y:  1 };
+    case 'w':  return { x: -1, y:  0 };
   }
 }
 
 /**
- * 选中边框 overlay:用 4 个细矩形 fill mesh 拼成边框,而不是 LineSegments
- * 因为 LineBasicMaterial.linewidth 在 macOS WebGL 多数实现里被忽略(永远 1px),
- * 看不清。用 mesh 边宽可控、跨平台稳定。
+ * 给 handle hover/drag 选择 cursor。
+ * 节点旋转后 handle 视觉位置变了,cursor 也要相应旋转
+ * (rotation 折算到最近的 8 方位,挑对应 cursor)
  */
-function makeSelectionOverlay(node: RenderedNode): THREE.Group {
-  const group = new THREE.Group();
-  rebuildSelectionBorder(group, node);
-  return group;
+function cursorForHandle(h: HandleKind, rotationDeg: number): string {
+  if (h === 'rotate') return 'grab';
+  // 把 handle 方向旋转到当前角度后,看落在哪个 8 方位 bucket
+  const baseDeg: Record<Exclude<HandleKind, 'rotate'>, number> = {
+    n: -90, ne: -45, e: 0, se: 45, s: 90, sw: 135, w: 180, nw: -135,
+  };
+  let deg = (baseDeg[h] + rotationDeg + 360 + 22.5) % 360;
+  const bucket = Math.floor(deg / 45);  // 0..7
+  // bucket 0..7 → e, se, s, sw, w, nw, n, ne
+  const cursors = ['ew-resize', 'nwse-resize', 'ns-resize', 'nesw-resize',
+                   'ew-resize', 'nwse-resize', 'ns-resize', 'nesw-resize'];
+  return cursors[bucket];
 }
 
-/** 重建 group 内的 4 条边 mesh(初始 mount + 每次 size/position 变更都用) */
-function rebuildSelectionBorder(group: THREE.Group, node: RenderedNode): void {
-  // 清掉旧子节点
-  while (group.children.length > 0) {
-    const child = group.children[0];
-    group.remove(child);
-    const mesh = child as THREE.Mesh;
-    if (mesh.geometry) mesh.geometry.dispose();
-    const m = mesh.material;
-    if (Array.isArray(m)) for (const x of m) x.dispose(); else (m as THREE.Material).dispose();
-  }
+/** 释放 LineLoop 的 geometry/material */
+function disposeOverlayGroup(loop: THREE.LineLoop): void {
+  loop.geometry.dispose();
+  const m = loop.material;
+  if (Array.isArray(m)) for (const x of m) x.dispose(); else (m as THREE.Material).dispose();
+}
 
-  const x1 = node.position.x - SELECTION_PADDING;
-  const y1 = node.position.y - SELECTION_PADDING;
-  const x2 = node.position.x + node.size.w + SELECTION_PADDING;
-  const y2 = node.position.y + node.size.h + SELECTION_PADDING;
-  const w = SELECTION_BORDER_WIDTH;
+/**
+ * 选中边框 overlay:用 LineLoop 描节点 bbox 边框
+ * (之前用 4 个 PlaneGeometry mesh 在 Y-flip frustum 下偶发渲染异常,
+ *  且 handles 已是清晰的选中视觉指示,边框只需轻量 1px 蓝线)
+ */
+function makeSelectionOverlay(node: RenderedNode): THREE.LineLoop {
+  const geom = new THREE.BufferGeometry();
+  geom.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(4 * 3), 3));
+  const mat = new THREE.LineBasicMaterial({ color: SELECTION_COLOR });
+  const loop = new THREE.LineLoop(geom, mat);
+  rebuildSelectionBorder(loop, node);
+  return loop;
+}
 
-  // DoubleSide 防 Y 翻转 frustum 下 face culling 把朝镜头的面剔掉
-  const mat = new THREE.MeshBasicMaterial({ color: SELECTION_COLOR, transparent: false, side: THREE.DoubleSide });
-  // 4 条边 mesh:top / right / bottom / left
-  const edges: Array<[number, number, number, number]> = [
-    [x1 - w / 2, y1 - w / 2, x2 + w / 2, y1 + w / 2],   // top
-    [x2 - w / 2, y1 - w / 2, x2 + w / 2, y2 + w / 2],   // right
-    [x1 - w / 2, y2 - w / 2, x2 + w / 2, y2 + w / 2],   // bottom
-    [x1 - w / 2, y1 - w / 2, x1 + w / 2, y2 + w / 2],   // left
+/**
+ * 更新 LineLoop 的 4 个顶点(初始 mount + 每次 size/position 变更都用)
+ * 节点旋转时,4 顶点绕 bbox 中心做对应旋转(OBB),让边框紧贴旋转后的 shape
+ */
+function rebuildSelectionBorder(loop: THREE.LineLoop, node: RenderedNode): void {
+  const cx = node.position.x + node.size.w / 2;
+  const cy = node.position.y + node.size.h / 2;
+  const halfW = node.size.w / 2 + SELECTION_PADDING;
+  const halfH = node.size.h / 2 + SELECTION_PADDING;
+  const rad = ((node.rotation ?? 0) * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  const z = SELECTION_Z;
+
+  // 4 个本地角点(相对中心),经 rotation 转回世界
+  const corners: Array<[number, number]> = [
+    [-halfW, -halfH],   // 左上
+    [ halfW, -halfH],   // 右上
+    [ halfW,  halfH],   // 右下
+    [-halfW,  halfH],   // 左下
   ];
-  for (const [ex1, ey1, ex2, ey2] of edges) {
-    const ew = ex2 - ex1;
-    const eh = ey2 - ey1;
-    const geom = new THREE.PlaneGeometry(ew, eh);
-    const mesh = new THREE.Mesh(geom, mat);
-    mesh.position.set(ex1 + ew / 2, ey1 + eh / 2, SELECTION_Z);
-    group.add(mesh);
+  const attr = loop.geometry.getAttribute('position') as THREE.BufferAttribute;
+  const arr = attr.array as Float32Array;
+  for (let i = 0; i < 4; i++) {
+    const [lx, ly] = corners[i];
+    arr[i * 3]     = cx + lx * cos - ly * sin;
+    arr[i * 3 + 1] = cy + lx * sin + ly * cos;
+    arr[i * 3 + 2] = z;
   }
+  attr.needsUpdate = true;
+  loop.geometry.computeBoundingSphere();
 }

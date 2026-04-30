@@ -28,8 +28,8 @@ export type HandleKind =
   | 'sw' | 's' | 'se'   // 下
   | 'rotate';
 
-const HANDLE_RADIUS = 5;          // 圆 handle 半径(像素)
-const HANDLE_BORDER = 1.5;        // 边框宽度(像素)
+const HANDLE_RADIUS = 3.3;        // 圆 handle 半径(像素)
+const HANDLE_BORDER = 1;          // 边框宽度(像素)
 const ROTATION_OFFSET = 24;       // rotation handle 距 top 的像素
 
 const HANDLE_COLOR = 0xffffff;          // 内部白色
