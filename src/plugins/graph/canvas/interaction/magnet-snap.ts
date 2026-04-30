@@ -37,14 +37,10 @@ export const MAGNET_SNAP_RADIUS_PX = 16;
 export function listMagnets(node: RenderedNode, instance: Instance): WorldMagnet[] {
   const magnets = magnetsForInstance(instance);
   if (!magnets) return [];
-  const { x: px, y: py } = node.position;
-  const { w, h } = node.size;
-  return magnets.map((m) => ({
-    instanceId: instance.id,
-    magnetId: m.id,
-    x: px + m.x * w,
-    y: py + m.y * h,
-  }));
+  return magnets.map((m) => {
+    const { x, y } = magnetToWorld(node, m.x, m.y);
+    return { instanceId: instance.id, magnetId: m.id, x, y };
+  });
 }
 
 /** 解析单个 magnet 的世界坐标;失败返回 null */
@@ -57,9 +53,31 @@ export function resolveMagnet(
   if (!magnets) return null;
   const m = magnets.find((mm) => mm.id === magnetId);
   if (!m) return null;
+  return magnetToWorld(node, m.x, m.y);
+}
+
+/**
+ * 把本地归一化 magnet 坐标(0..1)转世界坐标,考虑节点 rotation
+ * 算法:本地相对 bbox 中心 → 旋转 → 平移到 bbox 中心(世界)
+ */
+function magnetToWorld(
+  node: RenderedNode,
+  mxNorm: number,
+  myNorm: number,
+): { x: number; y: number } {
+  const { x: px, y: py } = node.position;
+  const { w, h } = node.size;
+  const cx = px + w / 2;
+  const cy = py + h / 2;
+  // magnet 在 bbox 内的本地坐标(中心为原点)
+  const lx = (mxNorm - 0.5) * w;
+  const ly = (myNorm - 0.5) * h;
+  const rad = ((node.rotation ?? 0) * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
   return {
-    x: node.position.x + m.x * node.size.w,
-    y: node.position.y + m.y * node.size.h,
+    x: cx + lx * cos - ly * sin,
+    y: cy + lx * sin + ly * cos,
   };
 }
 
