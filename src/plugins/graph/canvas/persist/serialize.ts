@@ -121,16 +121,15 @@ export function deserialize(
   // 3. 装配画板
   nr.setInstances(validInstances);
 
-  // 4. 恢复视口
-  // 空画板:不调 setView,让 SceneManager 保持 1:1 容器映射(避免 view 与
-  // container 比例错位导致鼠标位置和 mesh 位置不一致)
-  // 有内容:从 doc.viewBox 恢复用户上次的视口
-  const hasContent = validInstances.length > 0;
-  if (hasContent && doc.viewBox && Number.isFinite(doc.viewBox.w) && doc.viewBox.w > 0) {
-    const cx = doc.viewBox.x + doc.viewBox.w / 2;
-    const cy = doc.viewBox.y + doc.viewBox.h / 2;
-    sm.setView(cx, cy, doc.viewBox.w);
-  }
+  // 4. 视口处理(v1 简化:不应用 doc.viewBox)
+  // 原因:viewBox 在 SceneManager mount 早期容器尺寸还不稳定时应用会导致 view
+  // 与 container 比例错位,造成 world 单位 ≠ 像素单位,所有鼠标交互(添加 /
+  // 选中 / 拖动)位置错乱。v1 简化为:画板永远以容器 1:1 映射(zoom=1)打开,
+  // 用户每次进画板自己 pan/zoom 调整。M2 修复 mount 时机问题后再启用 viewBox
+  // 持久化。
+  // 引用:doc.viewBox 字段仍序列化存储,只是反序列化时不应用 — 给 v2 升级路径留位
+  void sm;
+  void doc.viewBox;
 
   return result;
 }

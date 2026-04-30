@@ -37,7 +37,7 @@ export class InteractionController {
   /** 当前选中的 instance id 集合 */
   private selected = new Set<string>();
   /** instanceId → overlay group(选中态线框) */
-  private overlays = new Map<string, THREE.LineSegments>();
+  private overlays = new Map<string, THREE.Group>();
 
   /** 拖动节点状态 */
   private dragging: {
@@ -117,7 +117,7 @@ export class InteractionController {
    */
   enterAddMode(spec: AddModeSpec): void {
     this.addMode = spec;
-    this.container.style.cursor = 'crosshair';
+    this.setCursor('crosshair');
     this.onAddModeChange?.(spec);
   }
 
@@ -125,7 +125,7 @@ export class InteractionController {
   exitAddMode(): void {
     if (!this.addMode) return;
     this.addMode = null;
-    this.container.style.cursor = '';
+    this.setCursor('default');
     this.onAddModeChange?.(null);
   }
 
@@ -140,18 +140,16 @@ export class InteractionController {
     this.unsubscribers = [];
     for (const overlay of this.overlays.values()) {
       this.sceneManager.scene.remove(overlay);
-      overlay.geometry.dispose();
-      const m = overlay.material;
-      if (Array.isArray(m)) for (const x of m) x.dispose(); else (m as THREE.Material).dispose();
+      disposeOverlayGroup(overlay);
     }
     this.overlays.clear();
     this.selected.clear();
     this.dragging = null;
     this.panning = null;
     if (this.addMode) {
-      this.container.style.cursor = '';
       this.addMode = null;
     }
+    this.container.style.cursor = '';
   }
 
   // ─────────────────────────────────────────────────────────
@@ -274,6 +272,7 @@ export class InteractionController {
 
   private handleMouseMove(e: MouseEvent): void {
     if (this.dragging) {
+      this.setCursor('grabbing');
       const screen = this.toContainerCoords(e);
       const world = this.sceneManager.screenToWorld(screen.x, screen.y);
       const dx = world.x - this.dragging.startWorld.x;
@@ -290,6 +289,7 @@ export class InteractionController {
     }
 
     if (this.panning) {
+      this.setCursor('grabbing');
       const screen = this.toContainerCoords(e);
       const dxScreen = screen.x - this.panning.startScreen.x;
       const dyScreen = screen.y - this.panning.startScreen.y;
@@ -310,6 +310,18 @@ export class InteractionController {
       );
       return;
     }
+
+    // 既不在 drag 也不在 pan:hover hit-test 切 cursor(grab vs default)
+    // 添加模式由 enterAddMode/exitAddMode 设 crosshair,不在这里覆盖
+    if (this.addMode) return;
+    // 鼠标在容器外时 toContainerCoords 会给负值,此时不切;只在容器内
+    const rect = this.container.getBoundingClientRect();
+    if (e.clientX < rect.left || e.clientX > rect.right ||
+        e.clientY < rect.top || e.clientY > rect.bottom) return;
+    const screen = this.toContainerCoords(e);
+    const world = this.sceneManager.screenToWorld(screen.x, screen.y);
+    const hit = this.hitTest(world);
+    this.setCursor(hit ? 'grab' : 'default');
   }
 
   private handleMouseUp(e: MouseEvent): void {
@@ -323,6 +335,16 @@ export class InteractionController {
       this.panning = null;
       // pan 不影响数据,不触发 onChange
     }
+    // mouseup 后恢复:hover 检测会在下一个 mousemove 立即纠正,这里先清成 default
+    if (!this.addMode) this.setCursor('default');
+  }
+
+  /** 设置容器 cursor;只在变化时写 DOM 避免高频回流 */
+  private currentCursor = '';
+  private setCursor(cursor: string): void {
+    if (this.currentCursor === cursor) return;
+    this.currentCursor = cursor;
+    this.container.style.cursor = cursor;
   }
 
   // ─────────────────────────────────────────────────────────
@@ -371,9 +393,7 @@ export class InteractionController {
         const overlay = this.overlays.get(id);
         if (overlay) {
           this.sceneManager.scene.remove(overlay);
-          overlay.geometry.dispose();
-          const m = overlay.material;
-          if (Array.isArray(m)) for (const x of m) x.dispose(); else (m as THREE.Material).dispose();
+          disposeOverlayGroup(overlay);
           this.overlays.delete(id);
         }
         // NodeRenderer.remove 会级联删引用 line
@@ -449,9 +469,7 @@ export class InteractionController {
     for (const [id, overlay] of Array.from(this.overlays)) {
       if (!this.selected.has(id) || !this.nodeRenderer.get(id)) {
         this.sceneManager.scene.remove(overlay);
-        overlay.geometry.dispose();
-        const m = overlay.material;
-        if (Array.isArray(m)) for (const x of m) x.dispose(); else (m as THREE.Material).dispose();
+        disposeOverlayGroup(overlay);
         this.overlays.delete(id);
       }
     }
@@ -461,17 +479,8 @@ export class InteractionController {
       if (!node) continue;
       const existing = this.overlays.get(id);
       if (existing) {
-        // 复用 mesh,刷新顶点
-        const points = selectionRectPoints(node);
-        const positions = new Float32Array(points.length * 3);
-        for (let i = 0; i < points.length; i++) {
-          positions[i * 3] = points[i].x;
-          positions[i * 3 + 1] = points[i].y;
-          positions[i * 3 + 2] = SELECTION_Z;
-        }
-        existing.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-        existing.geometry.attributes.position.needsUpdate = true;
-        existing.geometry.computeBoundingSphere();
+        // 复用 group,重建 4 条边 mesh(node.position/size 可能变了)
+        rebuildSelectionBorder(existing, node);
       } else {
         const overlay = makeSelectionOverlay(node);
         this.sceneManager.scene.add(overlay);
@@ -541,6 +550,9 @@ function resolveDefaultSize(spec: AddModeSpec): { w: number; h: number } {
 const SELECTION_Z = 0.02;            // 比 stroke(0.01)高,确保覆盖在最上
 const SELECTION_COLOR = 0x4A90E2;
 const SELECTION_PADDING = 4;          // 选中线框比节点本身略大,视觉清楚
+const SELECTION_BORDER_WIDTH = 2;    // 边框线宽(世界坐标);用 mesh 拼实现,
+                                      // 不依赖 LineBasicMaterial.linewidth(macOS
+                                      // WebGL 多数实现忽略这个属性,永远 1px)
 
 /** 滚轮灵敏度:exp(deltaY * k) 是 zoom factor。k=0.001 时 deltaY=100 → 1.105x */
 const WHEEL_ZOOM_SENSITIVITY = 0.001;
@@ -553,31 +565,59 @@ function isLineKind(node: RenderedNode): boolean {
   return !!node.shapeRef && node.shapeRef.startsWith('krig.line.');
 }
 
-function makeSelectionOverlay(node: RenderedNode): THREE.LineSegments {
-  const points = selectionRectPoints(node);
-  const positions = new Float32Array(points.length * 3);
-  for (let i = 0; i < points.length; i++) {
-    positions[i * 3] = points[i].x;
-    positions[i * 3 + 1] = points[i].y;
-    positions[i * 3 + 2] = SELECTION_Z;
+/** 释放 overlay group 内所有子 mesh 的 geometry/material */
+function disposeOverlayGroup(group: THREE.Group): void {
+  for (const child of group.children) {
+    const mesh = child as THREE.Mesh;
+    if (mesh.geometry) mesh.geometry.dispose();
+    const m = mesh.material;
+    if (Array.isArray(m)) for (const x of m) x.dispose(); else (m as THREE.Material).dispose();
   }
-  const geom = new THREE.BufferGeometry();
-  geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-  const mat = new THREE.LineBasicMaterial({ color: SELECTION_COLOR, linewidth: 2 });
-  return new THREE.LineSegments(geom, mat);
 }
 
-/** 4 段虚线?暂用实线 4 段连续矩形(LineSegments 每两点一段) */
-function selectionRectPoints(node: RenderedNode): Array<{ x: number; y: number }> {
+/**
+ * 选中边框 overlay:用 4 个细矩形 fill mesh 拼成边框,而不是 LineSegments
+ * 因为 LineBasicMaterial.linewidth 在 macOS WebGL 多数实现里被忽略(永远 1px),
+ * 看不清。用 mesh 边宽可控、跨平台稳定。
+ */
+function makeSelectionOverlay(node: RenderedNode): THREE.Group {
+  const group = new THREE.Group();
+  rebuildSelectionBorder(group, node);
+  return group;
+}
+
+/** 重建 group 内的 4 条边 mesh(初始 mount + 每次 size/position 变更都用) */
+function rebuildSelectionBorder(group: THREE.Group, node: RenderedNode): void {
+  // 清掉旧子节点
+  while (group.children.length > 0) {
+    const child = group.children[0];
+    group.remove(child);
+    const mesh = child as THREE.Mesh;
+    if (mesh.geometry) mesh.geometry.dispose();
+    const m = mesh.material;
+    if (Array.isArray(m)) for (const x of m) x.dispose(); else (m as THREE.Material).dispose();
+  }
+
   const x1 = node.position.x - SELECTION_PADDING;
   const y1 = node.position.y - SELECTION_PADDING;
   const x2 = node.position.x + node.size.w + SELECTION_PADDING;
   const y2 = node.position.y + node.size.h + SELECTION_PADDING;
-  // 4 边 = 8 个顶点(LineSegments 每对相邻顶点画一段)
-  return [
-    { x: x1, y: y1 }, { x: x2, y: y1 },     // top
-    { x: x2, y: y1 }, { x: x2, y: y2 },     // right
-    { x: x2, y: y2 }, { x: x1, y: y2 },     // bottom
-    { x: x1, y: y2 }, { x: x1, y: y1 },     // left
+  const w = SELECTION_BORDER_WIDTH;
+
+  const mat = new THREE.MeshBasicMaterial({ color: SELECTION_COLOR, transparent: false });
+  // 4 条边 mesh:top / right / bottom / left
+  const edges: Array<[number, number, number, number]> = [
+    [x1 - w / 2, y1 - w / 2, x2 + w / 2, y1 + w / 2],   // top
+    [x2 - w / 2, y1 - w / 2, x2 + w / 2, y2 + w / 2],   // right
+    [x1 - w / 2, y2 - w / 2, x2 + w / 2, y2 + w / 2],   // bottom
+    [x1 - w / 2, y1 - w / 2, x1 + w / 2, y2 + w / 2],   // left
   ];
+  for (const [ex1, ey1, ex2, ey2] of edges) {
+    const ew = ex2 - ex1;
+    const eh = ey2 - ey1;
+    const geom = new THREE.PlaneGeometry(ew, eh);
+    const mesh = new THREE.Mesh(geom, mat);
+    mesh.position.set(ex1 + ew / 2, ey1 + eh / 2, SELECTION_Z);
+    group.add(mesh);
+  }
 }

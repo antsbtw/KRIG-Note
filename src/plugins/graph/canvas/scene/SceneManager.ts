@@ -76,11 +76,18 @@ export class SceneManager {
     // ⚠️ 第三参数必须 true,否则 Retina canvas DOM 撑成 2 倍 CSS 像素超出容器
     this.renderer.setSize(clientWidth, clientHeight, true);
 
-    // viewWidth/viewHeight 默认锁定到容器像素大小(zoom=1)
+    // 首次:锁定到容器像素大小(zoom=1,viewCenter 在容器中心)
     if (this.viewWidth === 0 || this.viewHeight === 0) {
       this.viewWidth = clientWidth;
       this.viewHeight = clientHeight;
       this.viewCenter = { x: clientWidth / 2, y: clientHeight / 2 };
+    } else {
+      // 容器变了(窗口 resize / NavSide 拖宽):保持当前 zoom 不变(zoom=
+      // viewWidth/clientWidth_old),按新容器尺寸调整 viewHeight 让 view aspect
+      // 等于 container aspect — 保证 world 单位的"宽" = "高"(像素 1:1 不
+      // 再变形)
+      const aspect = clientWidth / clientHeight;
+      this.viewHeight = this.viewWidth / aspect;
     }
     this.applyCamera();
   }
