@@ -170,9 +170,12 @@ function cloneInstance(inst: Instance): Instance {
  * 渲染层会因数值溢出整体崩坏(整画布被 stretch 的 mesh 覆盖)
  */
 function sanitizeInstance(inst: Instance): string | null {
-  const SIZE_MAX = 100000;   // 单边最大 10 万 px(对应 viewBox 内任何形状都够)
+  // 普通 shape:size 单边最大 10000 px(再大就视觉异常,远超合理画板用例)
+  // line:size 是 endpoints 的 AABB,跨度可能很大,放宽到 50000
+  const isLine = inst.type === 'shape' && /^krig\.line\./.test(inst.ref);
+  const SIZE_MAX = isLine ? 50000 : 10000;
   const SIZE_MIN = 1;
-  const POS_MAX = 1e7;        // position 最大 ±1e7
+  const POS_MAX = 1e6;        // position 最大 ±1e6(远超合理画板范围)
   const issues: string[] = [];
 
   if (inst.size) {

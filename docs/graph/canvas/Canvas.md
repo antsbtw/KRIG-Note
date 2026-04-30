@@ -82,9 +82,12 @@ v1 必备的 Canvas 操作(里程碑 1 验收清单):
 | 11 | 关闭 Canvas → 重新打开 | 内容完整恢复(view 也恢复 — schema_version=2 后) |
 | 12 | **多选(Shift-click)** → toolbar inline `⊟ Combine` → 弹对话框 | 创建新 substance 存进 Library,原 shape 替换为新 substance 实例 |
 | 13 | 选中 substance 实例 → 右键 / 工具 → "Edit Substance" | 调用 Canvas API 在 right-slot 打开,编辑该 substance 定义(M1.6) |
-| 14 | shape 移动时,引用它的 line 端点跟随 magnet 自动吸附 | line 端点保持在 magnet 位置,跟随移动(创建 line 的 UI 留 v1.1) |
+| 14 | shape 移动时,引用它的 line 端点跟随 magnet 自动吸附 | line 端点保持在 magnet 位置,跟随移动 |
+| 15 | 从 Picker 选 line shape → 鼠标在某 magnet 内 mousedown → 拖到另一 shape 的 magnet → mouseup | 创建带 endpoints 的 line,两端绑 magnet;落空(没命中 magnet)则取消(不创建悬空 line) |
+| 16 | 选中已有 line → 拖某一端的端点 handle → 拖到另一 magnet → mouseup | line 该端 endpoint 重新绑到新 magnet(rewire);落空则恢复原 magnet |
+| 17 | 旋转两端任一 shape | line 端点跟随旋转后的 magnet 位置(M1.x.5 已实现) |
 
-完成所有 14 项才算 v1 通过。
+完成所有 17 项才算 v1 通过。
 
 ### 2.2 v1 不做(留 v1.5+)
 
@@ -92,10 +95,8 @@ v1 必备的 Canvas 操作(里程碑 1 验收清单):
 |---|---|
 | 框选(drag-select) | v1.1 |
 | 复制粘贴(Cmd+C/V) | v1.1 |
-| 撤销 / 重做(Cmd+Z) | v1.1(toolbar 不预留占位按钮,真做时再加) |
-| 创建 line 的 UI(从 picker 选 line shape 后画板上画 line) | v1.1 |
-| **选中节点 8 个 resize handles(4 角 + 4 边中点)+ 旋转 handle**(对齐 Freeform / Figma) | v1.1(详见 §3.5) |
-| 拖 line 端点 / 改 line 路径 | v1.1 |
+| line 选中视觉高亮(line 自身加粗 / 变色) | v1.1 |
+| line 路径中段编辑(elbow 中段拖动 / curved 控制点编辑) | v1.1 |
 | 对齐辅助线 / 吸附网格 | v1.2 |
 | 分组 / 解组(超过单层 substance 嵌套) | v1.2 |
 | 层级管理(置顶 / 置底 / 上一层 / 下一层) | v1.2 |
@@ -300,6 +301,47 @@ v1 必备的 Canvas 操作(里程碑 1 验收清单):
   zoom 改变时 group.scale.set(1/zoom, 1/zoom, 1) 让 handles 像素恒定
 - handle hit-test 优先级高于 shape 本体(否则拖 handle 会被解析成"拖整个 shape")
 - 拖动 handle 改 instance.size + position(角 handle 同时改两者)
+
+### 3.5b Line 交互(创建 / rewire)
+
+line 实例与 shape / substance 不同,**没有 size / rotation 语义**,
+只有 endpoints(两端各绑一个 magnet)。所以选中态视觉、交互都不一样。
+
+#### 创建 line(M1.x.7,已实现)
+
+press-drag-release 风格:
+
+1. 用户在 Picker 选 line 类 shape(`krig.line.straight` / `.elbow` / `.curved`)
+   → 进入 addMode(光标变 crosshair)
+2. **mousedown 必须在某 shape 的 magnet 16px 半径内才起手**;
+   未命中则取消 addMode(不创建悬空 line)
+3. mousemove:预览 line 跟随鼠标,终点会吸附到附近 magnet
+4. mouseup:
+   - 落点在 magnet 内 → 创建带 `endpoints: [{instance, magnet}, ...]` 的 Instance
+   - 落空 → 取消(不创建)
+
+视觉辅助:
+- addMode 起手前,hover 命中 shape 显示该 shape 的 magnet 蓝点
+- 画线中,所有候选 shape(除起点 instance 外)都显示 magnet 蓝点
+
+#### Rewire(改连端点,M1.x.7 待补)
+
+选中一条已有 line 时,显示 2 个端点 handle(line 起点 / 终点处的小蓝圆),
+**不显**常规 8 resize handle 和 rotation handle(line 没有这些语义)。
+
+- mousedown 在某端点 handle → 进入 rewiring 状态
+  - 起点固定为 line 另一端的 magnet 世界坐标
+  - 拖动鼠标:更新 line 几何,跟随鼠标 / 吸附附近 magnet
+- mouseup:
+  - 落点在 magnet 内(且不是 line 自身的另一端 instance)→ 改写 `endpoints[i]`
+  - 落空 → 还原原 magnet(不允许 rewire 出悬空 line)
+- ESC 取消 rewire(还原原状态)
+
+实现要点:
+- rewire 复用 magnet hint overlay(画线中的视觉)
+- rewire 不创建预览 line,**直接改原 line 的几何**(updateLineGeometry);
+  失败时 mouseup 还原(用 startEndpoints 快照恢复)
+- selection border 不显矩形(line 的 bbox 是端点 AABB,框矩形没意义)
 
 ### 3.6 多选 + Combine to Substance 流程
 

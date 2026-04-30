@@ -7,7 +7,7 @@ import type { Instance, InstanceKind } from '../../library/types';
 import { ShapeRegistry } from '../../library/shapes';
 import { SubstanceRegistry } from '../../library/substances';
 import { findClosestMagnet, listMagnets, MAGNET_SNAP_RADIUS_PX } from './magnet-snap';
-import { renderLine, updateLineGeometry } from '../scene/LineRenderer';
+import { renderLine, updateLineGeometry, generateLinePoints, setLineHighlight } from '../scene/LineRenderer';
 
 /**
  * InteractionController — 鼠标 / 键盘交互
@@ -99,6 +99,32 @@ export class InteractionController {
 
   /** Magnet 提示 overlay:hover shape / 画 line 时显示该 shape 的 magnet 点 */
   private magnetHints = new Map<string, THREE.Group>();
+
+  /** 当前 hover 高亮的 line id(用于切换时还原前一个的颜色) */
+  private hoveredLineId: string | null = null;
+
+  /**
+   * Line 端点 handle:line 单选时显示 2 个端点小圆(替代常规 8 resize handle)
+   * 仅当选中实例是 line 时存在;切换选区时清掉
+   */
+  private lineEndpointHandles: {
+    instanceId: string;
+    /** 端点 0 / 端点 1 各一个 mesh */
+    handles: [THREE.Mesh, THREE.Mesh];
+    group: THREE.Group;
+  } | null = null;
+
+  /** Rewire 状态(拖 line 端点改连接) */
+  private rewiring: {
+    instanceId: string;
+    /** 拖的是哪一端(0 = endpoints[0], 1 = endpoints[1]) */
+    endpointIndex: 0 | 1;
+    /** 起始 endpoints 快照(失败 / ESC 时还原) */
+    startEndpoints: [
+      { instance: string; magnet: string },
+      { instance: string; magnet: string },
+    ];
+  } | null = null;
 
   /** 添加模式 — 用户从 Picker 选了一个 shape/substance,等点击画布放置 */
   private addMode: AddModeSpec | null = null;
@@ -211,7 +237,10 @@ export class InteractionController {
     this.dragging = null;
     this.panning = null;
     this.cancelDrawingLine();
+    this.cancelRewire();
     this.clearMagnetHints();
+    this.clearLineEndpointHandles();
+    this.hoveredLineId = null;
     if (this.addMode) {
       this.addMode = null;
     }
@@ -297,6 +326,13 @@ export class InteractionController {
       return;
     }
 
+    // line 端点 handle 命中(单选 line 时显示)→ 进入 rewire 状态
+    const epIdx = this.hitTestLineEndpointHandle(world);
+    if (epIdx !== null && this.lineEndpointHandles) {
+      this.startRewire(this.lineEndpointHandles.instanceId, epIdx);
+      return;
+    }
+
     const hit = this.hitTest(world);
     const additive = e.shiftKey || e.metaKey;
     if (hit) {
@@ -357,6 +393,14 @@ export class InteractionController {
       const screen = this.toContainerCoords(e);
       const world = this.sceneManager.screenToWorld(screen.x, screen.y);
       this.updateDrawingLine(world);
+      return;
+    }
+
+    // Rewire 中:更新被拖端点(吸附到附近 magnet 或跟鼠标)
+    if (this.rewiring) {
+      const screen = this.toContainerCoords(e);
+      const world = this.sceneManager.screenToWorld(screen.x, screen.y);
+      this.updateRewire(world);
       return;
     }
 
@@ -435,6 +479,23 @@ export class InteractionController {
     const world = this.sceneManager.screenToWorld(screen.x, screen.y);
     const hit = this.hitTest(world);
     this.setCursor(hit ? 'grab' : 'default');
+
+    // hover 命中 line → 高亮(若是 line);切换或离开则还原
+    const hitNode = hit ? this.nodeRenderer.get(hit) : null;
+    const newHoveredLine = hitNode && isLineKind(hitNode) ? hit : null;
+    if (newHoveredLine !== this.hoveredLineId) {
+      // 还原旧
+      if (this.hoveredLineId) {
+        const old = this.nodeRenderer.get(this.hoveredLineId);
+        if (old) setLineHighlight(old.group, false);
+      }
+      // 高亮新
+      if (newHoveredLine) {
+        const node = this.nodeRenderer.get(newHoveredLine);
+        if (node) setLineHighlight(node.group, true);
+      }
+      this.hoveredLineId = newHoveredLine;
+    }
   }
 
   private handleMouseUp(e: MouseEvent): void {
@@ -443,6 +504,12 @@ export class InteractionController {
       const screen = this.toContainerCoords(e);
       const world = this.sceneManager.screenToWorld(screen.x, screen.y);
       this.tryFinishDrawingLine(world);
+      return;
+    }
+    if (this.rewiring) {
+      const screen = this.toContainerCoords(e);
+      const world = this.sceneManager.screenToWorld(screen.x, screen.y);
+      this.tryFinishRewire(world);
       return;
     }
     if (this.resizing) {
@@ -535,8 +602,10 @@ export class InteractionController {
       this.notifySelectionChanged();
       this.onChange?.();
     } else if (e.key === 'Escape') {
-      // 优先级:取消画线 → 取消添加模式 → 清选区
-      if (this.drawingLine) {
+      // 优先级:取消 rewire → 取消画线 → 取消添加模式 → 清选区
+      if (this.rewiring) {
+        this.cancelRewire();
+      } else if (this.drawingLine) {
         this.cancelDrawingLine();
       } else if (this.addMode) {
         this.exitAddMode();
@@ -558,19 +627,35 @@ export class InteractionController {
    * 返回最上层(后渲染)被命中的 instance id,否则 null
    */
   private hitTest(world: { x: number; y: number }): string | null {
-    let best: { id: string; area: number } | null = null;
+    // 优先检测 line(走"距离曲线",阈值小,不易抢 shape 命中);
+    // 然后检测 shape(走 OBB AABB)
+    const lineThreshold = LINE_HIT_THRESHOLD_PX / Math.max(this.sceneManager.getView().zoom, 0.01);
+    let bestLine: { id: string; dist: number } | null = null;
+    let bestShape: { id: string; area: number } | null = null;
+
     for (const id of this.nodeRenderer.ids()) {
       const node = this.nodeRenderer.get(id);
       if (!node) continue;
-      const { position, size } = node;
-      // line 的 size 可能是 0(start==end),用一个 padding 让命中带容忍
-      if (size.w === 0 && size.h === 0) continue;
-      const padding = isLineKind(node) ? 8 : 0;
 
-      // bbox 中心(世界坐标)
+      if (isLineKind(node)) {
+        // line:距离曲线采样点的最小距离 < 阈值才算命中
+        const inst = this.getInstance(id);
+        if (!inst) continue;
+        const ep = this.resolveLineWorldEndpoints(inst);
+        if (!ep) continue;
+        const pts = generateLinePoints(inst.ref, ep.start, ep.end);
+        const dist = distancePointToPolyline(world.x, world.y, pts);
+        if (dist <= lineThreshold && (!bestLine || dist < bestLine.dist)) {
+          bestLine = { id, dist };
+        }
+        continue;
+      }
+
+      // shape:OBB AABB
+      const { position, size } = node;
+      if (size.w === 0 && size.h === 0) continue;
       const cx = position.x + size.w / 2;
       const cy = position.y + size.h / 2;
-      // world → 本地:平移到中心 + 逆旋转
       const dx = world.x - cx;
       const dy = world.y - cy;
       const rad = -((node.rotation ?? 0) * Math.PI) / 180;
@@ -578,16 +663,16 @@ export class InteractionController {
       const sin = Math.sin(rad);
       const lx = dx * cos - dy * sin;
       const ly = dx * sin + dy * cos;
-      // 本地 AABB 测试
-      const halfW = size.w / 2 + padding;
-      const halfH = size.h / 2 + padding;
+      const halfW = size.w / 2;
+      const halfH = size.h / 2;
       if (lx >= -halfW && lx <= halfW && ly >= -halfH && ly <= halfH) {
-        // 选最小面积(假设小的在更上层 / 更精确)
         const area = size.w * size.h;
-        if (!best || area < best.area) best = { id, area };
+        if (!bestShape || area < bestShape.area) bestShape = { id, area };
       }
     }
-    return best?.id ?? null;
+    // line 优先(line 在 shape 之上的视觉,且通常 line 距离阈值很小,
+    // 命中 line 时用户必然是在精确点 line)
+    return bestLine?.id ?? bestShape?.id ?? null;
   }
 
   private startDrag(startWorld: { x: number; y: number }): void {
@@ -742,6 +827,137 @@ export class InteractionController {
     this.sceneManager.scene.remove(this.drawingLine.previewGroup);
     disposeLineGroup(this.drawingLine.previewGroup);
     this.drawingLine = null;
+  }
+
+  // ─────────────────────────────────────────────────────────
+  // Rewire(M1.x.7b)— 拖 line 端点改连接
+  // ─────────────────────────────────────────────────────────
+
+  /** 进入 rewire 状态:记录 line 实例 + 拖的哪一端 + 起始 endpoints 快照 */
+  private startRewire(instanceId: string, endpointIndex: 0 | 1): void {
+    const inst = this.getInstance(instanceId);
+    if (!inst || !inst.endpoints) return;
+    this.pushHistory();
+    this.rewiring = {
+      instanceId,
+      endpointIndex,
+      startEndpoints: [
+        { ...inst.endpoints[0] },
+        { ...inst.endpoints[1] },
+      ],
+    };
+    // 进 rewire 时显示所有候选 shape 的 magnet 点(除 line 自身的另一端 instance,
+    // 避免连到原 instance 的另一个 magnet 也算"重连同一节点"— 这是允许的,
+    // 但视觉上要让用户看到所有候选)
+    this.showMagnetHintsFor((id) => id !== instanceId);
+  }
+
+  /**
+   * mousemove:line 几何跟随鼠标(吸附附近 magnet 或跟手),不改 Instance.endpoints
+   * (避免 endpoints 字段不支持"自由坐标"的限制)。直接改 line group 的几何 buffer。
+   * mouseup 命中 magnet 才正式写 endpoints。
+   */
+  private updateRewire(world: { x: number; y: number }): void {
+    if (!this.rewiring) return;
+    const inst = this.getInstance(this.rewiring.instanceId);
+    if (!inst || !inst.endpoints) return;
+    const node = this.nodeRenderer.get(this.rewiring.instanceId);
+    if (!node) return;
+
+    // 解析另一端的世界坐标(rewire 中固定不动)
+    const otherIdx = this.rewiring.endpointIndex === 0 ? 1 : 0;
+    const otherEp = this.rewiring.startEndpoints[otherIdx];
+    const otherPair = (() => {
+      const n = this.nodeRenderer.get(otherEp.instance);
+      const i = this.getInstance(otherEp.instance);
+      return n && i ? { node: n, instance: i } : null;
+    })();
+    if (!otherPair) return;
+    const otherMagnet = listMagnets(otherPair.node, otherPair.instance)
+      .find((m) => m.magnetId === otherEp.magnet);
+    if (!otherMagnet) return;
+    const fixedEnd = { x: otherMagnet.x, y: otherMagnet.y };
+
+    // 找被拖端的位置:吸附附近 magnet,否则跟鼠标
+    const exclude = new Set([otherEp.instance]);
+    const closest = findClosestMagnet(
+      world.x, world.y,
+      this.allMagnetCandidates(),
+      this.snapRadiusWorld(),
+      exclude,
+    );
+    const draggedEnd = closest
+      ? { x: closest.magnet.x, y: closest.magnet.y }
+      : { x: world.x, y: world.y };
+
+    // 根据拖的是哪端,组装 start/end
+    const start = this.rewiring.endpointIndex === 0 ? draggedEnd : fixedEnd;
+    const end = this.rewiring.endpointIndex === 0 ? fixedEnd : draggedEnd;
+
+    // 直接改 line group 的几何(不动 Instance.endpoints)
+    updateLineGeometry(node.group, inst.ref, start, end);
+
+    // 同步更新 endpoint handles 的位置(被拖端跟着鼠标 / magnet)
+    if (this.lineEndpointHandles &&
+        this.lineEndpointHandles.instanceId === this.rewiring.instanceId) {
+      this.lineEndpointHandles.handles[this.rewiring.endpointIndex]
+        .position.set(draggedEnd.x, draggedEnd.y, MAGNET_HINT_Z);
+    }
+  }
+
+  /** mouseup:落点是否吸附到 magnet;落空则还原原 endpoints */
+  private tryFinishRewire(world: { x: number; y: number }): void {
+    if (!this.rewiring) return;
+    const r = this.rewiring;
+    this.rewiring = null;
+    this.clearMagnetHints();
+    const inst = this.getInstance(r.instanceId);
+    if (!inst || !inst.endpoints) return;
+
+    const otherIdx = r.endpointIndex === 0 ? 1 : 0;
+    const otherInst = r.startEndpoints[otherIdx].instance;
+    const exclude = new Set([otherInst]);
+    const closest = findClosestMagnet(
+      world.x, world.y,
+      this.allMagnetCandidates(),
+      this.snapRadiusWorld(),
+      exclude,
+    );
+    if (closest) {
+      // 写入新 endpoints + 重新渲染线 + 持久化
+      inst.endpoints[r.endpointIndex] = {
+        instance: closest.magnet.instanceId,
+        magnet: closest.magnet.magnetId,
+      };
+      // updateLinesFor 只刷线几何,不重建 group(保留 lineEndpointHandles)
+      this.nodeRenderer.updateLinesFor(closest.magnet.instanceId);
+      this.refreshOverlays();   // 刷新 endpoint handles 位置
+      this.onChange?.();
+    } else {
+      // 落空:还原原 endpoints + 用原 endpoints 刷几何
+      inst.endpoints[0] = { ...r.startEndpoints[0] };
+      inst.endpoints[1] = { ...r.startEndpoints[1] };
+      // 用任一端 instance 触发 updateLinesFor
+      this.nodeRenderer.updateLinesFor(r.startEndpoints[0].instance);
+      this.refreshOverlays();
+      if (this.undoStack.length > 0) this.undoStack.pop();
+    }
+  }
+
+  /** ESC / unmount:还原起始 endpoints */
+  private cancelRewire(): void {
+    if (!this.rewiring) return;
+    const r = this.rewiring;
+    this.rewiring = null;
+    this.clearMagnetHints();
+    const inst = this.getInstance(r.instanceId);
+    if (inst && inst.endpoints) {
+      inst.endpoints[0] = { ...r.startEndpoints[0] };
+      inst.endpoints[1] = { ...r.startEndpoints[1] };
+      this.nodeRenderer.updateLinesFor(r.startEndpoints[0].instance);
+      this.refreshOverlays();
+    }
+    if (this.undoStack.length > 0) this.undoStack.pop();
   }
 
   /**
@@ -1032,6 +1248,97 @@ export class InteractionController {
         this.overlays.set(id, overlay);
       }
     }
+    // 单选 line 时显示 2 个端点 handle(供 rewire);其它情况清掉
+    this.refreshLineEndpointHandles();
+  }
+
+  /** 单选 line 时显示 2 个端点 handle(rewire 入口) */
+  private refreshLineEndpointHandles(): void {
+    const ids = Array.from(this.selected);
+    const single = ids.length === 1 ? this.nodeRenderer.get(ids[0]) : null;
+    const isLine = single && isLineKind(single);
+    if (!isLine) {
+      this.clearLineEndpointHandles();
+      return;
+    }
+    const inst = this.getInstance(single.instanceId);
+    if (!inst) return;
+    // 解析端点世界坐标
+    const ep = this.resolveLineWorldEndpoints(inst);
+    if (!ep) {
+      this.clearLineEndpointHandles();
+      return;
+    }
+    if (this.lineEndpointHandles && this.lineEndpointHandles.instanceId === single.instanceId) {
+      // 复用,只更新位置(端点 magnet 可能因节点拖动变化)
+      this.lineEndpointHandles.handles[0].position.set(ep.start.x, ep.start.y, MAGNET_HINT_Z);
+      this.lineEndpointHandles.handles[1].position.set(ep.end.x, ep.end.y, MAGNET_HINT_Z);
+    } else {
+      // 切换 instance:清旧建新
+      this.clearLineEndpointHandles();
+      const group = new THREE.Group();
+      const h0 = makeEndpointHandleMesh();
+      const h1 = makeEndpointHandleMesh();
+      h0.position.set(ep.start.x, ep.start.y, MAGNET_HINT_Z);
+      h1.position.set(ep.end.x, ep.end.y, MAGNET_HINT_Z);
+      group.add(h0);
+      group.add(h1);
+      this.sceneManager.scene.add(group);
+      this.lineEndpointHandles = {
+        instanceId: single.instanceId,
+        handles: [h0, h1],
+        group,
+      };
+    }
+  }
+
+  private clearLineEndpointHandles(): void {
+    if (!this.lineEndpointHandles) return;
+    this.sceneManager.scene.remove(this.lineEndpointHandles.group);
+    for (const m of this.lineEndpointHandles.handles) {
+      m.geometry.dispose();
+      (m.material as THREE.Material).dispose();
+    }
+    this.lineEndpointHandles = null;
+  }
+
+  /** 解析一条 line 实例两端的世界坐标(走 magnet-snap.resolveLineEndpoints) */
+  private resolveLineWorldEndpoints(
+    inst: Instance,
+  ): { start: { x: number; y: number }; end: { x: number; y: number } } | null {
+    if (!inst.endpoints) return null;
+    // 直接用 magnet-snap 的 helper
+    const _resolveOther = (id: string) => {
+      const n = this.nodeRenderer.get(id);
+      const i = this.getInstance(id);
+      return n && i ? { node: n, instance: i } : null;
+    };
+    // 复用现有 resolveMagnet
+    const a = inst.endpoints[0];
+    const b = inst.endpoints[1];
+    const aPair = _resolveOther(a.instance);
+    const bPair = _resolveOther(b.instance);
+    if (!aPair || !bPair) return null;
+    const start = listMagnets(aPair.node, aPair.instance).find((m) => m.magnetId === a.magnet);
+    const end = listMagnets(bPair.node, bPair.instance).find((m) => m.magnetId === b.magnet);
+    if (!start || !end) return null;
+    return { start: { x: start.x, y: start.y }, end: { x: end.x, y: end.y } };
+  }
+
+  /** Hit-test:屏幕坐标 → line 端点 index(0 / 1),否则 null */
+  private hitTestLineEndpointHandle(world: { x: number; y: number }): 0 | 1 | null {
+    if (!this.lineEndpointHandles) return null;
+    const handles = this.lineEndpointHandles.handles;
+    // endpoint handle 视觉半径 6 世界单位,hit 半径放宽到 12 世界单位
+    // (低 zoom 下 = 小 px 也好点;不用 snapRadiusWorld 因为那是屏幕像素折算,
+    //  端点本身就是世界坐标固定大小,折算反而 zoom 大时半径过大抢 shape)
+    const radius = 12;
+    for (let i = 0; i < 2; i++) {
+      const p = handles[i].position;
+      const d = Math.hypot(world.x - p.x, world.y - p.y);
+      if (d <= radius) return i as 0 | 1;
+    }
+    return null;
   }
 
   /** event 屏幕坐标 → 容器内坐标 */
@@ -1095,6 +1402,8 @@ function resolveDefaultSize(spec: AddModeSpec): { w: number; h: number } {
 const SELECTION_Z = 0.02;            // 比 stroke(0.01)高,确保覆盖在最上
 const SELECTION_COLOR = 0x4A90E2;
 const SELECTION_PADDING = 0;          // 边框紧贴 shape 边
+/** Line hit-test 阈值(屏幕像素;距离曲线采样点 ≤ 此值算命中) */
+const LINE_HIT_THRESHOLD_PX = 10;
 
 /** 滚轮灵敏度:exp(-deltaY * k) 是 zoom factor。k=0.001 时 deltaY=100 → 0.905x(缩小) */
 const WHEEL_ZOOM_SENSITIVITY = 0.001;
@@ -1270,4 +1579,53 @@ function disposeMagnetHintGroup(group: THREE.Group): void {
     if (Array.isArray(m)) for (const x of m) x.dispose();
     else if (m) (m as THREE.Material).dispose();
   }
+}
+
+/**
+ * 点到折线最短距离:把折线拆成连续线段,逐段算点-线段距离,取最小
+ * line 的曲线渲染前已采样为多段折线(generateLinePoints 输出),所以这个就够
+ */
+function distancePointToPolyline(
+  px: number, py: number,
+  pts: Array<{ x: number; y: number }>,
+): number {
+  if (pts.length === 0) return Infinity;
+  if (pts.length === 1) return Math.hypot(px - pts[0].x, py - pts[0].y);
+  let minD = Infinity;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const d = distancePointToSegment(px, py, pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y);
+    if (d < minD) minD = d;
+  }
+  return minD;
+}
+
+/** 点到线段距离(标准公式) */
+function distancePointToSegment(
+  px: number, py: number,
+  x1: number, y1: number, x2: number, y2: number,
+): number {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq === 0) return Math.hypot(px - x1, py - y1);
+  let t = ((px - x1) * dx + (py - y1) * dy) / lenSq;
+  t = Math.max(0, Math.min(1, t));
+  const cx = x1 + t * dx;
+  const cy = y1 + t * dy;
+  return Math.hypot(px - cx, py - cy);
+}
+
+/**
+ * Line endpoint handle:line 选中时显示在两端的小蓝圆,供用户拖拽 rewire
+ * 半径 6 世界单位(在低 zoom 下也清晰可点);颜色比 magnet hint 更深
+ */
+function makeEndpointHandleMesh(): THREE.Mesh {
+  const geom = new THREE.CircleGeometry(6, 24);
+  const mat = new THREE.MeshBasicMaterial({
+    color: 0x2E5C8A,
+    transparent: true,
+    opacity: 0.95,
+    side: THREE.DoubleSide,
+  });
+  return new THREE.Mesh(geom, mat);
 }

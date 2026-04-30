@@ -43,6 +43,25 @@ export function renderLine(ref: string, opts: LineRenderOptions): THREE.Group {
   return group;
 }
 
+/**
+ * 切换 line 视觉高亮(hover / selected 用)
+ * 高亮:颜色变亮(0x4A90E2);非高亮:还原为初始颜色(读 userData.baseColor)
+ */
+export function setLineHighlight(group: THREE.Group, on: boolean): void {
+  const line = group.children[0] as THREE.Line | undefined;
+  if (!line) return;
+  const mat = line.material as THREE.LineBasicMaterial;
+  // 首次 highlight:把当前颜色保存为 baseColor
+  if (!group.userData.baseColor) {
+    group.userData.baseColor = mat.color.getHex();
+  }
+  if (on) {
+    mat.color.set(0x4A90E2);
+  } else {
+    mat.color.setHex(group.userData.baseColor);
+  }
+}
+
 /** 不重新建 mesh,只更新顶点缓冲(M1.3 拖动时高频调用,避免抖动) */
 export function updateLineGeometry(
   group: THREE.Group,
@@ -68,6 +87,14 @@ export function updateLineGeometry(
 // ─────────────────────────────────────────────────────────
 // 顶点生成
 // ─────────────────────────────────────────────────────────
+
+export function generateLinePoints(
+  ref: string,
+  start: { x: number; y: number },
+  end: { x: number; y: number },
+): Array<{ x: number; y: number }> {
+  return generatePoints(ref, start, end).map((p) => ({ x: p.x, y: p.y }));
+}
 
 function generatePoints(
   ref: string,
