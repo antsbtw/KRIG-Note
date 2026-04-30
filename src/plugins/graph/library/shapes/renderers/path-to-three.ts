@@ -1,4 +1,7 @@
 import * as THREE from 'three';
+import { Line2 } from 'three/examples/jsm/lines/Line2.js';
+import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js';
+import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import type { PathCmd, ShapeDef, FillStyle, LineStyle } from '../../types';
 import { buildEnv, evalFormula, type EvalEnv } from './formula-eval';
 
@@ -21,8 +24,8 @@ import { buildEnv, evalFormula, type EvalEnv } from './formula-eval';
 export interface PathToThreeOutput {
   /** 填充 mesh,fill.type === 'none' 时为 null */
   fill: THREE.Mesh | null;
-  /** 描边 line,line.type === 'none' 时为 null */
-  stroke: THREE.Line | null;
+  /** 描边 Line2(Fat Lines,真正可控线宽);line.type === 'none' 时为 null */
+  stroke: Line2 | null;
   /** 把两者打包,Canvas 直接挂这个到 scene */
   group: THREE.Group;
 }
@@ -64,7 +67,7 @@ export function pathToThree(
   const shapePath = buildShapePath(path, env);
   const group = new THREE.Group();
   let fill: THREE.Mesh | null = null;
-  let stroke: THREE.Line | null = null;
+  let stroke: Line2 | null = null;
 
   // ── Fill ──
   const fillStyle = style.fill;
@@ -85,18 +88,34 @@ export function pathToThree(
   }
 
   // ── Stroke ──
+  // 用 Line2(Fat Lines)而非 THREE.Line:
+  // THREE.LineBasicMaterial.linewidth 在 macOS WebGL 多数实现里被忽略(永远 1px),
+  // Line2 用 Shader 模拟宽度,任意线宽都能渲染
+  // linewidth 用屏幕像素单位(不随 zoom 缩放,屏幕看起来恒定)
   const strokeStyle = style.stroke;
   if (strokeStyle && strokeStyle.type === 'solid') {
     const points = sampleStrokePoints(path, env);
     if (points.length >= 2) {
-      const geom = new THREE.BufferGeometry().setFromPoints(points);
-      const mat = new THREE.LineBasicMaterial({
-        color: new THREE.Color(strokeStyle.color ?? '#2E5C8A'),
-        linewidth: strokeStyle.width ?? 1.5,        // 注:WebGL 多数实现忽略 linewidth,
-                                                    // v1.5+ 改用 Line2 / MeshLine 解决
+      // 顶点扁平化为 [x,y,z, x,y,z, ...]
+      const positions: number[] = [];
+      for (const p of points) {
+        positions.push(p.x, p.y, p.z);
+      }
+      const geom = new LineGeometry();
+      geom.setPositions(positions);
+      const mat = new LineMaterial({
+        color: new THREE.Color(strokeStyle.color ?? '#2E5C8A').getHex(),
+        linewidth: strokeStyle.width ?? 1.5,         // 屏幕像素
+        worldUnits: false,
+        // resolution 由 SceneManager 在 RAF 内每帧同步(走 LineMaterial.resolution.set)
+        resolution: new THREE.Vector2(window.innerWidth, window.innerHeight),
+        transparent: false,
+        depthTest: false,                            // 在 z=0.01 上,不需要深度测试
       });
-      stroke = new THREE.Line(geom, mat);
+      stroke = new Line2(geom, mat);
+      stroke.computeLineDistances();
       stroke.position.z = Z_STROKE;
+      stroke.renderOrder = 1;                        // stroke 渲染在 fill 之上
       group.add(stroke);
     }
   }

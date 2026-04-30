@@ -450,10 +450,8 @@ export class InteractionController {
       const screen = this.toContainerCoords(e);
       const dxScreen = screen.x - this.panning.startScreen.x;
       const dyScreen = screen.y - this.panning.startScreen.y;
-      // 屏幕 → 世界 delta 直接除 zoom(zoom = "1 世界单位 / 1 CSS 像素")
       const dxWorld = dxScreen / this.panning.startZoom;
       const dyWorld = dyScreen / this.panning.startZoom;
-      // pan:鼠标向右拖,viewCenter 应向左移(画面跟手指走)
       this.sceneManager.setView(
         this.panning.startCenter.x - dxWorld,
         this.panning.startCenter.y - dyWorld,

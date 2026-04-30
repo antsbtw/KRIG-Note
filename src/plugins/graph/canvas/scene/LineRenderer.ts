@@ -1,4 +1,7 @@
 import * as THREE from 'three';
+import { Line2 } from 'three/examples/jsm/lines/Line2.js';
+import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js';
+import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import type { LineStyle } from '../../library/types';
 
 /**
@@ -27,18 +30,30 @@ export interface LineRenderOptions {
   style?: LineStyle;
 }
 
-/** 渲染一条 line(返回 THREE.Group 包一个 THREE.Line) */
+/**
+ * 渲染一条 line(返回 THREE.Group 包一个 Line2)
+ * 用 Line2(Fat Lines)而非 THREE.Line:THREE.LineBasicMaterial.linewidth 在
+ * macOS WebGL 多数实现里被忽略(永远 1px),Line2 用 Shader 模拟宽度,任意线宽都能渲染
+ */
 export function renderLine(ref: string, opts: LineRenderOptions): THREE.Group {
   const { start, end, style } = opts;
   const group = new THREE.Group();
   const points = generatePoints(ref, start, end);
-  const geom = new THREE.BufferGeometry().setFromPoints(points);
-  const mat = new THREE.LineBasicMaterial({
-    color: new THREE.Color(style?.color ?? '#2E5C8A'),
-    linewidth: style?.width ?? 1.5,
+  const positions = pointsToFlatArray(points);
+  const geom = new LineGeometry();
+  geom.setPositions(positions);
+  const mat = new LineMaterial({
+    color: new THREE.Color(style?.color ?? '#2E5C8A').getHex(),
+    linewidth: style?.width ?? 1.5,         // 屏幕像素
+    worldUnits: false,
+    resolution: new THREE.Vector2(window.innerWidth, window.innerHeight),
+    transparent: false,
+    depthTest: false,
   });
-  const line = new THREE.Line(geom, mat);
+  const line = new Line2(geom, mat);
+  line.computeLineDistances();
   line.position.z = Z_LINE;
+  line.renderOrder = 1;
   group.add(line);
   return group;
 }
@@ -48,11 +63,11 @@ export function renderLine(ref: string, opts: LineRenderOptions): THREE.Group {
  * 高亮:颜色变亮(0x4A90E2);非高亮:还原为初始颜色(读 userData.baseColor)
  */
 export function setLineHighlight(group: THREE.Group, on: boolean): void {
-  const line = group.children[0] as THREE.Line | undefined;
+  const line = group.children[0] as Line2 | undefined;
   if (!line) return;
-  const mat = line.material as THREE.LineBasicMaterial;
+  const mat = line.material as LineMaterial;
   // 首次 highlight:把当前颜色保存为 baseColor
-  if (!group.userData.baseColor) {
+  if (group.userData.baseColor === undefined) {
     group.userData.baseColor = mat.color.getHex();
   }
   if (on) {
@@ -69,19 +84,21 @@ export function updateLineGeometry(
   start: { x: number; y: number },
   end: { x: number; y: number },
 ): void {
-  const line = group.children[0] as THREE.Line | undefined;
+  const line = group.children[0] as Line2 | undefined;
   if (!line) return;
   const points = generatePoints(ref, start, end);
-  const positions = new Float32Array(points.length * 3);
-  for (let i = 0; i < points.length; i++) {
-    positions[i * 3]     = points[i].x;
-    positions[i * 3 + 1] = points[i].y;
-    positions[i * 3 + 2] = points[i].z;
+  const positions = pointsToFlatArray(points);
+  (line.geometry as LineGeometry).setPositions(positions);
+  line.computeLineDistances();
+}
+
+/** Vector3[] → 扁平 [x,y,z, x,y,z, ...] */
+function pointsToFlatArray(points: THREE.Vector3[]): number[] {
+  const arr: number[] = [];
+  for (const p of points) {
+    arr.push(p.x, p.y, p.z);
   }
-  const geom = line.geometry;
-  geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-  geom.attributes.position.needsUpdate = true;
-  geom.computeBoundingSphere();
+  return arr;
 }
 
 // ─────────────────────────────────────────────────────────

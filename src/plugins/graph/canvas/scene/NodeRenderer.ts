@@ -312,19 +312,28 @@ export class NodeRenderer {
     const root = new THREE.Group();
     root.userData.instanceId = inst.id;
 
+    // 计算 substance 内部缩放:实际 size / 原始 bbox
+    // 让 components 跟随 substance 整体 resize
+    const baseSize = inferSubstanceSize(def);
+    const actualSize = inst.size ? { ...inst.size } : baseSize;
+    const scale = {
+      x: baseSize.w > 0 ? actualSize.w / baseSize.w : 1,
+      y: baseSize.h > 0 ? actualSize.h / baseSize.h : 1,
+    };
+
     for (const comp of def.components) {
       // v1 只支持 component.type='shape'(详见类注释)
       if (comp.type !== 'shape') {
         console.warn(`[NodeRenderer] substance ${inst.ref} has nested substance (v1 unsupported)`);
         continue;
       }
-      const sub = renderComponent(comp, inst);
+      const sub = renderComponent(comp, inst, scale);
       if (sub) root.add(sub);
     }
 
     // 安置 root 到画板坐标 — outer/inner 嵌套实现 bbox 中心旋转(同 shape 实例)
     const { position } = ensurePositionSize(inst, null);
-    const size = inst.size ? { ...inst.size } : inferSubstanceSize(def);
+    const size = actualSize;
     const outerGroup = wrapForRotation(root, position, size, inst.rotation ?? 0);
     outerGroup.userData.instanceId = inst.id;
     return {
@@ -374,15 +383,25 @@ function isLineInstance(inst: Instance): boolean {
   return shape?.category === 'line';
 }
 
-/** 渲染 substance 的一个 shape component */
-function renderComponent(comp: SubstanceComponent, inst: Instance): THREE.Group | null {
+/**
+ * 渲染 substance 的一个 shape component
+ * scale: substance 实例 size / 原始 substance bbox 的比例(x, y 各一)
+ *        让 component 内容跟随 substance 整体缩放
+ */
+function renderComponent(
+  comp: SubstanceComponent,
+  inst: Instance,
+  scale: { x: number; y: number },
+): THREE.Group | null {
   const shape = ShapeRegistry.get(comp.ref);
   if (!shape) {
     console.warn(`[NodeRenderer] component shape not found: ${comp.ref}`);
     return null;
   }
-  const w = comp.transform.w ?? shape.viewBox.w;
-  const h = comp.transform.h ?? shape.viewBox.h;
+  const baseW = comp.transform.w ?? shape.viewBox.w;
+  const baseH = comp.transform.h ?? shape.viewBox.h;
+  const w = baseW * scale.x;
+  const h = baseH * scale.y;
   const out = shapeToThree(shape, {
     width: w,
     height: h,
@@ -390,11 +409,14 @@ function renderComponent(comp: SubstanceComponent, inst: Instance): THREE.Group 
     lineStyle: mergeLine(shape.default_style?.line, comp.style_overrides?.line as Partial<LineStyle>),
   });
 
+  // 位置也按 scale 缩放(component 内的 x/y 是相对 substance 原点)
+  const px = comp.transform.x * scale.x;
+  const py = comp.transform.y * scale.y;
   // anchor:center → 把 mesh 中心移到 transform.x/y;否则 transform.x/y 是左上角
   if (comp.transform.anchor === 'center') {
-    out.group.position.set(comp.transform.x - w / 2, comp.transform.y - h / 2, 0);
+    out.group.position.set(px - w / 2, py - h / 2, 0);
   } else {
-    out.group.position.set(comp.transform.x, comp.transform.y, 0);
+    out.group.position.set(px, py, 0);
   }
   out.group.userData.instanceId = inst.id;
   out.group.userData.binding = comp.binding;

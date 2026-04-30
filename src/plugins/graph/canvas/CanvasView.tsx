@@ -42,6 +42,10 @@ declare const viewAPI: {
   onGraphOpenInView: (callback: (graphId: string) => void) => () => void;
   onGraphDeleted: (callback: (graphId: string) => void) => () => void;
   onGraphTitleChanged: (callback: (data: { graphId: string; title: string }) => void) => () => void;
+  /** 启动恢复:主进程把上次的 workspace state 推过来,含 activeGraphId */
+  onRestoreWorkspaceState: (
+    callback: (state: { activeNoteId: string | null; activeGraphId?: string | null }) => void,
+  ) => () => void;
   closeSelf: () => Promise<void>;
 };
 
@@ -252,10 +256,20 @@ export function CanvasView() {
 
   // ── Graph 打开 / 删除 / 标题变更 监听 ──
   useEffect(() => {
-    // 启动时拉一次 pending(NavSide create-canvas 可能在 view 之前)
+    // 启动恢复优先级:
+    // 1) graphPendingOpen — NavSide create-canvas 等明确意图(view mount 前已派发)
+    // 2) onRestoreWorkspaceState — 主进程推送的上次 workspace state(activeGraphId)
     void viewAPI.graphPendingOpen().then((id) => {
       if (id) void loadGraph(id);
     }).catch(() => { /* ignore */ });
+
+    const unsubRestore = viewAPI.onRestoreWorkspaceState((state) => {
+      const id = state.activeGraphId;
+      // 已经有 activeGraph(被 pendingOpen 或 onGraphOpenInView 抢先)→ 跳过
+      if (id && !activeGraphIdRef.current) {
+        void loadGraph(id);
+      }
+    });
 
     const unsubOpen = viewAPI.onGraphOpenInView(async (graphId) => {
       // 切画板前 flush 旧 graphId 的 pending save
@@ -292,6 +306,7 @@ export function CanvasView() {
     });
 
     return () => {
+      unsubRestore();
       unsubOpen();
       unsubDeleted();
       unsubTitle();
@@ -462,6 +477,9 @@ const styles: Record<string, React.CSSProperties> = {
   canvasContainer: {
     width: '100%',
     height: '100%',
+    // 容器 tabIndex=0 是为了 Delete/ESC/Cmd+Z 等键盘事件,
+    // 但 macOS 会给 focused 容器画黄色 outline,UX 上突兀,这里隐藏
+    outline: 'none',
   },
   emptyOverlay: {
     position: 'absolute',

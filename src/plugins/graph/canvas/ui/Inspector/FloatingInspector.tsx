@@ -123,17 +123,29 @@ export function FloatingInspector(props: FloatingInspectorProps) {
   const inst = props.getInstance(id);
   if (!inst) return null;
 
+  // substance 实例的 fill / line 由 substance 定义控制,实例层改不生效;
+  // 仅显示 Position(X/Y/W/H)避免误导用户(Substance Edit 模式 M2 才做)
+  const isSubstance = inst.type === 'substance';
+  const headerLabel = isSubstance ? 'Format Substance' : 'Format Shape';
+
   return (
     <div ref={panelRef} style={{ ...styles.panel, ...resolvePosStyle(pos) }}>
       <Header
-        label="Format Shape"
+        label={headerLabel}
         onMouseDown={handleHeaderMouseDown}
         onClose={props.onClose}
       />
       <div style={styles.body}>
         <PositionSection inst={inst} onUpdate={(patch) => props.onUpdate(id, patch)} />
-        <FillSection inst={inst} onUpdate={(patch) => props.onUpdate(id, patch)} />
-        <LineSection inst={inst} onUpdate={(patch) => props.onUpdate(id, patch)} />
+        {!isSubstance && <FillSection inst={inst} onUpdate={(patch) => props.onUpdate(id, patch)} />}
+        {!isSubstance && <LineSection inst={inst} onUpdate={(patch) => props.onUpdate(id, patch)} />}
+        {isSubstance && (
+          <div style={styles.note}>
+            Fill / Line 由 Substance 定义控制,实例层不可改。
+            <br />
+            <span style={styles.noteDim}>(Edit Substance 入口 v1.1 加)</span>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -466,6 +478,20 @@ const styles: Record<string, CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     gap: 4,
+  },
+  note: {
+    margin: '12px 0 4px',
+    padding: 8,
+    background: 'rgba(255, 255, 255, 0.04)',
+    border: '1px solid rgba(255, 255, 255, 0.08)',
+    borderRadius: 4,
+    fontSize: 11,
+    color: 'rgba(255, 255, 255, 0.7)',
+    lineHeight: 1.5,
+  },
+  noteDim: {
+    fontSize: 10,
+    color: 'rgba(255, 255, 255, 0.4)',
   },
   colorInput: {
     width: 28,
