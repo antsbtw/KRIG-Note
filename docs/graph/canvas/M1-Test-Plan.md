@@ -98,7 +98,7 @@
 ### Test 4:实例化 Substance
 
 **步骤**:
-1. 点 toolbar `◇ Substance` → 选 `Family Person`
+1. 点 toolbar `+ 添加` → 左栏切到 `Family` 分类 → 选 `Family Person`
 2. 在画布空白处单击
 
 **预期**:
@@ -113,20 +113,27 @@
 ### Test 5:Inspector 改属性
 
 **步骤**:
-1. 单击一个已存在的 shape 实例(Test 3 创建的 roundRect)
-2. 右上角应浮出 Inspector 浮层,标题 "Format Shape"
+1. **单击**一个已存在的 shape 实例(Test 3 创建的 roundRect)→ 仅显示蓝色
+   选中边框,**Inspector 不弹出**(M1.x UX 决策:Inspector 默认隐藏,避免
+   遮挡画板)
+2. **双击**该节点 → 右上角应浮出 Inspector 浮层,标题 "Format Shape"
 3. 改 X 字段 → Tab/Enter → mesh 应跟着移动到新 X
 4. 点 Fill Color 色块 → 弹系统颜色选择器 → 选个红色 → mesh 填充色变红
-5. 拖动 Inspector header → 浮层位置改变;刷新页面后位置记忆(localStorage)
+5. 点 Inspector header 上的 `×` → 浮层关闭(选中边框仍显示)
+6. 拖动 Inspector header → 浮层位置改变;刷新页面后位置记忆(localStorage)
 
 **预期**:
+- 单击节点不打开 Inspector(只显示选中边框)
+- 双击节点打开 Inspector
+- Inspector 打开期间,切换选中其他节点 → Inspector 跟随切换显示
 - 数值字段 Enter / blur 才提交(打字不会高频重渲染)
 - 色块改色立即生效
 - Inspector 拖动到屏幕外被 clamp 在 viewport 内
 - 改完任何属性后 toolbar 标题应短暂显示 `•`(脏)然后消失
 
 **失败迹象**:
-- ❌ Inspector 不出现 → onSelectionChange 没正确触发
+- ❌ 单击就弹 Inspector → UX 决策没落地
+- ❌ 双击不开 Inspector → onDoubleClick 没接通
 - ❌ 改色后 mesh 颜色没变 → NodeRenderer.update 没跑或 mesh 重建失败
 - ❌ 改完不保存 → handleInstanceUpdate 没调 scheduleSave
 
@@ -256,15 +263,24 @@
 ## 已知 M1 范围限制
 
 下列功能不在 M1,**测试时遇到不算 bug**:
+- **选中节点的 8 个 resize handles + 旋转 handle**(对齐 Freeform / Figma)— v1.1
+  - M1 选中只显示**蓝色矩形边框**,无法通过拖动 handle 改 size / rotate
 - 框选(drag-select)— v1.1
-- Cmd+Z 撤销 / Cmd+C/V 复制粘贴 — v1.1
+- Cmd+Z 撤销 / Cmd+C/V 复制粘贴 — v1.1(toolbar 已不显示占位按钮)
 - 拖动 line 端点 — v1.1
 - **创建 line 的 UI**(从 picker 选 line shape 后画板上画 line 的交互)— v1.1
-- 撤销 / 重做按钮(toolbar 显示但灰)— v1.1
 - substance props 编辑(label / gender / birth / death)— v1.1
 - Inspector Arrow / dash / 透明度 — v1.1
 - 跨画板共享 user substance — M2 之前
 - right-slot 调用方式(canvasAPI)— M1.6 完成后
+
+## M1.x UX 决策(已落实到 spec)
+
+- **Toolbar 添加按钮**:`+ Shape` / `◇ Substance` 合并为单一 `+ 添加`(SVG 图标),
+  Picker 内 Shape/Substance 类目平铺;不再向用户暴露内部架构区分
+- **撤销/重做占位按钮删除**:灰按钮反而困惑用户,真做时再加
+- **Inspector 默认隐藏**:单击节点只显示选中边框,**双击才打开 Inspector**
+  浮层(避免遮挡画板);Inspector 打开后跟随切换选中节点显示属性
 
 ---
 

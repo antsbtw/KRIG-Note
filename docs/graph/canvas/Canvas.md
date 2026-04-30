@@ -69,20 +69,20 @@ v1 必备的 Canvas 操作(里程碑 1 验收清单):
 
 | # | 操作 | 期望结果 |
 |---|---|---|
-| 1 | NavSide "+ 新建画板" | 创建 Canvas note,自动打开 |
-| 2 | 浏览 Library 工具栏 | 看到 18 个内置 shape(分类:basic / arrow / flowchart / line / text)+ 5 个内置 substance(library / family) |
-| 3 | 点击 shape 工具 → 画布点击位置 | 在该位置实例化一个 shape 节点 |
-| 4 | 点击 substance 工具 → 画布点击位置 | 实例化一个 substance(组合 shape) |
-| 5 | 单击节点 | 节点高亮(选中),Inspector 显示属性 |
-| 6 | Inspector 改 fill / line / size / label | 节点视觉立刻更新 |
-| 7 | 拖动节点 | 节点跟随,所连接的 line 自动跟随 |
+| 1 | NavSide "+ 画板" | 创建 Canvas note,自动打开 |
+| 2 | 浏览 Library Picker | 看到 22 个内置 shape(basic 11 / arrow 3 / flowchart 4 / line 3 / text 1)+ 5 个内置 substance(library 2 / family 3) |
+| 3 | 点 toolbar `+ 添加` → Picker 选 shape → 画布点击 | 在点击位置实例化一个 shape 节点(中心对齐鼠标),自动选中 |
+| 4 | 点 toolbar `+ 添加` → Picker 选 substance → 画布点击 | 实例化一个 substance(组合 shape) |
+| 5 | 单击节点 | 节点显示**蓝色矩形选中边框**(M1 范围,resize handles 留 v1.1);**Inspector 不自动打开**(双击才打开,见 §3.4) |
+| 6 | 双击节点 → Inspector 改 fill / line / size | 节点视觉立刻更新 |
+| 7 | 拖动节点 | 节点跟随鼠标,光标变 grab/grabbing,所连接的 line 自动跟随 |
 | 8 | 选中节点按 Delete | 节点删除(连接的 line 也删除) |
-| 9 | 鼠标滚轮 | 画板缩放 |
-| 10 | 拖动空白区域 | 画板平移 |
-| 11 | 关闭 Canvas → 重新打开 | 内容完整恢复 |
-| 12 | **多选(Shift-click)** → "Combine to Substance" | 弹出命名对话框 → 创建新 substance 存进 Library |
-| 13 | 选中 substance 实例 → 右键 / 工具 → "Edit Substance" | 调用 Canvas API 在 right-slot 打开,编辑该 substance 定义 |
-| 14 | 创建一个 line,两端 magnet 自动吸附到附近 shape | line 端点正确连接到节点 |
+| 9 | 鼠标滚轮 | 画板缩放(以光标为中心 zoom-to-cursor) |
+| 10 | 拖动空白区域 | 画板平移(zoom 不变) |
+| 11 | 关闭 Canvas → 重新打开 | 内容完整恢复(view 也恢复 — schema_version=2 后) |
+| 12 | **多选(Shift-click)** → toolbar inline `⊟ Combine` → 弹对话框 | 创建新 substance 存进 Library,原 shape 替换为新 substance 实例 |
+| 13 | 选中 substance 实例 → 右键 / 工具 → "Edit Substance" | 调用 Canvas API 在 right-slot 打开,编辑该 substance 定义(M1.6) |
+| 14 | shape 移动时,引用它的 line 端点跟随 magnet 自动吸附 | line 端点保持在 magnet 位置,跟随移动(创建 line 的 UI 留 v1.1) |
 
 完成所有 14 项才算 v1 通过。
 
@@ -92,7 +92,10 @@ v1 必备的 Canvas 操作(里程碑 1 验收清单):
 |---|---|
 | 框选(drag-select) | v1.1 |
 | 复制粘贴(Cmd+C/V) | v1.1 |
-| 撤销 / 重做(Cmd+Z) | v1.1 |
+| 撤销 / 重做(Cmd+Z) | v1.1(toolbar 不预留占位按钮,真做时再加) |
+| 创建 line 的 UI(从 picker 选 line shape 后画板上画 line) | v1.1 |
+| **选中节点 8 个 resize handles(4 角 + 4 边中点)+ 旋转 handle**(对齐 Freeform / Figma) | v1.1(详见 §3.5) |
+| 拖 line 端点 / 改 line 路径 | v1.1 |
 | 对齐辅助线 / 吸附网格 | v1.2 |
 | 分组 / 解组(超过单层 substance 嵌套) | v1.2 |
 | 层级管理(置顶 / 置底 / 上一层 / 下一层) | v1.2 |
@@ -152,8 +155,15 @@ v1 必备的 Canvas 操作(里程碑 1 验收清单):
 按钮分组(从左到右):
 - **导航**:`‹` 后退 / `›` 前进(沿用 NoteView 规范,⌘[ / ⌘])
 - **标题**:当前画板名(点击可改名)
-- **创作**:`+ Shape` / `◇ Substance`(点击弹出浮动 Picker,见 §3.3)
-- **历史**:`↶` 撤销 / `↷` 重做(v1.1)
+- **创作**:**`+ 添加`** 单一图标按钮(SVG 矩形 + 圆形叠加,语义"形状",
+  对齐 Apple Pages 工具栏视觉),点击弹出浮动 Picker(见 §3.3)
+  - **UX 决策**:不向用户暴露 Shape vs Substance 内部架构区分(那是工程
+    内部"原子 vs 分子"概念,用户不需要理解)。Picker 内左栏分类列表
+    Shape / Substance 类目平铺,用户当作"分类"消费即可。
+  - 内部 PickerItem.section 仍保留 'shape' | 'substance',决定 onPick 时
+    spec.kind(NodeRenderer 渲染分支需要)
+- **撤销/重做**:M1 不做,**toolbar 不显示占位按钮**(灰色按钮反而困惑
+  用户)— v1.x 真做时再加回来
 - **视图**:`🔍 100%` 缩放滑块 / `↔` Fit to content
 - **通用**:`+ 新建` / `Open`(打开其他画板)/ `🔄` SlotToggle / `×` 关闭面板
 
@@ -161,7 +171,7 @@ v1 必备的 Canvas 操作(里程碑 1 验收清单):
 
 ### 3.3 Library Picker(浮动浮层)
 
-参考 **macOS Freeform shape picker**:**双栏 popover**(左侧分类列表 + 右侧 shape 网格),顶部搜索框 + 自定义入口。从 toolbar `+ Shape` / `◇ Substance` 按钮下方弹出,选完即收(不常驻)。
+参考 **macOS Freeform shape picker**:**双栏 popover**(左侧分类列表 + 右侧 shape 网格),顶部搜索框 + 自定义入口。从 toolbar `+ 添加` 按钮下方弹出,选完即收(不常驻)。
 
 ```
                    ▲ (anchor 三角指向 toolbar 按钮)
@@ -192,10 +202,11 @@ v1 必备的 Canvas 操作(里程碑 1 验收清单):
   - 分隔线
   - Substance 区:Library / Family / User(用户自创)
 - **右栏**:当前选中分类下的 shape / substance 网格,**每行 3 个**,纯色 icon(`#4A90E2` 蓝)+ shape 缩略
-- **入口**:toolbar `+ Shape` 和 `◇ Substance` 共用同一个 popover,只是初始高亮分类不同(前者落在 Basic,后者落在 Library)
+- **入口**:toolbar `+ 添加` 单一按钮触发 popover,默认高亮 Basic 分类(用户在
+  左栏自由切到任何分类)
 
 操作:
-- 点击 toolbar `+ Shape` / `◇ Substance` → popover 弹出
+- 点击 toolbar `+ 添加` → popover 弹出
 - 左栏切分类 → 右栏立即更新
 - 顶部 Search → 跨所有分类模糊搜索
 - 点击右栏的具体 shape / substance → popover 关闭,光标进入"添加模式"
@@ -204,7 +215,17 @@ v1 必备的 Canvas 操作(里程碑 1 验收清单):
 
 ### 3.4 Inspector(浮动浮层)
 
-参考 PowerPoint 的 Format Shape 面板,**以浮动浮层形式呈现**(不是固定右侧栏),v1 简化字段:
+参考 PowerPoint 的 Format Shape 面板,**以浮动浮层形式呈现**(不是固定右侧栏),v1 简化字段。
+
+**触发规则(M1.x UX 决策)**:
+- **默认隐藏** — Inspector 是"高级编辑"工具,不是"选中即弹"的弹窗。单击节点
+  只显示选中边框(见 §3.5),不打开 Inspector(避免遮挡画板)
+- **双击节点** → 打开 Inspector 浮层
+- 一旦打开,Inspector 跟随当前选中节点切换显示属性;点击 Inspector header 上
+  的 `×` 按钮关闭 Inspector
+- **Inspector 关闭状态对其他选中操作无影响**(选中边框始终显示)
+
+字段:
 
 ```
 ┌──────────────────────┐
@@ -246,7 +267,41 @@ v1 必备的 Canvas 操作(里程碑 1 验收清单):
 
 字段对齐 PowerPoint Format Shape(详见 [Library.md §2.1 default_style](../library/Library.md#2.1-数据格式))。
 
-### 3.5 多选 + Combine to Substance 流程
+### 3.5 选中态(选中边框 / Resize handles)
+
+参考 **macOS Freeform** 选中态视觉:
+
+**M1 范围(已实现)**:
+- 单击节点 → 节点周围显示**蓝色矩形选中边框**(2px 实线,padding 4px)
+- 多选(Shift-click)→ 每个选中节点都显示边框
+- 边框用 4 个 PlaneGeometry mesh 拼成(避免 LineBasicMaterial.linewidth 在
+  macOS WebGL 被忽略导致永远 1px 看不清)
+
+**v1.1 范围(留 todo)**:Freeform 风格 8 个 resize handles + 旋转点
+- 4 角 handle(白色圆点,边框蓝)→ 拖动同时改 W + H,保持比例(Shift 释放比例)
+- 4 边中点 handle → 单向改 W 或 H
+- 顶部中点上方 1 个绿色圆点 → 旋转 handle(rotation 字段,v1.1 加)
+- handle 像素大小恒定(8×8 CSS 像素),不随 zoom 缩放(屏幕坐标稳定层)
+
+参考视觉(用户 2026-04-29 截图):
+
+```
+   ╭─────● (rotate)
+   │
+○──○──○──○
+│           │
+○           ○
+│           │
+○──○──○──○
+```
+
+实现要点(v1.1 设计):
+- handles 是独立的 mesh group,挂在 SceneManager.scene 上(不在 mesh 内部),
+  zoom 改变时 group.scale.set(1/zoom, 1/zoom, 1) 让 handles 像素恒定
+- handle hit-test 优先级高于 shape 本体(否则拖 handle 会被解析成"拖整个 shape")
+- 拖动 handle 改 instance.size + position(角 handle 同时改两者)
+
+### 3.6 多选 + Combine to Substance 流程
 
 ```
 1. 用户 Shift-click 选中 3 个 shape(rect + line + label)
@@ -272,7 +327,7 @@ v1 必备的 Canvas 操作(里程碑 1 验收清单):
    e. 画布上原 3 个 shape 替换为一个 substance 实例
 ```
 
-### 3.6 Edit Substance 流程
+### 3.7 Edit Substance 流程
 
 ```
 1. 用户选中 substance 实例,右键 → "Edit Substance"
