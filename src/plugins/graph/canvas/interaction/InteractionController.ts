@@ -6,6 +6,8 @@ import type { HandlesOverlay, HandleKind } from '../scene/HandlesOverlay';
 import type { Instance, InstanceKind } from '../../library/types';
 import { ShapeRegistry } from '../../library/shapes';
 import { SubstanceRegistry } from '../../library/substances';
+import { findClosestMagnet, listMagnets, MAGNET_SNAP_RADIUS_PX } from './magnet-snap';
+import { renderLine, updateLineGeometry } from '../scene/LineRenderer';
 
 /**
  * InteractionController — 鼠标 / 键盘交互
@@ -80,6 +82,23 @@ export class InteractionController {
     /** mouse-down 时节点的 rotation 快照 */
     startRotation: number;
   } | null = null;
+
+  /** 画 line 状态(M1.x.7,addMode + line spec 触发) */
+  private drawingLine: {
+    /** 起点 magnet 所属 instance id */
+    startInstanceId: string;
+    /** 起点 magnet id */
+    startMagnetId: string;
+    /** 起点世界坐标(按 instance + magnet 解析,绑定后不再变) */
+    startWorld: { x: number; y: number };
+    /** 当前预览 line ref(同 addMode.spec.ref) */
+    lineRef: string;
+    /** 预览 line 的 THREE.Group(挂在 sceneManager.scene) */
+    previewGroup: THREE.Group;
+  } | null = null;
+
+  /** Magnet 提示 overlay:hover shape / 画 line 时显示该 shape 的 magnet 点 */
+  private magnetHints = new Map<string, THREE.Group>();
 
   /** 添加模式 — 用户从 Picker 选了一个 shape/substance,等点击画布放置 */
   private addMode: AddModeSpec | null = null;
@@ -168,6 +187,8 @@ export class InteractionController {
   exitAddMode(): void {
     if (!this.addMode) return;
     this.addMode = null;
+    this.cancelDrawingLine();
+    this.clearMagnetHints();
     this.setCursor('default');
     this.onAddModeChange?.(null);
   }
@@ -189,6 +210,8 @@ export class InteractionController {
     this.selected.clear();
     this.dragging = null;
     this.panning = null;
+    this.cancelDrawingLine();
+    this.clearMagnetHints();
     if (this.addMode) {
       this.addMode = null;
     }
@@ -250,8 +273,14 @@ export class InteractionController {
     const screen = this.toContainerCoords(e);
     const world = this.sceneManager.screenToWorld(screen.x, screen.y);
 
-    // 添加模式:优先级最高,无论命中节点还是空白都视作"放置"
+    // 添加模式:优先级最高
     if (this.addMode) {
+      // line 类 shape 走"press-drag-release 画线"模式:
+      // mousedown 必须在某 magnet 16px 内,否则取消(不创建悬空 line)
+      if (this.isAddingLine()) {
+        this.tryStartDrawingLine(world);
+        return;
+      }
       this.placeInstance(world, screen);
       return;
     }
@@ -323,6 +352,22 @@ export class InteractionController {
   }
 
   private handleMouseMove(e: MouseEvent): void {
+    // 画 line 中:更新预览 line 终点(吸附到附近 magnet 或跟鼠标)
+    if (this.drawingLine) {
+      const screen = this.toContainerCoords(e);
+      const world = this.sceneManager.screenToWorld(screen.x, screen.y);
+      this.updateDrawingLine(world);
+      return;
+    }
+
+    // addMode 是 line 时:hover 显示候选 shape 的 magnet 点提示
+    if (this.isAddingLine()) {
+      const screen = this.toContainerCoords(e);
+      const world = this.sceneManager.screenToWorld(screen.x, screen.y);
+      this.refreshMagnetHintsForHover(world);
+      return;
+    }
+
     if (this.resizing) {
       this.setCursor('grabbing');
       const screen = this.toContainerCoords(e);
@@ -394,6 +439,12 @@ export class InteractionController {
 
   private handleMouseUp(e: MouseEvent): void {
     if (e.button !== 0) return;
+    if (this.drawingLine) {
+      const screen = this.toContainerCoords(e);
+      const world = this.sceneManager.screenToWorld(screen.x, screen.y);
+      this.tryFinishDrawingLine(world);
+      return;
+    }
     if (this.resizing) {
       this.resizing = null;
       this.onChange?.();
@@ -484,8 +535,10 @@ export class InteractionController {
       this.notifySelectionChanged();
       this.onChange?.();
     } else if (e.key === 'Escape') {
-      // 优先级:取消添加模式 → 清选区
-      if (this.addMode) {
+      // 优先级:取消画线 → 取消添加模式 → 清选区
+      if (this.drawingLine) {
+        this.cancelDrawingLine();
+      } else if (this.addMode) {
         this.exitAddMode();
       } else {
         this.clearSelection();
@@ -559,6 +612,199 @@ export class InteractionController {
       startCenter: { x: view.centerX, y: view.centerY },
       startZoom: view.zoom,
     };
+  }
+
+  // ─────────────────────────────────────────────────────────
+  // 画 line(M1.x.7)
+  // ─────────────────────────────────────────────────────────
+
+  /** 当前 addMode 是否在添加 line 类 shape */
+  private isAddingLine(): boolean {
+    if (!this.addMode || this.addMode.kind !== 'shape') return false;
+    const shape = ShapeRegistry.get(this.addMode.ref);
+    return shape?.category === 'line';
+  }
+
+  /** 收集所有候选 magnet 节点(供 findClosestMagnet 用) */
+  private allMagnetCandidates(): Array<{ node: RenderedNode; instance: Instance }> {
+    const out: Array<{ node: RenderedNode; instance: Instance }> = [];
+    for (const id of this.nodeRenderer.ids()) {
+      const node = this.nodeRenderer.get(id);
+      const inst = this.getInstance(id);
+      if (node && inst) out.push({ node, instance: inst });
+    }
+    return out;
+  }
+
+  /** 屏幕像素 → 世界距离(用于 magnet 吸附半径换算) */
+  private snapRadiusWorld(): number {
+    const zoom = this.sceneManager.getView().zoom;
+    return MAGNET_SNAP_RADIUS_PX / Math.max(zoom, 0.01);
+  }
+
+  /** mousedown 在 magnet 附近 → 起手画线;否则取消 addMode */
+  private tryStartDrawingLine(world: { x: number; y: number }): void {
+    if (!this.addMode) return;
+    const closest = findClosestMagnet(
+      world.x, world.y,
+      this.allMagnetCandidates(),
+      this.snapRadiusWorld(),
+    );
+    if (!closest) {
+      // 没命中 magnet:不创建悬空 line,直接取消 addMode
+      this.exitAddMode();
+      return;
+    }
+    const lineRef = this.addMode.ref;
+    const startWorld = { x: closest.magnet.x, y: closest.magnet.y };
+    // 创建预览 line(start = magnet, end = magnet,长度 0)
+    const previewGroup = renderLine(lineRef, {
+      start: startWorld,
+      end: startWorld,
+    });
+    this.sceneManager.scene.add(previewGroup);
+    this.drawingLine = {
+      startInstanceId: closest.magnet.instanceId,
+      startMagnetId: closest.magnet.magnetId,
+      startWorld,
+      lineRef,
+      previewGroup,
+    };
+  }
+
+  /** mousemove:更新预览 line 终点(吸附附近 magnet 或跟鼠标) */
+  private updateDrawingLine(world: { x: number; y: number }): void {
+    if (!this.drawingLine) return;
+    const exclude = new Set([this.drawingLine.startInstanceId]);
+    const closest = findClosestMagnet(
+      world.x, world.y,
+      this.allMagnetCandidates(),
+      this.snapRadiusWorld(),
+      exclude,
+    );
+    const end = closest ? { x: closest.magnet.x, y: closest.magnet.y } : world;
+    updateLineGeometry(
+      this.drawingLine.previewGroup,
+      this.drawingLine.lineRef,
+      this.drawingLine.startWorld,
+      end,
+    );
+  }
+
+  /** mouseup:落点在 magnet 附近 → 创建 line;否则取消 */
+  private tryFinishDrawingLine(world: { x: number; y: number }): void {
+    if (!this.drawingLine) return;
+    const drawing = this.drawingLine;
+    // 清掉预览 line(无论成败)
+    this.sceneManager.scene.remove(drawing.previewGroup);
+    disposeLineGroup(drawing.previewGroup);
+    this.drawingLine = null;
+
+    const exclude = new Set([drawing.startInstanceId]);
+    const closest = findClosestMagnet(
+      world.x, world.y,
+      this.allMagnetCandidates(),
+      this.snapRadiusWorld(),
+      exclude,
+    );
+    if (!closest) {
+      // 落空:不创建 line,直接退出 addMode
+      this.exitAddMode();
+      return;
+    }
+
+    // 创建带 endpoints 的 line instance
+    this.pushHistory();
+    const id = this.nodeRenderer.nextInstanceId();
+    const instance: Instance = {
+      id,
+      type: 'shape',
+      ref: drawing.lineRef,
+      endpoints: [
+        { instance: drawing.startInstanceId, magnet: drawing.startMagnetId },
+        { instance: closest.magnet.instanceId, magnet: closest.magnet.magnetId },
+      ],
+    };
+    this.nodeRenderer.add(instance);
+
+    // 选中新创建的 line + 退出 addMode
+    this.selected.clear();
+    this.selected.add(id);
+    this.refreshOverlays();
+    this.notifySelectionChanged();
+    this.exitAddMode();
+    this.onChange?.();
+  }
+
+  /** ESC / unmount 时取消画 line(清掉预览 group) */
+  private cancelDrawingLine(): void {
+    if (!this.drawingLine) return;
+    this.sceneManager.scene.remove(this.drawingLine.previewGroup);
+    disposeLineGroup(this.drawingLine.previewGroup);
+    this.drawingLine = null;
+  }
+
+  /**
+   * hover 显示 magnet 提示:
+   * - 画线中:显示除起点 instance 外所有 shape 的 magnet 点
+   * - 仅 addMode 是 line(未起手):只显示鼠标 hover 的 shape 的 magnet 点
+   */
+  private refreshMagnetHintsForHover(world: { x: number; y: number }): void {
+    if (this.drawingLine) {
+      // 画线中:显示所有候选 shape 的 magnet,除了起点 instance
+      this.showMagnetHintsFor((id) => id !== this.drawingLine!.startInstanceId);
+      return;
+    }
+    // 起手前:仅显示 hover 命中 shape 的 magnet
+    const hit = this.hitTest(world);
+    if (!hit) {
+      this.clearMagnetHints();
+      return;
+    }
+    this.showMagnetHintsFor((id) => id === hit);
+  }
+
+  /** 在指定 instance 上显示 magnet 点(过滤函数返回 true 的 instance 才显) */
+  private showMagnetHintsFor(filter: (id: string) => boolean): void {
+    const wantedIds = new Set<string>();
+    for (const id of this.nodeRenderer.ids()) {
+      if (!filter(id)) continue;
+      const node = this.nodeRenderer.get(id);
+      const inst = this.getInstance(id);
+      if (!node || !inst) continue;
+      // 没 magnets 的 shape 跳过(line 类 / 无定义)
+      if (listMagnets(node, inst).length === 0) continue;
+      wantedIds.add(id);
+    }
+    // 删多余
+    for (const [id, group] of Array.from(this.magnetHints)) {
+      if (!wantedIds.has(id)) {
+        this.sceneManager.scene.remove(group);
+        disposeMagnetHintGroup(group);
+        this.magnetHints.delete(id);
+      }
+    }
+    // 加新 / 更新已有(magnet 位置可能因节点拖动 / 旋转变化)
+    for (const id of wantedIds) {
+      const node = this.nodeRenderer.get(id)!;
+      const inst = this.getInstance(id)!;
+      const existing = this.magnetHints.get(id);
+      if (existing) {
+        rebuildMagnetHintDots(existing, node, inst);
+      } else {
+        const group = makeMagnetHintGroup(node, inst);
+        this.sceneManager.scene.add(group);
+        this.magnetHints.set(id, group);
+      }
+    }
+  }
+
+  private clearMagnetHints(): void {
+    for (const group of this.magnetHints.values()) {
+      this.sceneManager.scene.remove(group);
+      disposeMagnetHintGroup(group);
+    }
+    this.magnetHints.clear();
   }
 
   /** 进入 resize 状态:记录起始尺寸/位置/旋转,后续 mousemove 应用 delta */
@@ -770,9 +1016,12 @@ export class InteractionController {
       }
     }
     // 加上新的 / 更新已有的(几何随 position/size 变)
+    // line 实例不显矩形选中边框(它的 bbox 是端点 AABB,框个矩形没意义);
+    // 选中视觉用 LineRenderer 自身高亮即可(M1.x.8 再做)
     for (const id of this.selected) {
       const node = this.nodeRenderer.get(id);
       if (!node) continue;
+      if (isLineKind(node)) continue;
       const existing = this.overlays.get(id);
       if (existing) {
         // 复用 LineLoop,更新 4 个顶点(node.position/size 可能变了)
@@ -948,4 +1197,77 @@ function rebuildSelectionBorder(loop: THREE.LineLoop, node: RenderedNode): void 
   }
   attr.needsUpdate = true;
   loop.geometry.computeBoundingSphere();
+}
+
+// ─────────────────────────────────────────────────────────
+// 画 line(M1.x.7)helpers
+// ─────────────────────────────────────────────────────────
+
+const MAGNET_HINT_COLOR = 0x4A90E2;
+const MAGNET_HINT_RADIUS_PX = 4;       // 屏幕像素 — 通过 group.scale=1/zoom 折算
+const MAGNET_HINT_Z = 0.04;            // 略低于 handles(0.05),不抢交互
+
+/** 释放预览 line group 的 geometry/material(LineRenderer 输出 group 内含 1 条 Line) */
+function disposeLineGroup(group: THREE.Group): void {
+  for (const child of group.children) {
+    const line = child as THREE.Line;
+    if (line.geometry) line.geometry.dispose();
+    const m = line.material;
+    if (Array.isArray(m)) for (const x of m) x.dispose();
+    else if (m) (m as THREE.Material).dispose();
+  }
+}
+
+/** 创建一个节点的 magnet 提示 group(N/S/E/W 等点) */
+function makeMagnetHintGroup(node: RenderedNode, inst: Instance): THREE.Group {
+  const group = new THREE.Group();
+  rebuildMagnetHintDots(group, node, inst);
+  return group;
+}
+
+/**
+ * 重建 group 内的 magnet 点 mesh
+ * 每个 magnet 一个 CircleGeometry,顶点是世界坐标(已含 rotation 变换);
+ * 半径用世界坐标(因为 group.scale=1,不像 HandlesOverlay 那样用 1/zoom)
+ * — 简化处理:小圆,zoom 很小时也看得见
+ */
+function rebuildMagnetHintDots(group: THREE.Group, node: RenderedNode, inst: Instance): void {
+  // 清旧
+  while (group.children.length > 0) {
+    const child = group.children[0];
+    group.remove(child);
+    const mesh = child as THREE.Mesh;
+    if (mesh.geometry) mesh.geometry.dispose();
+    const m = mesh.material;
+    if (Array.isArray(m)) for (const x of m) x.dispose();
+    else if (m) (m as THREE.Material).dispose();
+  }
+  // listMagnets 已含 rotation 变换的世界坐标
+  const dots = listMagnets(node, inst);
+  for (const m of dots) {
+    // 半径取 max(节点半最小边的 0.04, 4 世界单位),保证视觉可见
+    const r = Math.max(Math.min(node.size.w, node.size.h) * 0.04, 4);
+    const geom = new THREE.CircleGeometry(r, 16);
+    const mat = new THREE.MeshBasicMaterial({
+      color: MAGNET_HINT_COLOR,
+      transparent: true,
+      opacity: 0.7,
+      side: THREE.DoubleSide,
+    });
+    const mesh = new THREE.Mesh(geom, mat);
+    mesh.position.set(m.x, m.y, MAGNET_HINT_Z);
+    group.add(mesh);
+  }
+  // 防御:radius 用了像素的话(MAGNET_HINT_RADIUS_PX)留作未来切到 1/zoom 缩放体系的入口
+  void MAGNET_HINT_RADIUS_PX;
+}
+
+function disposeMagnetHintGroup(group: THREE.Group): void {
+  for (const child of group.children) {
+    const mesh = child as THREE.Mesh;
+    if (mesh.geometry) mesh.geometry.dispose();
+    const m = mesh.material;
+    if (Array.isArray(m)) for (const x of m) x.dispose();
+    else if (m) (m as THREE.Material).dispose();
+  }
 }

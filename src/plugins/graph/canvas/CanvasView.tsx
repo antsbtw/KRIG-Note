@@ -198,8 +198,10 @@ export function CanvasView() {
           handles.setTarget(null);
         } else if (ids.length === 1) {
           // 单选 → 显示该节点的 resize / rotation handles
+          // line 实例只有 endpoints,没有 resize/rotate 语义,跳过
           const node = nr.get(ids[0]);
-          handles.setTarget(node ?? null);
+          const isLine = !!node?.shapeRef?.startsWith('krig.line.');
+          handles.setTarget(isLine ? null : (node ?? null));
         } else {
           // 多选 → 不显示 handles(M1 范围限制)
           handles.setTarget(null);
