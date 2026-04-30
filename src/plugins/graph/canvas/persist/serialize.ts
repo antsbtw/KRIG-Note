@@ -8,24 +8,33 @@ import type { SceneManager } from '../scene/SceneManager';
  *
  * 输出形状:
  * {
- *   schema_version: 1,
- *   viewBox: { x, y, w, h },        // 视口(camera frustum left/top/width/height)
+ *   schema_version: 2,
+ *   view: { centerX, centerY, zoom },        // Freeform 风格视口
  *   instances: [Instance, ...],
- *   user_substances?: [SubstanceDef, ...],  // 用户创建的 substance(source='user')
+ *   user_substances?: [SubstanceDef, ...],
  * }
  *
- * user_substances 是 v1 临时字段:M1.5b 接通 note-store 后,每个 user substance
- * 存为独立 note,不再嵌在 canvas note 里。M1.5a 阶段先内嵌,保证序列化往返
- * 完整(刷新或重新打开后用户自创 substance 不丢)。
+ * v1 = 旧格式 viewBox: {x,y,w,h}(已弃用,deserialize 兼容读取)
+ * v2 = 新格式 view: {centerX, centerY, zoom}(无量纲缩放,与容器尺寸解耦)
+ *
+ * user_substances 是 v1 临时字段:M2 后改为独立 note 存储。
  */
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export interface CanvasDocument {
   schema_version: number;
+  /** Freeform 风格视口:中心世界坐标 + 无量纲 zoom */
+  view: { centerX: number; centerY: number; zoom: number };
+  instances: Instance[];
+  user_substances?: SubstanceDef[];
+}
+
+/** v1 兼容:旧文档形状(deserialize 容错读取) */
+interface CanvasDocumentV1 {
+  schema_version: 1;
   viewBox: { x: number; y: number; w: number; h: number };
   instances: Instance[];
-  /** 用户在该画板创建的 substance 定义(M1.5b 后改为独立 note) */
   user_substances?: SubstanceDef[];
 }
 
@@ -35,13 +44,9 @@ export interface CanvasDocument {
 
 export function serialize(nr: NodeRenderer, sm: SceneManager): CanvasDocument {
   const view = sm.getView();
-  const halfW = view.viewWidth / 2;
-  const halfH = view.viewHeight / 2;
-
   const instances = nr.listInstances();
 
-  // 收集用户创建的 substance:扫所有 substance instance,去重 ref;
-  // 只保留 source='user' 的(builtin 不需要存,启动时 bootstrap 会重新注册)
+  // 收集用户创建的 substance(source='user' 的需要嵌入文档,builtin 不需要)
   const userRefs = new Set<string>();
   for (const inst of instances) {
     if (inst.type === 'substance') userRefs.add(inst.ref);
@@ -54,11 +59,10 @@ export function serialize(nr: NodeRenderer, sm: SceneManager): CanvasDocument {
 
   return {
     schema_version: SCHEMA_VERSION,
-    viewBox: {
-      x: view.centerX - halfW,
-      y: view.centerY - halfH,
-      w: view.viewWidth,
-      h: view.viewHeight,
+    view: {
+      centerX: view.centerX,
+      centerY: view.centerY,
+      zoom: view.zoom,
     },
     instances: instances.map(cloneInstance),
     user_substances: userSubstances.length > 0 ? userSubstances : undefined,
@@ -70,16 +74,13 @@ export function serialize(nr: NodeRenderer, sm: SceneManager): CanvasDocument {
 // ─────────────────────────────────────────────────────────
 
 export interface DeserializeResult {
-  /** 该 doc 中的 instance 总数 */
   instanceCount: number;
-  /** 因 ref 找不到而被跳过的 instance id 列表 */
   skipped: string[];
-  /** schema_version 不识别时的 fallback warning */
   warnings: string[];
 }
 
 export function deserialize(
-  doc: CanvasDocument,
+  doc: CanvasDocument | CanvasDocumentV1,
   nr: NodeRenderer,
   sm: SceneManager,
 ): DeserializeResult {
@@ -93,12 +94,8 @@ export function deserialize(
     result.warnings.push('document is not an object');
     return result;
   }
-  if (doc.schema_version !== SCHEMA_VERSION) {
-    result.warnings.push(`unknown schema_version ${doc.schema_version}, expected ${SCHEMA_VERSION}`);
-    // 仍尝试加载,容错优于拒绝
-  }
 
-  // 1. 注册 user_substances(必须在 setInstances 之前,否则 substance 实例渲染不出)
+  // 1. 注册 user_substances(必须在 setInstances 之前)
   for (const def of doc.user_substances ?? []) {
     if (!def.id || !Array.isArray(def.components)) {
       result.warnings.push(`malformed user substance: ${def?.id ?? '<no-id>'}`);
@@ -107,9 +104,9 @@ export function deserialize(
     SubstanceRegistry.register(def);
   }
 
-  // 2. 验证每个 instance 的 ref 有效;跳过无效的
+  // 2. 验证 instance,跳过无效的
   const validInstances: Instance[] = [];
-  for (const inst of doc.instances ?? []) {
+  for (const inst of (doc as CanvasDocument).instances ?? []) {
     if (!inst || !inst.id || !inst.ref || !inst.type) {
       result.skipped.push(inst?.id ?? '<no-id>');
       continue;
@@ -121,17 +118,36 @@ export function deserialize(
   // 3. 装配画板
   nr.setInstances(validInstances);
 
-  // 4. 视口处理(v1 简化:不应用 doc.viewBox)
-  // 原因:viewBox 在 SceneManager mount 早期容器尺寸还不稳定时应用会导致 view
-  // 与 container 比例错位,造成 world 单位 ≠ 像素单位,所有鼠标交互(添加 /
-  // 选中 / 拖动)位置错乱。v1 简化为:画板永远以容器 1:1 映射(zoom=1)打开,
-  // 用户每次进画板自己 pan/zoom 调整。M2 修复 mount 时机问题后再启用 viewBox
-  // 持久化。
-  // 引用:doc.viewBox 字段仍序列化存储,只是反序列化时不应用 — 给 v2 升级路径留位
-  void sm;
-  void doc.viewBox;
+  // 4. 恢复视图
+  // v2:直接用 view.{centerX, centerY, zoom}
+  // v1(legacy):viewBox.{x,y,w,h} 已弃用,zoom 无法精确恢复(需要容器尺寸,
+  //   而旧文档没存)。简化:v1 文档丢弃视口,让 SceneManager 用初始 zoom=1
+  if (isV2(doc)) {
+    const v = doc.view;
+    if (Number.isFinite(v.centerX) && Number.isFinite(v.centerY) &&
+        Number.isFinite(v.zoom) && v.zoom > 0) {
+      sm.setView(v.centerX, v.centerY, v.zoom);
+    }
+  } else if (isV1(doc)) {
+    result.warnings.push('schema_version=1 (legacy viewBox), view not restored');
+    // 不调 setView,SceneManager 保持初始 zoom=1 + viewCenter 在容器中心
+  } else {
+    const v = (doc as { schema_version?: unknown }).schema_version;
+    result.warnings.push(`unknown schema_version ${String(v)}`);
+  }
 
   return result;
+}
+
+function isV2(doc: CanvasDocument | CanvasDocumentV1): doc is CanvasDocument {
+  return doc.schema_version === SCHEMA_VERSION
+    && 'view' in doc
+    && doc.view !== null
+    && typeof doc.view === 'object';
+}
+
+function isV1(doc: CanvasDocument | CanvasDocumentV1): doc is CanvasDocumentV1 {
+  return doc.schema_version === 1 && 'viewBox' in doc;
 }
 
 // ─────────────────────────────────────────────────────────
@@ -144,10 +160,10 @@ function cloneInstance(inst: Instance): Instance {
 }
 
 /** 创建空文档(给 NavSide "+ 新建画板"用) */
-export function createEmptyDocument(viewWidth = 1920, viewHeight = 1080): CanvasDocument {
+export function createEmptyDocument(): CanvasDocument {
   return {
     schema_version: SCHEMA_VERSION,
-    viewBox: { x: 0, y: 0, w: viewWidth, h: viewHeight },
+    view: { centerX: 0, centerY: 0, zoom: 1 },
     instances: [],
   };
 }

@@ -197,17 +197,15 @@ export function CanvasView() {
     // 没有持久化 graph 时,canvas 保持空白,empty overlay 显示提示;
     // dev fixture 已删除(M1.5b.6 接通真实持久化后不再需要)
 
-    // Zoom 显示:轮询 sceneManager.getView(),取整变化才 setState
+    // Zoom 显示:轮询 sceneManager.getView().zoom,取整变化才 setState
     let lastReported = -1;
-    const baseViewWidth = sm.getView().viewWidth || 1;
     const zoomTimer = window.setInterval(() => {
       const cur = sm.getView();
-      if (cur.viewWidth <= 0) return;
-      const z = baseViewWidth / cur.viewWidth;
-      const pct = Math.round(z * 100);
+      if (cur.zoom <= 0) return;
+      const pct = Math.round(cur.zoom * 100);
       if (pct === lastReported) return;
       lastReported = pct;
-      setZoomLevel(z);
+      setZoomLevel(cur.zoom);
     }, 150);
 
     return () => {

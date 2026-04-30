@@ -1,13 +1,13 @@
 // 序列化 round-trip smoke
 // 不依赖 NodeRenderer / SceneManager(那两者要 DOM/WebGL),只测 CanvasDocument
-// 结构 + cloneInstance 保真 + viewBox 数学
+// 结构(schema_version=2,Freeform 视图)+ cloneInstance 保真
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
-// 构造一个完整的画板文档
+// 构造一个完整的 v2 画板文档
 const before = {
   schema_version: SCHEMA_VERSION,
-  viewBox: { x: 100, y: 50, w: 1920, h: 1080 },
+  view: { centerX: 500, centerY: 300, zoom: 1.5 },
   instances: [
     { id: 'i-1', type: 'shape', ref: 'krig.basic.roundRect', position: { x: 50, y: 50 }, size: { w: 200, h: 100 }, params: { r: 0.2 } },
     { id: 'i-2', type: 'shape', ref: 'krig.basic.diamond', position: { x: 320, y: 50 }, size: { w: 120, h: 100 }, style_overrides: { fill: { color: '#e8a8c0' } } },
@@ -29,15 +29,13 @@ const before = {
   ],
 };
 
-// 模拟 serialize + deserialize:JSON.stringify + JSON.parse(测语义保留)
 const json = JSON.stringify(before);
 const after = JSON.parse(json);
 
 const failed = [];
 
-// 字段对等
 if (after.schema_version !== SCHEMA_VERSION) failed.push(`schema_version mismatch: ${after.schema_version}`);
-if (JSON.stringify(after.viewBox) !== JSON.stringify(before.viewBox)) failed.push('viewBox mismatch');
+if (JSON.stringify(after.view) !== JSON.stringify(before.view)) failed.push('view mismatch');
 if (after.instances.length !== before.instances.length) failed.push(`instances count: ${after.instances.length} vs ${before.instances.length}`);
 if (after.user_substances.length !== 1) failed.push(`user_substances count: ${after.user_substances.length}`);
 
@@ -58,14 +56,11 @@ if (us.id !== 'user.test.abc123') failed.push(`user_substance id lost: ${us.id}`
 if (us.source !== 'user') failed.push(`user_substance source lost: ${us.source}`);
 if (us.components[0].binding !== 'frame') failed.push(`user_substance components.binding lost`);
 
-// viewBox → centerX/Y/viewWidth 数学
-const cx = before.viewBox.x + before.viewBox.w / 2;
-const cy = before.viewBox.y + before.viewBox.h / 2;
-const expectedCx = 100 + 1920 / 2;
-const expectedCy = 50 + 1080 / 2;
-if (cx !== expectedCx || cy !== expectedCy) failed.push(`viewBox center math wrong: (${cx},${cy})`);
+// view 字段验证
+if (after.view.zoom !== 1.5) failed.push(`view.zoom lost: ${after.view.zoom}`);
+if (after.view.centerX !== 500 || after.view.centerY !== 300) failed.push(`view center lost`);
 
-console.log(`[serialize-smoke] roundtrip ${before.instances.length} instances + ${before.user_substances.length} user substances`);
+console.log(`[serialize-smoke] roundtrip ${before.instances.length} instances + ${before.user_substances.length} user substances + view`);
 if (failed.length === 0) {
   console.log('[serialize-smoke] OK ✓');
   process.exit(0);

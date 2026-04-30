@@ -40,7 +40,8 @@ export const graphStore: IGraphStore = {
     const now = Date.now();
     // 空画板:CanvasView 反序列化时 createEmptyDocument 会兜底,
     // 但这里也存一份合理初值,免得读到 null
-    const docContent = { schema_version: 1, viewBox: { x: 0, y: 0, w: 1920, h: 1080 }, instances: [] };
+    // schema_version=2 Freeform 风格:view.zoom 无量纲,与容器尺寸解耦
+    const docContent = { schema_version: 2, view: { centerX: 0, centerY: 0, zoom: 1 }, instances: [] };
 
     const record: GraphCanvasRecord = {
       id,

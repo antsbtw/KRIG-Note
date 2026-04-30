@@ -1,23 +1,31 @@
 import * as THREE from 'three';
 
 /**
- * SceneManager — Three.js 底座
+ * SceneManager — Three.js 底座(Freeform 风格无界画板)
  *
  * 职责:
  * - 创建 scene + 正交相机 + WebGLRenderer
  * - 处理容器 resize(ResizeObserver)
  * - 处理 Retina(setPixelRatio + setSize 第三参 true)
  * - RAF 渲染循环
- * - fitToContent(NaN 防御)
+ * - fitToBox / fitToContent
  * - dispose
  *
- * **不**做:节点渲染管线(M1.2b)、交互(M1.3)、UI(M1.4)。
+ * **不**做:节点渲染管线、交互、UI。
  *
- * 坐标系约定(对齐 path-to-three.ts):
- * - X 向右,Y **向下**,Z 朝外(正交相机看 -Z)。所有 shape mesh 都是 z=0 平面
- *   上的 2D 几何。
- * - "世界坐标"等于 Canvas 像素坐标(画板坐标系):shape mesh.position 直接
- *   等于其在画板上的左上角(或 transform.x/y 对应的锚点)。
+ * 坐标系约定(对齐 Freeform / Figma / draw.io 标准做法):
+ * - X 向右,Y **向下**(对齐 SVG / Canvas 习惯),Z 朝外(正交相机看 -Z)
+ * - **世界坐标 = 画板坐标系,无界(可任意 zoom + pan)**
+ * - shape mesh.position 是其在画板上的世界坐标(与 container 大小完全无关)
+ *
+ * 视口模型:
+ * - viewCenter:世界坐标里"屏幕中心对应的世界点"(pan 改这个)
+ * - zoom:无量纲缩放因子(zoom>1 放大,zoom<1 缩小)
+ * - 视口宽 = clientWidth / zoom(实时由 zoom 派生,容器 resize 时自动跟随)
+ *
+ * 关键不变量:**1 个 zoom=1 单位的世界距离 = 1 个 CSS 像素**。这让 shape 数据
+ * 里写 `size: { w: 160, h: 100 }` 在 zoom=1 时显示正好 160×100 CSS 像素,
+ * 与画板大小无关。
  */
 export class SceneManager {
   readonly scene: THREE.Scene;
@@ -29,10 +37,12 @@ export class SceneManager {
   private rafHandle: number | null = null;
   private disposed = false;
 
-  /** 当前画板的世界坐标视口(camera frustum 中心 + 宽高,单位:画板像素) */
+  /** 屏幕中心对应的世界坐标点 */
   private viewCenter = { x: 0, y: 0 };
-  private viewWidth = 0;   // 画板坐标系下 camera 看到的宽
-  private viewHeight = 0;
+  /** 无量纲缩放因子(1 = "1 世界单位 = 1 CSS 像素") */
+  private zoom = 1;
+  /** 是否已经初始化过 viewCenter(首次 resize 时根据容器尺寸定位) */
+  private inited = false;
 
   constructor(container: HTMLElement) {
     if (!container) {
@@ -42,11 +52,10 @@ export class SceneManager {
 
     this.scene = new THREE.Scene();
     // Three.js scene 不能直接吃 CSS var,这里用 token 同源色值(--krig-bg-base);
-    // v1.x 优化方向:启动时 getComputedStyle 读 token 同步给 scene,主题切换跟随
+    // v1.x 优化方向:启动时 getComputedStyle 读 token 同步给 scene
     this.scene.background = new THREE.Color('#1e1e1e');
 
-    // 正交相机(2D 画板专用)。frustum 由 fitToContent 或 setView 决定;
-    // 默认占位一个像素的 frustum,后续 first-resize 会立刻修正。
+    // 正交相机(2D 画板专用)。frustum 由 applyCamera 实时计算
     this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 1000);
     this.camera.position.z = 10;
 
@@ -54,7 +63,8 @@ export class SceneManager {
     this.renderer.setPixelRatio(window.devicePixelRatio || 1);
     container.appendChild(this.renderer.domElement);
 
-    // ResizeObserver:容器变了同步 renderer + camera
+    // ResizeObserver:容器变了同步 renderer + camera;**zoom 不变**,frustum
+    // 自动按新 clientWidth/zoom 算
     this.resizeObserver = new ResizeObserver(() => this.handleResize());
     this.resizeObserver.observe(container);
 
@@ -76,35 +86,29 @@ export class SceneManager {
     // ⚠️ 第三参数必须 true,否则 Retina canvas DOM 撑成 2 倍 CSS 像素超出容器
     this.renderer.setSize(clientWidth, clientHeight, true);
 
-    // 首次:锁定到容器像素大小(zoom=1,viewCenter 在容器中心)
-    if (this.viewWidth === 0 || this.viewHeight === 0) {
-      this.viewWidth = clientWidth;
-      this.viewHeight = clientHeight;
+    // 首次 init:viewCenter 设为容器中心(世界坐标 = 容器中心 CSS 像素位置)
+    // 这样 shape 数据里的 (0,0) 在容器左上角,自然布局
+    if (!this.inited) {
       this.viewCenter = { x: clientWidth / 2, y: clientHeight / 2 };
-    } else {
-      // 容器变了(窗口 resize / NavSide 拖宽):保持当前 zoom 不变(zoom=
-      // viewWidth/clientWidth_old),按新容器尺寸调整 viewHeight 让 view aspect
-      // 等于 container aspect — 保证 world 单位的"宽" = "高"(像素 1:1 不
-      // 再变形)
-      const aspect = clientWidth / clientHeight;
-      this.viewHeight = this.viewWidth / aspect;
+      this.inited = true;
     }
+    // 后续 resize:zoom 不变,viewCenter 不变。frustum 在 applyCamera 里实时
+    // 用 clientWidth/zoom 算,自动跟随容器尺寸
     this.applyCamera();
   }
 
-  /** 把 viewCenter / viewWidth / viewHeight 应用到 camera frustum */
+  /** 把 viewCenter / zoom 应用到 camera frustum(用容器实时尺寸算可视范围) */
   private applyCamera(): void {
     const { clientWidth, clientHeight } = this.container;
     if (clientWidth === 0 || clientHeight === 0) return;
 
-    // Y 向下:top < bottom(在 OrthographicCamera 里 top 比 bottom 数值大,
-    // 但我们的世界 Y 向下,所以传 -Y 给 camera 实现"看下来 Y 增加"的视觉)。
-    // 做法:camera.up = (0, -1, 0),frustum 用世界坐标直接传。
-    const halfW = this.viewWidth / 2;
-    const halfH = this.viewHeight / 2;
+    // 视口宽高(世界坐标)= 容器像素 / zoom
+    const halfW = clientWidth / this.zoom / 2;
+    const halfH = clientHeight / this.zoom / 2;
     this.camera.left = this.viewCenter.x - halfW;
     this.camera.right = this.viewCenter.x + halfW;
-    this.camera.top = this.viewCenter.y - halfH;     // Y 向下:top 比 bottom 小
+    // Y 向下:top < bottom(camera.up = (0,-1,0))
+    this.camera.top = this.viewCenter.y - halfH;
     this.camera.bottom = this.viewCenter.y + halfH;
     this.camera.position.x = this.viewCenter.x;
     this.camera.position.y = this.viewCenter.y;
@@ -114,11 +118,10 @@ export class SceneManager {
   }
 
   /**
-   * 把 camera 视口设为 [x1..x2] × [y1..y2](世界坐标),自动 padding 10%
-   * 适配画板尺寸到容器尺寸(letterbox,保持比例)。
+   * 把 camera 视口适配到 [box.minX..maxX] × [box.minY..maxY] 范围,加 padding
    *
-   * ⚠️ NaN 防御:setFromObject(scene) 含退化几何时返回 NaN box,导致
-   * camera frustum 全 NaN,画面空白。4 分量 isFinite 检查不过则跳过。
+   * ⚠️ NaN 防御:setFromObject(scene) 含退化几何时返回 NaN box,4 分量 isFinite
+   * 检查不过则跳过。
    */
   fitToBox(box: { minX: number; minY: number; maxX: number; maxY: number }, padding = 0.1): boolean {
     if (
@@ -134,25 +137,20 @@ export class SceneManager {
       console.warn('[SceneManager] fitToBox skipped: zero/negative size', box);
       return false;
     }
+    const { clientWidth, clientHeight } = this.container;
+    if (clientWidth === 0 || clientHeight === 0) return false;
+
     const cx = (box.minX + box.maxX) / 2;
     const cy = (box.minY + box.maxY) / 2;
     const padW = w * (1 + padding);
     const padH = h * (1 + padding);
-    // letterbox:按容器宽高比放大,保证 padW/padH 都装得下
-    const { clientWidth, clientHeight } = this.container;
-    const containerAspect = clientWidth / clientHeight;
-    const boxAspect = padW / padH;
-    let viewW: number, viewH: number;
-    if (boxAspect > containerAspect) {
-      viewW = padW;
-      viewH = padW / containerAspect;
-    } else {
-      viewH = padH;
-      viewW = padH * containerAspect;
-    }
+    // letterbox:取较小的 zoom(让 padW 和 padH 都能装进容器)
+    const zoomX = clientWidth / padW;
+    const zoomY = clientHeight / padH;
+    const zoom = Math.min(zoomX, zoomY);
+
     this.viewCenter = { x: cx, y: cy };
-    this.viewWidth = viewW;
-    this.viewHeight = viewH;
+    this.zoom = zoom;
     this.applyCamera();
     return true;
   }
@@ -167,27 +165,24 @@ export class SceneManager {
     );
   }
 
-  /** 直接设视口中心 + 宽(高按容器比例自适应);用于 pan / zoom 控制 */
-  setView(centerX: number, centerY: number, viewWidth: number): void {
-    if (!Number.isFinite(centerX) || !Number.isFinite(centerY) || !Number.isFinite(viewWidth) || viewWidth <= 0) {
-      console.warn('[SceneManager] setView ignored:', { centerX, centerY, viewWidth });
+  /** 直接设视口(用于 pan / zoom 控制 + 反序列化恢复视图) */
+  setView(centerX: number, centerY: number, zoom: number): void {
+    if (!Number.isFinite(centerX) || !Number.isFinite(centerY) || !Number.isFinite(zoom) || zoom <= 0) {
+      console.warn('[SceneManager] setView ignored:', { centerX, centerY, zoom });
       return;
     }
-    const { clientWidth, clientHeight } = this.container;
-    if (clientWidth === 0) return;
-    const aspect = clientWidth / clientHeight;
     this.viewCenter = { x: centerX, y: centerY };
-    this.viewWidth = viewWidth;
-    this.viewHeight = viewWidth / aspect;
+    this.zoom = zoom;
+    this.inited = true;
     this.applyCamera();
   }
 
-  getView(): { centerX: number; centerY: number; viewWidth: number; viewHeight: number } {
+  /** 当前视图状态(给序列化 / Toolbar zoom 显示) */
+  getView(): { centerX: number; centerY: number; zoom: number } {
     return {
       centerX: this.viewCenter.x,
       centerY: this.viewCenter.y,
-      viewWidth: this.viewWidth,
-      viewHeight: this.viewHeight,
+      zoom: this.zoom,
     };
   }
 
@@ -195,31 +190,22 @@ export class SceneManager {
   // 屏幕 ↔ 世界坐标互转(交互模块要用)
   // ─────────────────────────────────────────────────────────
 
-  /** CSS 像素的容器内坐标 → 世界坐标 */
+  /** 容器内 CSS 像素坐标 → 世界坐标 */
   screenToWorld(screenX: number, screenY: number): { x: number; y: number } {
     const { clientWidth, clientHeight } = this.container;
     if (clientWidth === 0 || clientHeight === 0) return { x: 0, y: 0 };
-    const ndcX = (screenX / clientWidth) * 2 - 1;
-    const ndcY = (screenY / clientHeight) * 2 - 1;
-    // 与 applyCamera 中的 frustum 对齐:left/right + top/bottom 已经是世界坐标
-    const halfW = this.viewWidth / 2;
-    const halfH = this.viewHeight / 2;
     return {
-      x: this.viewCenter.x + ndcX * halfW,
-      y: this.viewCenter.y + ndcY * halfH,
+      x: this.viewCenter.x + (screenX - clientWidth / 2) / this.zoom,
+      y: this.viewCenter.y + (screenY - clientHeight / 2) / this.zoom,
     };
   }
 
-  /** 世界坐标 → CSS 像素的容器内坐标 */
+  /** 世界坐标 → 容器内 CSS 像素坐标 */
   worldToScreen(worldX: number, worldY: number): { x: number; y: number } {
     const { clientWidth, clientHeight } = this.container;
-    const halfW = this.viewWidth / 2;
-    const halfH = this.viewHeight / 2;
-    const ndcX = (worldX - this.viewCenter.x) / halfW;
-    const ndcY = (worldY - this.viewCenter.y) / halfH;
     return {
-      x: ((ndcX + 1) / 2) * clientWidth,
-      y: ((ndcY + 1) / 2) * clientHeight,
+      x: clientWidth / 2 + (worldX - this.viewCenter.x) * this.zoom,
+      y: clientHeight / 2 + (worldY - this.viewCenter.y) * this.zoom,
     };
   }
 
