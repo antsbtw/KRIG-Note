@@ -104,14 +104,17 @@ export function deserialize(
     SubstanceRegistry.register(def);
   }
 
-  // 2. 验证 instance,跳过无效的
+  // 2. 验证 instance,跳过无效的;清洗异常 size/position(防御历史脏数据)
   const validInstances: Instance[] = [];
   for (const inst of (doc as CanvasDocument).instances ?? []) {
     if (!inst || !inst.id || !inst.ref || !inst.type) {
       result.skipped.push(inst?.id ?? '<no-id>');
       continue;
     }
-    validInstances.push(cloneInstance(inst));
+    const cloned = cloneInstance(inst);
+    const sanitizeWarn = sanitizeInstance(cloned);
+    if (sanitizeWarn) result.warnings.push(`${cloned.id}: ${sanitizeWarn}`);
+    validInstances.push(cloned);
   }
   result.instanceCount = validInstances.length;
 
@@ -157,6 +160,53 @@ function isV1(doc: CanvasDocument | CanvasDocumentV1): doc is CanvasDocumentV1 {
 /** 深拷贝 instance(避免外部修改原始引用) */
 function cloneInstance(inst: Instance): Instance {
   return JSON.parse(JSON.stringify(inst));
+}
+
+/**
+ * 清洗 instance:把 NaN/Infinity/超大值钳制成合理范围
+ * 返回 warning 字符串(若有改动);返回 null 表示数据正常
+ *
+ * 防御场景:历史 bug 把 size 写成天文数字 → 持久化 → 重新加载时
+ * 渲染层会因数值溢出整体崩坏(整画布被 stretch 的 mesh 覆盖)
+ */
+function sanitizeInstance(inst: Instance): string | null {
+  const SIZE_MAX = 100000;   // 单边最大 10 万 px(对应 viewBox 内任何形状都够)
+  const SIZE_MIN = 1;
+  const POS_MAX = 1e7;        // position 最大 ±1e7
+  const issues: string[] = [];
+
+  if (inst.size) {
+    const sw = Number(inst.size.w);
+    const sh = Number(inst.size.h);
+    if (!Number.isFinite(sw) || sw > SIZE_MAX || sw < SIZE_MIN) {
+      issues.push(`size.w=${inst.size.w} → 100`);
+      inst.size.w = 100;
+    }
+    if (!Number.isFinite(sh) || sh > SIZE_MAX || sh < SIZE_MIN) {
+      issues.push(`size.h=${inst.size.h} → 100`);
+      inst.size.h = 100;
+    }
+  }
+  if (inst.position) {
+    const px = Number(inst.position.x);
+    const py = Number(inst.position.y);
+    if (!Number.isFinite(px) || Math.abs(px) > POS_MAX) {
+      issues.push(`position.x=${inst.position.x} → 0`);
+      inst.position.x = 0;
+    }
+    if (!Number.isFinite(py) || Math.abs(py) > POS_MAX) {
+      issues.push(`position.y=${inst.position.y} → 0`);
+      inst.position.y = 0;
+    }
+  }
+  if (inst.rotation !== undefined) {
+    const r = Number(inst.rotation);
+    if (!Number.isFinite(r)) {
+      issues.push(`rotation=${inst.rotation} → 0`);
+      inst.rotation = 0;
+    }
+  }
+  return issues.length ? issues.join(', ') : null;
 }
 
 /** 创建空文档(给 NavSide "+ 新建画板"用) */
