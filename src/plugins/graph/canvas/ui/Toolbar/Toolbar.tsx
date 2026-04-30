@@ -55,28 +55,20 @@ export function Toolbar(props: ToolbarProps) {
       {/* ── Title ── */}
       <span style={styles.title}>{props.title}</span>
 
-      {/* ── 创作工具组 ── */}
+      {/* ── 添加(单图标按钮,语义"形状",对齐 Apple Pages 工具栏视觉) ── */}
       <span style={styles.divider} />
       <button
         style={{
-          ...styles.actionBtn,
+          ...styles.iconBtnLg,
           ...(inAddMode ? styles.actionBtnActive : null),
         }}
         onClick={(e: ReactMouseEvent<HTMLButtonElement>) =>
           props.onAdd(e.currentTarget.getBoundingClientRect())
         }
         title="添加图元(从 Library 选择)"
+        aria-label="添加图元"
       >
-        + 添加
-      </button>
-
-      {/* ── History(占位,v1.1)── */}
-      <span style={styles.divider} />
-      <button style={{ ...styles.iconBtn, opacity: 0.3 }} disabled title="撤销(v1.1)">
-        ↶
-      </button>
-      <button style={{ ...styles.iconBtn, opacity: 0.3 }} disabled title="重做(v1.1)">
-        ↷
+        <ShapesIcon />
       </button>
 
       {/* ── View(zoom 显示 + Fit)── */}
@@ -126,6 +118,22 @@ export function Toolbar(props: ToolbarProps) {
         </div>
       )}
     </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────
+// 图标(inline SVG,精确控制视觉,不依赖系统 emoji 字体)
+// ─────────────────────────────────────────────────────────
+
+/** "Shapes" 图标:一个圆叠在圆角矩形上,对齐 Apple Pages / Keynote 工具栏 */
+function ShapesIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+      {/* 后层:圆角矩形 */}
+      <rect x="4.5" y="4.5" width="9" height="9" rx="1.5" />
+      {/* 前层:圆形(略偏左上) */}
+      <circle cx="6" cy="6" r="3" fill="var(--krig-bg-elevated)" />
+    </svg>
   );
 }
 
@@ -189,6 +197,20 @@ const styles: Record<string, CSSProperties> = {
   actionBtnActive: {
     background: 'var(--krig-accent-bg)',
     borderColor: 'var(--krig-accent-border)',
+  },
+  iconBtnLg: {
+    background: 'transparent',
+    border: '1px solid var(--krig-border-input)',
+    borderRadius: 4,
+    color: 'var(--krig-text-primary)',
+    width: 28,
+    height: BTN_HEIGHT,
+    padding: 0,
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
   },
   iconBtn: {
     background: 'transparent',
