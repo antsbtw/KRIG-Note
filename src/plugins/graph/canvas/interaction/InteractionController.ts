@@ -595,7 +595,8 @@ function rebuildSelectionBorder(group: THREE.Group, node: RenderedNode): void {
   const y2 = node.position.y + node.size.h + SELECTION_PADDING;
   const w = SELECTION_BORDER_WIDTH;
 
-  const mat = new THREE.MeshBasicMaterial({ color: SELECTION_COLOR, transparent: false });
+  // DoubleSide 防 Y 翻转 frustum 下 face culling 把朝镜头的面剔掉
+  const mat = new THREE.MeshBasicMaterial({ color: SELECTION_COLOR, transparent: false, side: THREE.DoubleSide });
   // 4 条边 mesh:top / right / bottom / left
   const edges: Array<[number, number, number, number]> = [
     [x1 - w / 2, y1 - w / 2, x2 + w / 2, y1 + w / 2],   // top

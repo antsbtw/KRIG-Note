@@ -218,16 +218,16 @@ function handlePositions(halfW: number, halfH: number): Record<HandleKind, [numb
 function makeHandleMesh(fillColor: number, borderColor: number): THREE.Group {
   const group = new THREE.Group();
 
-  // 外圆(border)
+  // 外圆(border)— DoubleSide 防 Y 翻转 frustum 下 face culling 把朝镜头的面剔掉
   const borderGeom = new THREE.CircleGeometry(HANDLE_RADIUS + HANDLE_BORDER, 24);
-  const borderMat = new THREE.MeshBasicMaterial({ color: borderColor });
+  const borderMat = new THREE.MeshBasicMaterial({ color: borderColor, side: THREE.DoubleSide });
   const borderMesh = new THREE.Mesh(borderGeom, borderMat);
   borderMesh.position.z = -0.001;  // 略低于 fill,确保 fill 显示在上
   group.add(borderMesh);
 
   // 内圆(fill)
   const fillGeom = new THREE.CircleGeometry(HANDLE_RADIUS, 24);
-  const fillMat = new THREE.MeshBasicMaterial({ color: fillColor });
+  const fillMat = new THREE.MeshBasicMaterial({ color: fillColor, side: THREE.DoubleSide });
   const fillMesh = new THREE.Mesh(fillGeom, fillMat);
   group.add(fillMesh);
 
