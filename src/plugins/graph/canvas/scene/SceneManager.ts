@@ -97,7 +97,14 @@ export class SceneManager {
     this.applyCamera();
   }
 
-  /** 把 viewCenter / zoom 应用到 camera frustum(用容器实时尺寸算可视范围) */
+  /** 把 viewCenter / zoom 应用到 camera frustum(用容器实时尺寸算可视范围)
+   *
+   * Y 向下约定的实现:用 camera.up=(0,-1,0) 翻转 Y,frustum top/bottom 仍按
+   * Three.js 标准(top > bottom)赋值。camera.up 翻转后,mesh Y 增大会显示在
+   * 屏幕下方。
+   *
+   * 之前用 top<bottom + camera.up=(0,-1,0) 双重翻转,两个负相消导致渲染错位。
+   */
   private applyCamera(): void {
     const { clientWidth, clientHeight } = this.container;
     if (clientWidth === 0 || clientHeight === 0) return;
@@ -107,9 +114,9 @@ export class SceneManager {
     const halfH = clientHeight / this.zoom / 2;
     this.camera.left = this.viewCenter.x - halfW;
     this.camera.right = this.viewCenter.x + halfW;
-    // Y 向下:top < bottom(camera.up = (0,-1,0))
-    this.camera.top = this.viewCenter.y - halfH;
-    this.camera.bottom = this.viewCenter.y + halfH;
+    // Three.js 标准 frustum:top > bottom(单独 camera.up=(0,-1,0) 翻转 Y)
+    this.camera.top = this.viewCenter.y + halfH;
+    this.camera.bottom = this.viewCenter.y - halfH;
     this.camera.position.x = this.viewCenter.x;
     this.camera.position.y = this.viewCenter.y;
     this.camera.up.set(0, -1, 0);

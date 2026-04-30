@@ -196,7 +196,7 @@ export class InteractionController {
 
     // 添加模式:优先级最高,无论命中节点还是空白都视作"放置"
     if (this.addMode) {
-      this.placeInstance(world);
+      this.placeInstance(world, screen);
       return;
     }
 
@@ -245,18 +245,39 @@ export class InteractionController {
   }
 
   /** 添加模式下点击画布:把当前 spec 实例化到点击的世界坐标 */
-  private placeInstance(world: { x: number; y: number }): void {
+  private placeInstance(world: { x: number; y: number }, clickScreen?: { x: number; y: number }): void {
     const spec = this.addMode;
     if (!spec) return;
 
     const size = resolveDefaultSize(spec);
     const id = this.nodeRenderer.nextInstanceId();
+    const position = { x: world.x - size.w / 2, y: world.y - size.h / 2 };
+    if (import.meta.env.DEV) {
+      const v = this.sceneManager.getView();
+      const c = this.container;
+      // 反算 shape 中心点会显示在屏幕哪个位置(应该 = clickScreen)
+      const centerScreen = this.sceneManager.worldToScreen(world.x, world.y);
+      // 反算 shape 左上角(position)在屏幕哪个位置
+      const topLeftScreen = this.sceneManager.worldToScreen(position.x, position.y);
+      // eslint-disable-next-line no-console
+      console.log(
+        `[placeInstance] id=${id} ` +
+        `clickScreen=(${clickScreen?.x.toFixed(0) ?? '?'},${clickScreen?.y.toFixed(0) ?? '?'}) ` +
+        `world=(${world.x.toFixed(0)},${world.y.toFixed(0)}) ` +
+        `position(world)=(${position.x.toFixed(0)},${position.y.toFixed(0)}) ` +
+        `centerOnScreen=(${centerScreen.x.toFixed(0)},${centerScreen.y.toFixed(0)}) ` +
+        `topLeftOnScreen=(${topLeftScreen.x.toFixed(0)},${topLeftScreen.y.toFixed(0)}) ` +
+        `size=${size.w}x${size.h} ` +
+        `view=center(${v.centerX.toFixed(0)},${v.centerY.toFixed(0)}) zoom=${v.zoom.toFixed(2)} ` +
+        `container=${c.clientWidth}x${c.clientHeight}`
+      );
+    }
     const instance: Instance = {
       id,
       type: spec.kind,
       ref: spec.ref,
       // 居中对齐到点击位置(用户感知"放在我点的地方")
-      position: { x: world.x - size.w / 2, y: world.y - size.h / 2 },
+      position,
       size,
     };
     this.nodeRenderer.add(instance);
