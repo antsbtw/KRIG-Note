@@ -3,13 +3,16 @@ import type { CSSProperties, MouseEvent as ReactMouseEvent } from 'react';
 /**
  * Canvas Toolbar — 顶部 36px 横条,对齐 NoteView 视觉
  *
- * 按钮分组(spec Canvas.md §3.2):
- *   导航(‹›)│ 标题 │ + Shape ◇ Substance │ 历史 │ 🔍% ↔Fit │ + 新建 Open 🔄 ×
+ * 按钮分组(spec Canvas.md §3.2 — UX 简化):
+ *   导航(‹›)│ 标题 │ + 添加 │ 历史 │ 🔍% ↔Fit │ + 新建 Open 🔄 ×
  *
- * M1.4a 通电:标题 / + Shape / ◇ Substance / 缩放% / Fit / ×
+ * M1.4a 通电:标题 / + 添加 / 缩放% / Fit / ×
  * M1.4a 占位:导航(M1.5+)/ 历史(v1.1)/ + 新建 Open(M1.5b)/ 🔄(M1.5b)
  *
  * 与 NoteView 对齐:#252525 背景、#333 下边框、4px gap、36px 高
+ *
+ * UX 决策:不向用户暴露 Shape vs Substance 区分(那是内部架构概念)。
+ * 单一 "+ 添加" 入口,LibraryPicker 内左栏分类列表里 Shape/Substance 类目平铺。
  */
 export interface ToolbarProps {
   title: string;
@@ -17,12 +20,11 @@ export interface ToolbarProps {
   zoomLevel: number;
   /** 多选时 inline 显示 Combine 按钮(spec §3.2 / M1.4d 接通) */
   multiSelected?: boolean;
-  /** 添加模式中:高亮对应工具按钮 */
+  /** 添加模式中:高亮 + 添加 按钮 */
   addModeRef?: string | null;
 
-  /** 触发按钮被点击,回调带 anchorRect(给 LibraryPicker 定位) */
-  onAddShape: (anchorRect: DOMRect) => void;
-  onAddSubstance: (anchorRect: DOMRect) => void;
+  /** "+ 添加" 按钮被点击,回调带 anchorRect(给 LibraryPicker 定位) */
+  onAdd: (anchorRect: DOMRect) => void;
   onFit: () => void;
   onCombine?: () => void;
   onClose: () => void;
@@ -31,8 +33,6 @@ export interface ToolbarProps {
 export function Toolbar(props: ToolbarProps) {
   const zoomPct = Math.round(props.zoomLevel * 100);
   const inAddMode = props.addModeRef !== null && props.addModeRef !== undefined;
-  const addingShape = props.addModeRef?.startsWith('krig.') ?? false;
-  const addingSubstance = props.addModeRef?.startsWith('library.') ?? false;
 
   return (
     <div style={styles.toolbar}>
@@ -60,26 +60,14 @@ export function Toolbar(props: ToolbarProps) {
       <button
         style={{
           ...styles.actionBtn,
-          ...(addingShape ? styles.actionBtnActive : null),
+          ...(inAddMode ? styles.actionBtnActive : null),
         }}
         onClick={(e: ReactMouseEvent<HTMLButtonElement>) =>
-          props.onAddShape(e.currentTarget.getBoundingClientRect())
+          props.onAdd(e.currentTarget.getBoundingClientRect())
         }
-        title="添加 Shape — 从 Library 选择一个图元"
+        title="添加图元(从 Library 选择)"
       >
-        + Shape
-      </button>
-      <button
-        style={{
-          ...styles.actionBtn,
-          ...(addingSubstance ? styles.actionBtnActive : null),
-        }}
-        onClick={(e: ReactMouseEvent<HTMLButtonElement>) =>
-          props.onAddSubstance(e.currentTarget.getBoundingClientRect())
-        }
-        title="添加 Substance — 从 Library 选择一个组合资源"
-      >
-        ◇ Substance
+        + 添加
       </button>
 
       {/* ── History(占位,v1.1)── */}

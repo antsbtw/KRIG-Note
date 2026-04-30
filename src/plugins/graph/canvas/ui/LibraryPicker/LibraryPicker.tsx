@@ -15,14 +15,17 @@ import { shapeToSVG, substanceToSVG } from './preview-svg';
  *   ├──────────┬──────────────┤
  *   │ ▸ Basic  │  □ ◯ ◇ ...   │  ← 左:分类 / 右:3-col 网格
  *   │   Arrow  │              │
- *   │   ...    │              │
- *   │ ──────── │              │
- *   │   Library│              │
+ *   │   Flowchart│            │
+ *   │   Line   │              │
+ *   │   Text   │              │
+ *   │ ──────── │              │  ← Shape / Substance 间分隔(纯视觉,UX 不
+ *   │   Library│              │     强调区分,用户当作"分类"消费就好)
  *   │   Family │              │
  *   └──────────┴──────────────┘
  *           ▲ anchor 三角指向触发按钮
  *
- * 入口:`+ Shape` / `◇ Substance` 共用 popover,initialSection 决定初始高亮分类
+ * 入口:Toolbar "+ 添加" 单按钮(v1 UX 简化,不向用户暴露 Shape vs Substance
+ * 内部架构区分;内部 PickerItem.section 仍保留,用于决定 onPick 时 spec.kind)
  * 关闭:onClose(由父控制 open)— 触发条件:点 item / ESC / 点外部
  * 选完一个 item:onPick(spec) → 父调 enterAddMode
  */
@@ -33,8 +36,6 @@ export interface LibraryPickerProps {
   open: boolean;
   /** 触发按钮在容器内的屏幕坐标(用于定位 popover + anchor 三角) */
   anchorRect: { left: number; top: number; width: number; height: number } | null;
-  /** 初始焦点:打开时落在 shape Basic 还是 substance Library */
-  initialSection: Section;
   onPick: (spec: AddModeSpec) => void;
   onClose: () => void;
 }
@@ -56,22 +57,16 @@ interface PickerItem {
 export function LibraryPicker(props: LibraryPickerProps) {
   const popoverRef = useRef<HTMLDivElement>(null);
   const [search, setSearch] = useState('');
-  const [activeCategory, setActiveCategory] = useState<{ section: Section; category: string }>(() =>
-    props.initialSection === 'shape'
-      ? { section: 'shape', category: 'basic' }
-      : { section: 'substance', category: 'library' }
+  // 默认进 Basic 分类(第一个);用户在左栏自由切
+  const [activeCategory, setActiveCategory] = useState<{ section: Section; category: string }>(
+    { section: 'shape', category: 'basic' },
   );
 
-  // 打开时 reset 状态(initialSection 改了或重新打开)
+  // 打开时 reset 搜索(分类保持上次选择,跨次打开用户体验更好)
   useEffect(() => {
     if (!props.open) return;
     setSearch('');
-    if (props.initialSection === 'shape') {
-      setActiveCategory({ section: 'shape', category: 'basic' });
-    } else {
-      setActiveCategory({ section: 'substance', category: 'library' });
-    }
-  }, [props.open, props.initialSection]);
+  }, [props.open]);
 
   // 收齐分类组 + items(memo:registry 是 bootstrap 后稳定的)
   const { groups, allItems } = useMemo(() => {

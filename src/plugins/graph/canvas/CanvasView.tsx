@@ -74,12 +74,11 @@ export function CanvasView() {
   const [zoomLevel, setZoomLevel] = useState(1);
   const [addMode, setAddMode] = useState<AddModeSpec | null>(null);
 
-  // LibraryPicker 状态
+  // LibraryPicker 状态(v1 UX 简化:单一 + 添加 入口,无需 section 区分)
   const [pickerState, setPickerState] = useState<{
     open: boolean;
-    section: 'shape' | 'substance';
     anchorRect: DOMRect | null;
-  }>({ open: false, section: 'shape', anchorRect: null });
+  }>({ open: false, anchorRect: null });
 
   // Inspector / 选区
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -274,11 +273,8 @@ export function CanvasView() {
   }, [loadGraph, flushSave]);
 
   // ── Toolbar 回调 ──
-  const handleAddShape = useCallback((anchorRect: DOMRect) => {
-    setPickerState({ open: true, section: 'shape', anchorRect });
-  }, []);
-  const handleAddSubstance = useCallback((anchorRect: DOMRect) => {
-    setPickerState({ open: true, section: 'substance', anchorRect });
+  const handleAdd = useCallback((anchorRect: DOMRect) => {
+    setPickerState({ open: true, anchorRect });
   }, []);
   const handleFit = useCallback(() => {
     nodeRendererRef.current?.fitAll();
@@ -363,8 +359,7 @@ export function CanvasView() {
         zoomLevel={zoomLevel}
         addModeRef={addMode?.ref ?? null}
         multiSelected={selectedIds.length >= 2}
-        onAddShape={handleAddShape}
-        onAddSubstance={handleAddSubstance}
+        onAdd={handleAdd}
         onFit={handleFit}
         onCombine={handleOpenCombine}
         onClose={handleClose}
@@ -395,7 +390,6 @@ export function CanvasView() {
               }
             : null
         }
-        initialSection={pickerState.section}
         onPick={handlePickerPick}
         onClose={handlePickerClose}
       />
