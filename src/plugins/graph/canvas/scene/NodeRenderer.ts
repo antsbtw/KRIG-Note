@@ -267,6 +267,7 @@ export class NodeRenderer {
       shapeRef: inst.ref,
       position: { ...position },
       size: { ...size },
+      rotation: inst.rotation ?? 0,
     };
   }
 
@@ -333,6 +334,7 @@ export class NodeRenderer {
       substanceRef: inst.ref,
       position: { ...position },
       size,
+      rotation: inst.rotation ?? 0,
     };
   }
 }
@@ -457,4 +459,6 @@ export interface RenderedNode {
   substanceRef?: string;
   position: { x: number; y: number };
   size: { w: number; h: number };
+  /** 度数;HandlesOverlay 用来同步 rotation handle 位置 */
+  rotation?: number;
 }

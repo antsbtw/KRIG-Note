@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { SceneManager } from './scene/SceneManager';
 import { NodeRenderer } from './scene/NodeRenderer';
+import { HandlesOverlay } from './scene/HandlesOverlay';
 import { InteractionController, type AddModeSpec } from './interaction/InteractionController';
 import { Toolbar } from './ui/Toolbar/Toolbar';
 import { LibraryPicker } from './ui/LibraryPicker/LibraryPicker';
@@ -50,6 +51,7 @@ export function CanvasView() {
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneManagerRef = useRef<SceneManager | null>(null);
   const nodeRendererRef = useRef<NodeRenderer | null>(null);
+  const handlesOverlayRef = useRef<HandlesOverlay | null>(null);
   const interactionRef = useRef<InteractionController | null>(null);
 
   // ── 持久化状态 ──
@@ -179,6 +181,7 @@ export function CanvasView() {
 
     const sm = new SceneManager(containerRef.current);
     const nr = new NodeRenderer(sm);
+    const handles = new HandlesOverlay(sm);
     const ic = new InteractionController({
       container: containerRef.current,
       sceneManager: sm,
@@ -188,14 +191,24 @@ export function CanvasView() {
       onAddModeChange: (spec) => setAddMode(spec),
       onSelectionChange: (ids) => {
         setSelectedIds(ids);
-        // 选区清空(用户点空白)→ 关 Inspector(对齐 Freeform 行为)
-        // 选区切换(单击别的节点)→ Inspector 保持当前 open 状态,跟随显示新节点
-        if (ids.length === 0) setInspectorOpen(false);
+        // 选区清空(用户点空白)→ 关 Inspector + 隐藏 handles
+        if (ids.length === 0) {
+          setInspectorOpen(false);
+          handles.setTarget(null);
+        } else if (ids.length === 1) {
+          // 单选 → 显示该节点的 resize / rotation handles
+          const node = nr.get(ids[0]);
+          handles.setTarget(node ?? null);
+        } else {
+          // 多选 → 不显示 handles(M1 范围限制)
+          handles.setTarget(null);
+        }
       },
       onNodeDoubleClick: () => setInspectorOpen(true),
     });
     sceneManagerRef.current = sm;
     nodeRendererRef.current = nr;
+    handlesOverlayRef.current = handles;
     interactionRef.current = ic;
 
     // 处理 mount 前到达的 pendingGraphId
@@ -223,10 +236,12 @@ export function CanvasView() {
       void flushSave(activeGraphIdRef.current);
       window.clearInterval(zoomTimer);
       ic.dispose();
+      handles.dispose();
       nr.clear();
       sm.dispose();
       sceneManagerRef.current = null;
       nodeRendererRef.current = null;
+      handlesOverlayRef.current = null;
       interactionRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -318,6 +333,11 @@ export function CanvasView() {
         : inst.style_overrides,
     };
     nr.update(merged);
+    // update 替换了 RenderedNode 对象,HandlesOverlay 持有旧引用 → 重新 setTarget
+    const handles = handlesOverlayRef.current;
+    if (handles && handles.getTarget()?.instanceId === id) {
+      handles.setTarget(nr.get(id) ?? null);
+    }
     scheduleSave();
   }, [scheduleSave]);
 
