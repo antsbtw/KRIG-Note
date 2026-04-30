@@ -73,7 +73,7 @@ v1 必备的 Canvas 操作(里程碑 1 验收清单):
 | 2 | 浏览 Library Picker | 看到 22 个内置 shape(basic 11 / arrow 3 / flowchart 4 / line 3 / text 1)+ 5 个内置 substance(library 2 / family 3) |
 | 3 | 点 toolbar `+ 添加` → Picker 选 shape → 画布点击 | 在点击位置实例化一个 shape 节点(中心对齐鼠标),自动选中 |
 | 4 | 点 toolbar `+ 添加` → Picker 选 substance → 画布点击 | 实例化一个 substance(组合 shape) |
-| 5 | 单击节点 | 节点显示**蓝色矩形选中边框**(M1 范围,resize handles 留 v1.1);**Inspector 不自动打开**(双击才打开,见 §3.4) |
+| 5 | 单击节点 | 节点显示**蓝色矩形选中边框 + 8 resize handles + 1 rotation handle**;**Inspector 不自动打开**(双击才打开,见 §3.4) |
 | 6 | 双击节点 → Inspector 改 fill / line / size | 节点视觉立刻更新 |
 | 7 | 拖动节点 | 节点跟随鼠标,光标变 grab/grabbing,所连接的 line 自动跟随 |
 | 8 | 选中节点按 Delete | 节点删除(连接的 line 也删除) |
@@ -268,39 +268,50 @@ v1 必备的 Canvas 操作(里程碑 1 验收清单):
 
 字段对齐 PowerPoint Format Shape(详见 [Library.md §2.1 default_style](../library/Library.md#2.1-数据格式))。
 
-### 3.5 选中态(选中边框 / Resize handles)
+### 3.5 选中态(选中边框 / Resize handles / Rotation)
 
-参考 **macOS Freeform** 选中态视觉:
+对齐 **macOS Freeform** 选中态视觉。M1.x 系列已完整实现。
 
-**M1 范围(已实现)**:
-- 单击节点 → 节点周围显示**蓝色矩形选中边框**(2px 实线,padding 4px)
-- 多选(Shift-click)→ 每个选中节点都显示边框
-- 边框用 4 个 PlaneGeometry mesh 拼成(避免 LineBasicMaterial.linewidth 在
-  macOS WebGL 被忽略导致永远 1px 看不清)
-
-**v1.1 范围(留 todo)**:Freeform 风格 8 个 resize handles + 旋转点
-- 4 角 handle(白色圆点,边框蓝)→ 拖动同时改 W + H,保持比例(Shift 释放比例)
-- 4 边中点 handle → 单向改 W 或 H
-- 顶部中点上方 1 个绿色圆点 → 旋转 handle(rotation 字段,v1.1 加)
-- handle 像素大小恒定(8×8 CSS 像素),不随 zoom 缩放(屏幕坐标稳定层)
-
-参考视觉(用户 2026-04-29 截图):
+**视觉**:
 
 ```
-   ╭─────● (rotate)
+   ╭─────● (rotate handle,绿色)
    │
-○──○──○──○
+○──○──○──○   ← 8 个 resize handle(白色圆点,边框蓝)
 │           │
 ○           ○
 │           │
 ○──○──○──○
 ```
 
-实现要点(v1.1 设计):
-- handles 是独立的 mesh group,挂在 SceneManager.scene 上(不在 mesh 内部),
-  zoom 改变时 group.scale.set(1/zoom, 1/zoom, 1) 让 handles 像素恒定
-- handle hit-test 优先级高于 shape 本体(否则拖 handle 会被解析成"拖整个 shape")
-- 拖动 handle 改 instance.size + position(角 handle 同时改两者)
+**M1.x.2 / M1.x.3 实现**:
+- 单击节点 → 显示**蓝色矩形选中边框**(LineLoop,1px)+ **8 个 resize handle** +
+  **1 个 rotation handle**(顶部上方绿色圆点)
+- 4 角 handle(NW/NE/SE/SW)→ 等比缩放(沿对角线方向投影,自动锁定纵横比)
+- 4 边中点 handle(N/S/E/W)→ 单边缩放(只改 W 或 H)
+- rotation handle → 拖动旋转节点;Shift 按住 → 吸附到 15° 倍数
+- handle 像素恒定:HandlesOverlay 用 group.scale = (1/zoom, 1/zoom, 1) 实现
+- handle hit-test 优先级高于 shape 本体(避免抢"拖动 shape"的命中)
+- handle / cursor 跟随节点 rotation 自动选最合适方位(ew-resize / nwse-resize 等)
+
+**M1.x.4 OBB hit-test**:
+- 旋转节点的 hit-test 走 OBB(world 点逆变换到节点本地坐标系再 AABB),
+  而非简单 AABB,旋转后能精确选中
+
+**M1.x.1 旋转模型**:
+- Instance 加 `rotation` 字段(度数,顺时针)
+- NodeRenderer 用 outer/inner 嵌套实现 bbox 中心旋转:outer.position = bbox 中心,
+  outer.rotation.z = degrees;inner = 原 mesh group,offset 到 -size/2
+
+**多选**:
+- Shift-click 多选 → 每个选中节点显示边框,但**不显**统一的 resize / rotation handle
+  (M1 范围限制,v1.2 加多选变换)
+
+**Line 选中**(M1.x.7):
+- line 实例只有 endpoints,没有 size / rotation,所以选中时**不显** 8 resize 和
+  rotation handle,改显示**两个端点 handle**(深蓝色小圆,半径 6)
+- 拖端点 handle = rewire(改连接;详见 §3.5b)
+- line 的 selection border 也不显矩形(它的 bbox 是端点 AABB,框矩形没意义)
 
 ### 3.5b Line 交互(创建 / rewire)
 
@@ -531,7 +542,7 @@ src/plugins/graph/canvas/
 - **分支**:`feature/graph-canvas-m1`(从 main 切出)。按 CLAUDE.md "分支按模块切" 原则,M1.1~M1.6 子任务在分支内连续 commit,**不中途合 main**,M1 全验收后统一合并
 - **依赖链**:M1.1 → M1.2 → M1.3 → M1.4 → M1.5 → M1.6,M1.1 必须先完(Canvas 才能消费 Library)
 - **路径**:`src/plugins/graph/library/`(共享资源)+ `src/plugins/graph/canvas/`(本模块)
-- **节奏**:每个 Mx.y 子任务完成即 commit;每个 Mx 完成跑一次相关验收项手测;M1.6 完成后跑 §2.1 全 14 项,**全过才合 main**
+- **节奏**:每个 Mx.y 子任务完成即 commit;每个 Mx 完成跑一次相关验收项手测;M1.6 完成后跑 §2.1 全 17 项,**全过才合 main**
 
 ### M1.1 Library 基础(1.5-2 天)
 
@@ -564,7 +575,8 @@ src/plugins/graph/canvas/
 
 - M1.4a: **Toolbar 顶部条** — **0.25 天**
   - 36px 高横条,字段对齐 NoteView toolbar 视觉(`#252525` 背景、`#333` 下边框、4px gap)
-  - 按钮:`‹ ›` 导航 / 标题 / `+ Shape` / `◇ Substance` / `↶ ↷`(v1.1 灰)/ `🔍 100%` / `↔` Fit / `+ 新建` / `Open` / `🔄` SlotToggle / `×`
+  - 按钮:`‹ ›` 导航 / 标题 / `+ 添加`(合并 Shape + Substance) / `🔍 100%` / `↔` Fit / `+ 新建` / `Open` / `🔄` SlotToggle / `×`
+  - 撤销/重做用 Cmd+Z / Cmd+Shift+Z 快捷键(M1.x.6),不在 toolbar 占位
 - M1.4b: **LibraryPicker 浮层** — **0.5-0.75 天**
   - 双栏 popover(左 ~160px 分类 + 右 3-col 网格)+ 顶部搜索 + anchor 三角
   - `+ Shape` / `◇ Substance` 共用同一 popover,初始高亮分类不同
@@ -586,6 +598,22 @@ src/plugins/graph/canvas/
 - M1.6a: `canvasAPI.openInRightSlotForSubstanceCreation` — **0.25 天**
 - M1.6b: `canvasAPI.openInRightSlotForSubstanceEdit` — **0.25 天**
 
+### M1.x 体验补丁(M1.5 之后,M1.6 之前/期间穿插)
+
+M1 spec 14 项验收过程中暴露的体验缺口,作为补丁推进:
+
+- M1.x.1: Instance.rotation 字段 + outer/inner 嵌套实现 bbox 中心旋转 — **0.25 天**
+- M1.x.2: ResizeHandlesOverlay 渲染(8 resize + 1 rotation) — **0.25 天**
+- M1.x.3: handles 拖动逻辑(resize 8 方向 + rotate,Shift 吸附 15°) — **0.5 天**
+- M1.x.4: hit-test OBB(旋转后选中)+ selection border OBB + corner 等比缩放 +
+  历史脏数据防御(deserialize sanitize) — **0.5 天**
+- M1.x.5: magnet 旋转跟随(line 端点接入点跟随节点 rotation) — **0.1 天**
+- M1.x.6: Cmd+Z / Cmd+Shift+Z 撤销/重做(50 步全量快照) — **0.25 天**
+- M1.x.7: line 创建 press-drag-release(从 magnet 拖出连线 + 吸附) — **0.5 天**
+- M1.x.7b: line rewire(拖端点改连接)+ 距离曲线 hit-test + line hover 高亮 — **0.5 天**
+
+体验补丁让 §2.1 验收清单从 14 项扩展到 17 项(见 §2.1)。
+
 ### 合计
 
 | 阶段 | 时间 |
@@ -596,19 +624,22 @@ src/plugins/graph/canvas/
 | M1.4 Canvas UI(Toolbar + LibraryPicker + FloatingInspector + Dialog) | 1.75-2.25 天 |
 | M1.5 序列化 | 0.5 天 |
 | M1.6 调用 API | 0.5 天 |
-| **里程碑 1 合计** | **~6.25-7.75 天** |
-| 用户验证(§2.1 14 项) | 0.5 天 |
+| M1.x 体验补丁 | ~3 天 |
+| **里程碑 1 合计** | **~9-11 天** |
+| 用户验证(§2.1 17 项) | 0.5 天 |
 
 里程碑 1 通过验证后,才进入 family-tree variant(里程碑 2,详见 [family-tree.md](../family-tree/family-tree.md))。
 
 ## 8. v1 验收标准
 
-详见 §2.1 的 14 项操作清单。**全部通过才进入里程碑 2**。
+详见 §2.1 的 17 项操作清单(原 14 项 + M1.x 系列补的 line 创建/rewire/旋转跟随)。
+**全部通过才进入里程碑 2**。
 
 特别强调:
 - 第 12 项(Combine to Substance)是 Canvas 创作能力的核心验证
-- 第 13 项(Edit Substance via API)是被其他 view 调用能力的核心验证
-- 第 14 项(Magnet 吸附)是 line 与 shape 联动的核心
+- 第 13 项(Edit Substance via API)是被其他 view 调用能力的核心验证(M1.6)
+- 第 14-17 项(Magnet 吸附 + line 创建 + rewire + 旋转跟随)是 line 与 shape
+  联动的核心闭环
 
 ## 9. 与现有 KRIG 模块关系
 
