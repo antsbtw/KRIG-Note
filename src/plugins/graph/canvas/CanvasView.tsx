@@ -82,6 +82,8 @@ export function CanvasView() {
 
   // Inspector / 选区
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  /** Inspector 默认隐藏,双击节点才打开;打开后跟随选中切换;× 关闭 */
+  const [inspectorOpen, setInspectorOpen] = useState(false);
   const [combineDialogOpen, setCombineDialogOpen] = useState(false);
 
   // ── 持久化函数(放在 useEffect 之前,因为 InteractionController 的 onChange 需要)──
@@ -183,6 +185,7 @@ export function CanvasView() {
       onChange: () => scheduleSave(),
       onAddModeChange: (spec) => setAddMode(spec),
       onSelectionChange: (ids) => setSelectedIds(ids),
+      onNodeDoubleClick: () => setInspectorOpen(true),
     });
     sceneManagerRef.current = sm;
     nodeRendererRef.current = nr;
@@ -392,11 +395,13 @@ export function CanvasView() {
         onClose={handlePickerClose}
       />
 
-      {/* Floating Inspector(浮层,选中节点时显示) */}
+      {/* Floating Inspector(浮层,默认隐藏,双击节点才打开;× 关闭) */}
       <FloatingInspector
+        open={inspectorOpen}
         selectedIds={selectedIds}
         getInstance={handleInstanceGet}
         onUpdate={handleInstanceUpdate}
+        onClose={() => setInspectorOpen(false)}
         onCombine={handleOpenCombine}
       />
 

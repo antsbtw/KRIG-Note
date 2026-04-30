@@ -62,6 +62,8 @@ export class InteractionController {
   private onAddModeChange?: (spec: AddModeSpec | null) => void;
   /** 选区变化回调(给 Inspector 同步显隐) */
   private onSelectionChange?: (ids: string[]) => void;
+  /** 节点双击回调(给 Inspector 打开用) */
+  private onNodeDoubleClick?: (id: string) => void;
 
   /** 待清理的 listener 取消器 */
   private unsubscribers: Array<() => void> = [];
@@ -74,6 +76,7 @@ export class InteractionController {
     onChange?: () => void;
     onAddModeChange?: (spec: AddModeSpec | null) => void;
     onSelectionChange?: (ids: string[]) => void;
+    onNodeDoubleClick?: (id: string) => void;
   }) {
     this.container = opts.container;
     this.sceneManager = opts.sceneManager;
@@ -82,6 +85,7 @@ export class InteractionController {
     this.onChange = opts.onChange;
     this.onAddModeChange = opts.onAddModeChange;
     this.onSelectionChange = opts.onSelectionChange;
+    this.onNodeDoubleClick = opts.onNodeDoubleClick;
     this.attachListeners();
   }
 
@@ -165,6 +169,7 @@ export class InteractionController {
     const onMouseUp   = (e: MouseEvent) => this.handleMouseUp(e);
     const onKeyDown   = (e: KeyboardEvent) => this.handleKeyDown(e);
     const onWheel     = (e: WheelEvent) => this.handleWheel(e);
+    const onDblClick  = (e: MouseEvent) => this.handleDoubleClick(e);
 
     this.container.addEventListener('mousedown', onMouseDown);
     // mousemove / mouseup 挂到 window:鼠标拖出容器仍要继续接收
@@ -173,6 +178,7 @@ export class InteractionController {
     this.container.addEventListener('keydown', onKeyDown);
     // wheel passive=false 才能 preventDefault(否则 macOS 双指会触发 history navigation)
     this.container.addEventListener('wheel', onWheel, { passive: false });
+    this.container.addEventListener('dblclick', onDblClick);
 
     this.unsubscribers.push(
       () => this.container.removeEventListener('mousedown', onMouseDown),
@@ -180,7 +186,18 @@ export class InteractionController {
       () => window.removeEventListener('mouseup', onMouseUp),
       () => this.container.removeEventListener('keydown', onKeyDown),
       () => this.container.removeEventListener('wheel', onWheel),
+      () => this.container.removeEventListener('dblclick', onDblClick),
     );
+  }
+
+  /** 双击节点 → 触发 onNodeDoubleClick(给 Inspector 打开用)*/
+  private handleDoubleClick(e: MouseEvent): void {
+    if (e.button !== 0) return;
+    if (this.addMode) return;
+    const screen = this.toContainerCoords(e);
+    const world = this.sceneManager.screenToWorld(screen.x, screen.y);
+    const hit = this.hitTest(world);
+    if (hit) this.onNodeDoubleClick?.(hit);
   }
 
   // ─────────────────────────────────────────────────────────
@@ -259,6 +276,13 @@ export class InteractionController {
       const centerScreen = this.sceneManager.worldToScreen(world.x, world.y);
       // 反算 shape 左上角(position)在屏幕哪个位置
       const topLeftScreen = this.sceneManager.worldToScreen(position.x, position.y);
+      // 用 Three.js camera 自己的投影来对照(NDC → screen);如果与 worldToScreen
+      // 不一致,说明 camera frustum 设置和我们的数学公式不匹配
+      const ndc = new THREE.Vector3(world.x, world.y, 0).project(this.sceneManager.camera);
+      const projectedScreen = {
+        x: (ndc.x + 1) / 2 * c.clientWidth,
+        y: (1 - ndc.y) / 2 * c.clientHeight,  // Y 翻转(NDC y 向上,屏幕 y 向下)
+      };
       // eslint-disable-next-line no-console
       console.log(
         `[placeInstance] id=${id} ` +
@@ -266,6 +290,7 @@ export class InteractionController {
         `world=(${world.x.toFixed(0)},${world.y.toFixed(0)}) ` +
         `position(world)=(${position.x.toFixed(0)},${position.y.toFixed(0)}) ` +
         `centerOnScreen=(${centerScreen.x.toFixed(0)},${centerScreen.y.toFixed(0)}) ` +
+        `projectedScreen=(${projectedScreen.x.toFixed(0)},${projectedScreen.y.toFixed(0)}) ` +
         `topLeftOnScreen=(${topLeftScreen.x.toFixed(0)},${topLeftScreen.y.toFixed(0)}) ` +
         `size=${size.w}x${size.h} ` +
         `view=center(${v.centerX.toFixed(0)},${v.centerY.toFixed(0)}) zoom=${v.zoom.toFixed(2)} ` +

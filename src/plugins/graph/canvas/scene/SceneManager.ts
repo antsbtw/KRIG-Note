@@ -97,13 +97,16 @@ export class SceneManager {
     this.applyCamera();
   }
 
-  /** 把 viewCenter / zoom 应用到 camera frustum(用容器实时尺寸算可视范围)
+  /** 把 viewCenter / zoom 应用到 camera frustum
    *
-   * Y 向下约定的实现:用 camera.up=(0,-1,0) 翻转 Y,frustum top/bottom 仍按
-   * Three.js 标准(top > bottom)赋值。camera.up 翻转后,mesh Y 增大会显示在
-   * 屏幕下方。
+   * Y 向下约定的实现:**camera.top 数值 < camera.bottom 数值**(直接传"颠倒"
+   * 的 frustum),camera.up 用默认 (0,1,0)。Three.js OrthographicCamera 接受
+   * 这种配置,投影矩阵会自动 Y 翻转 — 画板 world Y 增大显示在屏幕下方,与
+   * worldToScreen 公式 `screen.y = container/2 + (world.y - center.y) * zoom`
+   * 一致。
    *
-   * 之前用 top<bottom + camera.up=(0,-1,0) 双重翻转,两个负相消导致渲染错位。
+   * 注意:不能再设 camera.up=(0,-1,0),否则会和 frustum 翻转叠加 → Y 不翻转。
+   * 之前各种叠加都没对齐,这次统一只用 frustum 翻转。
    */
   private applyCamera(): void {
     const { clientWidth, clientHeight } = this.container;
@@ -114,12 +117,13 @@ export class SceneManager {
     const halfH = clientHeight / this.zoom / 2;
     this.camera.left = this.viewCenter.x - halfW;
     this.camera.right = this.viewCenter.x + halfW;
-    // Three.js 标准 frustum:top > bottom(单独 camera.up=(0,-1,0) 翻转 Y)
-    this.camera.top = this.viewCenter.y + halfH;
-    this.camera.bottom = this.viewCenter.y - halfH;
+    // Y 向下:top 数值 < bottom 数值。用默认 camera.up=(0,1,0)(不另设)
+    this.camera.top = this.viewCenter.y - halfH;
+    this.camera.bottom = this.viewCenter.y + halfH;
     this.camera.position.x = this.viewCenter.x;
     this.camera.position.y = this.viewCenter.y;
-    this.camera.up.set(0, -1, 0);
+    this.camera.position.z = 10;
+    // up 用默认 (0,1,0)— frustum 内置 top<bottom 已经反转 Y
     this.camera.lookAt(this.viewCenter.x, this.viewCenter.y, 0);
     this.camera.updateProjectionMatrix();
   }

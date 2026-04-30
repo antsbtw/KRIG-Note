@@ -23,11 +23,15 @@ const DEFAULT_POS = { right: 12, top: 60 };  // 距右上角的偏移
 const PANEL_W = 240;
 
 export interface FloatingInspectorProps {
+  /** 是否显示;默认隐藏,双击节点才打开 */
+  open: boolean;
   selectedIds: string[];
   /** 从 NodeRenderer 取原始 Instance */
   getInstance: (id: string) => Instance | undefined;
   /** Inspector 改了属性,父组件应用 patch 并重渲染 */
   onUpdate: (id: string, patch: Partial<Instance>) => void;
+  /** 用户点 × 关闭浮层 */
+  onClose: () => void;
   /** 多选时显示 Combine 按钮(M1.4d 接通) */
   onCombine?: () => void;
 }
@@ -83,13 +87,19 @@ export function FloatingInspector(props: FloatingInspectorProps) {
     };
   }, []);
 
+  // 默认隐藏(单击节点不打开 Inspector,双击才打开,见 spec §3.4)
+  if (!props.open) return null;
   if (props.selectedIds.length === 0) return null;
 
   // 多选
   if (props.selectedIds.length > 1) {
     return (
       <div ref={panelRef} style={{ ...styles.panel, ...resolvePosStyle(pos) }}>
-        <Header label={`${props.selectedIds.length} items selected`} onMouseDown={handleHeaderMouseDown} />
+        <Header
+          label={`${props.selectedIds.length} items selected`}
+          onMouseDown={handleHeaderMouseDown}
+          onClose={props.onClose}
+        />
         <div style={styles.body}>
           <div style={styles.multiHint}>
             多选模式:
@@ -115,7 +125,11 @@ export function FloatingInspector(props: FloatingInspectorProps) {
 
   return (
     <div ref={panelRef} style={{ ...styles.panel, ...resolvePosStyle(pos) }}>
-      <Header label="Format Shape" onMouseDown={handleHeaderMouseDown} />
+      <Header
+        label="Format Shape"
+        onMouseDown={handleHeaderMouseDown}
+        onClose={props.onClose}
+      />
       <div style={styles.body}>
         <PositionSection inst={inst} onUpdate={(patch) => props.onUpdate(id, patch)} />
         <FillSection inst={inst} onUpdate={(patch) => props.onUpdate(id, patch)} />
@@ -129,11 +143,26 @@ export function FloatingInspector(props: FloatingInspectorProps) {
 // Header
 // ─────────────────────────────────────────────────────────
 
-function Header({ label, onMouseDown }: { label: string; onMouseDown: (e: React.MouseEvent<HTMLDivElement>) => void }) {
+function Header({
+  label, onMouseDown, onClose,
+}: {
+  label: string;
+  onMouseDown: (e: React.MouseEvent<HTMLDivElement>) => void;
+  onClose: () => void;
+}) {
   return (
     <div style={styles.header} onMouseDown={onMouseDown}>
       <span style={styles.headerTitle}>{label}</span>
-      <span style={styles.headerHint}>⋮⋮</span>
+      <button
+        type="button"
+        style={styles.headerCloseBtn}
+        onMouseDown={(e) => e.stopPropagation()}  // 不触发拖动
+        onClick={onClose}
+        title="关闭(ESC)"
+        aria-label="关闭"
+      >
+        ×
+      </button>
     </div>
   );
 }
@@ -375,10 +404,22 @@ const styles: Record<string, CSSProperties> = {
   headerTitle: {
     fontSize: 12,
     fontWeight: 500,
+    flex: 1,
   },
-  headerHint: {
-    fontSize: 11,
-    color: 'var(--krig-text-faint)',
+  headerCloseBtn: {
+    width: 18,
+    height: 18,
+    background: 'transparent',
+    border: 'none',
+    color: 'var(--krig-text-dim)',
+    fontSize: 16,
+    lineHeight: 1,
+    cursor: 'pointer',
+    padding: 0,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 3,
   },
   body: {
     padding: 10,
