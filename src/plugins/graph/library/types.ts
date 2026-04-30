@@ -251,6 +251,12 @@ export interface Instance {
   position?: { x: number; y: number };
   size?: { w: number; h: number };
 
+  /**
+   * 旋转(度数;顺时针方向 = 用户视觉的"顺时针")
+   * 缺省 = 0(无旋转);旋转中心 = bbox 中心(position + size/2)
+   */
+  rotation?: number;
+
   /** line 实例两端连接 */
   endpoints?: [InstanceEndpoint, InstanceEndpoint];
 

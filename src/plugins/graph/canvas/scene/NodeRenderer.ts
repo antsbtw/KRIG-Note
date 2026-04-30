@@ -129,12 +129,17 @@ export class NodeRenderer {
    */
   updateLinesFor(instanceId: string): void {
     // 1. 同步 byId 里 node.position(若该 instance 还存在)
+    // node.group 是 outer group(position = bbox 中心),所以同步时要加 size/2
     const node = this.byId.get(instanceId);
     const inst = this.instances.get(instanceId);
     if (node && inst && inst.position) {
       node.position.x = inst.position.x;
       node.position.y = inst.position.y;
-      node.group.position.set(inst.position.x, inst.position.y, 0);
+      node.group.position.set(
+        inst.position.x + node.size.w / 2,
+        inst.position.y + node.size.h / 2,
+        0,
+      );
     }
 
     // 2. 重渲染引用它的所有 line
@@ -251,12 +256,14 @@ export class NodeRenderer {
       fillStyle: mergeFill(shape.default_style?.fill, inst.style_overrides?.fill),
       lineStyle: mergeLine(shape.default_style?.line, inst.style_overrides?.line),
     });
-    out.group.position.set(position.x, position.y, 0);
-    out.group.userData.instanceId = inst.id;
+    // outer/inner 嵌套实现 bbox 中心旋转(inner mesh 顶点在 [0..w]×[0..h] 不变,
+    // outer 定位到 bbox 中心 + 旋转,inner 偏移 -size/2 让左上角对齐 outer 原点)
+    const outerGroup = wrapForRotation(out.group, position, size, inst.rotation ?? 0);
+    outerGroup.userData.instanceId = inst.id;
     return {
       instanceId: inst.id,
       kind: 'shape',
-      group: out.group,
+      group: outerGroup,
       shapeRef: inst.ref,
       position: { ...position },
       size: { ...size },
@@ -314,20 +321,44 @@ export class NodeRenderer {
       if (sub) root.add(sub);
     }
 
-    // 安置 root 到画板坐标
+    // 安置 root 到画板坐标 — outer/inner 嵌套实现 bbox 中心旋转(同 shape 实例)
     const { position } = ensurePositionSize(inst, null);
-    root.position.set(position.x, position.y, 0);
-
+    const size = inst.size ? { ...inst.size } : inferSubstanceSize(def);
+    const outerGroup = wrapForRotation(root, position, size, inst.rotation ?? 0);
+    outerGroup.userData.instanceId = inst.id;
     return {
       instanceId: inst.id,
       kind: 'substance',
-      group: root,
+      group: outerGroup,
       substanceRef: inst.ref,
       position: { ...position },
-      // substance 的整体 size 由 frame component 决定 / 或外层指定
-      size: inst.size ? { ...inst.size } : inferSubstanceSize(def),
+      size,
     };
   }
+}
+
+/**
+ * outer/inner 嵌套实现 bbox 中心旋转:
+ * - outer:position = bbox 中心,rotation.z = -degrees * π/180
+ * - inner:原 mesh group,position = (-size.w/2, -size.h/2)(让左上角对齐 outer 原点)
+ *
+ * 旋转方向约定:rotation > 0 = 用户视觉的顺时针旋转。
+ * 由于 SceneManager 用 frustum top<bottom 实现 Y 翻转(Y 向下),Three.js 内部
+ * 仍是 Y-up,所以 group.rotation.z 的正方向是逆时针;Y 翻转后 + Z 旋转视觉上
+ * 变成顺时针 — 直接 group.rotation.z = degrees * π/180 即可。
+ */
+function wrapForRotation(
+  innerGroup: THREE.Group,
+  position: { x: number; y: number },
+  size: { w: number; h: number },
+  rotationDeg: number,
+): THREE.Group {
+  const outer = new THREE.Group();
+  outer.position.set(position.x + size.w / 2, position.y + size.h / 2, 0);
+  outer.rotation.z = (rotationDeg * Math.PI) / 180;
+  innerGroup.position.set(-size.w / 2, -size.h / 2, 0);
+  outer.add(innerGroup);
+  return outer;
 }
 
 // ─────────────────────────────────────────────────────────
