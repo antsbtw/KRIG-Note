@@ -64,9 +64,6 @@ function resolveIdent(name: string, env: EvalEnv): number {
   const trimmed = name.trim();
   // 数字字面量
   if (trimmed !== '' && !Number.isNaN(Number(trimmed))) return Number(trimmed);
-  // 内置
-  const built = builtinIdent(trimmed, env);
-  if (built !== undefined) return built;
   // params.X 形式(handle from 字段会用)
   const paramMatch = /^params\.(\w+)$/.exec(trimmed);
   if (paramMatch) {
@@ -76,10 +73,14 @@ function resolveIdent(name: string, env: EvalEnv): number {
     }
     return v;
   }
-  // params 直接引用(裸名)
+  // params 直接引用(裸名)— 优先于 builtin,允许 shape 用 'r' 等
+  // 名字作为 param 而不被 builtin('r' = w)抢走
   if (trimmed in env.params) return env.params[trimmed];
-  // guides
+  // guides — 同理优先于 builtin
   if (trimmed in env.guides) return env.guides[trimmed];
+  // 内置(最后兜底)
+  const built = builtinIdent(trimmed, env);
+  if (built !== undefined) return built;
   throw new Error(`[formula-eval] unknown identifier: ${trimmed}`);
 }
 
