@@ -162,6 +162,8 @@ export function CanvasView() {
       setActiveGraphId(graphId);
       setGraphTitle(record.title || 'Untitled Canvas');
       setDirty(false);
+      // 切画板 reset Inspector(避免上一个画板双击留下的 open=true 残留)
+      setInspectorOpen(false);
     } catch (err) {
       if (seq !== loadSeqRef.current) return;
       console.error('[CanvasView] loadGraph failed:', err);
@@ -184,7 +186,12 @@ export function CanvasView() {
       getInstance: (id) => nr.getInstance(id),
       onChange: () => scheduleSave(),
       onAddModeChange: (spec) => setAddMode(spec),
-      onSelectionChange: (ids) => setSelectedIds(ids),
+      onSelectionChange: (ids) => {
+        setSelectedIds(ids);
+        // 选区清空(用户点空白)→ 关 Inspector(对齐 Freeform 行为)
+        // 选区切换(单击别的节点)→ Inspector 保持当前 open 状态,跟随显示新节点
+        if (ids.length === 0) setInspectorOpen(false);
+      },
       onNodeDoubleClick: () => setInspectorOpen(true),
     });
     sceneManagerRef.current = sm;
