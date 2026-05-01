@@ -241,6 +241,17 @@ export interface SubstancePack {
 
 export type InstanceKind = 'shape' | 'substance';
 
+/**
+ * 文字节点的语义内容类型(M2.1 引入).
+ *
+ * 与 NoteView 同源:本质是 src/shared/types/atom-types.ts 的 Atom[].
+ * 此处用 unknown[] 是因为 library/types.ts 是图层基础类型,不应直接依赖
+ * note 模块;消费方(渲染层 / 编辑层)做 import + 类型断言.
+ *
+ * 详见 docs/graph/canvas/Canvas-M2.1-TextNode-Spec.md §1
+ */
+export type TextNodeAtoms = unknown[];
+
 export interface InstanceEndpoint {
   /** 连接到哪个 instance 的 id */
   instance: string;
@@ -286,4 +297,15 @@ export interface Instance {
 
   /** substance 实例的业务属性(姓名 / gender / birth / death 等) */
   props?: Record<string, unknown>;
+
+  /**
+   * 文字节点语义内容(M2.1 引入).
+   *
+   * 仅当 ref === 'krig.text.label' 时生效;格式 = NoteView 同源 Atom[]
+   * (src/shared/types/atom-types.ts).扁平存储,parentId 关联,与 NoteView
+   * 数据完全互通.
+   *
+   * 详见 docs/graph/canvas/Canvas-M2.1-TextNode-Spec.md §1.
+   */
+  doc?: TextNodeAtoms;
 }

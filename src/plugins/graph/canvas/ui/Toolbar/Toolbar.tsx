@@ -3,36 +3,60 @@ import type { CSSProperties, MouseEvent as ReactMouseEvent } from 'react';
 /**
  * Canvas Toolbar — 顶部 36px 横条,对齐 NoteView 视觉
  *
- * 按钮分组(spec Canvas.md §3.2 — UX 简化):
- *   导航(‹›)│ 标题 │ + 添加 │ 历史 │ 🔍% ↔Fit │ + 新建 Open 🔄 ×
+ * 按钮分组(M2.0 重排,Canvas-M2-Code-Diff §8 决议):
+ *   导航(‹›)│ 标题 │ flex spacer │ Shape [A] ≡ 田 ↗ │ + 新建 Open 🔄 ×
  *
- * M1.4a 通电:标题 / + 添加 / 缩放% / Fit / ×
- * M1.4a 占位:导航(M1.5+)/ 历史(v1.1)/ + 新建 Open(M1.5b)/ 🔄(M1.5b)
+ * 删除项(M2.0):🔍 zoom% / ↔ Fit(zoom 显示与 fit 仍可走快捷键)
+ * 新增项(M2.0):[A] Text / ≡ Sticky / 田 Table / ↗ Line — 占位按钮,逐步通电
+ *   - Text/Sticky/Table 走 M2.1 / M2.2
+ *   - Line 走 M2.5(届时按钮展开为三态胶囊 line/arrow/connector)
  *
  * 与 NoteView 对齐:#252525 背景、#333 下边框、4px gap、36px 高
  *
- * UX 决策:不向用户暴露 Shape vs Substance 区分(那是内部架构概念)。
- * 单一 "+ 添加" 入口,LibraryPicker 内左栏分类列表里 Shape/Substance 类目平铺。
+ * UX 决策:创作组(共 5 个图标按钮)整组靠右排列,与 + 新建 Open 等通用按钮共用
+ * 右侧带,左侧只留 ‹ › + 标题。
  */
 export interface ToolbarProps {
   title: string;
-  /** 0..1+,1 = 100% */
-  zoomLevel: number;
   /** 多选时 inline 显示 Combine 按钮(spec §3.2 / M1.4d 接通) */
   multiSelected?: boolean;
-  /** 添加模式中:高亮 + 添加 按钮 */
+  /** 添加模式中:高亮当前激活的添加按钮 */
   addModeRef?: string | null;
 
-  /** "+ 添加" 按钮被点击,回调带 anchorRect(给 LibraryPicker 定位) */
+  /** Shape 入口 — 单击弹 LibraryPicker(传 anchorRect 给 popover 定位) */
   onAdd: (anchorRect: DOMRect) => void;
-  onFit: () => void;
+  /** Text 节点入口(M2.1 通电;现占位) */
+  onAddText?: (anchorRect: DOMRect) => void;
+  /** Sticky 节点入口(M2.1 通电;现占位) */
+  onAddSticky?: (anchorRect: DOMRect) => void;
+  /** Table 节点入口(M2.2 通电;现占位) */
+  onAddTable?: (anchorRect: DOMRect) => void;
+  /** Line 入口(M2.5 通电;现占位 — 届时展开为 line/arrow/connector 三态胶囊) */
+  onAddLine?: (anchorRect: DOMRect) => void;
+
   onCombine?: () => void;
   onClose: () => void;
 }
 
 export function Toolbar(props: ToolbarProps) {
-  const zoomPct = Math.round(props.zoomLevel * 100);
   const inAddMode = props.addModeRef !== null && props.addModeRef !== undefined;
+  /**
+   * addModeRef 是 Library 资源 id(如 'krig.text.label' / 'krig.basic.roundRect').
+   * Toolbar 按钮的 active 态用前缀匹配判断:
+   *   text → 'krig.text.*'
+   *   sticky → 'krig.sticky.*'(M2.2 通电后才有)
+   *   table → 'krig.table.*'(M2.2)
+   *   line → 'krig.line.*'(M2.5)
+   *   shape → 其他全部(基础形状走通用 + 添加按钮)
+   */
+  const isAddModeMatch = (category: string) =>
+    typeof props.addModeRef === 'string' && props.addModeRef.startsWith(`krig.${category}.`);
+  const isShapeAddMode =
+    inAddMode &&
+    !isAddModeMatch('text') &&
+    !isAddModeMatch('sticky') &&
+    !isAddModeMatch('table') &&
+    !isAddModeMatch('line');
 
   return (
     <div style={styles.toolbar}>
@@ -55,12 +79,13 @@ export function Toolbar(props: ToolbarProps) {
       {/* ── Title ── */}
       <span style={styles.title}>{props.title}</span>
 
-      {/* ── 添加(单图标按钮,语义"形状",对齐 Apple Pages 工具栏视觉) ── */}
-      <span style={styles.divider} />
+      <div style={{ flex: 1 }} />
+
+      {/* ── 创作组(Shape + 文本三件套 + Line,共 5 个图标按钮,M2.0 整组靠右) ── */}
       <button
         style={{
           ...styles.iconBtnLg,
-          ...(inAddMode ? styles.actionBtnActive : null),
+          ...(isShapeAddMode ? styles.actionBtnActive : null),
         }}
         onClick={(e: ReactMouseEvent<HTMLButtonElement>) =>
           props.onAdd(e.currentTarget.getBoundingClientRect())
@@ -70,26 +95,72 @@ export function Toolbar(props: ToolbarProps) {
       >
         <ShapesIcon />
       </button>
-
-      {/* ── View(zoom 显示 + Fit)── */}
-      <span style={styles.divider} />
-      <span style={styles.zoomDisplay} title="当前缩放">
-        🔍 {zoomPct}%
-      </span>
       <button
-        style={styles.iconBtn}
-        onClick={props.onFit}
-        title="适配全部内容(Fit to content)"
+        style={{
+          ...styles.iconBtnLg,
+          ...(isAddModeMatch('text') ? styles.actionBtnActive : null),
+          ...(props.onAddText ? null : styles.iconBtnDisabled),
+        }}
+        disabled={!props.onAddText}
+        onClick={(e: ReactMouseEvent<HTMLButtonElement>) =>
+          props.onAddText?.(e.currentTarget.getBoundingClientRect())
+        }
+        title="添加文字(M2.1 通电)"
+        aria-label="添加文字"
       >
-        ↔
+        <TextIcon />
       </button>
-
-      <div style={{ flex: 1 }} />
+      <button
+        style={{
+          ...styles.iconBtnLg,
+          ...(isAddModeMatch('sticky') ? styles.actionBtnActive : null),
+          ...(props.onAddSticky ? null : styles.iconBtnDisabled),
+        }}
+        disabled={!props.onAddSticky}
+        onClick={(e: ReactMouseEvent<HTMLButtonElement>) =>
+          props.onAddSticky?.(e.currentTarget.getBoundingClientRect())
+        }
+        title="添加便签(M2.1 通电)"
+        aria-label="添加便签"
+      >
+        <StickyIcon />
+      </button>
+      <button
+        style={{
+          ...styles.iconBtnLg,
+          ...(isAddModeMatch('table') ? styles.actionBtnActive : null),
+          ...(props.onAddTable ? null : styles.iconBtnDisabled),
+        }}
+        disabled={!props.onAddTable}
+        onClick={(e: ReactMouseEvent<HTMLButtonElement>) =>
+          props.onAddTable?.(e.currentTarget.getBoundingClientRect())
+        }
+        title="添加表格(M2.2 通电)"
+        aria-label="添加表格"
+      >
+        <TableIcon />
+      </button>
+      <button
+        style={{
+          ...styles.iconBtnLg,
+          ...(isAddModeMatch('line') ? styles.actionBtnActive : null),
+          ...(props.onAddLine ? null : styles.iconBtnDisabled),
+        }}
+        disabled={!props.onAddLine}
+        onClick={(e: ReactMouseEvent<HTMLButtonElement>) =>
+          props.onAddLine?.(e.currentTarget.getBoundingClientRect())
+        }
+        title="添加线条(M2.5 通电;届时展开为 line/arrow/connector 三态胶囊)"
+        aria-label="添加线条"
+      >
+        <LineIcon />
+      </button>
 
       {/* M1.x.10 起,Combine 入口移到右键菜单(对齐 Freeform);
           Toolbar inline 按钮已删,multiSelected/onCombine 仍保留 prop 以备未来 */}
 
       {/* ── 通用(占位 + 真按钮)── */}
+      <span style={styles.divider} />
       <button style={{ ...styles.actionBtn, opacity: 0.3 }} disabled title="新建画板(M1.5b)">
         + 新建
       </button>
@@ -125,6 +196,50 @@ function ShapesIcon() {
       <rect x="4.5" y="4.5" width="9" height="9" rx="1.5" />
       {/* 前层:圆形(略偏左上) */}
       <circle cx="6" cy="6" r="3" fill="var(--krig-bg-elevated)" />
+    </svg>
+  );
+}
+
+/** "Text" 图标:[A] 字母外加方框,对齐 Freeform 文字框工具 */
+function TextIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+      <rect x="2.5" y="2.5" width="11" height="11" rx="1.5" />
+      <path d="M5.8 11 L8 5 L10.2 11" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M6.6 9 L9.4 9" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** "Sticky"(便签)图标:三条横线代表内容,对齐 Freeform sticky 工具 */
+function StickyIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+      <rect x="2.5" y="3" width="11" height="10" rx="1.5" />
+      <path d="M5 6 L11 6" strokeLinecap="round" />
+      <path d="M5 8.5 L11 8.5" strokeLinecap="round" />
+      <path d="M5 11 L9 11" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** "Table" 图标:2×2 网格 */
+function TableIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+      <rect x="2.5" y="2.5" width="11" height="11" rx="1.5" />
+      <path d="M2.5 8 L13.5 8" />
+      <path d="M8 2.5 L8 13.5" />
+    </svg>
+  );
+}
+
+/** "Line" 图标:左下 → 右上 斜线 + 末端箭头(对齐 Freeform 线条工具) */
+function LineIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+      <path d="M3 13 L13 3" strokeLinecap="round" />
+      <path d="M9 3 L13 3 L13 7" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
@@ -204,6 +319,10 @@ const styles: Record<string, CSSProperties> = {
     justifyContent: 'center',
     flexShrink: 0,
   },
+  iconBtnDisabled: {
+    opacity: 0.3,
+    cursor: 'not-allowed',
+  },
   iconBtn: {
     background: 'transparent',
     border: '1px solid var(--krig-border-input)',
@@ -214,13 +333,6 @@ const styles: Record<string, CSSProperties> = {
     padding: '0 8px',
     cursor: 'pointer',
     flexShrink: 0,
-  },
-  zoomDisplay: {
-    fontSize: 11,
-    color: 'var(--krig-text-muted)',
-    minWidth: 60,
-    textAlign: 'center' as const,
-    fontVariantNumeric: 'tabular-nums',
   },
   combineBtn: {
     background: 'var(--krig-accent-bg)',

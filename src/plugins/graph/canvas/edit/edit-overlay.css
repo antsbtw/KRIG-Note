@@ -1,0 +1,129 @@
+/**
+ * Canvas 文字节点编辑浮层样式(M2.1)
+ * 对齐 Freeform 风格:深灰圆角胶囊 + 蓝边 + 阴影
+ */
+
+.krig-canvas-edit-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: transparent;
+  pointer-events: auto;
+}
+
+.krig-canvas-edit-popup {
+  position: fixed;
+  min-width: 240px;
+  max-width: 520px;
+  min-height: 32px;
+  max-height: 320px;
+  padding: 8px 10px;
+  background: rgba(40, 44, 52, 0.97);
+  border: 1px solid #4a90e2;
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.55);
+  /* 默认锚点中心定位:popup 中心对齐节点中心 */
+  transform: translate(-50%, -50%);
+  color: #e0e0e0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  overflow: auto;
+}
+
+/* anchorOffsetY > 0 时:popup 顶对齐锚点(节点下方浮层) */
+.krig-canvas-edit-popup.krig-canvas-edit-popup--below {
+  transform: translate(-50%, 0);
+}
+
+/* PM 挂载点 */
+.krig-canvas-edit-pm-mount {
+  outline: none;
+}
+
+/*
+ * NoteView 全局 .ProseMirror 默认 padding: 24px 48px 24px 72px(给 block-handle 留空间),
+ * 在画板节点编辑态(popup 宽度 240-520px)里这个 padding 会吃掉大半内容宽,文字看起来居中.
+ * 这里强制 override 为 0,让文字从 popup 左边贴边开始(popup 自身已有 8/10px padding).
+ *
+ * !important 是因为 note.css 的选择器特异性更高(.ProseMirror 单类).
+ */
+.krig-canvas-edit-pm-mount .ProseMirror {
+  padding: 0 !important;
+  font-size: 14px !important;
+  line-height: 1.5 !important;
+  outline: none;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+/* heading 在画板节点里也要小一点(NoteView 默认 h1=38px,popup 装不下) */
+.krig-canvas-edit-pm-mount .ProseMirror h1 {
+  font-size: 22px !important;
+  margin: 2px 0 !important;
+  padding: 0 !important;
+}
+.krig-canvas-edit-pm-mount .ProseMirror h2 {
+  font-size: 18px !important;
+  margin: 2px 0 !important;
+  padding: 0 !important;
+}
+.krig-canvas-edit-pm-mount .ProseMirror h3 {
+  font-size: 16px !important;
+  margin: 2px 0 !important;
+  padding: 0 !important;
+}
+
+.krig-canvas-edit-pm-mount .ProseMirror p {
+  margin: 2px 0 !important;
+  padding: 0 !important;
+}
+
+/*
+ * NoteView 的 bullet/ordered list 不用浏览器默认 ul/ol/li,
+ * 而是用 .bullet-list / .bullet-list__content + ::before 伪元素画圆点.
+ * note.css line 65-104:
+ *   .bullet-list > .bullet-list__content > p { padding-left: 24px; position: relative }
+ *   .bullet-list > .bullet-list__content > p::before {
+ *     position: absolute; left: 6px; top: calc(3px + 1.7em / 2);  ← 1.7em 是 line-height
+ *   }
+ *
+ * 我们 popup 把 line-height 改 1.5,bullet 位置算偏 → 看似浮在文字行之间.
+ * 这里强制让 .bullet-list__content > p 用 line-height: 1.5 同步.
+ */
+.krig-canvas-edit-pm-mount .ProseMirror .bullet-list,
+.krig-canvas-edit-pm-mount .ProseMirror .ordered-list {
+  margin: 2px 0 !important;
+}
+.krig-canvas-edit-pm-mount .ProseMirror .bullet-list > .bullet-list__content > p,
+.krig-canvas-edit-pm-mount .ProseMirror .bullet-list > .bullet-list__content > h1,
+.krig-canvas-edit-pm-mount .ProseMirror .bullet-list > .bullet-list__content > h2,
+.krig-canvas-edit-pm-mount .ProseMirror .bullet-list > .bullet-list__content > h3 {
+  line-height: 1.5 !important;
+  padding-left: 18px !important;       /* NoteView 默认 24px,popup 收紧 */
+}
+.krig-canvas-edit-pm-mount .ProseMirror .bullet-list > .bullet-list__content > p::before,
+.krig-canvas-edit-pm-mount .ProseMirror .bullet-list > .bullet-list__content > h1::before,
+.krig-canvas-edit-pm-mount .ProseMirror .bullet-list > .bullet-list__content > h2::before,
+.krig-canvas-edit-pm-mount .ProseMirror .bullet-list > .bullet-list__content > h3::before {
+  /* 重新算:line-height 1.5 / 字号 14 → 行高 21px,圆点在中间 ~10px */
+  top: calc(2px + 0.75em) !important;
+  left: 4px !important;
+  width: 5px !important;
+  height: 5px !important;
+}
+
+/* ordered-list 也同步收紧(NoteView 用相似的 .ordered-list__content 结构) */
+.krig-canvas-edit-pm-mount .ProseMirror .ordered-list > .ordered-list__content > p {
+  line-height: 1.5 !important;
+}
+
+/* 文字节点编辑态光标可见(对齐 NoteView) */
+.krig-canvas-edit-pm-mount .ProseMirror p:empty::before,
+.krig-canvas-edit-pm-mount .ProseMirror h1:empty::before,
+.krig-canvas-edit-pm-mount .ProseMirror h2:empty::before,
+.krig-canvas-edit-pm-mount .ProseMirror h3:empty::before {
+  content: '';
+  display: inline-block;
+  width: 0;
+}

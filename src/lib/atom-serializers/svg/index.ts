@@ -49,15 +49,80 @@ async function renderAtom(atom: Atom, yOffset: number): Promise<{ svg: string; h
     case 'textBlock':
       return renderTextBlock(atom, yOffset);
     case 'mathBlock': {
-      const tex = (atom.attrs?.tex as string) ?? '';
-      return renderMathBlock(tex, FONT_SIZE, yOffset);
+      // NoteView mathBlock schema:content: 'text*',LaTeX 存在 PM 子 text 节点里
+      // PM JSON 形态:{ type: 'mathBlock', attrs: { color, bgColor }, content: [{ type: 'text', text: 'x^2+1' }] }
+      // 兼容老 attrs.latex / attrs.tex 数据(若 content 为空)
+      const fromContent = extractMathLatex(atom);
+      const latex = fromContent
+        || (atom.attrs?.latex as string)
+        || (atom.attrs?.tex as string)
+        || '';
+      return renderMathBlock(latex, FONT_SIZE, yOffset);
     }
     case 'bulletList':
       return renderList(atom, yOffset, false);
     case 'orderedList':
       return renderList(atom, yOffset, true);
     default:
-      return { svg: '', height: 0 };
+      // 未识别的 block(image / video / table / column-list / code-block / ...):
+      // 不静默丢弃 — 渲染一行灰字占位,提示用户该 atom 存在但当前视图未支持渲染
+      // (atom 数据本身仍保留在 instance.doc 里,只是展示态降级,符合三层架构原则 3)
+      return renderUnknownAtom(atom, yOffset);
+  }
+}
+
+/**
+ * 从 PM JSON 形态的 mathBlock 抽 LaTeX 字符串.
+ *
+ * NoteView mathBlock schema 是 `content: 'text*'`,LaTeX 当作普通文本子节点存,
+ * PM JSON: { content: [{ type: 'text', text: 'x^2 + 1' }] }
+ * 拼接所有 text child 即得 LaTeX 源码.
+ */
+function extractMathLatex(atom: Atom): string {
+  const children = atom.content;
+  if (!Array.isArray(children) || children.length === 0) return '';
+  return children
+    .map((c) => (c && typeof c === 'object' && c.type === 'text' && typeof c.text === 'string' ? c.text : ''))
+    .join('');
+}
+
+/**
+ * 未识别 atom 的降级渲染:构造一个虚拟 textBlock,内容是 ASCII 占位
+ * (避免 emoji 字体回退缺失;占位文字不可编辑,只是视觉提示).
+ *
+ * 详见 docs/graph/canvas/Canvas-M2.1-TextNode-Spec.md §2.3
+ */
+async function renderUnknownAtom(atom: Atom, yOffset: number): Promise<{ svg: string; height: number }> {
+  const label = unknownAtomLabel(atom.type);
+  const placeholderAtom: Atom = {
+    type: 'textBlock',
+    content: [{ type: 'text', text: label }],
+  };
+  return renderTextBlock(placeholderAtom, yOffset);
+}
+
+/** 把未识别的 atom 类型映射成简短占位标签(纯 ASCII,避免 emoji 字体缺失) */
+function unknownAtomLabel(atomType: string): string {
+  switch (atomType) {
+    case 'image':         return '[Image]';
+    case 'video':         return '[Video]';
+    case 'audio':         return '[Audio]';
+    case 'tweet':         return '[Tweet]';
+    case 'codeBlock':     return '[Code]';
+    case 'table':         return '[Table]';
+    case 'columnList':    return '[Columns]';
+    case 'frameBlock':    return '[Frame]';
+    case 'callout':       return '[Callout]';
+    case 'blockquote':    return '[Quote]';
+    case 'toggleList':    return '[Toggle]';
+    case 'externalRef':   return '[Ref]';
+    case 'fileBlock':     return '[File]';
+    case 'htmlBlock':     return '[HTML]';
+    case 'mathVisual':    return '[Diagram]';
+    case 'horizontalRule': return '---';
+    case 'pageAnchor':    return '[Anchor]';
+    case 'taskList':      return '[Tasks]';
+    default:              return `[${atomType}]`;
   }
 }
 

@@ -117,7 +117,8 @@ export async function renderTextBlock(
         x += inline.text.length * CHAR_ADVANCE_FALLBACK * scale;
       }
     } else if (inline.type === 'mathInline') {
-      const tex = (inline.attrs?.tex as string) ?? '';
+      // NoteView schema 用 attrs.latex(权威源);兼容老 attrs.tex 数据
+      const tex = (inline.attrs?.latex as string) ?? (inline.attrs?.tex as string) ?? '';
       const { svg, advance } = await renderMathInline(tex, fontSize, x, baselineY);
       if (svg) {
         parts.push(svg);

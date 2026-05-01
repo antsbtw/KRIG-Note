@@ -8,19 +8,21 @@ import type { SceneManager } from '../scene/SceneManager';
  *
  * 输出形状:
  * {
- *   schema_version: 2,
+ *   schema_version: 3,
  *   view: { centerX, centerY, zoom },        // Freeform 风格视口
- *   instances: [Instance, ...],
+ *   instances: [Instance, ...],              // M2.1: 含 doc?: Atom[](文字节点)
  *   user_substances?: [SubstanceDef, ...],
  * }
  *
+ * Schema 版本演进:
  * v1 = 旧格式 viewBox: {x,y,w,h}(已弃用,deserialize 兼容读取)
- * v2 = 新格式 view: {centerX, centerY, zoom}(无量纲缩放,与容器尺寸解耦)
+ * v2 = view: {centerX, centerY, zoom}(无量纲缩放,与容器尺寸解耦)
+ * v3 = (M2.1) Instance 增加 doc?: Atom[] 字段(文字节点的 NoteView 同源语义内容)
  *
  * user_substances 是 v1 临时字段:M2 后改为独立 note 存储。
  */
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export interface CanvasDocument {
   schema_version: number;
@@ -122,10 +124,10 @@ export function deserialize(
   nr.setInstances(validInstances);
 
   // 4. 恢复视图
-  // v2:直接用 view.{centerX, centerY, zoom}
+  // v2/v3:直接用 view.{centerX, centerY, zoom}(v3 是 v2 超集,新增 instance.doc)
   // v1(legacy):viewBox.{x,y,w,h} 已弃用,zoom 无法精确恢复(需要容器尺寸,
   //   而旧文档没存)。简化:v1 文档丢弃视口,让 SceneManager 用初始 zoom=1
-  if (isV2(doc)) {
+  if (isV2OrLater(doc)) {
     const v = doc.view;
     if (Number.isFinite(v.centerX) && Number.isFinite(v.centerY) &&
         Number.isFinite(v.zoom) && v.zoom > 0) {
@@ -142,8 +144,9 @@ export function deserialize(
   return result;
 }
 
-function isV2(doc: CanvasDocument | CanvasDocumentV1): doc is CanvasDocument {
-  return doc.schema_version === SCHEMA_VERSION
+/** v2 或更高(目前 v2/v3),共享相同的视口 + instances 字段结构 */
+function isV2OrLater(doc: CanvasDocument | CanvasDocumentV1): doc is CanvasDocument {
+  return (doc.schema_version === 2 || doc.schema_version === 3)
     && 'view' in doc
     && doc.view !== null
     && typeof doc.view === 'object';
@@ -209,6 +212,25 @@ function sanitizeInstance(inst: Instance): string | null {
       inst.rotation = 0;
     }
   }
+
+  // doc(M2.1):文字节点 NoteView 同源 atom 数组
+  // 防御:必须是数组;每元素必须是对象且含 type 字段(NoteView Atom 最小契约)
+  // 不通过则丢弃整个 doc 字段(不损坏其他字段),展示态 fallback 到空内容
+  if (inst.doc !== undefined) {
+    if (!Array.isArray(inst.doc)) {
+      issues.push(`doc is not an array → dropped`);
+      inst.doc = undefined;
+    } else {
+      const valid = inst.doc.every(
+        (a) => a !== null && typeof a === 'object' && typeof (a as { type?: unknown }).type === 'string',
+      );
+      if (!valid) {
+        issues.push(`doc contains malformed atoms → dropped`);
+        inst.doc = undefined;
+      }
+    }
+  }
+
   return issues.length ? issues.join(', ') : null;
 }
 

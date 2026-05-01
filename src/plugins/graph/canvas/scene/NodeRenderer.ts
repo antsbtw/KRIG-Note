@@ -8,6 +8,8 @@ import type { Instance, InstanceKind, SubstanceComponent, SubstanceDef } from '.
 import type { SceneManager } from './SceneManager';
 import { renderLine, updateLineGeometry } from './LineRenderer';
 import { resolveLineEndpoints } from '../interaction/magnet-snap';
+import { TextRenderer } from './TextRenderer';
+import { textNodeAtomsToPmJson, isTextNodeRef } from '../edit/atom-bridge';
 
 /**
  * NodeRenderer — Canvas instance JSON → Three.js mesh 渲染管线
@@ -32,8 +34,22 @@ export class NodeRenderer {
   private instances = new Map<string, Instance>();
   /** 反向索引:被引用的 instance id → 引用它的 line instance id 集合 */
   private lineRefs = new Map<string, Set<string>>();
+  /** 共享的文字节点 SVG 渲染器(M2.1) */
+  private textRenderer = new TextRenderer();
+  /** 文字节点异步 SVG 渲染的 token(M2.1):update/remove 时递增,stale resolve 丢弃 */
+  private textRenderTokens = new Map<string, number>();
+  /**
+   * 文字节点 size 自适应完成后的回调(M2.1).
+   * 给 CanvasView 用:在 adapt 完成时刷新 HandlesOverlay 的 currentNode 引用,
+   * 否则选中边框永远停在初始 size 上(adapt 是 async,setTarget 在它之前).
+   */
+  private onTextNodeResized?: (instanceId: string) => void;
 
   constructor(private sceneManager: SceneManager) {}
+
+  setOnTextNodeResized(cb: (instanceId: string) => void): void {
+    this.onTextNodeResized = cb;
+  }
 
   /** 全量替换:清掉现有节点,渲染新的 instances 列表 */
   setInstances(instances: Instance[]): void {
@@ -164,6 +180,7 @@ export class NodeRenderer {
     for (const id of Array.from(this.byId.keys())) this.remove(id);
     this.lineRefs.clear();
     this.instances.clear();
+    this.textRenderTokens.clear();
   }
 
   /** 查询 instance 的渲染产物 */
@@ -229,6 +246,10 @@ export class NodeRenderer {
 
   private renderInstance(inst: Instance): RenderedNode | null {
     if (inst.type === 'shape') {
+      // 文字节点(M2.1):走 TextRenderer SVG → mesh 路径
+      if (isTextNodeRef(inst.ref)) {
+        return this.renderTextInstance(inst);
+      }
       return this.renderShapeInstance(inst);
     } else {
       return this.renderSubstanceInstance(inst);
@@ -300,6 +321,156 @@ export class NodeRenderer {
         h: Math.abs(ep.end.y - ep.start.y),
       },
     };
+  }
+
+  /**
+   * 文字节点(M2.1):内容是 NoteView 同源 Atom[](inst.doc).
+   *
+   * 渲染时机:atomsToSvg 是 async,首帧返回**占位 group**(含一个隐形 hit-area
+   * 矩形 + 一个灰色轻量 placeholder),保证 fitToContent / hit-test 不算偏;
+   * 真实 SVG mesh 异步 resolve 后替换 inner 的渲染层 children.
+   *
+   * 重生成保护:每个 instance 维护 textRenderToken,update/remove 后递增,
+   * stale 的 async resolve 直接丢弃.
+   */
+  private renderTextInstance(inst: Instance): RenderedNode | null {
+    const { position, size } = ensurePositionSize(inst, null);
+    const safeSize = {
+      w: Math.max(1, size.w),
+      h: Math.max(1, size.h),
+    };
+
+    // inner group 由两层组成:hitArea(底,透明)+ contentSlot(上,SVG mesh 异步填入)
+    const innerGroup = new THREE.Group();
+
+    // ── 隐形 hit-area(覆盖整个 size,捕获 glyph 之间的空隙点击)──
+    const hitGeo = new THREE.PlaneGeometry(safeSize.w, safeSize.h);
+    const hitMat = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const hitMesh = new THREE.Mesh(hitGeo, hitMat);
+    hitMesh.position.set(safeSize.w / 2, safeSize.h / 2, 0);
+    hitMesh.userData.isTextHitArea = true;
+    innerGroup.add(hitMesh);
+
+    // ── content slot(SVG mesh 在此填入)──
+    const contentSlot = new THREE.Group();
+    contentSlot.userData.isTextContentSlot = true;
+    innerGroup.add(contentSlot);
+
+    // outer/inner 嵌套(沿用 M1.x.1 旋转架构)
+    const outerGroup = wrapForRotation(innerGroup, position, safeSize, inst.rotation ?? 0);
+    outerGroup.userData.instanceId = inst.id;
+
+    // ── 异步触发 SVG mesh 渲染 ──
+    const token = (this.textRenderTokens.get(inst.id) ?? 0) + 1;
+    this.textRenderTokens.set(inst.id, token);
+
+    const pmJsonAtoms = textNodeAtomsToPmJson(inst.doc);
+    if (pmJsonAtoms.length > 0) {
+      void this.textRenderer.render(pmJsonAtoms).then((svgGroup) => {
+        if (this.textRenderTokens.get(inst.id) !== token) {
+          this.textRenderer.dispose(svgGroup);
+          return;
+        }
+        const current = this.byId.get(inst.id);
+        if (!current) {
+          this.textRenderer.dispose(svgGroup);
+          return;
+        }
+
+        // 1. 在 attach 之前测 SVG 本地 bbox(避开 matrixWorld 时序问题)
+        //    svgGroup 的局部坐标系就是 SVG path 自身,bbox.max.y 直接 = 内容高度
+        svgGroup.updateMatrixWorld(true);
+        const localBbox = new THREE.Box3().setFromObject(svgGroup);
+        const contentH = (Number.isFinite(localBbox.max.y) && Number.isFinite(localBbox.min.y))
+          ? localBbox.max.y - localBbox.min.y
+          : 0;
+
+        // 2. 抵消 TextRenderer 内的 group.scale.y = -1(canvas SceneManager 已通过
+        //    frustum top<bottom 实现 Y 翻转,SVG path 坐标本身就是 Y-down,无需再翻)
+        svgGroup.scale.y = 1;
+        svgGroup.position.set(0, 0, 0.01);
+        contentSlot.add(svgGroup);
+
+        // 3. 内容溢出自适应(对齐 Freeform 文字框行为,宽度用户控制,高度跟内容)
+        if (contentH > 0) {
+          this.adaptTextNodeSizeToContent(inst.id, current, contentH);
+        }
+      }).catch((e) => {
+        console.warn(`[Canvas.text] async render failed`, e);
+      });
+    }
+
+    return {
+      instanceId: inst.id,
+      kind: 'shape',
+      group: outerGroup,
+      shapeRef: inst.ref,
+      position: { ...position },
+      size: { ...safeSize },
+      rotation: inst.rotation ?? 0,
+    };
+  }
+
+  /**
+   * 文字节点内容溢出时,把 size.h 扩到 SVG bbox 实际高度.
+   *
+   * 做法:测量 contentSlot 的世界 bbox 高度 → 与 RenderedNode.size.h 比较
+   * → 若超出则:
+   *   1. 替换 hit-area mesh(几何尺寸固定,只能新建)
+   *   2. 更新 RenderedNode.size.h(让 HandlesOverlay / hit-test 拿到新尺寸)
+   *   3. 同步 instance.size.h(让下次 serialize 写盘新值)
+   *   4. 触发引用 line 重新计算
+   */
+  private adaptTextNodeSizeToContent(
+    instanceId: string,
+    rendered: RenderedNode,
+    contentH: number,
+  ): void {
+    const padding = 8;
+    const newH = Math.ceil(contentH + padding);
+
+    if (newH <= rendered.size.h + 1) return;
+
+    // outer / inner 嵌套(wrapForRotation):
+    // outer.position = (px + w/2, py + h/2)
+    // inner.position = (-w/2, -h/2)
+    // 改 size.h 时这两处都得同步(否则 bbox 中心算错,节点会上下偏移)
+    const outer = rendered.group;
+    const inner = outer.children[0] as THREE.Group | undefined;
+    if (!inner) return;
+    const oldH = rendered.size.h;
+    outer.position.y += (newH - oldH) / 2;
+    inner.position.y = -newH / 2;
+
+    // 重建 hit-area mesh(PlaneGeometry size 写死了无法 in-place 改)
+    const oldHitMesh = inner.children.find(
+      (c) => (c as THREE.Mesh).userData?.isTextHitArea,
+    ) as THREE.Mesh | undefined;
+    if (oldHitMesh) {
+      oldHitMesh.geometry.dispose();
+      const newGeo = new THREE.PlaneGeometry(rendered.size.w, newH);
+      oldHitMesh.geometry = newGeo;
+      oldHitMesh.position.set(rendered.size.w / 2, newH / 2, 0);
+    }
+
+    // 更新 RenderedNode.size + instance.size(后者影响序列化 + 选中边框)
+    rendered.size.h = newH;
+    const persistInst = this.instances.get(instanceId);
+    if (persistInst && persistInst.size) {
+      persistInst.size.h = newH;
+    }
+
+    // 引用此节点的 line 端点更新(若有 magnet 连过来)
+    this.updateLinesFor(instanceId);
+
+    // 通知上层(给 CanvasView 用,刷新 HandlesOverlay 的 currentNode)
+    this.onTextNodeResized?.(instanceId);
   }
 
   /** substance 实例:展开 components,各自渲染并按 transform 在 group 内定位 */
@@ -531,9 +702,16 @@ function mergeLine(base?: LineStyle, override?: Partial<LineStyle>): LineStyle |
   return { ...(base ?? { type: 'solid' }), ...(override ?? {}) } as LineStyle;
 }
 
-/** 递归释放 group 下所有 mesh 的 geometry/material */
+/**
+ * 递归释放 group 下所有 mesh 的 geometry/material.
+ *
+ * 跳过 userData.sharedAsset = true 的 mesh:它们的 geometry/material 由
+ * 静态 LRU 缓存共享管理(如 TextRenderer 的 SVG mesh),disposeGroup 不能
+ * dispose,否则缓存里其他持有同引用的 mesh 会变空.
+ */
 function disposeGroup(group: THREE.Object3D): void {
   group.traverse((obj) => {
+    if (obj.userData?.sharedAsset) return;
     const m = obj as THREE.Mesh;
     if (m.geometry) m.geometry.dispose();
     const mat = m.material;

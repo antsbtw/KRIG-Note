@@ -1,13 +1,21 @@
 /**
- * bulletList / orderedList 序列化。
+ * bulletList / orderedList 序列化.
  *
- * Note 系统结构（v1.3 § 4.2 P1 Block）：
- *   bulletList { content: [listItem { content: [textBlock | nested list] }] }
+ * NoteView schema(权威源,plugins/note/blocks/bullet-list.ts):
+ *   content: 'block+'  ← 直接含 textBlock / nested list,**没有 listItem 包装**
  *
- * 渲染策略：
- * - 每个 listItem 依据其在父 list 中的索引画 bullet（圆点）或编号（数字 path）
- * - 缩进 INDENT_PER_LEVEL × depth（嵌套层级）
- * - listItem 内可嵌套子 list / paragraph，递归处理
+ * 形态:
+ *   bulletList {
+ *     content: [
+ *       textBlock,           // 列表项 1
+ *       textBlock,           // 列表项 2
+ *       bulletList,          // 嵌套子列表(缩进 +1 级渲染)
+ *     ]
+ *   }
+ *
+ * 渲染策略:
+ * - 每个 textBlock child = 一个列表项,画 bullet/number + 缩进文本
+ * - 嵌套 list child 缩进递归,自身不画 bullet(由子 list 的项画)
  */
 import type { Atom } from '../../types';
 import { renderTextBlock } from './textBlock';
@@ -33,50 +41,43 @@ export async function renderList(
 
   const indent = INDENT_PER_LEVEL * (depth + 1);
 
-  for (const item of atom.content) {
-    if (item.type !== 'listItem' || !item.content) continue;
+  // NoteView schema(权威源):bulletList/orderedList content='block+',
+  // 子元素直接是 textBlock/嵌套 list,**没有 listItem 中间层**.
+  // 序列化器适配此结构:每个 textBlock child = 一个列表项,嵌套 list 缩进递归.
+  for (const child of atom.content) {
+    if (!child) continue;
+    const childYStart = y;
 
-    // listItem 内部：逐 child 渲染（textBlock 直接画，嵌套 list 递归）
-    let firstBlockY = y;
-    let firstBlockBaselineY = -1;
-
-    for (const child of item.content) {
-      const childYStart = y;
-      let res: { svg: string; height: number } = { svg: '', height: 0 };
-
-      if (child.type === 'textBlock') {
-        res = await renderIndentedTextBlock(child, y, indent);
-      } else if (child.type === 'bulletList') {
-        res = await renderList(child, y, false, depth + 1);
-      } else if (child.type === 'orderedList') {
-        res = await renderList(child, y, true, depth + 1);
-      }
-
-      if (res.svg) parts.push(res.svg);
-
-      // 第一个 block 决定 bullet/number 的 y 位置
-      if (firstBlockBaselineY < 0 && child.type === 'textBlock') {
-        firstBlockBaselineY = childYStart + 14 + 2; // baselineY 与 textBlock 内一致
-      }
-
-      y += res.height;
-    }
-
-    // 在第一个 block 的位置画 bullet/number
-    if (firstBlockBaselineY < 0) firstBlockBaselineY = firstBlockY + 16;
-
-    if (ordered) {
-      const text = `${index}.`;
-      const numX = indent - INDENT_PER_LEVEL + BULLET_X_OFFSET;
-      const { svg } = await textToPath(text, NUMBER_FONT_SIZE, numX, firstBlockBaselineY, BULLET_FILL);
+    if (child.type === 'textBlock') {
+      const { svg, height } = await renderIndentedTextBlock(child, y, indent);
       if (svg) parts.push(svg);
-    } else {
-      const cx = indent - INDENT_PER_LEVEL + BULLET_X_OFFSET + BULLET_DIAMETER / 2;
-      const cy = firstBlockBaselineY - NUMBER_FONT_SIZE / 2 + 1;
-      parts.push(circlePath(cx, cy, BULLET_DIAMETER / 2));
-    }
 
-    index++;
+      // 在文本基线位置画 bullet / number(baselineY 与 textBlock 内 baseline 算法一致)
+      const baselineY = childYStart + 14 + 2;
+      if (ordered) {
+        const text = `${index}.`;
+        const numX = indent - INDENT_PER_LEVEL + BULLET_X_OFFSET;
+        const r = await textToPath(text, NUMBER_FONT_SIZE, numX, baselineY, BULLET_FILL);
+        if (r.svg) parts.push(r.svg);
+      } else {
+        const cx = indent - INDENT_PER_LEVEL + BULLET_X_OFFSET + BULLET_DIAMETER / 2;
+        const cy = baselineY - NUMBER_FONT_SIZE / 2 + 1;
+        parts.push(circlePath(cx, cy, BULLET_DIAMETER / 2));
+      }
+
+      y += height;
+      index++;
+    } else if (child.type === 'bulletList') {
+      // 嵌套无序列表:缩进 +1 级,index 不增(嵌套 list 不算父列表的项)
+      const { svg, height } = await renderList(child, y, false, depth + 1);
+      if (svg) parts.push(svg);
+      y += height;
+    } else if (child.type === 'orderedList') {
+      const { svg, height } = await renderList(child, y, true, depth + 1);
+      if (svg) parts.push(svg);
+      y += height;
+    }
+    // 其他 block(如 callout / mathBlock 嵌入列表)暂跳过,不破坏布局
   }
 
   return { svg: parts.join(''), height: y - yOffset };

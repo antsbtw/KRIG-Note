@@ -9,11 +9,14 @@ import { LibraryPicker } from './ui/LibraryPicker/LibraryPicker';
 import { FloatingInspector } from './ui/Inspector/FloatingInspector';
 import { ContextMenu, type ContextMenuItem } from './ui/ContextMenu/ContextMenu';
 import { CreateSubstanceDialog, type CreateSubstanceFormResult } from './ui/dialogs/CreateSubstanceDialog';
+import { EditOverlay } from './edit/EditOverlay';
+import { isTextNodeRef } from './edit/atom-bridge';
 import { combineSelectedToSubstance } from './combine';
 import { ShapeRegistry } from '../library/shapes';
 import { SubstanceRegistry } from '../library/substances';
 import { serialize, deserialize, type CanvasDocument } from './persist/serialize';
 import type { Instance } from '../library/types';
+import type { Atom as NoteAtom } from '../../../shared/types/atom-types';
 import type { GraphCanvasRecord } from '../../../shared/types/graph-types';
 
 /**
@@ -66,6 +69,8 @@ export function CanvasView() {
   const nodeRendererRef = useRef<NodeRenderer | null>(null);
   const handlesOverlayRef = useRef<HandlesOverlay | null>(null);
   const interactionRef = useRef<InteractionController | null>(null);
+  /** 文字节点编辑浮层(M2.1) */
+  const editOverlayRef = useRef<EditOverlay | null>(null);
 
   // ── 持久化状态 ──
   const activeGraphIdRef = useRef<string | null>(null);
@@ -201,6 +206,20 @@ export function CanvasView() {
     const sm = new SceneManager(containerRef.current);
     const nr = new NodeRenderer(sm);
     const handles = new HandlesOverlay(sm);
+
+    // 文字节点内容 async 渲染完成扩 size 后:
+    // 1. HandlesOverlay 的 currentNode 引用刷新(让 8 个 handle / rotation 重新 layout)
+    // 2. InteractionController 的 selection border(LineLoop)重画到新 size
+    //    (selection border 在 InteractionController.overlays,跟 HandlesOverlay 是
+    //     两套独立几何,不会自动跟随)
+    nr.setOnTextNodeResized((id) => {
+      const target = handles.getTarget();
+      if (target && target.instanceId === id) {
+        const fresh = nr.get(id);
+        if (fresh) handles.setTarget(fresh);
+      }
+      interactionRef.current?.refreshSelectionOverlays();
+    });
     const ic = new InteractionController({
       container: containerRef.current,
       sceneManager: sm,
@@ -226,13 +245,62 @@ export function CanvasView() {
           handles.setTarget(null);
         }
       },
-      onNodeDoubleClick: () => setInspectorOpen(true),
+      onNodeDoubleClick: (id) => {
+        const inst = nr.getInstance(id);
+        // 文字节点 → 进入编辑浮层(M2.1);其他 → Inspector(M1.x UX)
+        if (inst && isTextNodeRef(inst.ref)) {
+          openTextEditor(inst);
+        } else {
+          setInspectorOpen(true);
+        }
+      },
       onContextMenu: (x, y, ids) => setContextMenu({ x, y, ids }),
     });
     sceneManagerRef.current = sm;
     nodeRendererRef.current = nr;
     handlesOverlayRef.current = handles;
     interactionRef.current = ic;
+
+    // ── EditOverlay(文字节点编辑浮层,M2.1)──
+    const editOverlay = new EditOverlay({
+      onExit: (target, atoms) => {
+        // commit doc:atoms 非 null 时写回(null 表示用户取消)
+        if (atoms !== null) {
+          const inst = nr.getInstance(target.id);
+          if (inst) {
+            const updated = { ...inst, doc: atoms as unknown[] };
+            nr.update(updated);
+            // nr.update 内部销毁旧 RenderedNode + 创建新对象;HandlesOverlay 的
+            // currentNode 还指向旧引用,必须 setTarget 到新对象,选中边框 / handles
+            // 才能看到新 size.h(否则视觉永远是初始 size)
+            const newNode = nr.get(target.id);
+            const isLine = !!newNode?.shapeRef?.startsWith('krig.line.');
+            handles.setTarget(isLine ? null : (newNode ?? null));
+            scheduleSave();
+          }
+        }
+      },
+    });
+    editOverlayRef.current = editOverlay;
+
+    /** 打开某个文字节点的编辑浮层 */
+    const openTextEditor = (inst: Instance): void => {
+      // 节点屏幕坐标:取节点 bbox 中心
+      const sz = inst.size ?? { w: 200, h: 40 };
+      const pos = inst.position ?? { x: 0, y: 0 };
+      const center = sm.worldToScreen(pos.x + sz.w / 2, pos.y + sz.h / 2);
+      // popup 默认锚点中心定位(transform: translate(-50%, -50%))
+      // 加容器偏移转换为 viewport 坐标
+      const containerEl = containerRef.current;
+      if (!containerEl) return;
+      const rect = containerEl.getBoundingClientRect();
+      editOverlay.enter({
+        id: inst.id,
+        atoms: (inst.doc ?? []) as NoteAtom[],
+        screenX: rect.left + center.x,
+        screenY: rect.top + center.y,
+      });
+    };
 
     // 处理 mount 前到达的 pendingGraphId
     const pending = pendingGraphIdRef.current;
@@ -258,6 +326,7 @@ export function CanvasView() {
       // unmount 前 flush pending save 到旧 graphId
       void flushSave(activeGraphIdRef.current);
       window.clearInterval(zoomTimer);
+      editOverlay.dispose();
       ic.dispose();
       handles.dispose();
       nr.clear();
@@ -266,6 +335,7 @@ export function CanvasView() {
       nodeRendererRef.current = null;
       handlesOverlayRef.current = null;
       interactionRef.current = null;
+      editOverlayRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -352,6 +422,19 @@ export function CanvasView() {
   const handleAdd = useCallback((anchorRect: DOMRect) => {
     setPickerState({ open: true, anchorRect });
   }, []);
+  /**
+   * Toolbar [A] Text 按钮接通(M2.1).
+   * 不走 LibraryPicker(文字节点是单一 ref,无需选择),直接进 addMode;
+   * 用户在画布点击即创建空 text instance.
+   */
+  const handleAddText = useCallback((_anchorRect: DOMRect) => {
+    interactionRef.current?.enterAddMode({
+      kind: 'shape',
+      ref: 'krig.text.label',
+    });
+  }, []);
+  // Fit-to-content 仍可走快捷键(M2.0 起 toolbar 不显示按钮)
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const handleFit = useCallback(() => {
     nodeRendererRef.current?.fitAll();
   }, []);
@@ -437,11 +520,10 @@ export function CanvasView() {
     <div style={styles.container}>
       <Toolbar
         title={graphTitle + (dirty ? ' •' : '')}
-        zoomLevel={zoomLevel}
         addModeRef={addMode?.ref ?? null}
         multiSelected={selectedIds.length >= 2}
         onAdd={handleAdd}
-        onFit={handleFit}
+        onAddText={handleAddText}
         onCombine={handleOpenCombine}
         onClose={handleClose}
       />

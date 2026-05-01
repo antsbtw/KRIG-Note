@@ -433,6 +433,11 @@ export class InteractionController {
       position,
       size,
     };
+    // 文字节点(M2.1):创建时初始化空 doc 字段(NoteView 同源)
+    // 双击节点会进入编辑态(M2.1.6)
+    if (spec.ref === 'krig.text.label') {
+      instance.doc = [];
+    }
     this.nodeRenderer.add(instance);
 
     // 选中新建的 instance,退出添加模式,通知数据变化
@@ -1366,6 +1371,14 @@ export class InteractionController {
     this.onChange?.();
   }
 
+  /**
+   * 强制刷新选中态 overlays(选区线框 + line endpoint handles).
+   * 文字节点 async 渲染完成扩 size 后,CanvasView 用这个让线框跟上.
+   */
+  refreshSelectionOverlays(): void {
+    this.refreshOverlays();
+  }
+
   /** 同步 overlays 到当前 selected 集合 */
   private refreshOverlays(): void {
     // 删掉不在 selected 里的 overlay
@@ -1514,6 +1527,8 @@ export interface AddModeSpec {
 function resolveDefaultSize(spec: AddModeSpec): { w: number; h: number } {
   if (spec.defaultSize) return spec.defaultSize;
   if (spec.kind === 'shape') {
+    // 文字节点(M2.1):宽 200 / 高 40 — 对齐 Freeform "Type to enter text" 视觉尺寸
+    if (spec.ref === 'krig.text.label') return { w: 200, h: 40 };
     const shape = ShapeRegistry.get(spec.ref);
     if (shape) {
       // 大多数 shape 用 100x100 太小,放大到一个对用户视觉合适的默认值
