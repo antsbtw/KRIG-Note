@@ -54,6 +54,11 @@
   caret-color: var(--popup-fg, #e8eaed) !important;
 }
 
+/* mathBlock 渲染态在 Sticky 黄底上要切深色 — note.css 默认 #e8eaed 浅灰看不见 */
+.krig-canvas-edit-pm-mount .math-block__rendered {
+  color: var(--popup-fg, #e8eaed) !important;
+}
+
 /* heading 在画板节点里也要小一点(NoteView 默认 h1=38px,popup 装不下) */
 .krig-canvas-edit-pm-mount .ProseMirror h1 {
   font-size: 22px !important;

@@ -15,6 +15,7 @@ export async function renderMathBlock(
   tex: string,
   fontSize: number,
   yOffset: number,
+  defaultTextColor?: string,
 ): Promise<{ svg: string; height: number }> {
   if (!tex) return { svg: '', height: 0 };
 
@@ -33,7 +34,9 @@ export async function renderMathBlock(
 
   let inner = extractInnerSvg(result.svg);
   if (!inner) return { svg: '', height: 0 };
-  inner = inner.replace(/currentColor/g, '#dddddd');
+  // 替换 currentColor 为节点主题色(Sticky 黄底用 '#222',默认 '#dddddd')
+  const fill = defaultTextColor ?? '#dddddd';
+  inner = inner.replace(/currentColor/g, fill);
 
   const scaleX = result.width / vbW;
   const scaleY = result.height / vbH;
@@ -42,7 +45,7 @@ export async function renderMathBlock(
   const top = yOffset + PADDING_Y;
   const transform = `translate(${PADDING_X - vbX * scaleX}, ${top - vbY * scaleY}) scale(${scaleX}, ${scaleY})`;
 
-  const wrapped = `<g transform="${transform}" fill="#dddddd" stroke="#dddddd">${inner}</g>`;
+  const wrapped = `<g transform="${transform}" fill="${fill}" stroke="${fill}">${inner}</g>`;
 
   return { svg: wrapped, height: result.height + PADDING_Y * 2 };
 }

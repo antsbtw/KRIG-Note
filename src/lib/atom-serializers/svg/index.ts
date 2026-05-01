@@ -104,7 +104,7 @@ async function renderAtom(
         || (atom.attrs?.latex as string)
         || (atom.attrs?.tex as string)
         || '';
-      return renderMathBlock(latex, FONT_SIZE, yOffset);
+      return renderMathBlock(latex, FONT_SIZE, yOffset, defaultTextColor);
     }
     case 'bulletList':
       return renderList(atom, yOffset, false, 0, contentWidth, links, defaultTextColor);

@@ -347,17 +347,17 @@ export class NodeRenderer {
     const innerGroup = new THREE.Group();
 
     // ── 背景层(M2.2 Sticky):style_overrides.fill 提供时画一层实色 plane ──
+    // 用 renderOrder 强制画顺序,不依赖 children 顺序 / depthWrite
     const bgFill = inst.style_overrides?.fill;
     if (bgFill?.type === 'solid' && bgFill.color) {
       const bgGeo = new THREE.PlaneGeometry(safeSize.w, safeSize.h);
       const bgMat = new THREE.MeshBasicMaterial({
         color: new THREE.Color(bgFill.color),
         side: THREE.DoubleSide,
-        depthWrite: false,
       });
       const bgMesh = new THREE.Mesh(bgGeo, bgMat);
-      // z = -0.01:在 hitArea(z=0)和文字(z=0.01)之下
       bgMesh.position.set(safeSize.w / 2, safeSize.h / 2, -0.01);
+      bgMesh.renderOrder = -1;  // 比文字(默认 0)低,确保先画(被覆盖)
       bgMesh.userData.isTextBackground = true;
       innerGroup.add(bgMesh);
     }
@@ -417,6 +417,8 @@ export class NodeRenderer {
         //    frustum top<bottom 实现 Y 翻转,SVG path 坐标本身就是 Y-down,无需再翻)
         svgGroup.scale.y = 1;
         svgGroup.position.set(0, 0, 0.01);
+        // 给 svgGroup 内所有 mesh 设 renderOrder=1,保证画在 BG(-1) / hitArea(0) 之上
+        svgGroup.traverse((obj) => { obj.renderOrder = 1; });
         contentSlot.add(svgGroup);
 
         // 3. 内容溢出自适应(对齐 Freeform 文字框行为,宽度用户控制,高度跟内容)
@@ -479,6 +481,18 @@ export class NodeRenderer {
       const newGeo = new THREE.PlaneGeometry(rendered.size.w, newH);
       oldHitMesh.geometry = newGeo;
       oldHitMesh.position.set(rendered.size.w / 2, newH / 2, 0);
+    }
+
+    // 同步 BG mesh(M2.2 Sticky):它和 hitMesh 一样固定尺寸,size 变了要重建,
+    // 否则黄底/位置偏(背景留旧 size 区域,文字溢到背景外看着像内容丢失)
+    const oldBgMesh = inner.children.find(
+      (c) => (c as THREE.Mesh).userData?.isTextBackground,
+    ) as THREE.Mesh | undefined;
+    if (oldBgMesh) {
+      oldBgMesh.geometry.dispose();
+      const newBgGeo = new THREE.PlaneGeometry(rendered.size.w, newH);
+      oldBgMesh.geometry = newBgGeo;
+      oldBgMesh.position.set(rendered.size.w / 2, newH / 2, -0.01);
     }
 
     // 更新 RenderedNode.size + instance.size(后者影响序列化 + 选中边框)

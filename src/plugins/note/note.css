@@ -829,6 +829,9 @@
   margin: 0;
   min-height: 40px;
   color: #e8eaed;
+  /* 公式编辑器自带深背景,caret 必须浅色 — 不跟随 popup-fg(Sticky 黄底
+   * 时 popup-fg=#222,深 caret 在深灰背景上看不见) */
+  caret-color: #e8eaed;
 }
 .math-block__editor pre code {
   background: none;
