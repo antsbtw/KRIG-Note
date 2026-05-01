@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { SceneManager } from './SceneManager';
 import type { RenderedNode } from './NodeRenderer';
+import { isTextNodeRef } from '../edit/atom-bridge';
 
 /**
  * HandlesOverlay — 选中节点的 resize / rotation handles
@@ -27,6 +28,19 @@ export type HandleKind =
   | 'w'        | 'e'    // 中
   | 'sw' | 's' | 'se'   // 下
   | 'rotate';
+
+/**
+ * 文字节点(krig.text.label)只允许左右拉宽 + 旋转;
+ * 高度由内容自动计算,不允许 N/S/4 角拖动改高度或同时改宽高.
+ */
+const TEXT_NODE_HANDLES = new Set<HandleKind>(['e', 'w', 'rotate']);
+const ALL_HANDLES_SET = new Set<HandleKind>(
+  ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w', 'rotate'],
+);
+
+function allowedHandlesFor(node: RenderedNode): Set<HandleKind> {
+  return isTextNodeRef(node.shapeRef) ? TEXT_NODE_HANDLES : ALL_HANDLES_SET;
+}
 
 const HANDLE_RADIUS = 3.3;        // 圆 handle 半径(像素)
 const HANDLE_BORDER = 1;          // 边框宽度(像素)
@@ -101,8 +115,10 @@ export class HandlesOverlay {
     const positions = handlePositions(halfW, halfH);
 
     const HIT_RADIUS = HANDLE_RADIUS + 4;  // 容忍区
+    const allowed = allowedHandlesFor(node);
     let closest: { kind: HandleKind; dist: number } | null = null;
     for (const [kind, [hx, hy]] of Object.entries(positions) as [HandleKind, [number, number]][]) {
+      if (!allowed.has(kind)) continue;
       const d = Math.hypot(px - hx, py - hy);
       if (d <= HIT_RADIUS && (!closest || d < closest.dist)) {
         closest = { kind, dist: d };
@@ -180,9 +196,12 @@ export class HandlesOverlay {
     const halfW = (node.size.w / 2) * view.zoom;
     const halfH = (node.size.h / 2) * view.zoom;
     const positions = handlePositions(halfW, halfH);
+    const allowed = allowedHandlesFor(node);
     for (const [kind, [hx, hy]] of Object.entries(positions) as [HandleKind, [number, number]][]) {
       const handle = this.handles.get(kind);
-      if (handle) handle.position.set(hx, hy, Z_HANDLE);
+      if (!handle) continue;
+      handle.position.set(hx, hy, Z_HANDLE);
+      handle.visible = allowed.has(kind);
     }
 
     // rotation 连线:从 top 中点 (0, -halfH) 到 rotation handle (0, -halfH-ROTATION_OFFSET)

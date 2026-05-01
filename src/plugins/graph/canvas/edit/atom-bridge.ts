@@ -23,8 +23,26 @@
 
 import type { Node as PMNode } from 'prosemirror-model';
 import { converterRegistry } from '../../../note/converters/registry';
+import { blockRegistry } from '../../../note/registry';
 import type { Atom as SerializerAtom } from '../../../../lib/atom-serializers/svg';
 import type { Atom as NoteAtom } from '../../../../shared/types/atom-types';
+
+/**
+ * Lazy 初始化 converter 注册表.
+ *
+ * Why:converterRegistry 是模块级单例,但默认空,需要 blockRegistry.initConverters()
+ * 注册全部 converter.GraphEditor 创建时会调,但**展示态渲染** TextRenderer 走
+ * atomsToDoc 不依赖 GraphEditor — 重启加载画板时,渲染先于编辑器创建,registry
+ * 是空的,atomsToDoc 返回空 doc,SVG 出来 0 children,文字看不到.
+ *
+ * 这里 lazy init:首次桥转换时确保 registry 就绪.initConverters 幂等可重复调.
+ */
+let convertersInited = false;
+function ensureConvertersInited(): void {
+  if (convertersInited) return;
+  blockRegistry.initConverters();
+  convertersInited = true;
+}
 
 /**
  * NoteView Atom[](Instance.doc 持久化形态)→ 序列化器形态 PM JSON children
@@ -33,6 +51,7 @@ import type { Atom as NoteAtom } from '../../../../shared/types/atom-types';
  */
 export function textNodeAtomsToPmJson(atoms: unknown[] | undefined): SerializerAtom[] {
   if (!atoms || atoms.length === 0) return [];
+  ensureConvertersInited();
   try {
     const docJson = converterRegistry.atomsToDoc(atoms as NoteAtom[]);
     const stripped = stripNoteTitleFromDocJson(docJson);
@@ -52,6 +71,7 @@ export function textNodeAtomsToPmJson(atoms: unknown[] | undefined): SerializerA
  */
 export function textNodeAtomsToDocJson(atoms: unknown[] | undefined): { type: 'doc'; content: unknown[] } {
   const safeAtoms = (atoms && atoms.length > 0 ? atoms : []) as NoteAtom[];
+  ensureConvertersInited();
   try {
     const docJson = converterRegistry.atomsToDoc(safeAtoms);
     const stripped = stripNoteTitleFromDocJson(docJson);
@@ -68,6 +88,7 @@ export function textNodeAtomsToDocJson(atoms: unknown[] | undefined): { type: 'd
 
 /** PM doc → NoteView Atom[](commit 时用) */
 export function pmDocToNoteAtoms(doc: PMNode): NoteAtom[] {
+  ensureConvertersInited();
   try {
     return converterRegistry.docToAtoms(doc);
   } catch (e) {

@@ -8,6 +8,10 @@ import { ShapeRegistry } from '../../library/shapes';
 import { SubstanceRegistry } from '../../library/substances';
 import { findClosestMagnet, listMagnets, MAGNET_SNAP_RADIUS_PX } from './magnet-snap';
 import { renderLine, updateLineGeometry, generateLinePoints, setLineHighlight } from '../scene/LineRenderer';
+import { isTextNodeRef } from '../edit/atom-bridge';
+
+/** 文字节点(krig.text.label)只允许左右 resize;高度由内容自动撑 */
+const TEXT_NODE_RESIZE_HANDLES = new Set<Exclude<HandleKind, 'rotate'>>(['e', 'w']);
 
 /**
  * InteractionController — 鼠标 / 键盘交互
@@ -1179,6 +1183,9 @@ export class InteractionController {
     handle: Exclude<HandleKind, 'rotate'>,
     startWorld: { x: number; y: number },
   ): void {
+    // 文字节点防御:只允许左右 handle resize;HandlesOverlay 已 filter 不显示
+    // N/S/4 角 handle,这里是双保险(避免未来 hitTest 改动 / 键盘触发等绕过)
+    if (isTextNodeRef(node.shapeRef) && !TEXT_NODE_RESIZE_HANDLES.has(handle)) return;
     this.pushHistory();
     this.resizing = {
       instanceId: node.instanceId,
