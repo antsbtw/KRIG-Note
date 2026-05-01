@@ -4,6 +4,8 @@ import type { PluginContext } from '../../../shared/plugin-types';
 import { graphStore, graphFolderStore } from '../../../main/storage/graph-store';
 import { activityStore } from '../../../main/storage/activity-store';
 import { isDBReady } from '../../../main/storage/client';
+import { workspaceManager } from '../../../main/workspace/manager';
+import { broadcastWorkspaceState } from '../../../main/ipc/handlers';
 import type { GraphVariant } from '../../../shared/types/graph-types';
 
 /**
@@ -127,6 +129,16 @@ export function registerGraphIpcHandlers(ctx: PluginContext): void {
         webContents.fromId(leftId)?.send(IPC.GRAPH_OPEN_IN_VIEW, graphId);
       }
     }
+  });
+
+  // ── Workspace 状态同步:CanvasView 报告当前打开的画板 ──
+  // 用于 app 重启时恢复"上次打开的画板"(类比 SET_ACTIVE_NOTE)
+  ipcMain.handle(IPC.GRAPH_SET_ACTIVE, (_event, graphId: string | null) => {
+    const active = workspaceManager.getActive();
+    if (!active) return;
+    workspaceManager.update(active.id, { activeGraphId: graphId });
+    // 广播给 NavSide 让它知道当前活跃 graph(高亮 / 同步)
+    broadcastWorkspaceState(ctx.getMainWindow());
   });
 
   // ── Folder CRUD ──

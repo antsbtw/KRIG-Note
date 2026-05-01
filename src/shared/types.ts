@@ -367,6 +367,7 @@ export const IPC = {
   GRAPH_PENDING_OPEN: 'graph:pending-open',         // CanvasView ready 后拉取待打开的 graphId
   GRAPH_DELETED: 'graph:deleted',                   // main → CanvasView:画板已删除,view 需清空
   GRAPH_TITLE_CHANGED: 'graph:title-changed',       // NavSide → CanvasView:标题变更同步
+  GRAPH_SET_ACTIVE: 'graph:set-active',              // CanvasView → main:报告当前打开的画板(用于重启恢复)
 
 
   // Web Translate

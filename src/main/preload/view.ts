@@ -90,6 +90,13 @@ contextBridge.exposeInMainWorld('viewAPI', {
     ipcRenderer.invoke(IPC.GRAPH_RENAME, id, title),
   graphPendingOpen: () => ipcRenderer.invoke(IPC.GRAPH_PENDING_OPEN),
   graphOpenInView: (id: string) => ipcRenderer.invoke(IPC.GRAPH_OPEN_IN_VIEW, id),
+  /** 报告当前打开的画板,主进程写到 workspace.activeGraphId(重启恢复用) */
+  setActiveGraph: (graphId: string | null) => ipcRenderer.invoke(IPC.GRAPH_SET_ACTIVE, graphId),
+  /** 主动拉当前 workspace 的 activeGraphId(view mount 时启动恢复用) */
+  getActiveGraphId: async (): Promise<string | null> => {
+    const data = await ipcRenderer.invoke(IPC.WORKSPACE_LIST);
+    return data?.active?.activeGraphId ?? null;
+  },
 
   onGraphOpenInView: (callback: (graphId: string) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, graphId: string) => callback(graphId);

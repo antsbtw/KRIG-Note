@@ -46,6 +46,14 @@ declare const viewAPI: {
   onRestoreWorkspaceState: (
     callback: (state: { activeNoteId: string | null; activeGraphId?: string | null }) => void,
   ) => () => void;
+  /** 报告当前打开的画板,主进程写到 workspace.activeGraphId(重启恢复用) */
+  setActiveGraph: (graphId: string | null) => Promise<void>;
+  /** 主动拉当前 workspace 的 activeGraphId(view mount 时启动恢复用) */
+  getActiveGraphId: () => Promise<string | null>;
+  /** DB 状态检查 */
+  isDBReady: () => Promise<boolean>;
+  /** DB ready 通知 */
+  onDBReady: (callback: () => void) => () => void;
   closeSelf: () => Promise<void>;
 };
 
@@ -143,6 +151,8 @@ export function CanvasView() {
       activeGraphIdRef.current = null;
       setActiveGraphId(null);
       setGraphTitle('Canvas');
+      // 清掉 workspace.activeGraphId,避免下次启动又恢复同一个僵尸 id
+      void viewAPI.setActiveGraph(null);
     };
 
     try {
@@ -170,6 +180,8 @@ export function CanvasView() {
       setDirty(false);
       // 切画板 reset Inspector(避免上一个画板双击留下的 open=true 残留)
       setInspectorOpen(false);
+      // 写到 workspace.activeGraphId(重启时主进程会推回来恢复)
+      void viewAPI.setActiveGraph(graphId);
     } catch (err) {
       if (seq !== loadSeqRef.current) return;
       console.error('[CanvasView] loadGraph failed:', err);
@@ -258,9 +270,27 @@ export function CanvasView() {
   useEffect(() => {
     // 启动恢复优先级:
     // 1) graphPendingOpen — NavSide create-canvas 等明确意图(view mount 前已派发)
-    // 2) onRestoreWorkspaceState — 主进程推送的上次 workspace state(activeGraphId)
-    void viewAPI.graphPendingOpen().then((id) => {
-      if (id) void loadGraph(id);
+    // 2) onRestoreWorkspaceState — 主进程切 workspace 时推送的 state
+    // 3) getActiveGraphId — 主动从主进程拉(应用启动时不发 RESTORE,要主动取)
+    void viewAPI.graphPendingOpen().then(async (pending) => {
+      if (pending) {
+        void loadGraph(pending);
+        return;
+      }
+      // pending 没值 → 取 workspace 的 activeGraphId 恢复(应用重启场景)
+      // 等 DB ready,否则 graphLoad 会返回 null 触发 fallback 把僵尸 id 当作不存在
+      if (activeGraphIdRef.current) return;
+      const dbReady = await viewAPI.isDBReady();
+      if (!dbReady) {
+        await new Promise<void>((resolve) => {
+          const unsub = viewAPI.onDBReady(() => { unsub(); resolve(); });
+        });
+      }
+      if (activeGraphIdRef.current) return;
+      const stored = await viewAPI.getActiveGraphId();
+      if (stored && !activeGraphIdRef.current) {
+        void loadGraph(stored);
+      }
     }).catch(() => { /* ignore */ });
 
     const unsubRestore = viewAPI.onRestoreWorkspaceState((state) => {
@@ -286,7 +316,7 @@ export function CanvasView() {
 
     const unsubDeleted = viewAPI.onGraphDeleted((graphId) => {
       if (activeGraphIdRef.current === graphId) {
-        // 当前画板被删:清空显示
+        // 当前画板被删:清空显示 + 清掉 activeGraphId(避免下次启动恢复死 id)
         if (saveTimerRef.current) {
           clearTimeout(saveTimerRef.current);
           saveTimerRef.current = null;
@@ -295,6 +325,7 @@ export function CanvasView() {
         activeGraphIdRef.current = null;
         setActiveGraphId(null);
         setGraphTitle('Canvas');
+        void viewAPI.setActiveGraph(null);
         setDirty(false);
       }
     });
