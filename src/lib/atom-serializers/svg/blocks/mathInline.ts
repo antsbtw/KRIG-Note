@@ -20,6 +20,7 @@ export async function renderMathInline(
   fontSize: number,
   x: number,
   baselineY: number,
+  defaultTextColor?: string,
 ): Promise<{ svg: string; advance: number }> {
   if (!tex) return { svg: '', advance: 0 };
 
@@ -37,11 +38,12 @@ export async function renderMathInline(
 
   const [vbX, vbY, vbW, vbH] = viewBoxMatch[1].split(/\s+/).map(parseFloat);
 
-  // 提取根 svg 的内容（去掉 <svg ...> 和 </svg>）
-  // 同时把 currentColor 替换为具体色值，避免 SVGLoader 报警告
+  // 提取根 svg 的内容(去掉 <svg ...> 和 </svg>)
+  // currentColor 替换为节点主题色(Sticky 用 '#222',默认 '#dddddd')
+  const fill = defaultTextColor ?? '#dddddd';
   let inner = extractInnerSvg(result.svg);
   if (!inner) return { svg: '', advance: 0 };
-  inner = inner.replace(/currentColor/g, '#dddddd');
+  inner = inner.replace(/currentColor/g, fill);
 
   // 缩放：MathJax viewBox 单位是内部坐标，需要缩放到 result.width × result.height
   const scaleX = result.width / vbW;
@@ -53,8 +55,7 @@ export async function renderMathInline(
   // transform: 把 MathJax 内容平移到目标位置 + 缩放 + 处理 viewBox 偏移
   const transform = `translate(${x - vbX * scaleX}, ${top - vbY * scaleY}) scale(${scaleX}, ${scaleY})`;
 
-  // currentColor 默认黑色——在 SVG 内联设置 fill 为浅灰
-  const wrapped = `<g transform="${transform}" fill="#dddddd" stroke="#dddddd">${inner}</g>`;
+  const wrapped = `<g transform="${transform}" fill="${fill}" stroke="${fill}">${inner}</g>`;
 
   return { svg: wrapped, advance: result.width + 4 };
 }

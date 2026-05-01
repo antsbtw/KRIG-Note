@@ -34,6 +34,7 @@ export async function renderList(
   depth = 0,
   contentWidth = 200,
   links?: LinkRect[],
+  defaultTextColor?: string,
 ): Promise<{ svg: string; height: number }> {
   if (!atom.content || atom.content.length === 0) return { svg: '', height: 0 };
 
@@ -53,31 +54,33 @@ export async function renderList(
     const childYStart = y;
 
     if (child.type === 'textBlock') {
-      const { svg, height } = await renderIndentedTextBlock(child, y, indent, innerWidth, links);
+      const { svg, height } = await renderIndentedTextBlock(child, y, indent, innerWidth, links, defaultTextColor);
       if (svg) parts.push(svg);
 
       // 在文本基线位置画 bullet / number(baselineY 与 textBlock 内 baseline 算法一致)
+      // bullet/number 颜色跟随节点主题色(Sticky 黄底深色,默认浅灰)
+      const bulletFill = defaultTextColor ?? BULLET_FILL;
       const baselineY = childYStart + 14 + 2;
       if (ordered) {
         const text = `${index}.`;
         const numX = indent - INDENT_PER_LEVEL + BULLET_X_OFFSET;
-        const r = await textToPath(text, NUMBER_FONT_SIZE, numX, baselineY, BULLET_FILL);
+        const r = await textToPath(text, NUMBER_FONT_SIZE, numX, baselineY, bulletFill);
         if (r.svg) parts.push(r.svg);
       } else {
         const cx = indent - INDENT_PER_LEVEL + BULLET_X_OFFSET + BULLET_DIAMETER / 2;
         const cy = baselineY - NUMBER_FONT_SIZE / 2 + 1;
-        parts.push(circlePath(cx, cy, BULLET_DIAMETER / 2));
+        parts.push(circlePath(cx, cy, BULLET_DIAMETER / 2, bulletFill));
       }
 
       y += height;
       index++;
     } else if (child.type === 'bulletList') {
       // 嵌套无序列表:缩进 +1 级,index 不增,可用宽度也收窄
-      const { svg, height } = await renderList(child, y, false, depth + 1, contentWidth, links);
+      const { svg, height } = await renderList(child, y, false, depth + 1, contentWidth, links, defaultTextColor);
       if (svg) parts.push(svg);
       y += height;
     } else if (child.type === 'orderedList') {
-      const { svg, height } = await renderList(child, y, true, depth + 1, contentWidth, links);
+      const { svg, height } = await renderList(child, y, true, depth + 1, contentWidth, links, defaultTextColor);
       if (svg) parts.push(svg);
       y += height;
     }
@@ -100,10 +103,11 @@ async function renderIndentedTextBlock(
   indent: number,
   contentWidth: number,
   links?: LinkRect[],
+  defaultTextColor?: string,
 ): Promise<{ svg: string; height: number }> {
   // 用本地累加器接 textBlock 的 link,再批量加 indent 偏移到上层
   const localLinks: LinkRect[] | undefined = links ? [] : undefined;
-  const { svg, height } = await renderTextBlock(atom, yOffset, contentWidth, localLinks);
+  const { svg, height } = await renderTextBlock(atom, yOffset, contentWidth, localLinks, defaultTextColor);
   if (links && localLinks) {
     for (const r of localLinks) {
       links.push({ ...r, x: r.x + indent });
@@ -117,7 +121,7 @@ async function renderIndentedTextBlock(
   };
 }
 
-function circlePath(cx: number, cy: number, r: number): string {
+function circlePath(cx: number, cy: number, r: number, fill: string = BULLET_FILL): string {
   // SVG path: 圆 = M(cx-r,cy) a r r 0 1 0 (2r) 0 a r r 0 1 0 -(2r) 0
-  return `<path d="M ${cx - r} ${cy} a ${r} ${r} 0 1 0 ${2 * r} 0 a ${r} ${r} 0 1 0 ${-2 * r} 0" fill="${BULLET_FILL}" />`;
+  return `<path d="M ${cx - r} ${cy} a ${r} ${r} 0 1 0 ${2 * r} 0 a ${r} ${r} 0 1 0 ${-2 * r} 0" fill="${fill}" />`;
 }

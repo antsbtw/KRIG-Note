@@ -34,6 +34,11 @@ export function clearSvgCache(): void {
 export interface AtomsToSvgOptions {
   /** 整个 SVG 的目标宽度(画板的 instance.size.w);不指定时用 DEFAULT_VIEWBOX_W */
   width?: number;
+  /**
+   * 文字默认色(M2.2 Sticky):浅底节点(如黄色 Sticky)用 '#222';
+   * 不传 = '#dddddd'(深色背景适配).textStyle.color mark 始终覆盖此默认.
+   */
+  defaultTextColor?: string;
 }
 
 /**
@@ -49,8 +54,9 @@ export async function atomsToSvgWithLinks(
   options: AtomsToSvgOptions = {},
 ): Promise<{ svg: string; links: LinkRect[] }> {
   const viewBoxW = options.width ?? DEFAULT_VIEWBOX_W;
-  // 缓存 key 含 width(同 atoms 不同 width wrap 结果不同)
-  const key = `w=${viewBoxW}|${JSON.stringify(atoms)}`;
+  const defaultTextColor = options.defaultTextColor;
+  // 缓存 key 含 width 和默认色(同 atoms 不同 width / 主题色 → 不同 SVG)
+  const key = `w=${viewBoxW}|c=${defaultTextColor ?? ''}|${JSON.stringify(atoms)}`;
   const cached = SVG_CACHE.get(key);
   if (cached !== undefined) return cached;
 
@@ -61,7 +67,7 @@ export async function atomsToSvgWithLinks(
   const links: LinkRect[] = [];
   let y = 0;
   for (const atom of atoms) {
-    const { svg, height } = await renderAtom(atom, y, contentWidth, links);
+    const { svg, height } = await renderAtom(atom, y, contentWidth, links, defaultTextColor);
     if (svg) parts.push(svg);
     y += height;
   }
@@ -85,10 +91,11 @@ async function renderAtom(
   yOffset: number,
   contentWidth: number,
   links: LinkRect[],
+  defaultTextColor?: string,
 ): Promise<{ svg: string; height: number }> {
   switch (atom.type) {
     case 'textBlock':
-      return renderTextBlock(atom, yOffset, contentWidth, links);
+      return renderTextBlock(atom, yOffset, contentWidth, links, defaultTextColor);
     case 'mathBlock': {
       // NoteView mathBlock schema:content: 'text*',LaTeX 存在 PM 子 text 节点里
       // 兼容老 attrs.latex / attrs.tex 数据(若 content 为空)
@@ -97,12 +104,12 @@ async function renderAtom(
         || (atom.attrs?.latex as string)
         || (atom.attrs?.tex as string)
         || '';
-      return renderMathBlock(latex, FONT_SIZE, yOffset);
+      return renderMathBlock(latex, FONT_SIZE, yOffset, defaultTextColor);
     }
     case 'bulletList':
-      return renderList(atom, yOffset, false, 0, contentWidth, links);
+      return renderList(atom, yOffset, false, 0, contentWidth, links, defaultTextColor);
     case 'orderedList':
-      return renderList(atom, yOffset, true, 0, contentWidth, links);
+      return renderList(atom, yOffset, true, 0, contentWidth, links, defaultTextColor);
     default:
       // 未识别的 block:渲染一行灰字占位
       return renderUnknownAtom(atom, yOffset, contentWidth);
