@@ -4,7 +4,7 @@ import {
   type ShapeDef, type FillStyle, type LineStyle,
 } from '../../library/shapes';
 import { SubstanceRegistry } from '../../library/substances';
-import type { Instance, InstanceKind, SubstanceComponent } from '../../library/types';
+import type { Instance, InstanceKind, SubstanceComponent, SubstanceDef } from '../../library/types';
 import type { SceneManager } from './SceneManager';
 import { renderLine, updateLineGeometry } from './LineRenderer';
 import { resolveLineEndpoints } from '../interaction/magnet-snap';
@@ -321,14 +321,28 @@ export class NodeRenderer {
       y: baseSize.h > 0 ? actualSize.h / baseSize.h : 1,
     };
 
+    // 两 pass:
+    // pass 1 渲染普通 shape component(line 暂跳过,要先有其它 component 的 magnet 坐标)
+    // pass 2 渲染 line component(用 pass 1 算好的内部 magnet 解析 endpoints)
+    const isLineComp = (comp: SubstanceComponent) => {
+      const s = ShapeRegistry.get(comp.ref);
+      return s?.category === 'line';
+    };
     for (const comp of def.components) {
-      // v1 只支持 component.type='shape'(详见类注释)
       if (comp.type !== 'shape') {
         console.warn(`[NodeRenderer] substance ${inst.ref} has nested substance (v1 unsupported)`);
         continue;
       }
+      if (isLineComp(comp)) continue;
       const sub = renderComponent(comp, inst, scale);
       if (sub) root.add(sub);
+    }
+    // pass 2:line component
+    for (const comp of def.components) {
+      if (comp.type !== 'shape') continue;
+      if (!isLineComp(comp)) continue;
+      const lineGroup = renderLineComponent(comp, def, scale);
+      if (lineGroup) root.add(lineGroup);
     }
 
     // 安置 root 到画板坐标 — outer/inner 嵌套实现 bbox 中心旋转(同 shape 实例)
@@ -421,6 +435,65 @@ function renderComponent(
   out.group.userData.instanceId = inst.id;
   out.group.userData.binding = comp.binding;
   return out.group;
+}
+
+/**
+ * 渲染 substance 内部的 line component:
+ * 用 endpoints 中 "comp:N" 引用同 substance 的其它 component,解析其 magnet 局部坐标
+ */
+function renderLineComponent(
+  comp: SubstanceComponent,
+  def: SubstanceDef,
+  scale: { x: number; y: number },
+): THREE.Group | null {
+  if (!comp.endpoints) return null;
+  const [a, b] = comp.endpoints;
+  const aPos = resolveInternalMagnet(def, a.component, a.magnet, scale);
+  const bPos = resolveInternalMagnet(def, b.component, b.magnet, scale);
+  if (!aPos || !bPos) return null;
+  const shape = ShapeRegistry.get(comp.ref);
+  const group = renderLine(comp.ref, {
+    start: aPos,
+    end: bPos,
+    style: mergeLine(shape?.default_style?.line, comp.style_overrides?.line as Partial<LineStyle>),
+  });
+  return group;
+}
+
+/**
+ * 解析 substance 内部 component 的 magnet 局部坐标(已应用 scale):
+ * "comp:N" → def.components[N] 的 magnet → 局部坐标
+ */
+function resolveInternalMagnet(
+  def: SubstanceDef,
+  componentRef: string,
+  magnetId: string,
+  scale: { x: number; y: number },
+): { x: number; y: number } | null {
+  const m = /^comp:(\d+)$/.exec(componentRef);
+  if (!m) return null;
+  const idx = Number(m[1]);
+  const comp = def.components[idx];
+  if (!comp) return null;
+  const shape = ShapeRegistry.get(comp.ref);
+  if (!shape) return null;
+  const magnet = (shape.magnets ?? []).find((mm) => mm.id === magnetId);
+  if (!magnet) return null;
+  // component 在 substance 内的本地坐标(应用 scale)
+  const baseW = comp.transform.w ?? shape.viewBox.w;
+  const baseH = comp.transform.h ?? shape.viewBox.h;
+  const w = baseW * scale.x;
+  const h = baseH * scale.y;
+  const px = comp.transform.x * scale.x;
+  const py = comp.transform.y * scale.y;
+  // anchor:center 时 (px,py) 是 mesh 中心,否则是左上角
+  const left = comp.transform.anchor === 'center' ? px - w / 2 : px;
+  const top  = comp.transform.anchor === 'center' ? py - h / 2 : py;
+  // magnet 归一化坐标 → 局部坐标
+  return {
+    x: left + magnet.x * w,
+    y: top  + magnet.y * h,
+  };
 }
 
 /** 必备字段兜底:shape 实例没填 position/size 时,用 viewBox / 0,0 兜底 */

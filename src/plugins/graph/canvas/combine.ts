@@ -45,26 +45,38 @@ export function combineSelectedToSubstance(
   nr: NodeRenderer,
   params: CombineParams,
 ): CombineResult | null {
-  // 1. 收集合格的 shape 实例(skip line / substance / 不存在的)
-  const eligible: Instance[] = [];
+  // 1. 分两批收集:shape(填充 / 文本)+ line(端点绑两端 shape 的 magnet)
+  //    要求:shape 至少 2 个;line 两端都必须在 selected 范围内,否则跳过
+  const shapeInsts: Instance[] = [];
+  const lineInsts: Instance[] = [];
+  const selectedSet = new Set(params.selectedIds);
+
   for (const id of params.selectedIds) {
     const inst = nr.getInstance(id);
     if (!inst) continue;
-    if (inst.type !== 'shape') continue;
-    if (!inst.position || !inst.size) continue;       // line endpoints 模式跳过
+    if (inst.type !== 'shape') continue;          // substance 实例不支持嵌套(留 v1.1)
     const shape = ShapeRegistry.get(inst.ref);
     if (!shape) continue;
-    if (shape.category === 'line') continue;          // line shape 跳过
-    eligible.push(inst);
+    if (shape.category === 'line') {
+      // line 实例必须有 endpoints,且两端 instance 都在 selected 内才一并打包
+      if (!inst.endpoints) continue;
+      const [a, b] = inst.endpoints;
+      if (!selectedSet.has(a.instance) || !selectedSet.has(b.instance)) continue;
+      lineInsts.push(inst);
+    } else {
+      // 普通 shape:必备 position + size
+      if (!inst.position || !inst.size) continue;
+      shapeInsts.push(inst);
+    }
   }
-  if (eligible.length < 2) {
-    console.warn('[combine] need at least 2 eligible shape instances');
+  if (shapeInsts.length < 2) {
+    console.warn('[combine] need at least 2 shape instances(line 端点必须都在 selected 里才一并打包)');
     return null;
   }
 
-  // 2. 计算 bbox
+  // 2. 计算 bbox(只看 shape;line 跟着两端走,不影响 bbox)
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const inst of eligible) {
+  for (const inst of shapeInsts) {
     const x1 = inst.position!.x;
     const y1 = inst.position!.y;
     const x2 = x1 + inst.size!.w;
@@ -77,8 +89,8 @@ export function combineSelectedToSubstance(
   const bboxW = maxX - minX;
   const bboxH = maxY - minY;
 
-  // 3. 构造 components(相对原点 = bbox 左上角)
-  const components: SubstanceComponent[] = eligible.map((inst, i) => ({
+  // 3a. 构造 shape components(相对原点 = bbox 左上角)
+  const components: SubstanceComponent[] = shapeInsts.map((inst, i) => ({
     type: 'shape',
     ref: inst.ref,
     transform: {
@@ -91,6 +103,28 @@ export function combineSelectedToSubstance(
     // 第一个标 frame(用户可以后期改)
     binding: i === 0 ? 'frame' : undefined,
   }));
+
+  // 3b. 把 line 也加进 components,endpoints 重映射到 substance 内部 component index
+  // shape components 的 instanceId → "comp:N" 映射
+  const instanceIdToCompIdx = new Map<string, number>();
+  shapeInsts.forEach((inst, i) => instanceIdToCompIdx.set(inst.id, i));
+
+  for (const lineInst of lineInsts) {
+    const [a, b] = lineInst.endpoints!;
+    const aIdx = instanceIdToCompIdx.get(a.instance);
+    const bIdx = instanceIdToCompIdx.get(b.instance);
+    if (aIdx === undefined || bIdx === undefined) continue;
+    components.push({
+      type: 'shape',
+      ref: lineInst.ref,
+      transform: { x: 0, y: 0 },                  // line 端点驱动,transform 仅占位
+      style_overrides: lineInst.style_overrides as Record<string, unknown> | undefined,
+      endpoints: [
+        { component: `comp:${aIdx}`, magnet: a.magnet },
+        { component: `comp:${bIdx}`, magnet: b.magnet },
+      ],
+    });
+  }
 
   // 4. 创建 SubstanceDef
   const substanceId = makeSubstanceId(params.name);
@@ -105,8 +139,8 @@ export function combineSelectedToSubstance(
   };
   SubstanceRegistry.register(def);
 
-  // 5. 删原 instances + 添加新 substance 实例
-  const consumedIds = eligible.map((i) => i.id);
+  // 5. 删原 instances(包括打包的 line)+ 添加新 substance 实例
+  const consumedIds = [...shapeInsts.map((i) => i.id), ...lineInsts.map((i) => i.id)];
   for (const id of consumedIds) {
     nr.remove(id);
   }

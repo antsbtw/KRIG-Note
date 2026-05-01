@@ -7,6 +7,7 @@ import { InteractionController, type AddModeSpec } from './interaction/Interacti
 import { Toolbar } from './ui/Toolbar/Toolbar';
 import { LibraryPicker } from './ui/LibraryPicker/LibraryPicker';
 import { FloatingInspector } from './ui/Inspector/FloatingInspector';
+import { ContextMenu, type ContextMenuItem } from './ui/ContextMenu/ContextMenu';
 import { CreateSubstanceDialog, type CreateSubstanceFormResult } from './ui/dialogs/CreateSubstanceDialog';
 import { combineSelectedToSubstance } from './combine';
 import { ShapeRegistry } from '../library/shapes';
@@ -99,6 +100,8 @@ export function CanvasView() {
   /** Inspector 默认隐藏,双击节点才打开;打开后跟随选中切换;× 关闭 */
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [combineDialogOpen, setCombineDialogOpen] = useState(false);
+  /** ContextMenu 状态:右键 / 双指点击节点弹出 */
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; ids: string[] } | null>(null);
 
   // ── 持久化函数(放在 useEffect 之前,因为 InteractionController 的 onChange 需要)──
 
@@ -224,6 +227,7 @@ export function CanvasView() {
         }
       },
       onNodeDoubleClick: () => setInspectorOpen(true),
+      onContextMenu: (x, y, ids) => setContextMenu({ x, y, ids }),
     });
     sceneManagerRef.current = sm;
     nodeRendererRef.current = nr;
@@ -488,8 +492,47 @@ export function CanvasView() {
         onCreate={handleCombineCreate}
         onCancel={handleCombineCancel}
       />
+
+      {/* 右键 / 双指点击菜单 */}
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          items={buildContextMenuItems(
+            contextMenu.ids,
+            handleOpenCombine,
+            () => interactionRef.current?.deleteSelected(),
+          )}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
     </div>
   );
+}
+
+/** 根据当前选区构建 ContextMenu 项 */
+function buildContextMenuItems(
+  ids: string[],
+  onCombine: () => void,
+  onDelete: () => void,
+): ContextMenuItem[] {
+  const items: ContextMenuItem[] = [];
+  if (ids.length >= 2) {
+    items.push({
+      id: 'combine',
+      label: 'Combine to Substance',
+      icon: '⊟',
+      onClick: onCombine,
+    });
+    items.push({ id: 'sep1', label: '', separator: true });
+  }
+  items.push({
+    id: 'delete',
+    label: 'Delete',
+    icon: '⌫',
+    onClick: onDelete,
+  });
+  return items;
 }
 
 const styles: Record<string, React.CSSProperties> = {

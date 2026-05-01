@@ -163,6 +163,18 @@ export interface ComponentTransform {
   anchor?: 'topLeft' | 'center' | 'bottomRight';
 }
 
+/**
+ * Line component 的内部端点引用:
+ * - "comp:N" — 引用同一 substance 内 components[N] 的某 magnet
+ * 例:{ component: 'comp:0', magnet: 'E' } = 第 0 个 component 的 East magnet
+ */
+export interface SubstanceLineEndpoint {
+  /** "comp:N" 形式,N 是同一 substance components 数组的下标 */
+  component: string;
+  /** magnet id(N/S/E/W 等) */
+  magnet: string;
+}
+
 export interface SubstanceComponent {
   type: 'shape' | 'substance';
   ref: string;                          // shape id 或 substance id
@@ -170,6 +182,8 @@ export interface SubstanceComponent {
   style_overrides?: Record<string, unknown>;
   /** 组件在 substance 内的角色(供 visual_rules 和 variant 引用) */
   binding?: string;                     // 如 'frame' | 'label' | 'icon'
+  /** line 类 component 用:两端绑同 substance 内其他 component 的 magnet */
+  endpoints?: [SubstanceLineEndpoint, SubstanceLineEndpoint];
 }
 
 export interface VisualRule {

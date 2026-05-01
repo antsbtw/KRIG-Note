@@ -86,16 +86,8 @@ export function Toolbar(props: ToolbarProps) {
 
       <div style={{ flex: 1 }} />
 
-      {/* ── 多选时 inline Combine(M1.4d 接通)── */}
-      {props.multiSelected && props.onCombine && (
-        <button
-          style={styles.combineBtn}
-          onClick={props.onCombine}
-          title="把选中的元素组合成一个 Substance"
-        >
-          ⊟ Combine to Substance
-        </button>
-      )}
+      {/* M1.x.10 起,Combine 入口移到右键菜单(对齐 Freeform);
+          Toolbar inline 按钮已删,multiSelected/onCombine 仍保留 prop 以备未来 */}
 
       {/* ── 通用(占位 + 真按钮)── */}
       <button style={{ ...styles.actionBtn, opacity: 0.3 }} disabled title="新建画板(M1.5b)">

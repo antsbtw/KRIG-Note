@@ -136,6 +136,8 @@ export class InteractionController {
   private onSelectionChange?: (ids: string[]) => void;
   /** 节点双击回调(给 Inspector 打开用) */
   private onNodeDoubleClick?: (id: string) => void;
+  /** 右键 / 双指点击回调(给 ContextMenu 打开用,viewport 像素坐标) */
+  private onContextMenu?: (x: number, y: number, selectedIds: string[]) => void;
 
   /** 待清理的 listener 取消器 */
   private unsubscribers: Array<() => void> = [];
@@ -162,6 +164,7 @@ export class InteractionController {
     onAddModeChange?: (spec: AddModeSpec | null) => void;
     onSelectionChange?: (ids: string[]) => void;
     onNodeDoubleClick?: (id: string) => void;
+    onContextMenu?: (x: number, y: number, selectedIds: string[]) => void;
   }) {
     this.container = opts.container;
     this.sceneManager = opts.sceneManager;
@@ -172,6 +175,7 @@ export class InteractionController {
     this.onAddModeChange = opts.onAddModeChange;
     this.onSelectionChange = opts.onSelectionChange;
     this.onNodeDoubleClick = opts.onNodeDoubleClick;
+    this.onContextMenu = opts.onContextMenu;
     this.attachListeners();
   }
 
@@ -226,6 +230,28 @@ export class InteractionController {
     return this.addMode !== null;
   }
 
+  /**
+   * 删除当前选中的实例(给 ContextMenu 等外部调用)
+   * 与 Delete 键路径一致:pushHistory + 级联删 line + 通知选区变化
+   */
+  deleteSelected(): void {
+    if (this.selected.size === 0) return;
+    this.pushHistory();
+    const ids = Array.from(this.selected);
+    this.selected.clear();
+    for (const id of ids) {
+      const overlay = this.overlays.get(id);
+      if (overlay) {
+        this.sceneManager.scene.remove(overlay);
+        disposeOverlayGroup(overlay);
+        this.overlays.delete(id);
+      }
+      this.nodeRenderer.remove(id);
+    }
+    this.notifySelectionChanged();
+    this.onChange?.();
+  }
+
   /** 移除所有 listener;CanvasView unmount 时调用 */
   dispose(): void {
     for (const u of this.unsubscribers) u();
@@ -263,6 +289,7 @@ export class InteractionController {
     const onKeyDown   = (e: KeyboardEvent) => this.handleKeyDown(e);
     const onWheel     = (e: WheelEvent) => this.handleWheel(e);
     const onDblClick  = (e: MouseEvent) => this.handleDoubleClick(e);
+    const onCtxMenu   = (e: MouseEvent) => this.handleContextMenu(e);
 
     this.container.addEventListener('mousedown', onMouseDown);
     // mousemove / mouseup 挂到 window:鼠标拖出容器仍要继续接收
@@ -272,6 +299,7 @@ export class InteractionController {
     // wheel passive=false 才能 preventDefault(否则 macOS 双指会触发 history navigation)
     this.container.addEventListener('wheel', onWheel, { passive: false });
     this.container.addEventListener('dblclick', onDblClick);
+    this.container.addEventListener('contextmenu', onCtxMenu);
 
     this.unsubscribers.push(
       () => this.container.removeEventListener('mousedown', onMouseDown),
@@ -280,7 +308,33 @@ export class InteractionController {
       () => this.container.removeEventListener('keydown', onKeyDown),
       () => this.container.removeEventListener('wheel', onWheel),
       () => this.container.removeEventListener('dblclick', onDblClick),
+      () => this.container.removeEventListener('contextmenu', onCtxMenu),
     );
+  }
+
+  /**
+   * 右键 / trackpad 双指点击 → 弹 ContextMenu
+   * - 命中节点(且未选中):先选中再弹
+   * - 命中节点(已选中):保留多选状态弹(让用户对多选执行 combine 等)
+   * - 命中空白:不弹(M1 范围;v1.1 可加"添加..."等空白菜单)
+   */
+  private handleContextMenu(e: MouseEvent): void {
+    e.preventDefault();
+    if (this.addMode || this.drawingLine || this.rewiring || this.marquee) return;
+    const screen = this.toContainerCoords(e);
+    const world = this.sceneManager.screenToWorld(screen.x, screen.y);
+    const hit = this.hitTest(world);
+    if (!hit) return; // 空白处:暂不弹(v1)
+
+    // 如果右键的节点不在 selected 中,先单选它(类比 macOS 文件管理器)
+    if (!this.selected.has(hit)) {
+      this.selected.clear();
+      this.selected.add(hit);
+      this.refreshOverlays();
+      this.notifySelectionChanged();
+    }
+    // viewport 像素坐标传给 React(ContextMenu 用 position: fixed)
+    this.onContextMenu?.(e.clientX, e.clientY, Array.from(this.selected));
   }
 
   /** 双击节点 → 触发 onNodeDoubleClick(给 Inspector 打开用)*/
@@ -1036,13 +1090,39 @@ export class InteractionController {
       this.showMagnetHintsFor((id) => id !== this.drawingLine!.startInstanceId);
       return;
     }
-    // 起手前:仅显示 hover 命中 shape 的 magnet
-    const hit = this.hitTest(world);
-    if (!hit) {
+    // 起手前:鼠标接近 shape(命中 OR 在吸附范围内)→ 显该 shape 的 magnet
+    // 不能只依赖 hitTest:magnet 在 shape 边缘,鼠标接近 magnet 时常常已在 shape 外
+    const proximityIds = this.findShapesNearMouse(world);
+    if (proximityIds.size === 0) {
       this.clearMagnetHints();
       return;
     }
-    this.showMagnetHintsFor((id) => id === hit);
+    this.showMagnetHintsFor((id) => proximityIds.has(id));
+  }
+
+  /**
+   * 找鼠标附近的 shape:命中本体 + 距任意 magnet ≤ snapRadius
+   * 用于"鼠标接近边缘 magnet 时"也能显示候选 shape 的所有 magnets
+   */
+  private findShapesNearMouse(world: { x: number; y: number }): Set<string> {
+    const radius = this.snapRadiusWorld();
+    const ids = new Set<string>();
+    // 1. hit 命中 shape 本体
+    const hit = this.hitTest(world);
+    if (hit) ids.add(hit);
+    // 2. 距任意 magnet 在 radius 内的 shape
+    for (const { node, instance } of this.allMagnetCandidates()) {
+      if (ids.has(instance.id)) continue;
+      const magnets = listMagnets(node, instance);
+      for (const m of magnets) {
+        const d = Math.hypot(world.x - m.x, world.y - m.y);
+        if (d <= radius) {
+          ids.add(instance.id);
+          break;
+        }
+      }
+    }
+    return ids;
   }
 
   /** 在指定 instance 上显示 magnet 点(过滤函数返回 true 的 instance 才显) */
