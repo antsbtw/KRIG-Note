@@ -159,6 +159,8 @@ contextBridge.exposeInMainWorld('viewAPI', {
   noteDelete: (id: string) => ipcRenderer.invoke(IPC.NOTE_DELETE, id),
   noteList: () => ipcRenderer.invoke(IPC.NOTE_LIST),
   noteOpenInEditor: (id: string) => ipcRenderer.invoke(IPC.NOTE_OPEN_IN_EDITOR, id),
+  /** M2.1.6d: 强制在 right slot 打开 note(给 link-click 用) */
+  noteOpenInRightSlot: (id: string) => ipcRenderer.invoke(IPC.NOTE_OPEN_IN_RIGHT_SLOT, id),
   notePendingOpen: () => ipcRenderer.invoke(IPC.NOTE_PENDING_OPEN),
   setActiveNote: (noteId: string | null, noteTitle?: string) => ipcRenderer.invoke(IPC.SET_ACTIVE_NOTE, noteId, noteTitle),
   getActiveNoteId: async (): Promise<string | null> => {
@@ -186,6 +188,12 @@ contextBridge.exposeInMainWorld('viewAPI', {
     const listener = (_event: Electron.IpcRendererEvent, noteId: string) => callback(noteId);
     ipcRenderer.on(IPC.NOTE_OPEN_IN_EDITOR, listener);
     return () => ipcRenderer.removeListener(IPC.NOTE_OPEN_IN_EDITOR, listener);
+  },
+  /** M2.1.6d: right slot NoteView 监听 link-click 路由发来的"打开此 note"指令 */
+  onNoteOpenInRightSlot: (callback: (noteId: string) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, noteId: string) => callback(noteId);
+    ipcRenderer.on(IPC.NOTE_OPEN_IN_RIGHT_SLOT, listener);
+    return () => ipcRenderer.removeListener(IPC.NOTE_OPEN_IN_RIGHT_SLOT, listener);
   },
   onNoteDeleted: (callback: (noteId: string) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, noteId: string) => callback(noteId);
@@ -225,6 +233,8 @@ contextBridge.exposeInMainWorld('viewAPI', {
 
   ebookBookshelfList: () => ipcRenderer.invoke(IPC.EBOOK_BOOKSHELF_LIST),
   ebookBookshelfOpen: (id: string) => ipcRenderer.invoke(IPC.EBOOK_BOOKSHELF_OPEN, id),
+  ebookBookshelfAdd: (filePath: string, fileType: 'pdf' | 'epub' | 'djvu' | 'cbz', storage: 'managed' | 'link' = 'link') =>
+    ipcRenderer.invoke(IPC.EBOOK_BOOKSHELF_ADD, filePath, fileType, storage),
   ebookGetData: () => ipcRenderer.invoke(IPC.EBOOK_GET_DATA),
   ebookClose: () => ipcRenderer.invoke(IPC.EBOOK_CLOSE),
   ebookRestore: () => ipcRenderer.invoke(IPC.EBOOK_RESTORE),
@@ -355,6 +365,15 @@ contextBridge.exposeInMainWorld('viewAPI', {
   webBookmarkList: () => ipcRenderer.invoke(IPC.WEB_BOOKMARK_LIST),
   webBookmarkFindByUrl: (url: string) => ipcRenderer.invoke('web:bookmark-find-by-url', url),
   webHistoryAdd: (url: string, title: string, favicon?: string) => ipcRenderer.invoke(IPC.WEB_HISTORY_ADD, url, title, favicon),
+
+  /** M2.1.6d: 强制在 right slot 打开 URL(给 link-click 用) */
+  webOpenInRightSlot: (url: string) => ipcRenderer.invoke(IPC.WEB_OPEN_IN_RIGHT_SLOT, url),
+  /** M2.1.6d: right slot WebView 监听 link-click 路由发来的"打开此 URL"指令 */
+  onWebOpenInRightSlot: (callback: (url: string) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, url: string) => callback(url);
+    ipcRenderer.on(IPC.WEB_OPEN_IN_RIGHT_SLOT, listener);
+    return () => ipcRenderer.removeListener(IPC.WEB_OPEN_IN_RIGHT_SLOT, listener);
+  },
 });
 
 // Bridge: forward IPC 'note:import-json' → DOM CustomEvent (for NoteEditor)

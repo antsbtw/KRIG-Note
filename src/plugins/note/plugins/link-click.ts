@@ -16,7 +16,90 @@ const api = () => (window as any).viewAPI as {
   openExternal: (url: string) => Promise<void>;
   mediaResolvePath: (src: string) => Promise<{ success: boolean; path: string }>;
   mediaOpenPath: (path: string) => void;
+  /** Right slot 路由(M2.1.6d):打开 right slot + 通知它装载内容 */
+  requestCompanion?: (workModeId: string) => Promise<void>;
+  sendToOtherSlot?: (msg: any) => void;
+  /** M2.1.6d:绕过 sendToOtherSlot 协议表,主进程直接 push noteId 到 right slot */
+  noteOpenInRightSlot?: (id: string) => Promise<void>;
+  /** M2.1.6d:同上,在 right slot 打开 URL(WebView loadURL) */
+  webOpenInRightSlot?: (url: string) => Promise<void>;
+  /** Ebook 加书架并加载(主进程会广播 EBOOK_LOADED 给所有 view,right slot ebook view 会自动加载) */
+  ebookBookshelfAdd?: (filePath: string, fileType: 'pdf' | 'epub' | 'djvu' | 'cbz', storage?: 'managed' | 'link') => Promise<unknown>;
 } | undefined;
+
+/**
+ * Right slot 装载逻辑(M2.1.6d).
+ *
+ * KRIG 链接行为:点击 inline 链接不再"跳走"主视图,而是在 right slot 浮出对应内容.
+ * 5 种协议路由(均为两步式:requestCompanion 打开对应 view + 通知装载内容):
+ *   krig://note/{id}          → right slot note view + 加载该 note
+ *   krig://block/{id}/{anchor} → 同上 + 滚动到 heading anchor(同文档则原地滚动)
+ *   https://...               → right slot web view + loadURL
+ *   file://{path}.pdf|.epub|.djvu|.cbz → right slot ebook view + bookshelfAdd 加书架并加载
+ *   file://{path} 其他扩展名     → OS 关联应用 fallback
+ *   media://{id}              → OS 关联应用(M2.1 不做 media right slot,留 v1.x)
+ */
+
+/**
+ * Right slot 路由两步走(M2.1.6d):
+ *   1. 框架契约:await requestCompanion(workModeId) — 框架确保 right slot 是
+ *      指定 view 并完成 view 创建(promise resolve 时 view 已 attach,但
+ *      renderer 可能还在加载).
+ *   2. 插件契约:noteOpenInRightSlot / webOpenInRightSlot / ebookBookshelfAdd
+ *      派发数据;插件 handler 在主进程会等 webContents did-finish-load 后再发.
+ *
+ * 之所以分两步:框架只懂"打开哪种 view",插件懂"加载什么内容".这是分层
+ * 注册原则的直接体现 — 不让插件主进程 reach 进框架内部去 ensure slot.
+ */
+
+// 对应 plugins/*/main/register.ts 里注册的 workModeId
+const WORKMODE_NOTE = 'demo-a';
+const WORKMODE_EBOOK = 'demo-b';
+const WORKMODE_WEB = 'demo-c';
+
+async function openNoteInRightSlot(noteId: string, anchor: string | null = null): Promise<void> {
+  const v = api();
+  if (!v?.requestCompanion || !v.noteOpenInRightSlot) {
+    console.warn('[link-click] missing requestCompanion or noteOpenInRightSlot');
+    return;
+  }
+  await v.requestCompanion(WORKMODE_NOTE);
+  await v.noteOpenInRightSlot(noteId);
+  // anchor 滚动留 v1.x
+  void anchor;
+}
+
+async function openWebInRightSlot(url: string): Promise<void> {
+  const v = api();
+  if (!v?.requestCompanion || !v.webOpenInRightSlot) {
+    console.warn('[link-click] missing requestCompanion or webOpenInRightSlot');
+    return;
+  }
+  await v.requestCompanion(WORKMODE_WEB);
+  await v.webOpenInRightSlot(url);
+}
+
+async function openEbookInRightSlot(filePath: string, fileType: 'pdf' | 'epub' | 'djvu' | 'cbz'): Promise<void> {
+  const v = api();
+  if (!v?.requestCompanion || !v.ebookBookshelfAdd) return;
+  await v.requestCompanion(WORKMODE_EBOOK);
+  // ebook view 加载由 EBOOK_LOADED 广播驱动 — 把书加进书架并加载即可
+  await v.ebookBookshelfAdd(filePath, fileType, 'link').catch(() => { /* ignore */ });
+}
+
+const EBOOK_EXT_MAP: Record<string, 'pdf' | 'epub' | 'djvu' | 'cbz'> = {
+  '.pdf': 'pdf',
+  '.epub': 'epub',
+  '.djvu': 'djvu',
+  '.cbz': 'cbz',
+};
+
+function getEbookFileType(path: string): 'pdf' | 'epub' | 'djvu' | 'cbz' | null {
+  const idx = path.lastIndexOf('.');
+  if (idx < 0) return null;
+  const ext = path.slice(idx).toLowerCase();
+  return EBOOK_EXT_MAP[ext] ?? null;
+}
 
 // ── 导航历史栈 ──
 
@@ -176,34 +259,36 @@ export function linkClickPlugin(): Plugin {
         event.preventDefault();
         event.stopPropagation();
 
+        // 5 种协议 → right slot 路由(M2.1.6d).
+        // 同文档内 anchor 跳转例外:还是直接滚动(无意义打开 right slot)
         if (href.startsWith('krig://note/')) {
           const noteId = href.replace('krig://note/', '');
-          navigateToNote(noteId);
+          void openNoteInRightSlot(noteId);
         } else if (href.startsWith('krig://block/')) {
           const parts = href.replace('krig://block/', '').split('/');
           const noteId = parts[0];
           const blockAnchor = parts.slice(1).join('/');
-          if (blockAnchor) {
-            if (noteId === history.current) {
-              // 同文档内跳转 → 直接滚动
-              scrollToBlockAnchor(view, blockAnchor);
-            } else {
-              // 跨文档跳转 → 存储锚点，等新笔记加载完后 flush
-              pendingAnchor = blockAnchor;
-              navigateToNote(noteId);
-            }
+          if (blockAnchor && noteId === history.current) {
+            // 同文档内跳转 → 直接滚动
+            scrollToBlockAnchor(view, blockAnchor);
           } else {
-            navigateToNote(noteId);
+            void openNoteInRightSlot(noteId, blockAnchor || null);
           }
         } else if (href.startsWith('file://')) {
-          // 本地文件路径 → 用系统默认应用打开
+          // M2.1.6d:本地文件 → ebook 格式打开 right slot ebook view;否则 OS 关联应用
           const v = api();
           try {
             const filePath = decodeURIComponent(new URL(href).pathname);
-            if (filePath && v?.mediaOpenPath) v.mediaOpenPath(filePath);
+            if (!filePath) return true;
+            const fileType = getEbookFileType(filePath);
+            if (fileType) {
+              void openEbookInRightSlot(filePath, fileType);
+            } else if (v?.mediaOpenPath) {
+              v.mediaOpenPath(filePath);
+            }
           } catch { /* ignore */ }
         } else if (href.startsWith('media://')) {
-          // 文件链接 → 用系统默认应用打开
+          // M2.1.6d 暂不做 right slot media 预览(留 v1.x);走 OS 关联应用 fallback
           const v = api();
           if (v?.mediaResolvePath) {
             v.mediaResolvePath(href).then(r => {
@@ -211,9 +296,8 @@ export function linkClickPlugin(): Plugin {
             }).catch(() => {});
           }
         } else {
-          // Web 链接 → 系统浏览器
-          const v = api();
-          if (v?.openExternal) v.openExternal(href);
+          // Web 链接 → right slot web view
+          void openWebInRightSlot(href);
         }
 
         return true;

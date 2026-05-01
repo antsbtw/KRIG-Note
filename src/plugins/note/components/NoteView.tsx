@@ -37,7 +37,9 @@ declare const viewAPI: {
   } | null>;
   noteList: () => Promise<Array<{ id: string; title: string }>>;
   noteOpenInEditor: (id: string) => Promise<void>;
+  noteOpenInRightSlot: (id: string) => Promise<void>;
   onNoteOpenInEditor: (callback: (noteId: string) => void) => () => void;
+  onNoteOpenInRightSlot: (callback: (noteId: string) => void) => () => void;
   onNoteDeleted: (callback: (noteId: string) => void) => () => void;
   onNoteTitleChanged: (callback: (data: { noteId: string; title: string }) => void) => () => void;
   noteSave: (id: string, docContent: unknown[], title: string) => Promise<void>;
@@ -369,6 +371,20 @@ export function NoteView() {
       });
     });
 
+    /**
+     * M2.1.6d:link-click 路由 — 用户在另一 slot 点击 inline 链接,要求本 slot 加载某 note.
+     * 主进程 NOTE_OPEN_IN_RIGHT_SLOT IPC 直接 push,绕过 sendToOtherSlot 协议表的时序问题.
+     */
+    const unsubOpenRight = viewAPI.onNoteOpenInRightSlot?.(async (noteId) => {
+      console.log('[NoteView.onNoteOpenInRightSlot]', noteId);
+      const prevId = activeNoteIdRef.current;
+      if (prevId && prevId !== noteId) await flushSave(prevId);
+      setDirty(false);
+      setHasActiveNote(true);
+      setLibraryEmpty(false);
+      await loadNote(noteId);
+    });
+
     // Step 3：外部重命名同步到编辑器 noteTitle 节点
     const unsubTitle = viewAPI.onNoteTitleChanged((data) => {
       if (data.noteId !== activeNoteIdRef.current) return;
@@ -456,7 +472,7 @@ export function NoteView() {
     });
 
     return () => {
-      unsubOpen(); unsubTitle(); unsubDeleted(); unsubRestore(); unsubTestDoc();
+      unsubOpen(); unsubOpenRight?.(); unsubTitle(); unsubDeleted(); unsubRestore(); unsubTestDoc();
       window.removeEventListener('keydown', keyHandler);
       window.removeEventListener('note:bookmark-toggle-panel', togglePanelHandler);
       window.removeEventListener('note:toc-jump', tocJumpHandler);

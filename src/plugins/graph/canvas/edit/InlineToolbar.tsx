@@ -25,8 +25,9 @@ import type { CSSProperties, ReactNode } from 'react';
 import type { EditorView } from 'prosemirror-view';
 import type { MarkType } from 'prosemirror-model';
 import { toggleMark } from 'prosemirror-commands';
-import { setTextAlign } from '../../../note/commands/editor-commands';
+import { setTextAlign, applyLink, removeLink } from '../../../note/commands/editor-commands';
 import { ColorPicker } from '../../../note/components/ColorPicker';
+import { LinkPanel } from '../../../note/components/LinkPanel';
 import {
   IconAlignLeft, IconAlignCenter, IconAlignRight, IconTextColor,
 } from '../../../note/components/icons';
@@ -53,6 +54,19 @@ function isInAtomNode(view: EditorView): boolean {
   return false;
 }
 
+/** 取选区上 link mark 的 href(无则 null);用于 LinkPanel currentHref */
+function getActiveLinkHref(view: EditorView): string | null {
+  const { from, to } = view.state.selection;
+  const linkType = view.state.schema.marks.link;
+  if (!linkType) return null;
+  let href: string | null = null;
+  view.state.doc.nodesBetween(from, to, (node) => {
+    const linkMark = linkType.isInSet(node.marks);
+    if (linkMark) href = linkMark.attrs.href as string;
+  });
+  return href;
+}
+
 /** 找到当前选区所在的 textBlock(pos + node);非 textBlock 内返回 null */
 function findCurrentTextBlock(view: EditorView): { pos: number; align: string } | null {
   const { $from } = view.state.selection;
@@ -72,6 +86,7 @@ export function InlineToolbar({ view }: InlineToolbarProps) {
   const [visible, setVisible] = useState(false);
   const [pos, setPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
   const [showColor, setShowColor] = useState(false);
+  const [showLink, setShowLink] = useState(false);
   const [lastTextColor, setLastTextColor] = useState('');
   const [lastBgColor, setLastBgColor] = useState('');
   // forceUpdate trigger:transaction 后重新检查 mark active 态
@@ -247,7 +262,7 @@ export function InlineToolbar({ view }: InlineToolbarProps) {
         </button>
       )}
 
-      {/* 🔗 链接(简化版:prompt 输 URL,不接 NoteView 三 Tab 面板) */}
+      {/* 🔗 链接:打开 LinkPanel(三 Tab,与 NoteView FloatingToolbar 共享组件) */}
       {schema.marks.link && (
         <button
           type="button"
@@ -255,16 +270,10 @@ export function InlineToolbar({ view }: InlineToolbarProps) {
           onMouseDown={(e) => e.preventDefault()}
           onClick={(e) => {
             e.preventDefault();
-            const url = window.prompt('Link URL:');
-            if (!url) return;
-            const linkType = schema.marks.link;
-            const { state, dispatch } = view;
-            const { from, to } = state.selection;
-            const mark = linkType.create({ href: url });
-            dispatch(state.tr.addMark(from, to, mark));
-            view.focus();
+            setShowLink((v) => !v);
+            setShowColor(false);
           }}
-          style={styles.btn}
+          style={{ ...styles.btn, ...(showLink ? styles.btnActive : null) }}
         >
           🔗
         </button>
@@ -280,6 +289,30 @@ export function InlineToolbar({ view }: InlineToolbarProps) {
             onHighlightApplied={(c) => setLastBgColor(c)}
             lastTextColor={lastTextColor}
             lastBgColor={lastBgColor}
+          />
+        </div>
+      )}
+
+      {/* LinkPanel 浮层(三 Tab:笔记 / 文件 / 网页;复用 NoteView 组件)*/}
+      {showLink && (
+        <div style={styles.colorPickerWrap}>
+          <LinkPanel
+            view={view}
+            currentHref={getActiveLinkHref(view)}
+            onApply={(href) => {
+              applyLink(view, href);
+              setShowLink(false);
+              view.focus();
+            }}
+            onRemove={() => {
+              removeLink(view);
+              setShowLink(false);
+              view.focus();
+            }}
+            onClose={() => {
+              setShowLink(false);
+              view.focus();
+            }}
           />
         </div>
       )}

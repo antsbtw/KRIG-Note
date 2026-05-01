@@ -212,6 +212,7 @@ export const IPC = {
 
   // NoteFile 编辑器操作
   NOTE_OPEN_IN_EDITOR: 'note:open-in-editor',
+  NOTE_OPEN_IN_RIGHT_SLOT: 'note:open-in-right-slot',  // M2.1.6d: 强制在 right slot 打开 note(给 link-click 用)
   NOTE_PENDING_OPEN: 'note:pending-open',    // NoteEditor ready 后拉取待打开的 noteId
   NOTE_DELETED: 'note:deleted',               // main → NoteView: 笔记已删除，编辑器需清除
   NOTE_TITLE_CHANGED: 'note:title-changed',  // NavSide → NoteView: 文件名变更同步到 noteTitle
@@ -309,6 +310,9 @@ export const IPC = {
   EBOOK_SAVE_PROGRESS: 'ebook:save-progress',
   EBOOK_RESTORE: 'ebook:restore',
   EBOOK_SET_EXPANDED_FOLDERS: 'ebook:set-expanded-folders',
+
+  // M2.1.6d: 强制在 right slot 打开 URL(给 link-click 用)
+  WEB_OPEN_IN_RIGHT_SLOT: 'web:open-in-right-slot',
 
   // Web 书签
   WEB_BOOKMARK_LIST: 'web:bookmark-list',
