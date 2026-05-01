@@ -372,7 +372,8 @@ export class NodeRenderer {
 
     const pmJsonAtoms = textNodeAtomsToPmJson(inst.doc);
     if (pmJsonAtoms.length > 0) {
-      void this.textRenderer.render(pmJsonAtoms).then((svgGroup) => {
+      // 把节点宽度传给 SVG 序列化器,文字按 size.w 自动 wrap
+      void this.textRenderer.render(pmJsonAtoms, { width: safeSize.w }).then((svgGroup) => {
         if (this.textRenderTokens.get(inst.id) !== token) {
           this.textRenderer.dispose(svgGroup);
           return;

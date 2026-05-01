@@ -34,11 +34,12 @@ export interface EditTarget {
   id: string;
   /** 初始 atoms(NoteView 同源) */
   atoms: NoteAtom[];
-  /** 锚点屏幕坐标(节点中心或左上) */
+  /** popup 左上角屏幕坐标(对齐节点 mesh 的左上角) */
   screenX: number;
   screenY: number;
-  /** popup 相对锚点的 Y 偏移;默认 0 = popup 顶对齐节点顶 */
-  anchorOffsetY?: number;
+  /** popup 宽高(屏幕像素;对齐节点 mesh 实际投影尺寸,让编辑态与展示态视觉重合) */
+  width: number;
+  height: number;
 }
 
 export interface EditOverlayCallbacks {
@@ -77,13 +78,13 @@ export class EditOverlay {
     });
     this.backdrop = backdrop;
 
-    // popup:fixed,屏幕坐标定位,深灰圆角胶囊
-    const offsetY = target.anchorOffsetY ?? 0;
+    // popup:fixed,左上角对齐节点 mesh 屏幕投影,宽高完全重合(原地编辑)
     const popup = document.createElement('div');
     popup.className = 'krig-canvas-edit-popup';
     popup.style.left = `${target.screenX}px`;
-    popup.style.top = `${target.screenY + offsetY}px`;
-    if (offsetY > 0) popup.classList.add('krig-canvas-edit-popup--below');
+    popup.style.top = `${target.screenY}px`;
+    popup.style.width = `${target.width}px`;
+    popup.style.minHeight = `${target.height}px`;
     popup.addEventListener('mousedown', (e) => e.stopPropagation());
 
     // PM 挂载点

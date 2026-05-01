@@ -32,6 +32,7 @@ export async function renderList(
   yOffset: number,
   ordered: boolean,
   depth = 0,
+  contentWidth = 200,
 ): Promise<{ svg: string; height: number }> {
   if (!atom.content || atom.content.length === 0) return { svg: '', height: 0 };
 
@@ -40,6 +41,8 @@ export async function renderList(
   let index = 1;
 
   const indent = INDENT_PER_LEVEL * (depth + 1);
+  // 缩进后,可用文字宽度收窄(嵌套越深越窄)
+  const innerWidth = Math.max(20, contentWidth - indent);
 
   // NoteView schema(权威源):bulletList/orderedList content='block+',
   // 子元素直接是 textBlock/嵌套 list,**没有 listItem 中间层**.
@@ -49,7 +52,7 @@ export async function renderList(
     const childYStart = y;
 
     if (child.type === 'textBlock') {
-      const { svg, height } = await renderIndentedTextBlock(child, y, indent);
+      const { svg, height } = await renderIndentedTextBlock(child, y, indent, innerWidth);
       if (svg) parts.push(svg);
 
       // 在文本基线位置画 bullet / number(baselineY 与 textBlock 内 baseline 算法一致)
@@ -68,12 +71,12 @@ export async function renderList(
       y += height;
       index++;
     } else if (child.type === 'bulletList') {
-      // 嵌套无序列表:缩进 +1 级,index 不增(嵌套 list 不算父列表的项)
-      const { svg, height } = await renderList(child, y, false, depth + 1);
+      // 嵌套无序列表:缩进 +1 级,index 不增,可用宽度也收窄
+      const { svg, height } = await renderList(child, y, false, depth + 1, contentWidth);
       if (svg) parts.push(svg);
       y += height;
     } else if (child.type === 'orderedList') {
-      const { svg, height } = await renderList(child, y, true, depth + 1);
+      const { svg, height } = await renderList(child, y, true, depth + 1, contentWidth);
       if (svg) parts.push(svg);
       y += height;
     }
@@ -84,17 +87,18 @@ export async function renderList(
 }
 
 /**
- * 缩进版 textBlock：renderTextBlock 的内容统一向右平移 indent。
- * 简化做法：在外层 SVG 包一个 transform="translate(indent, 0)"。
+ * 缩进版 textBlock:renderTextBlock 的内容统一向右平移 indent.
+ * width 已收窄(由父级算好),内层 textBlock 在自己的 contentWidth 内 wrap.
  */
 async function renderIndentedTextBlock(
   atom: Atom,
   yOffset: number,
   indent: number,
+  contentWidth: number,
 ): Promise<{ svg: string; height: number }> {
-  const { svg, height } = await renderTextBlock(atom, yOffset);
+  const { svg, height } = await renderTextBlock(atom, yOffset, contentWidth);
   if (!svg) return { svg: '', height };
-  // 包一层 transform（SVGLoader 解析嵌套 g 没问题）
+  // 包一层 transform(SVGLoader 解析嵌套 g 没问题)
   return {
     svg: `<g transform="translate(${indent}, 0)">${svg}</g>`,
     height,

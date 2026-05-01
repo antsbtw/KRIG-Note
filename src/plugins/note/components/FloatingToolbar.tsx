@@ -4,6 +4,7 @@ import type { MarkType } from 'prosemirror-model';
 import { toggleMark } from 'prosemirror-commands';
 import { applyLink as applyLinkCmd, removeLink as removeLinkCmd, insertInlineMath } from '../commands/editor-commands';
 import { ColorPicker } from './ColorPicker';
+import { IconTextColor } from './icons';
 import { getCurrentNoteId } from '../plugins/link-click';
 
 /**
@@ -250,13 +251,13 @@ export function FloatingToolbar({ view }: FloatingToolbarProps) {
         </button>
       )}
 
-      {/* 颜色按钮 */}
+      {/* 颜色按钮(icon 复用 components/icons.tsx) */}
       <button
         className={`ft-btn ${showColorPicker ? 'ft-btn--active' : ''}`}
         onClick={() => { setShowColorPicker(!showColorPicker); setShowLinkPanel(false); }}
         title="颜色"
       >
-        <span style={{ borderBottom: `2px solid ${lastTextColor || '#8ab4f8'}`, lineHeight: 1 }}>A</span>
+        <IconTextColor lastColor={lastTextColor || '#8ab4f8'} />
       </button>
 
       {/* 链接面板 */}

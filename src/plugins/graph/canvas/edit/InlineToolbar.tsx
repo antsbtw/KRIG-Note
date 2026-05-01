@@ -21,10 +21,15 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import type { CSSProperties } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import type { EditorView } from 'prosemirror-view';
 import type { MarkType } from 'prosemirror-model';
 import { toggleMark } from 'prosemirror-commands';
+import { setTextAlign } from '../../../note/commands/editor-commands';
+import { ColorPicker } from '../../../note/components/ColorPicker';
+import {
+  IconAlignLeft, IconAlignCenter, IconAlignRight, IconTextColor,
+} from '../../../note/components/icons';
 
 interface InlineToolbarProps {
   view: EditorView | null;
@@ -48,9 +53,27 @@ function isInAtomNode(view: EditorView): boolean {
   return false;
 }
 
+/** 找到当前选区所在的 textBlock(pos + node);非 textBlock 内返回 null */
+function findCurrentTextBlock(view: EditorView): { pos: number; align: string } | null {
+  const { $from } = view.state.selection;
+  for (let d = $from.depth; d >= 1; d--) {
+    const node = $from.node(d);
+    if (node.type.name === 'textBlock') {
+      return {
+        pos: $from.before(d),
+        align: (node.attrs.align as string) ?? 'left',
+      };
+    }
+  }
+  return null;
+}
+
 export function InlineToolbar({ view }: InlineToolbarProps) {
   const [visible, setVisible] = useState(false);
   const [pos, setPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+  const [showColor, setShowColor] = useState(false);
+  const [lastTextColor, setLastTextColor] = useState('');
+  const [lastBgColor, setLastBgColor] = useState('');
   // forceUpdate trigger:transaction 后重新检查 mark active 态
   const [, forceUpdate] = useState(0);
   const tbRef = useRef<HTMLDivElement>(null);
@@ -152,6 +175,39 @@ export function InlineToolbar({ view }: InlineToolbarProps) {
         );
       })}
 
+      {/* 对齐:左 / 中 / 右(段级 attrs,改 textBlock.attrs.align)— icons 复用 NoteView */}
+      {(() => {
+        const tb = findCurrentTextBlock(view);
+        if (!tb) return null;
+        const apply = (align: string) => {
+          setTextAlign(view, tb.pos, align);
+          view.focus();
+        };
+        const alignBtn = (id: string, glyph: ReactNode, title: string) => (
+          <button
+            key={id}
+            type="button"
+            title={title}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={(e) => {
+              e.preventDefault();
+              apply(id);
+            }}
+            style={{ ...styles.btn, ...(tb.align === id ? styles.btnActive : null) }}
+          >
+            {glyph}
+          </button>
+        );
+        return (
+          <>
+            {alignBtn('left', IconAlignLeft, 'Align left')}
+            {alignBtn('center', IconAlignCenter, 'Align center')}
+            {alignBtn('right', IconAlignRight, 'Align right')}
+            <span style={styles.divider} />
+          </>
+        );
+      })()}
+
       {/* ∑ 行内公式:把选区文字 → mathInline 节点(NoteView schema 用 attrs.latex)*/}
       {schema.nodes.mathInline && (
         <button
@@ -172,6 +228,22 @@ export function InlineToolbar({ view }: InlineToolbarProps) {
           style={styles.btn}
         >
           ∑
+        </button>
+      )}
+
+      {/* A 颜色:打开 ColorPicker(文字颜色 + 高亮背景)— icon 复用 NoteView */}
+      {(schema.marks.textStyle || schema.marks.highlight) && (
+        <button
+          type="button"
+          title="Text color / highlight"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={(e) => {
+            e.preventDefault();
+            setShowColor((v) => !v);
+          }}
+          style={{ ...styles.btn, ...(showColor ? styles.btnActive : null) }}
+        >
+          <IconTextColor lastColor={lastTextColor || '#8ab4f8'} />
         </button>
       )}
 
@@ -196,6 +268,20 @@ export function InlineToolbar({ view }: InlineToolbarProps) {
         >
           🔗
         </button>
+      )}
+
+      {/* ColorPicker 浮层(在 toolbar 下方;复用 NoteView 组件)*/}
+      {showColor && (
+        <div style={styles.colorPickerWrap}>
+          <ColorPicker
+            view={view}
+            onClose={() => setShowColor(false)}
+            onTextColorApplied={(c) => setLastTextColor(c)}
+            onHighlightApplied={(c) => setLastBgColor(c)}
+            lastTextColor={lastTextColor}
+            lastBgColor={lastBgColor}
+          />
+        </div>
       )}
     </div>
   );
@@ -234,5 +320,18 @@ const styles: Record<string, CSSProperties> = {
   btnActive: {
     background: 'rgba(74, 144, 226, 0.4)',
     color: '#fff',
+  },
+  divider: {
+    width: 1,
+    height: 16,
+    margin: '0 4px',
+    background: 'rgba(255, 255, 255, 0.15)',
+  },
+  colorPickerWrap: {
+    position: 'absolute',
+    top: '100%',
+    left: 0,
+    marginTop: 4,
+    zIndex: 1110,
   },
 };

@@ -1,6 +1,10 @@
 import { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import type { EditorView } from 'prosemirror-view';
 import { TextSelection } from 'prosemirror-state';
+import {
+  IconAlignLeft, IconAlignCenter, IconAlignRight,
+  IconIndentLeft, IconIndentRight,
+} from './icons';
 import { blockRegistry } from '../registry';
 import { toggleHeadingCollapse } from '../plugins/heading-collapse';
 import { openAskAIPanel } from './AskAIPanel';
@@ -666,9 +670,7 @@ export function HandleMenu({ view }: HandleMenuProps) {
                     onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
                     title="Indent (Tab)"
                   >
-                    <span style={styles.icon}>
-                      <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 3h12M6 7h8M6 11h8" stroke="#e8eaed" strokeWidth="1.5" strokeLinecap="round"/><path d="M2 6l2.5 2-2.5 2" stroke="#e8eaed" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                    </span>
+                    <span style={styles.icon}>{IconIndentRight}</span>
                     <span>Indent</span>
                   </div>
                   <div
@@ -678,9 +680,7 @@ export function HandleMenu({ view }: HandleMenuProps) {
                     onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
                     title="Outdent (Shift+Tab)"
                   >
-                    <span style={styles.icon}>
-                      <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 3h12M6 7h8M6 11h8" stroke="#e8eaed" strokeWidth="1.5" strokeLinecap="round"/><path d="M4.5 6L2 8l2.5 2" stroke="#e8eaed" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                    </span>
+                    <span style={styles.icon}>{IconIndentLeft}</span>
                     <span>Outdent</span>
                   </div>
                 </div>
@@ -702,9 +702,10 @@ export function HandleMenu({ view }: HandleMenuProps) {
                   </>
                 )}
                 {node?.type.name === 'textBlock' && ([
-                  ['left', 'Align Left', <svg key="l" width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="3" width="12" height="1.5" rx=".5" fill="#e8eaed"/><rect x="2" y="7" width="8" height="1.5" rx=".5" fill="#e8eaed"/><rect x="2" y="11" width="12" height="1.5" rx=".5" fill="#e8eaed"/></svg>],
-                  ['center', 'Align Center', <svg key="c" width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="3" width="12" height="1.5" rx=".5" fill="#e8eaed"/><rect x="4" y="7" width="8" height="1.5" rx=".5" fill="#e8eaed"/><rect x="2" y="11" width="12" height="1.5" rx=".5" fill="#e8eaed"/></svg>],
-                  ['right', 'Align Right', <svg key="r" width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="3" width="12" height="1.5" rx=".5" fill="#e8eaed"/><rect x="6" y="7" width="8" height="1.5" rx=".5" fill="#e8eaed"/><rect x="2" y="11" width="12" height="1.5" rx=".5" fill="#e8eaed"/></svg>],
+                  // icons 复用 components/icons.tsx 中的共享 SVG(画板 InlineToolbar 也用同一份)
+                  ['left', 'Align Left', IconAlignLeft],
+                  ['center', 'Align Center', IconAlignCenter],
+                  ['right', 'Align Right', IconAlignRight],
                 ] as const).map(([value, label, icon]) => (
                   <div
                     key={value}

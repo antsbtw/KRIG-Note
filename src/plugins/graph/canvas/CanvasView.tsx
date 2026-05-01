@@ -264,7 +264,11 @@ export function CanvasView() {
     // ── EditOverlay(文字节点编辑浮层,M2.1)──
     const editOverlay = new EditOverlay({
       onExit: (target, atoms) => {
-        // commit doc:atoms 非 null 时写回(null 表示用户取消)
+        // 1. 恢复展示态 mesh + 选中边框(进入时被隐藏,见 openTextEditor)
+        const meshNode = nr.get(target.id);
+        if (meshNode) meshNode.group.visible = true;
+
+        // 2. commit doc:atoms 非 null 时写回(null 表示用户取消)
         if (atoms !== null) {
           const inst = nr.getInstance(target.id);
           if (inst) {
@@ -278,27 +282,53 @@ export function CanvasView() {
             handles.setTarget(isLine ? null : (newNode ?? null));
             scheduleSave();
           }
+        } else {
+          // 取消编辑:重新 setTarget 到当前 mesh 节点(让 handles 重新显示)
+          const node = nr.get(target.id);
+          if (node) handles.setTarget(node);
         }
+
+        // 3. 恢复 selection border(InteractionController.overlays 在编辑期间被隐藏)
+        ic.refreshSelectionOverlays();
       },
     });
     editOverlayRef.current = editOverlay;
 
-    /** 打开某个文字节点的编辑浮层 */
+    /**
+     * 打开某个文字节点的编辑浮层.
+     *
+     * popup 与节点 mesh 屏幕投影 1:1 重合(原地编辑 — 视觉上看不出展示/编辑切换):
+     * - popup 左上角 = mesh 左上角的屏幕坐标
+     * - popup 宽高 = mesh.size × view.zoom(世界单位 → 屏幕像素)
+     */
     const openTextEditor = (inst: Instance): void => {
-      // 节点屏幕坐标:取节点 bbox 中心
       const sz = inst.size ?? { w: 200, h: 40 };
       const pos = inst.position ?? { x: 0, y: 0 };
-      const center = sm.worldToScreen(pos.x + sz.w / 2, pos.y + sz.h / 2);
-      // popup 默认锚点中心定位(transform: translate(-50%, -50%))
-      // 加容器偏移转换为 viewport 坐标
       const containerEl = containerRef.current;
       if (!containerEl) return;
       const rect = containerEl.getBoundingClientRect();
+
+      // mesh 左上角 → 屏幕坐标
+      const topLeft = sm.worldToScreen(pos.x, pos.y);
+      const view = sm.getView();
+      const zoom = view.zoom > 0 ? view.zoom : 1;
+      const screenW = sz.w * zoom;
+      const screenH = sz.h * zoom;
+
+      // 进入编辑态:隐藏展示态 mesh + 选中边框 + handles
+      // (popup 接管节点视觉;退出编辑时 onExit 恢复)
+      const meshNode = nr.get(inst.id);
+      if (meshNode) meshNode.group.visible = false;
+      handles.setTarget(null);
+      ic.refreshSelectionOverlays();
+
       editOverlay.enter({
         id: inst.id,
         atoms: (inst.doc ?? []) as NoteAtom[],
-        screenX: rect.left + center.x,
-        screenY: rect.top + center.y,
+        screenX: rect.left + topLeft.x,
+        screenY: rect.top + topLeft.y,
+        width: screenW,
+        height: screenH,
       });
     };
 

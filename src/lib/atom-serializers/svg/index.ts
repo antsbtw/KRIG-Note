@@ -6,9 +6,11 @@ import { renderList } from './blocks/list';
 import { LruCache } from '../lru';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
-const VIEWBOX_W = 200;
+const DEFAULT_VIEWBOX_W = 200;
 const VIEWBOX_H = 30;
 const FONT_SIZE = 14;
+/** 内容区左右各留白(textBlock x 起点 4 + 右边 4),对齐 textBlock 内 x = 4 起算 */
+const HORIZONTAL_PADDING = 8;
 
 /** L1 SvgCache（spec § 5.1）：atoms hash → SVG 字符串 */
 const SVG_CACHE = new LruCache<string, string>(1000);
@@ -27,30 +29,46 @@ export function clearSvgCache(): void {
   SVG_CACHE.clear();
 }
 
-export async function atomsToSvg(atoms: Atom[]): Promise<string> {
-  const key = JSON.stringify(atoms);
+export interface AtomsToSvgOptions {
+  /** 整个 SVG 的目标宽度(画板的 instance.size.w);不指定时用 DEFAULT_VIEWBOX_W */
+  width?: number;
+}
+
+export async function atomsToSvg(
+  atoms: Atom[],
+  options: AtomsToSvgOptions = {},
+): Promise<string> {
+  const viewBoxW = options.width ?? DEFAULT_VIEWBOX_W;
+  // 缓存 key 含 width(同 atoms 不同 width wrap 结果不同)
+  const key = `w=${viewBoxW}|${JSON.stringify(atoms)}`;
   const cached = SVG_CACHE.get(key);
   if (cached !== undefined) return cached;
+
+  // 内容区有效宽度(留出左右 padding,与 textBlock x 起点 4 一致)
+  const contentWidth = Math.max(20, viewBoxW - HORIZONTAL_PADDING);
 
   const parts: string[] = [];
   let y = 0;
   for (const atom of atoms) {
-    const { svg, height } = await renderAtom(atom, y);
+    const { svg, height } = await renderAtom(atom, y, contentWidth);
     if (svg) parts.push(svg);
     y += height;
   }
-  const result = wrapSvg(parts.join('\n'), VIEWBOX_W, Math.max(VIEWBOX_H, y));
+  const result = wrapSvg(parts.join('\n'), viewBoxW, Math.max(VIEWBOX_H, y));
   SVG_CACHE.set(key, result);
   return result;
 }
 
-async function renderAtom(atom: Atom, yOffset: number): Promise<{ svg: string; height: number }> {
+async function renderAtom(
+  atom: Atom,
+  yOffset: number,
+  contentWidth: number,
+): Promise<{ svg: string; height: number }> {
   switch (atom.type) {
     case 'textBlock':
-      return renderTextBlock(atom, yOffset);
+      return renderTextBlock(atom, yOffset, contentWidth);
     case 'mathBlock': {
       // NoteView mathBlock schema:content: 'text*',LaTeX 存在 PM 子 text 节点里
-      // PM JSON 形态:{ type: 'mathBlock', attrs: { color, bgColor }, content: [{ type: 'text', text: 'x^2+1' }] }
       // 兼容老 attrs.latex / attrs.tex 数据(若 content 为空)
       const fromContent = extractMathLatex(atom);
       const latex = fromContent
@@ -60,14 +78,12 @@ async function renderAtom(atom: Atom, yOffset: number): Promise<{ svg: string; h
       return renderMathBlock(latex, FONT_SIZE, yOffset);
     }
     case 'bulletList':
-      return renderList(atom, yOffset, false);
+      return renderList(atom, yOffset, false, 0, contentWidth);
     case 'orderedList':
-      return renderList(atom, yOffset, true);
+      return renderList(atom, yOffset, true, 0, contentWidth);
     default:
-      // 未识别的 block(image / video / table / column-list / code-block / ...):
-      // 不静默丢弃 — 渲染一行灰字占位,提示用户该 atom 存在但当前视图未支持渲染
-      // (atom 数据本身仍保留在 instance.doc 里,只是展示态降级,符合三层架构原则 3)
-      return renderUnknownAtom(atom, yOffset);
+      // 未识别的 block:渲染一行灰字占位
+      return renderUnknownAtom(atom, yOffset, contentWidth);
   }
 }
 
@@ -92,13 +108,17 @@ function extractMathLatex(atom: Atom): string {
  *
  * 详见 docs/graph/canvas/Canvas-M2.1-TextNode-Spec.md §2.3
  */
-async function renderUnknownAtom(atom: Atom, yOffset: number): Promise<{ svg: string; height: number }> {
+async function renderUnknownAtom(
+  atom: Atom,
+  yOffset: number,
+  contentWidth: number,
+): Promise<{ svg: string; height: number }> {
   const label = unknownAtomLabel(atom.type);
   const placeholderAtom: Atom = {
     type: 'textBlock',
     content: [{ type: 'text', text: label }],
   };
-  return renderTextBlock(placeholderAtom, yOffset);
+  return renderTextBlock(placeholderAtom, yOffset, contentWidth);
 }
 
 /** 把未识别的 atom 类型映射成简短占位标签(纯 ASCII,避免 emoji 字体缺失) */

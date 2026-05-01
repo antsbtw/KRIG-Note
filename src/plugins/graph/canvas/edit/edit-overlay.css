@@ -12,28 +12,20 @@
 }
 
 .krig-canvas-edit-popup {
+  /* 几何参数(left/top/width/height)由 EditOverlay.enter 内联设置,
+   * 实现"原地编辑":popup 与节点 mesh 屏幕投影完全重合,无视觉错位 */
   position: fixed;
-  min-width: 240px;
-  max-width: 520px;
-  min-height: 32px;
-  max-height: 320px;
   padding: 8px 10px;
+  box-sizing: border-box;
   background: rgba(40, 44, 52, 0.97);
   border: 1px solid #4a90e2;
   border-radius: 8px;
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.55);
-  /* 默认锚点中心定位:popup 中心对齐节点中心 */
-  transform: translate(-50%, -50%);
   color: #e0e0e0;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-size: 14px;
   line-height: 1.5;
   overflow: auto;
-}
-
-/* anchorOffsetY > 0 时:popup 顶对齐锚点(节点下方浮层) */
-.krig-canvas-edit-popup.krig-canvas-edit-popup--below {
-  transform: translate(-50%, 0);
 }
 
 /* PM 挂载点 */

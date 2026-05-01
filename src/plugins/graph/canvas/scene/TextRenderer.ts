@@ -59,11 +59,13 @@ export class TextRenderer {
    * atoms 形态 = 序列化器同源 PM JSON(`{ type, content?, attrs?, marks?, text? }`),
    * 不是 NoteView 持久化态 Atom(`{ id, type, parentId, ... }`)
    * 调用方需先做 NoteView Atom → PM JSON 转换(走 converterRegistry.atomsToDoc)
+   *
+   * width:画板节点 instance.size.w,SVG 内部按此 wrap;不传时用默认 200
    */
-  async render(atoms: Atom[]): Promise<THREE.Object3D> {
+  async render(atoms: Atom[], options: { width?: number } = {}): Promise<THREE.Object3D> {
     let svgString: string;
     try {
-      svgString = await atomsToSvg(atoms);
+      svgString = await atomsToSvg(atoms, { width: options.width });
     } catch (e) {
       console.warn('[TextRenderer] atomsToSvg failed, falling back', e);
       svgString = this.fallbackSvg(atoms);

@@ -58,6 +58,10 @@ export interface MarkSet {
   italic?: boolean;
   underline?: boolean;
   code?: boolean;
+  /** textStyle mark.attrs.color — 文字颜色(CSS 颜色字符串) */
+  textColor?: string;
+  /** highlight mark.attrs.color — 文字背景颜色(CSS 颜色字符串) */
+  bgColor?: string;
 }
 
 /**
