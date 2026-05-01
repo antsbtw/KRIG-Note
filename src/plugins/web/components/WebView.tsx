@@ -19,6 +19,8 @@ declare const viewAPI: {
   onMessage: (callback: (message: { protocol: string; action: string; payload: unknown }) => void) => () => void;
   requestCompanion: (workModeId: string) => Promise<void>;
   translateText: (text: string, targetLang?: string) => Promise<{ text: string } | null>;
+  /** M2.1.6d: link-click 路由发来"打开此 URL"的指令(主进程直接 push) */
+  onWebOpenInRightSlot: (callback: (url: string) => void) => () => void;
 };
 
 const DEFAULT_URL = 'https://www.google.com';
@@ -129,6 +131,18 @@ export function WebView() {
 
   useEffect(() => {
     checkBookmark(currentUrl);
+  }, []);
+
+  // ── M2.1.6d: link-click 路由 — 主进程直接 push URL,绕过 sendToOtherSlot 协议表 ──
+
+  useEffect(() => {
+    const unsub = viewAPI.onWebOpenInRightSlot((url) => {
+      console.log('[WebView.onWebOpenInRightSlot]', url);
+      if (url && webviewRef.current) {
+        webviewRef.current.loadURL(url);
+      }
+    });
+    return unsub;
   }, []);
 
   // ── 监听右侧消息（见 slot-communication.md） ──

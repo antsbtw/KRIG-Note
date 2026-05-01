@@ -1,21 +1,22 @@
 import { Plugin, PluginKey } from 'prosemirror-state';
+import {
+  dispatchLinkHref,
+  openNoteInRightSlot,
+} from '../lib/right-slot-routing';
 
 /**
- * Link Click Plugin — 统一链接点击分发
+ * Link Click Plugin — NoteView 编辑态链接点击分发
  *
- * 点击 link mark 时根据 href 协议决定行为：
- * - krig://note/{noteId}  → 打开笔记（push 导航历史栈）
- * - krig://block/{noteId}/{blockId} → 打开笔记并滚动到 block
- * - https:// / http://    → 系统浏览器打开
+ * 5 协议路由统一走 ../lib/right-slot-routing.ts(canvas 也复用同一模块).
  *
- * 导航历史栈：支持后退/前进
+ * 本插件只额外做一件事:**同文档内 krig://block 跳转**直接 PM 滚动,
+ * 不打开 right slot(用户感知:点目录像滚动到那里,不是开新窗口).
+ *
+ * 导航历史栈(后退/前进):走 noteOpenInEditor 主视图导航,与 right slot 无关.
  */
 
 const api = () => (window as any).viewAPI as {
   noteOpenInEditor: (id: string) => Promise<void>;
-  openExternal: (url: string) => Promise<void>;
-  mediaResolvePath: (src: string) => Promise<{ success: boolean; path: string }>;
-  mediaOpenPath: (path: string) => void;
 } | undefined;
 
 // ── 导航历史栈 ──
@@ -176,46 +177,22 @@ export function linkClickPlugin(): Plugin {
         event.preventDefault();
         event.stopPropagation();
 
-        if (href.startsWith('krig://note/')) {
-          const noteId = href.replace('krig://note/', '');
-          navigateToNote(noteId);
-        } else if (href.startsWith('krig://block/')) {
+        // 同文档内 krig://block 跳转例外:直接 PM 滚动,不开 right slot
+        if (href.startsWith('krig://block/')) {
           const parts = href.replace('krig://block/', '').split('/');
           const noteId = parts[0];
           const blockAnchor = parts.slice(1).join('/');
-          if (blockAnchor) {
-            if (noteId === history.current) {
-              // 同文档内跳转 → 直接滚动
-              scrollToBlockAnchor(view, blockAnchor);
-            } else {
-              // 跨文档跳转 → 存储锚点，等新笔记加载完后 flush
-              pendingAnchor = blockAnchor;
-              navigateToNote(noteId);
-            }
-          } else {
-            navigateToNote(noteId);
+          if (blockAnchor && noteId === history.current) {
+            scrollToBlockAnchor(view, blockAnchor);
+            return true;
           }
-        } else if (href.startsWith('file://')) {
-          // 本地文件路径 → 用系统默认应用打开
-          const v = api();
-          try {
-            const filePath = decodeURIComponent(new URL(href).pathname);
-            if (filePath && v?.mediaOpenPath) v.mediaOpenPath(filePath);
-          } catch { /* ignore */ }
-        } else if (href.startsWith('media://')) {
-          // 文件链接 → 用系统默认应用打开
-          const v = api();
-          if (v?.mediaResolvePath) {
-            v.mediaResolvePath(href).then(r => {
-              if (r?.success && r.path) v.mediaOpenPath(r.path);
-            }).catch(() => {});
-          }
-        } else {
-          // Web 链接 → 系统浏览器
-          const v = api();
-          if (v?.openExternal) v.openExternal(href);
+          // 跨文档 → 走通用路由(打开 right slot NoteView + 滚动 anchor)
+          void openNoteInRightSlot(noteId, blockAnchor || null);
+          return true;
         }
 
+        // 其余 4 种协议 → 共享路由(canvas 也用此)
+        dispatchLinkHref(href);
         return true;
       },
 

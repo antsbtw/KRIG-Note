@@ -1,4 +1,4 @@
-import { ipcMain, BaseWindow, BrowserWindow, dialog, shell, net, session } from 'electron';
+import { ipcMain, BaseWindow, BrowserWindow, dialog, shell, net, session, webContents } from 'electron';
 import { IPC } from '../../../shared/types';
 import { workspaceManager } from '../../../main/workspace/manager';
 import {
@@ -86,6 +86,30 @@ export function registerWebIpcHandlers(ctx: PluginContext): void {
       }
     }
   }
+
+  /**
+   * M2.1.6d:link-click 路由 — 在 right slot WebView 上 loadURL.
+   *
+   * 契约:渲染端调用前必须已经通过 viewAPI.requestCompanion('web')(框架契约)确保
+   * right slot 是 web view.本 handler 只负责派发 URL,不操控 slot.
+   *
+   * 找到当前 active workspace 的 right view webContents 直发,绕开 sendToOtherSlot
+   * 协议表的注册时序问题.
+   */
+  ipcMain.handle(IPC.WEB_OPEN_IN_RIGHT_SLOT, (_event, url: string) => {
+    const { rightId } = getActiveViewWebContentsIds();
+    if (rightId == null) return;
+    const target = webContents.fromId(rightId);
+    if (!target) return;
+
+    // 等 webContents 加载完 + 留 200ms 给 React 组件 mount onWebOpenInRightSlot listener
+    const dispatch = () => target.send(IPC.WEB_OPEN_IN_RIGHT_SLOT, url);
+    if (target.isLoading()) {
+      target.once('did-finish-load', () => setTimeout(dispatch, 200));
+    } else {
+      setTimeout(dispatch, 50);
+    }
+  });
 
   // ── Web Translate ──
 

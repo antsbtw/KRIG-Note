@@ -1,19 +1,16 @@
 /**
- * GraphPanel — Graph 工作模式的 NavSide 内容面板（v1.4 NavSide 重构 M3）。
+ * GraphPanel — Graph 工作模式的 NavSide 内容面板
  *
- * 消费 FolderTree + useGraphOperations，所有业务逻辑下沉到插件 hook。
+ * 与 NotePanel / EBookPanel 同形态:消费 FolderTree + useGraphOperations,
+ * 监听 'navside:action' 事件响应 actionBar 点击。
+ *
  * NavSide.tsx 通过 panel-registry.getNavPanel('graph-list') 拿到本组件渲染。
- *
- * 与 NotePanel 同形态：
- * - itemMeta 按 variant 选 icon
- * - 拖拽 / 重命名 / 右键菜单 由 FolderTree 内置 + ops 业务回调
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo } from 'react';
 import { FolderTree } from '../../../renderer/navside/components/FolderTree';
 import type { ItemNode } from '../../../renderer/navside/components/FolderTree';
-import { useGraphOperations, type VariantId } from './useGraphOperations';
-import { VariantPicker } from './VariantPicker';
-import type { GraphListItem } from './useGraphSync';
+import { useGraphOperations } from './useGraphOperations';
+import type { GraphCanvasListItem } from '../../../shared/types/graph-types';
 
 function relativeTime(ts: number): string {
   const diff = Date.now() - ts;
@@ -29,27 +26,28 @@ function relativeTime(ts: number): string {
   return new Date(ts).toLocaleDateString();
 }
 
+/** Variant 图标(v1 仅 canvas;M2 加 family-tree / knowledge / mindmap 时各自图标) */
+const VARIANT_ICONS: Record<string, string> = {
+  'canvas': '🎨',
+  'family-tree': '🌳',
+  'knowledge': '🕸',
+  'mindmap': '💭',
+};
+
 export function GraphPanel() {
   const ops = useGraphOperations();
 
-  // VariantPicker 浮层状态：点 "+ 图谱" 时弹出选 variant
-  const [pickerAnchor, setPickerAnchor] = useState<HTMLElement | null>(null);
-
-  // 监听 NavSide ActionBar 点击（v1.4 plugin 自治模式）
+  // 监听 NavSide ActionBar 点击
   useEffect(() => {
     const handler = (e: Event) => {
-      const ev = e as CustomEvent<{ contentType: string; actionId: string; target: HTMLElement }>;
+      const ev = e as CustomEvent<{ contentType: string; actionId: string }>;
       if (ev.detail.contentType !== 'graph-list') return;
       switch (ev.detail.actionId) {
+        case 'create-canvas':
+          ops.handleCreateCanvas(null);
+          break;
         case 'create-folder':
-          ops.handleCreateFolder();
-          break;
-        case 'create-graph':
-          // "+ 图谱" 仍弹 VariantPicker 选 variant
-          setPickerAnchor(ev.detail.target);
-          break;
-        case 'import-graph':
-          void ops.handleImport();
+          ops.handleCreateFolder(null);
           break;
       }
     };
@@ -59,48 +57,35 @@ export function GraphPanel() {
 
   const itemMeta = useMemo(
     () => (item: ItemNode) => {
-      const g = item.payload as GraphListItem;
+      const g = item.payload as GraphCanvasListItem;
       return {
-        icon: ops.variantIcon(g.variant),
-        title: g.title || '未命名图谱',
+        icon: VARIANT_ICONS[g.variant] ?? '🎨',
+        title: g.title || '未命名画板',
         rightHint: relativeTime(g.updated_at),
       };
     },
-    [ops],
+    [],
   );
 
-  const handlePickVariant = (variant: VariantId) => {
-    ops.handleCreateGraph(variant, null);
-  };
-
   return (
-    <>
-      <FolderTree
-        nodes={ops.nodes}
-        selectedIds={ops.selectedIds}
-        onSelectChange={ops.setSelectedIds}
-        onFolderToggle={ops.handleFolderToggle}
-        itemMeta={itemMeta}
-        onItemClick={(item) => ops.handleItemClick(item)}
-        onItemDoubleClick={(item) => ops.startRename(item.id)}
-        contextMenu={(target) => ops.buildContextMenu(target)}
-        draggable
-        onDrop={ops.handleDrop}
-        onKeyAction={ops.handleKeyAction}
-        renamingId={ops.renamingId}
-        renamingValue={ops.renameValue}
-        onRenamingChange={ops.setRenameValue}
-        onRenameCommit={ops.commitRename}
-        onRenameCancel={ops.cancelRename}
-        emptyText="暂无图谱。右键空白处新建。"
-      />
-      {pickerAnchor && (
-        <VariantPicker
-          anchor={pickerAnchor}
-          onPick={handlePickVariant}
-          onClose={() => setPickerAnchor(null)}
-        />
-      )}
-    </>
+    <FolderTree
+      nodes={ops.nodes}
+      selectedIds={ops.selectedIds}
+      onSelectChange={ops.setSelectedIds}
+      onFolderToggle={ops.handleFolderToggle}
+      itemMeta={itemMeta}
+      onItemClick={(item) => ops.handleItemClick(item)}
+      onItemDoubleClick={(item) => ops.startRename(item.id)}
+      contextMenu={(target) => ops.buildContextMenu(target)}
+      draggable
+      onDrop={ops.handleDrop}
+      onKeyAction={ops.handleKeyAction}
+      renamingId={ops.renamingId}
+      renamingValue={ops.renameValue}
+      onRenamingChange={ops.setRenameValue}
+      onRenameCommit={ops.commitRename}
+      onRenameCancel={ops.cancelRename}
+      emptyText="暂无画板,点击上方 + 画板 创建"
+    />
   );
 }

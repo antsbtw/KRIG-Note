@@ -1,52 +1,42 @@
 import { workModeRegistry } from '../../../main/workmode/registry';
 import { navSideRegistry } from '../../../main/navside/registry';
 import type { PluginContext } from '../../../shared/plugin-types';
-import { graphViewStore } from '../../../main/storage/graphview-store';
-import { activityStore } from '../../../main/storage/activity-store';
-import { IPC } from '../../../shared/types';
 import { registerGraphIpcHandlers } from './ipc-handlers';
 
-const GRAPH_WORKMODE_ID = 'graph';
+/**
+ * Graph Plugin — 框架注册
+ *
+ * 与 ebook 形态对齐:
+ * - WorkMode:让 shell 能开 Graph view(viewType: graph)
+ * - NavSide:contentType='graph-list' 路由到 GraphPanel(plugins/graph/navside/)
+ * - actionBar 双按钮:+ 文件夹 / + 画板(对齐 NoteView 模式)
+ * - actionBar 点击通过 'navside:action' CustomEvent 由 GraphPanel 内部处理,
+ *   main 端不需要 registerAction(与 ebook 模式一致)
+ * - IPC Handlers:GRAPH_* / GRAPH_FOLDER_* 通道(见 ipc-handlers.ts)
+ *
+ * 详见 docs/graph/canvas/Canvas.md。
+ */
 
 export function register(ctx: PluginContext): void {
+  // ── IPC Handlers ──
   registerGraphIpcHandlers(ctx);
 
+  // ── WorkMode ──
   workModeRegistry.register({
-    id: GRAPH_WORKMODE_ID,
+    id: 'graph',
     viewType: 'graph',
-    icon: '🕸',
+    icon: '🎨',
     label: 'Graph',
-    order: 7,
+    order: 5,
   });
 
+  // ── NavSide ──
   navSideRegistry.register({
-    workModeId: GRAPH_WORKMODE_ID,
-    actionBar: {
-      title: '图谱目录',
-      actions: [
-        { id: 'create-folder', label: '+ 文件夹' },
-        { id: 'create-graph', label: '+ 图谱' },
-        { id: 'import-graph', label: '+ 导入' },
-      ],
-    },
+    workModeId: 'graph',
+    actionBar: { title: '画板目录', actions: [
+      { id: 'create-folder', label: '+ 文件夹' },
+      { id: 'create-canvas', label: '+ 画板' },
+    ]},
     contentType: 'graph-list',
-  });
-
-  navSideRegistry.registerAction(GRAPH_WORKMODE_ID, 'create-graph', async () => {
-    const record = await graphViewStore.create();
-    activityStore.log('graph.create', record.id);
-
-    // 广播列表变更（NavSide GraphPanel 监听刷新）
-    const win = ctx.getMainWindow();
-    if (win) {
-      const list = await graphViewStore.list();
-      for (const view of win.contentView.children) {
-        if ('webContents' in view) {
-          (view as any).webContents.send(IPC.GRAPH_LIST_CHANGED, list);
-        }
-      }
-    }
-
-    return { id: record.id, title: record.title };
   });
 }

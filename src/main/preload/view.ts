@@ -82,40 +82,37 @@ contextBridge.exposeInMainWorld('viewAPI', {
     ipcRenderer.on(IPC.LOAD_TEST_DOC, listener);
     return () => ipcRenderer.removeListener(IPC.LOAD_TEST_DOC, listener);
   },
-  onGraphActiveChanged: (callback: (graphId: string | null) => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, graphId: string | null) => callback(graphId);
-    ipcRenderer.on(IPC.GRAPH_ACTIVE_CHANGED, listener);
-    return () => ipcRenderer.removeListener(IPC.GRAPH_ACTIVE_CHANGED, listener);
+  // ── Graph 画板(rebuild — see docs/graph/canvas/Canvas.md) ──
+  graphLoad: (id: string) => ipcRenderer.invoke(IPC.GRAPH_LOAD, id),
+  graphSave: (id: string, docContent: unknown, title: string) =>
+    ipcRenderer.invoke(IPC.GRAPH_SAVE, id, docContent, title),
+  graphRename: (id: string, title: string) =>
+    ipcRenderer.invoke(IPC.GRAPH_RENAME, id, title),
+  graphPendingOpen: () => ipcRenderer.invoke(IPC.GRAPH_PENDING_OPEN),
+  graphOpenInView: (id: string) => ipcRenderer.invoke(IPC.GRAPH_OPEN_IN_VIEW, id),
+  /** 报告当前打开的画板,主进程写到 workspace.activeGraphId(重启恢复用) */
+  setActiveGraph: (graphId: string | null) => ipcRenderer.invoke(IPC.GRAPH_SET_ACTIVE, graphId),
+  /** 主动拉当前 workspace 的 activeGraphId(view mount 时启动恢复用) */
+  getActiveGraphId: async (): Promise<string | null> => {
+    const data = await ipcRenderer.invoke(IPC.WORKSPACE_LIST);
+    return data?.active?.activeGraphId ?? null;
   },
-  // ── v1.4 graph-import：四态数据模型 ──
-  graphLoadFull: (graphId: string) => ipcRenderer.invoke(IPC.GRAPH_LOAD_FULL, graphId),
-  graphSetActiveLayout: (graphId: string, layoutId: string) => ipcRenderer.invoke(IPC.GRAPH_SET_ACTIVE_LAYOUT, graphId, layoutId),
-  graphSetActiveViewMode: (graphId: string, viewModeId: string) => ipcRenderer.invoke(IPC.GRAPH_SET_ACTIVE_VIEW_MODE, graphId, viewModeId),
-  // Geometry
-  graphGeometryCreate: (record: unknown) => ipcRenderer.invoke(IPC.GRAPH_GEOMETRY_CREATE, record),
-  graphGeometryDelete: (id: string) => ipcRenderer.invoke(IPC.GRAPH_GEOMETRY_DELETE, id),
-  // Intension
-  graphIntensionList: (graphId: string, subjectId?: string) => ipcRenderer.invoke(IPC.GRAPH_INTENSION_LIST, graphId, subjectId),
-  graphIntensionCreate: (record: unknown) => ipcRenderer.invoke(IPC.GRAPH_INTENSION_CREATE, record),
-  graphIntensionUpdate: (id: string, fields: unknown) => ipcRenderer.invoke(IPC.GRAPH_INTENSION_UPDATE, id, fields),
-  graphIntensionDelete: (id: string) => ipcRenderer.invoke(IPC.GRAPH_INTENSION_DELETE, id),
-  graphIntensionCreateBulk: (records: unknown[]) => ipcRenderer.invoke(IPC.GRAPH_INTENSION_CREATE_BULK, records),
-  // Presentation
-  graphPresentationList: (graphId: string, layoutIds?: string[]) => ipcRenderer.invoke(IPC.GRAPH_PRESENTATION_LIST, graphId, layoutIds),
-  graphPresentationSet: (record: unknown) => ipcRenderer.invoke(IPC.GRAPH_PRESENTATION_SET, record),
-  graphPresentationSetBulk: (records: unknown[]) => ipcRenderer.invoke(IPC.GRAPH_PRESENTATION_SET_BULK, records),
-  graphPresentationDelete: (graphId: string, layoutId: string, subjectId: string, attribute: string) =>
-    ipcRenderer.invoke(IPC.GRAPH_PRESENTATION_DELETE, graphId, layoutId, subjectId, attribute),
-  graphPresentationClearLayout: (graphId: string, layoutId: string) =>
-    ipcRenderer.invoke(IPC.GRAPH_PRESENTATION_CLEAR_LAYOUT, graphId, layoutId),
-  onGraphPresentationChanged: (callback: (info: { graphId: string }) => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, info: { graphId: string }) => callback(info);
-    ipcRenderer.on(IPC.GRAPH_PRESENTATION_CHANGED, listener);
-    return () => ipcRenderer.removeListener(IPC.GRAPH_PRESENTATION_CHANGED, listener);
+
+  onGraphOpenInView: (callback: (graphId: string) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, graphId: string) => callback(graphId);
+    ipcRenderer.on(IPC.GRAPH_OPEN_IN_VIEW, listener);
+    return () => ipcRenderer.removeListener(IPC.GRAPH_OPEN_IN_VIEW, listener);
   },
-  // Substance（GraphView 需要查询渲染默认值）
-  graphSubstanceList: () => ipcRenderer.invoke(IPC.GRAPH_SUBSTANCE_LIST),
-  graphSubstanceGet: (id: string) => ipcRenderer.invoke(IPC.GRAPH_SUBSTANCE_GET, id),
+  onGraphDeleted: (callback: (graphId: string) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, graphId: string) => callback(graphId);
+    ipcRenderer.on(IPC.GRAPH_DELETED, listener);
+    return () => ipcRenderer.removeListener(IPC.GRAPH_DELETED, listener);
+  },
+  onGraphTitleChanged: (callback: (data: { graphId: string; title: string }) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, data: { graphId: string; title: string }) => callback(data);
+    ipcRenderer.on(IPC.GRAPH_TITLE_CHANGED, listener);
+    return () => ipcRenderer.removeListener(IPC.GRAPH_TITLE_CHANGED, listener);
+  },
 
   // 文件对话框 + 媒体操作（通用服务）
   fileSaveDialog: (options: { defaultName: string; data: string; filters?: { name: string; extensions: string[] }[] }) =>
@@ -162,6 +159,8 @@ contextBridge.exposeInMainWorld('viewAPI', {
   noteDelete: (id: string) => ipcRenderer.invoke(IPC.NOTE_DELETE, id),
   noteList: () => ipcRenderer.invoke(IPC.NOTE_LIST),
   noteOpenInEditor: (id: string) => ipcRenderer.invoke(IPC.NOTE_OPEN_IN_EDITOR, id),
+  /** M2.1.6d: 强制在 right slot 打开 note(给 link-click 用) */
+  noteOpenInRightSlot: (id: string) => ipcRenderer.invoke(IPC.NOTE_OPEN_IN_RIGHT_SLOT, id),
   notePendingOpen: () => ipcRenderer.invoke(IPC.NOTE_PENDING_OPEN),
   setActiveNote: (noteId: string | null, noteTitle?: string) => ipcRenderer.invoke(IPC.SET_ACTIVE_NOTE, noteId, noteTitle),
   getActiveNoteId: async (): Promise<string | null> => {
@@ -189,6 +188,12 @@ contextBridge.exposeInMainWorld('viewAPI', {
     const listener = (_event: Electron.IpcRendererEvent, noteId: string) => callback(noteId);
     ipcRenderer.on(IPC.NOTE_OPEN_IN_EDITOR, listener);
     return () => ipcRenderer.removeListener(IPC.NOTE_OPEN_IN_EDITOR, listener);
+  },
+  /** M2.1.6d: right slot NoteView 监听 link-click 路由发来的"打开此 note"指令 */
+  onNoteOpenInRightSlot: (callback: (noteId: string) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, noteId: string) => callback(noteId);
+    ipcRenderer.on(IPC.NOTE_OPEN_IN_RIGHT_SLOT, listener);
+    return () => ipcRenderer.removeListener(IPC.NOTE_OPEN_IN_RIGHT_SLOT, listener);
   },
   onNoteDeleted: (callback: (noteId: string) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, noteId: string) => callback(noteId);
@@ -228,6 +233,8 @@ contextBridge.exposeInMainWorld('viewAPI', {
 
   ebookBookshelfList: () => ipcRenderer.invoke(IPC.EBOOK_BOOKSHELF_LIST),
   ebookBookshelfOpen: (id: string) => ipcRenderer.invoke(IPC.EBOOK_BOOKSHELF_OPEN, id),
+  ebookBookshelfAdd: (filePath: string, fileType: 'pdf' | 'epub' | 'djvu' | 'cbz', storage: 'managed' | 'link' = 'link') =>
+    ipcRenderer.invoke(IPC.EBOOK_BOOKSHELF_ADD, filePath, fileType, storage),
   ebookGetData: () => ipcRenderer.invoke(IPC.EBOOK_GET_DATA),
   ebookClose: () => ipcRenderer.invoke(IPC.EBOOK_CLOSE),
   ebookRestore: () => ipcRenderer.invoke(IPC.EBOOK_RESTORE),
@@ -358,6 +365,15 @@ contextBridge.exposeInMainWorld('viewAPI', {
   webBookmarkList: () => ipcRenderer.invoke(IPC.WEB_BOOKMARK_LIST),
   webBookmarkFindByUrl: (url: string) => ipcRenderer.invoke('web:bookmark-find-by-url', url),
   webHistoryAdd: (url: string, title: string, favicon?: string) => ipcRenderer.invoke(IPC.WEB_HISTORY_ADD, url, title, favicon),
+
+  /** M2.1.6d: 强制在 right slot 打开 URL(给 link-click 用) */
+  webOpenInRightSlot: (url: string) => ipcRenderer.invoke(IPC.WEB_OPEN_IN_RIGHT_SLOT, url),
+  /** M2.1.6d: right slot WebView 监听 link-click 路由发来的"打开此 URL"指令 */
+  onWebOpenInRightSlot: (callback: (url: string) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, url: string) => callback(url);
+    ipcRenderer.on(IPC.WEB_OPEN_IN_RIGHT_SLOT, listener);
+    return () => ipcRenderer.removeListener(IPC.WEB_OPEN_IN_RIGHT_SLOT, listener);
+  },
 });
 
 // Bridge: forward IPC 'note:import-json' → DOM CustomEvent (for NoteEditor)

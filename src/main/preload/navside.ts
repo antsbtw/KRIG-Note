@@ -130,44 +130,34 @@ contextBridge.exposeInMainWorld('navSideAPI', {
     return () => ipcRenderer.removeListener(IPC.WEB_BOOKMARK_CHANGED, listener);
   },
 
-  // ── Graph (L5) ──
+  // ── Graph 画板(rebuild — see docs/graph/canvas/Canvas.md) ──
 
   graphList: () => ipcRenderer.invoke(IPC.GRAPH_LIST),
-  graphCreate: (title?: string, hostNoteId?: string | null, variant?: string, folderId?: string | null) =>
-    ipcRenderer.invoke(IPC.GRAPH_CREATE, title, hostNoteId, variant, folderId),
-  graphRename: (id: string, title: string) => ipcRenderer.invoke(IPC.GRAPH_RENAME, id, title),
+  graphCreate: (title?: string, variant?: string, folderId?: string | null) =>
+    ipcRenderer.invoke(IPC.GRAPH_CREATE, title, variant, folderId),
   graphDelete: (id: string) => ipcRenderer.invoke(IPC.GRAPH_DELETE, id),
-  graphSetActive: (id: string | null) => ipcRenderer.invoke(IPC.GRAPH_SET_ACTIVE, id),
+  graphRename: (id: string, title: string) =>
+    ipcRenderer.invoke(IPC.GRAPH_RENAME, id, title),
   graphMoveToFolder: (id: string, folderId: string | null) =>
     ipcRenderer.invoke(IPC.GRAPH_MOVE_TO_FOLDER, id, folderId),
-  onGraphListChanged: (callback: (list: unknown[]) => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, list: unknown[]) => callback(list);
-    ipcRenderer.on(IPC.GRAPH_LIST_CHANGED, listener);
-    return () => ipcRenderer.removeListener(IPC.GRAPH_LIST_CHANGED, listener);
-  },
-  onGraphActiveChanged: (callback: (graphId: string | null) => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, graphId: string | null) => callback(graphId);
-    ipcRenderer.on(IPC.GRAPH_ACTIVE_CHANGED, listener);
-    return () => ipcRenderer.removeListener(IPC.GRAPH_ACTIVE_CHANGED, listener);
-  },
+  graphDuplicate: (id: string, targetFolderId?: string | null) =>
+    ipcRenderer.invoke(IPC.GRAPH_DUPLICATE, id, targetFolderId),
+  graphOpenInView: (id: string) => ipcRenderer.invoke(IPC.GRAPH_OPEN_IN_VIEW, id),
 
-  // ── Graph Folder (v1.4) ──
-
+  // Graph 文件夹
   graphFolderList: () => ipcRenderer.invoke(IPC.GRAPH_FOLDER_LIST),
   graphFolderCreate: (title: string, parentId?: string | null) =>
     ipcRenderer.invoke(IPC.GRAPH_FOLDER_CREATE, title, parentId),
   graphFolderRename: (id: string, title: string) =>
     ipcRenderer.invoke(IPC.GRAPH_FOLDER_RENAME, id, title),
-  graphFolderDelete: (id: string) => ipcRenderer.invoke(IPC.GRAPH_FOLDER_DELETE, id),
+  graphFolderDelete: (id: string) =>
+    ipcRenderer.invoke(IPC.GRAPH_FOLDER_DELETE, id),
   graphFolderMove: (id: string, parentId: string | null) =>
     ipcRenderer.invoke(IPC.GRAPH_FOLDER_MOVE, id, parentId),
-  onGraphFolderListChanged: (callback: (list: unknown[]) => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, list: unknown[]) => callback(list);
-    ipcRenderer.on(IPC.GRAPH_FOLDER_LIST_CHANGED, listener);
-    return () => ipcRenderer.removeListener(IPC.GRAPH_FOLDER_LIST_CHANGED, listener);
-  },
 
-  // ── v1.4 graph-import：从 Markdown 文件导入图谱 ──
-  // 不传 path 时弹文件对话框；传 path 时直接读（自动化测试用）
-  graphImportFromFile: (path?: string) => ipcRenderer.invoke(IPC.GRAPH_IMPORT_FROM_FILE, path),
+  onGraphListChanged: (callback: (list: unknown[]) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, list: unknown[]) => callback(list);
+    ipcRenderer.on(IPC.GRAPH_LIST_CHANGED, listener);
+    return () => ipcRenderer.removeListener(IPC.GRAPH_LIST_CHANGED, listener);
+  },
 });

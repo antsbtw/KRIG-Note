@@ -212,6 +212,7 @@ export const IPC = {
 
   // NoteFile 编辑器操作
   NOTE_OPEN_IN_EDITOR: 'note:open-in-editor',
+  NOTE_OPEN_IN_RIGHT_SLOT: 'note:open-in-right-slot',  // M2.1.6d: 强制在 right slot 打开 note(给 link-click 用)
   NOTE_PENDING_OPEN: 'note:pending-open',    // NoteEditor ready 后拉取待打开的 noteId
   NOTE_DELETED: 'note:deleted',               // main → NoteView: 笔记已删除，编辑器需清除
   NOTE_TITLE_CHANGED: 'note:title-changed',  // NavSide → NoteView: 文件名变更同步到 noteTitle
@@ -310,6 +311,9 @@ export const IPC = {
   EBOOK_RESTORE: 'ebook:restore',
   EBOOK_SET_EXPANDED_FOLDERS: 'ebook:set-expanded-folders',
 
+  // M2.1.6d: 强制在 right slot 打开 URL(给 link-click 用)
+  WEB_OPEN_IN_RIGHT_SLOT: 'web:open-in-right-slot',
+
   // Web 书签
   WEB_BOOKMARK_LIST: 'web:bookmark-list',
   WEB_BOOKMARK_ADD: 'web:bookmark-add',
@@ -343,43 +347,32 @@ export const IPC = {
   THOUGHT_RELATE: 'thought:relate',
   THOUGHT_UNRELATE: 'thought:unrelate',
 
-  // Graph (L5)
-  GRAPH_CREATE: 'graph:create',
-  GRAPH_LIST: 'graph:list',
-  GRAPH_LOAD: 'graph:load',
-  GRAPH_RENAME: 'graph:rename',
+  // Graph 画板(rebuild from scratch — see docs/graph/canvas/Canvas.md)
+  // 与 ebook 形态对齐:独立 IPC namespace,自有 store(graph_canvas + graph_folder)
+  GRAPH_LIST: 'graph:list',                         // 列画板(GraphCanvasListItem[])
+  GRAPH_CREATE: 'graph:create',                     // 新建画板,返回 GraphCanvasRecord
+  GRAPH_LOAD: 'graph:load',                         // 加载画板(取 doc_content)
+  GRAPH_SAVE: 'graph:save',                         // 保存画板(doc_content + title)
   GRAPH_DELETE: 'graph:delete',
-  GRAPH_LIST_CHANGED: 'graph:list-changed',  // main → renderer 广播
-  GRAPH_SET_ACTIVE: 'graph:set-active',      // navside → main：设置当前 workspace 的 activeGraphId
-  GRAPH_ACTIVE_CHANGED: 'graph:active-changed',  // main → renderer：activeGraphId 变化（GraphView/NavSide 监听）
-  GRAPH_MOVE_TO_FOLDER: 'graph:move-to-folder',  // v1.4: 把图移动到指定 folder（null = 根）
-  GRAPH_SET_ACTIVE_LAYOUT: 'graph:set-active-layout',  // v1.4 graph-import: 切换图谱当前布局算法
-  GRAPH_SET_ACTIVE_VIEW_MODE: 'graph:set-active-view-mode',  // v1.6 B3: 切换图谱当前 ViewMode
-  // Graph Folder (v1.4 NavSide 重构)
-  GRAPH_FOLDER_LIST: 'graph-folder:list',
-  GRAPH_FOLDER_CREATE: 'graph-folder:create',
-  GRAPH_FOLDER_RENAME: 'graph-folder:rename',
-  GRAPH_FOLDER_DELETE: 'graph-folder:delete',
-  GRAPH_FOLDER_MOVE: 'graph-folder:move',
-  GRAPH_FOLDER_LIST_CHANGED: 'graph-folder:list-changed',  // main → renderer 广播
-  // ── v1.4 graph-import：四态数据模型 IPC ──
-  GRAPH_LOAD_FULL: 'graph:load-full',                            // GraphView → main：加载图谱全部数据（geometries + intensions + presentations）
-  GRAPH_GEOMETRY_CREATE: 'graph:geometry-create',
-  GRAPH_GEOMETRY_DELETE: 'graph:geometry-delete',
-  GRAPH_INTENSION_LIST: 'graph:intension-list',
-  GRAPH_INTENSION_CREATE: 'graph:intension-create',
-  GRAPH_INTENSION_UPDATE: 'graph:intension-update',
-  GRAPH_INTENSION_DELETE: 'graph:intension-delete',
-  GRAPH_INTENSION_CREATE_BULK: 'graph:intension-create-bulk',
-  GRAPH_PRESENTATION_LIST: 'graph:presentation-list',
-  GRAPH_PRESENTATION_SET: 'graph:presentation-set',
-  GRAPH_PRESENTATION_SET_BULK: 'graph:presentation-set-bulk',
-  GRAPH_PRESENTATION_DELETE: 'graph:presentation-delete',
-  GRAPH_PRESENTATION_CLEAR_LAYOUT: 'graph:presentation-clear-layout',  // 清空指定 layout 所有 atom
-  GRAPH_PRESENTATION_CHANGED: 'graph:presentation-changed',           // main → renderer 广播
-  GRAPH_IMPORT_FROM_FILE: 'graph:import-from-file',                    // D11 实施
-  GRAPH_SUBSTANCE_LIST: 'graph:substance-list',                        // 列出所有可用 substance（v1.5 详情面板用）
-  GRAPH_SUBSTANCE_GET: 'graph:substance-get',
+  GRAPH_RENAME: 'graph:rename',
+  GRAPH_MOVE_TO_FOLDER: 'graph:move-to-folder',
+  GRAPH_DUPLICATE: 'graph:duplicate',
+  GRAPH_LIST_CHANGED: 'graph:list-changed',         // main → renderer:画板列表变更广播
+
+  // Graph 文件夹(独立分类树,不与 note folder 共享)
+  GRAPH_FOLDER_CREATE: 'graph:folder-create',
+  GRAPH_FOLDER_RENAME: 'graph:folder-rename',
+  GRAPH_FOLDER_DELETE: 'graph:folder-delete',
+  GRAPH_FOLDER_MOVE: 'graph:folder-move',
+  GRAPH_FOLDER_LIST: 'graph:folder-list',
+
+  // Graph view 工作流(类比 NOTE_OPEN_IN_EDITOR / EBOOK_BOOKSHELF_OPEN)
+  GRAPH_OPEN_IN_VIEW: 'graph:open-in-view',         // NavSide / 其他 → CanvasView:加载某画板
+  GRAPH_PENDING_OPEN: 'graph:pending-open',         // CanvasView ready 后拉取待打开的 graphId
+  GRAPH_DELETED: 'graph:deleted',                   // main → CanvasView:画板已删除,view 需清空
+  GRAPH_TITLE_CHANGED: 'graph:title-changed',       // NavSide → CanvasView:标题变更同步
+  GRAPH_SET_ACTIVE: 'graph:set-active',              // CanvasView → main:报告当前打开的画板(用于重启恢复)
+
 
   // Web Translate
   WEB_TRANSLATE_FETCH_ELEMENT_JS: 'web-translate:fetch-element-js',

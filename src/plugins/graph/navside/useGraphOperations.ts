@@ -1,66 +1,39 @@
 /**
- * useGraphOperations — Graph 业务操作 hook（v1.4 NavSide 重构 M3）。
+ * useGraphOperations — Graph 业务操作 hook(对齐 useEBookOperations / useNoteOperations)
  *
- * 镜像 useNoteOperations：
- * - 维护选中 / 重命名 / 排序 / 剪贴板等 UI 状态
- * - 暴露 CRUD 调用 + variant 创建
- * - 把 graphList + folderList → TreeNode[] 给 FolderTree
- * - 提供 contextMenu / onDrop / onKey 等 FolderTree 回调
+ * 镜像形态:
+ * - graphList + folderList → TreeNode[] 给 FolderTree
+ * - 维护选中 / 重命名 / 拖拽业务回调
+ * - 提供 contextMenu / onDrop / onKey
+ *
+ * v1 范围(与 spec Canvas.md §3.2 对齐):
+ * - 双 actionBar 按钮:create-canvas / create-folder
+ * - 单击 → 切到 graph workMode + open-in-view
+ * - 重命名 / 删除 / 移动文件夹 / 拖拽全套
+ * - 不实现:画板预览图(M2+ 的"卡片视图"留 v1.5+)
  */
 import { useState, useCallback } from 'react';
 import { useActiveState } from '../../../renderer/navside/store/useActiveState';
 import { activeStateStore } from '../../../renderer/navside/store/active-state-store';
-import {
-  useGraphSync,
-  type GraphListItem,
-  type GraphFolderRecord,
-} from './useGraphSync';
-import type { TreeNode, FolderNode, ItemNode, ContextMenuItem } from '../../../renderer/navside/components/FolderTree';
-
-interface ImportSuccessResult {
-  graphId: string;
-  stats: { geometries: number; intensions: number };
-  warnings: string[];
-}
-
-interface ImportFailResult {
-  error?: string;
-  canceled?: boolean;
-}
+import { useGraphSync } from './useGraphSync';
+import type { GraphCanvasListItem, GraphFolderRecord } from '../../../shared/types/graph-types';
+import type {
+  TreeNode, FolderNode, ItemNode, ContextMenuItem,
+} from '../../../renderer/navside/components/FolderTree';
 
 declare const navSideAPI: {
   switchWorkMode: (id: string) => Promise<void>;
-  executeAction: (actionId: string, params?: Record<string, unknown>) => Promise<unknown>;
-  graphCreate: (title?: string, hostNoteId?: string | null, variant?: string, folderId?: string | null) => Promise<{ id: string; title?: string } | null>;
+  graphCreate: (title?: string, variant?: string, folderId?: string | null) => Promise<{ id: string; title: string } | null>;
   graphRename: (id: string, title: string) => Promise<void>;
   graphDelete: (id: string) => Promise<void>;
-  graphSetActive: (id: string | null) => Promise<void>;
   graphMoveToFolder: (id: string, folderId: string | null) => Promise<void>;
-  graphFolderCreate: (title: string, parentId?: string | null) => Promise<{ id: string; title?: string } | null>;
+  graphDuplicate: (id: string, targetFolderId?: string | null) => Promise<unknown>;
+  graphOpenInView: (id: string) => Promise<void>;
+  graphFolderCreate: (title: string, parentId?: string | null) => Promise<GraphFolderRecord | null>;
   graphFolderRename: (id: string, title: string) => Promise<void>;
   graphFolderDelete: (id: string) => Promise<void>;
   graphFolderMove: (id: string, parentId: string | null) => Promise<void>;
-  graphImportFromFile: (path?: string) => Promise<ImportSuccessResult | ImportFailResult>;
   closeRightSlot: () => Promise<void>;
-};
-
-type SortState = 'title-asc' | 'title-desc' | 'date-asc' | 'date-desc';
-
-/** v1.4 启用的变种集合（MindMap / BPMN / Timeline / Canvas v1.5+ 启用） */
-export const AVAILABLE_VARIANTS = [
-  { id: 'knowledge', label: '知识图谱', icon: '⚛' },
-  { id: 'basic', label: '基础图', icon: '○' },
-] as const;
-
-export type VariantId = typeof AVAILABLE_VARIANTS[number]['id'];
-
-const VARIANT_ICONS: Record<string, string> = {
-  knowledge: '⚛',
-  mindmap: '☘',
-  bpmn: '⊳',
-  timeline: '⏱',
-  canvas: '◫',
-  basic: '○',
 };
 
 export function useGraphOperations() {
@@ -71,52 +44,24 @@ export function useGraphOperations() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
-  const [folderSortMap, setFolderSortMap] = useState<Record<string, SortState>>({});
-  const [clipboard, setClipboard] = useState<{ type: 'graph' | 'folder'; id: string } | null>(null);
 
-  // expandedFolders 是 Set 还是 string[]（store 里 graphExpandedFolders 是 string[]）
   const expandedSet = new Set(expandedFolders);
 
-  // ── 排序 ──
-
-  const getSortedFolders = useCallback(
-    (parentId: string | null): GraphFolderRecord[] => {
-      const folders = folderList.filter((f) => f.parent_id === parentId);
-      const key = parentId ?? '__root__';
-      const sort = folderSortMap[key];
-      const sorted = [...folders];
-      if (sort === 'title-asc') sorted.sort((a, b) => a.title.localeCompare(b.title, 'zh-CN'));
-      else if (sort === 'title-desc') sorted.sort((a, b) => b.title.localeCompare(a.title, 'zh-CN'));
-      else if (sort === 'date-asc') sorted.sort((a, b) => a.created_at - b.created_at);
-      else if (sort === 'date-desc') sorted.sort((a, b) => b.created_at - a.created_at);
-      else sorted.sort((a, b) => a.sort_order - b.sort_order);
-      return sorted;
-    },
-    [folderList, folderSortMap],
-  );
-
-  const getSortedGraphs = useCallback(
-    (folderId: string | null): GraphListItem[] => {
-      const graphs = graphList.filter((g) => (g.folder_id ?? null) === folderId);
-      const key = folderId ?? '__root__';
-      const sort = folderSortMap[key];
-      const sorted = [...graphs];
-      if (sort === 'title-asc') sorted.sort((a, b) => a.title.localeCompare(b.title, 'zh-CN'));
-      else if (sort === 'title-desc') sorted.sort((a, b) => b.title.localeCompare(a.title, 'zh-CN'));
-      else if (sort === 'date-asc') sorted.sort((a, b) => a.updated_at - b.updated_at);
-      else if (sort === 'date-desc') sorted.sort((a, b) => b.updated_at - a.updated_at);
-      else sorted.sort((a, b) => b.updated_at - a.updated_at); // 默认按更新时间倒序
-      return sorted;
-    },
-    [graphList, folderSortMap],
-  );
+  // ── tree id 编码:g:graphId / f:folderId ──
+  const decode = (treeId: string): { type: 'graph' | 'folder'; id: string } => ({
+    type: treeId.startsWith('f:') ? 'folder' : 'graph',
+    id: treeId.slice(2),
+  });
 
   // ── TreeNode[] ──
-
   const buildTreeNodes = useCallback((): TreeNode[] => {
     const buildChildren = (parentId: string | null): TreeNode[] => {
       const nodes: TreeNode[] = [];
-      for (const f of getSortedFolders(parentId)) {
+
+      const folders = folderList
+        .filter((f) => f.parent_id === parentId)
+        .sort((a, b) => a.sort_order - b.sort_order);
+      for (const f of folders) {
         const folderNode: FolderNode = {
           kind: 'folder',
           id: `f:${f.id}`,
@@ -127,7 +72,11 @@ export function useGraphOperations() {
         };
         nodes.push(folderNode);
       }
-      for (const g of getSortedGraphs(parentId)) {
+
+      const graphs = graphList
+        .filter((g) => g.folder_id === parentId)
+        .sort((a, b) => b.updated_at - a.updated_at);
+      for (const g of graphs) {
         const itemNode: ItemNode = {
           kind: 'item',
           id: `g:${g.id}`,
@@ -136,18 +85,13 @@ export function useGraphOperations() {
         };
         nodes.push(itemNode);
       }
+
       return nodes;
     };
     return buildChildren(null);
-  }, [getSortedFolders, getSortedGraphs, expandedSet]);
-
-  const decode = (treeId: string): { type: 'graph' | 'folder'; id: string } => ({
-    type: treeId.startsWith('f:') ? 'folder' : 'graph',
-    id: treeId.slice(2),
-  });
+  }, [graphList, folderList, expandedSet]);
 
   // ── 折叠 ──
-
   const handleFolderToggle = useCallback((treeId: string, expand: boolean) => {
     if (!treeId.startsWith('f:')) return;
     const folderId = treeId.slice(2);
@@ -157,40 +101,36 @@ export function useGraphOperations() {
     activeStateStore.setGraphExpandedFoldersLocal(Array.from(next));
   }, [expandedFolders]);
 
-  // ── 单击 = 打开图 ──
-
-  const handleItemClick = useCallback((item: ItemNode) => {
+  // ── 单击 = 打开画板 ──
+  const handleItemClick = useCallback(async (item: ItemNode) => {
     const { type, id } = decode(item.id);
     if (type !== 'graph') return;
     void navSideAPI.closeRightSlot();
-    void navSideAPI.graphSetActive(id);
+    // 切到 graph workMode(若不在),然后 open-in-view
+    await navSideAPI.switchWorkMode('graph');
+    void navSideAPI.graphOpenInView(id);
     activeStateStore.setActiveGraphIdLocal(id);
   }, []);
 
-  // ── 创建 ──
+  // ── 创建画板 ──
+  const handleCreateCanvas = useCallback((parentId?: string | null) => {
+    void navSideAPI.graphCreate('未命名画板', 'canvas', parentId ?? null).then((g) => {
+      if (g?.id) {
+        // 自动展开父文件夹 + 进入重命名
+        if (parentId) {
+          const next = new Set(expandedFolders);
+          next.add(parentId);
+          activeStateStore.setGraphExpandedFoldersLocal(Array.from(next));
+        }
+        setRenamingId(`g:${g.id}`);
+        setRenameValue(g.title || '未命名画板');
+      }
+    });
+  }, [expandedFolders]);
 
-  const handleCreateGraph = useCallback(
-    (variant: VariantId = 'knowledge', folderId?: string | null) => {
-      void navSideAPI
-        .graphCreate('未命名图谱', null, variant, folderId ?? null)
-        .then((g) => {
-          if (g?.id) {
-            setRenamingId(`g:${g.id}`);
-            setRenameValue(g.title || '未命名图谱');
-            // 自动展开父 folder
-            if (folderId) {
-              const next = new Set(expandedFolders);
-              next.add(folderId);
-              activeStateStore.setGraphExpandedFoldersLocal(Array.from(next));
-            }
-          }
-        });
-    },
-    [expandedFolders],
-  );
-
+  // ── 创建文件夹 ──
   const handleCreateFolder = useCallback((parentId?: string | null) => {
-    void navSideAPI.graphFolderCreate('新建文件夹', parentId).then((f) => {
+    void navSideAPI.graphFolderCreate('新建文件夹', parentId ?? null).then((f) => {
       if (f?.id) {
         if (parentId) {
           const next = new Set(expandedFolders);
@@ -203,44 +143,20 @@ export function useGraphOperations() {
     });
   }, [expandedFolders]);
 
-  // ── ActionBar ──
-
-  const handleSwitchMode = useCallback((id: string) => {
-    void navSideAPI.closeRightSlot();
-    void navSideAPI.switchWorkMode(id);
-  }, []);
-
-  /** 从 Markdown 文件导入图谱（弹文件对话框） */
-  const handleImport = useCallback(async () => {
-    const result = await navSideAPI.graphImportFromFile();
-    if (!result) return;
-    if ('canceled' in result && result.canceled) return;
-    if ('error' in result && result.error) {
-      console.error('[GraphOps] import failed:', result.error);
-      alert(`导入失败：${result.error}`);
-      return;
-    }
-    if ('graphId' in result) {
-      const stats = result.stats;
-      const warnings = result.warnings.length;
-      console.log(`[GraphOps] imported ${result.graphId}: ${stats.geometries} geometries, ${stats.intensions} intensions, ${warnings} warnings`);
-      // 自动激活新图（NavSide 列表广播 + GraphView 加载）
-      void navSideAPI.closeRightSlot();
-      void navSideAPI.graphSetActive(result.graphId);
-      activeStateStore.setActiveGraphIdLocal(result.graphId);
-    }
-  }, []);
-
   // ── 重命名 ──
-
   const startRename = useCallback((treeId: string) => {
     const { type, id } = decode(treeId);
-    const item = type === 'graph'
-      ? graphList.find((g) => g.id === id)
-      : folderList.find((f) => f.id === id);
-    if (!item) return;
-    setRenamingId(treeId);
-    setRenameValue(item.title);
+    if (type === 'graph') {
+      const g = graphList.find((x) => x.id === id);
+      if (!g) return;
+      setRenamingId(treeId);
+      setRenameValue(g.title || '');
+    } else {
+      const f = folderList.find((x) => x.id === id);
+      if (!f) return;
+      setRenamingId(treeId);
+      setRenameValue(f.title || '');
+    }
   }, [graphList, folderList]);
 
   const commitRename = useCallback((treeId: string) => {
@@ -257,7 +173,6 @@ export function useGraphOperations() {
   const cancelRename = useCallback(() => setRenamingId(null), []);
 
   // ── 删除 ──
-
   const handleDelete = useCallback((treeId: string) => {
     const { type, id } = decode(treeId);
     if (type === 'graph') {
@@ -281,8 +196,7 @@ export function useGraphOperations() {
     setSelectedIds(new Set());
   }, [selectedIds, activeGraphId]);
 
-  // ── 拖拽业务 ──
-
+  // ── 拖拽 ──
   const isDescendantFolder = useCallback((parentId: string, childId: string): boolean => {
     let current: string | null = childId;
     const visited = new Set<string>();
@@ -325,40 +239,12 @@ export function useGraphOperations() {
   }, [graphList, folderList, expandedFolders, isDescendantFolder]);
 
   // ── 右键菜单 ──
-
   const buildContextMenu = useCallback(
     (target: TreeNode | null): ContextMenuItem[] => {
       if (!target) {
-        // 空白处右键：创建 + 排序
         return [
-          ...AVAILABLE_VARIANTS.map((v) => ({
-            id: `new-${v.id}`,
-            label: `新建${v.label}`,
-            icon: v.icon,
-            onClick: () => handleCreateGraph(v.id, null),
-          })),
+          { id: 'new-canvas', label: '新建画板', icon: '🎨', onClick: () => handleCreateCanvas(null) },
           { id: 'new-folder', label: '新建文件夹', icon: '📁', onClick: () => handleCreateFolder(null) },
-          { id: 'sep1', label: '', separator: true },
-          {
-            id: 'sort-title',
-            label: `按标题排序${folderSortMap['__root__']?.startsWith('title') ? (folderSortMap['__root__'] === 'title-asc' ? ' ↑' : ' ↓') : ''}`,
-            onClick: () => {
-              setFolderSortMap((m) => ({
-                ...m,
-                __root__: m['__root__'] === 'title-asc' ? 'title-desc' : 'title-asc',
-              }));
-            },
-          },
-          {
-            id: 'sort-date',
-            label: `按日期排序${folderSortMap['__root__']?.startsWith('date') ? (folderSortMap['__root__'] === 'date-asc' ? ' ↑' : ' ↓') : ''}`,
-            onClick: () => {
-              setFolderSortMap((m) => ({
-                ...m,
-                __root__: m['__root__'] === 'date-asc' ? 'date-desc' : 'date-asc',
-              }));
-            },
-          },
         ];
       }
       const isMulti = selectedIds.size > 1 && selectedIds.has(target.id);
@@ -368,12 +254,7 @@ export function useGraphOperations() {
       if (isFolder) {
         const folderId = target.id.slice(2);
         items.push(
-          ...AVAILABLE_VARIANTS.map((v) => ({
-            id: `new-${v.id}-in`,
-            label: `在此新建${v.label}`,
-            icon: v.icon,
-            onClick: () => handleCreateGraph(v.id, folderId),
-          })),
+          { id: 'new-canvas-in', label: '在此新建画板', icon: '🎨', onClick: () => handleCreateCanvas(folderId) },
           { id: 'new-folder-in', label: '在此新建文件夹', icon: '📁', onClick: () => handleCreateFolder(folderId) },
           { id: 'sep1', label: '', separator: true },
         );
@@ -381,29 +262,43 @@ export function useGraphOperations() {
 
       items.push(
         { id: 'rename', label: '重命名', icon: '✎', disabled: isMulti, onClick: () => startRename(target.id) },
-        { id: 'copy', label: '复制', icon: '📋', disabled: isMulti, onClick: () => {
-          const { type, id } = decode(target.id);
-          setClipboard({ type, id });
-        }},
-        ...(clipboard && isFolder ? [{ id: 'paste', label: '粘贴', icon: '📌', onClick: () => {
-          if (!clipboard) return;
-          void navSideAPI.executeAction('paste', {
-            clipboardType: clipboard.type,
-            clipboardId: clipboard.id,
-            targetFolderId: target.id.slice(2),
+      );
+
+      // 画板:在文件夹内时显示「移出文件夹」
+      if (!isFolder && !isMulti) {
+        const { id: graphId } = decode(target.id);
+        const g = graphList.find((x) => x.id === graphId);
+        if (g?.folder_id) {
+          items.push({
+            id: 'move-out',
+            label: '移出文件夹',
+            icon: '↗',
+            onClick: () => void navSideAPI.graphMoveToFolder(graphId, null),
           });
-        }}] : []),
+        }
+        items.push({
+          id: 'duplicate',
+          label: '复制',
+          icon: '📋',
+          onClick: () => void navSideAPI.graphDuplicate(graphId, null),
+        });
+      }
+
+      items.push(
         { id: 'sep2', label: '', separator: true },
-        { id: 'delete', label: isMulti ? `删除 ${selectedIds.size} 项` : '删除', icon: '🗑',
-          onClick: () => isMulti ? handleDeleteSelected() : handleDelete(target.id) },
+        {
+          id: 'delete',
+          label: isMulti ? `删除 ${selectedIds.size} 项` : '删除',
+          icon: '🗑',
+          onClick: () => isMulti ? handleDeleteSelected() : handleDelete(target.id),
+        },
       );
       return items;
     },
-    [selectedIds, folderSortMap, clipboard, handleCreateGraph, handleCreateFolder, startRename, handleDelete, handleDeleteSelected],
+    [selectedIds, graphList, handleCreateCanvas, handleCreateFolder, startRename, handleDelete, handleDeleteSelected],
   );
 
   // ── 键盘 ──
-
   const handleKeyAction = useCallback(
     (action: 'delete' | 'rename' | 'enter', target: TreeNode) => {
       if (action === 'delete') {
@@ -412,7 +307,7 @@ export function useGraphOperations() {
       } else if (action === 'rename') {
         startRename(target.id);
       } else if (action === 'enter') {
-        if (target.kind === 'item') handleItemClick(target);
+        if (target.kind === 'item') void handleItemClick(target);
       }
     },
     [selectedIds, handleDeleteSelected, handleDelete, startRename, handleItemClick],
@@ -433,12 +328,10 @@ export function useGraphOperations() {
     startRename,
     commitRename,
     cancelRename,
-    handleSwitchMode,
-    handleCreateGraph,
+    handleCreateCanvas,
     handleCreateFolder,
-    handleImport,
     activeGraphId,
-    folderSortMap,
-    variantIcon: (variant: string) => VARIANT_ICONS[variant] ?? '○',
+    graphList,
+    folderList,
   };
 }

@@ -1,48 +1,31 @@
 /**
- * useGraphSync — Graph 数据列表订阅 hook（v1.4 NavSide 重构 M3）。
+ * useGraphSync — Graph 数据列表订阅 hook(对齐 useEBookSync)
  *
- * 维护 graphList / graphFolderList 本地副本：
- * - 启动时拉一次（dbReady 后）
- * - 订阅 onGraphListChanged / onGraphFolderListChanged 自动 refetch
+ * 维护 graphList + folderList 本地副本:
+ * - 启动时拉一次(dbReady 后)
+ * - 订阅 onGraphListChanged 自动 refetch
  *
- * activeGraphId / graphExpandedFolders 不在此 hook，业务通过 useActiveState 直接读。
+ * activeGraphId / graphExpandedFolders 不在此 hook,业务通过 useActiveState 直接读。
  */
 import { useState, useEffect, useCallback } from 'react';
-
-export interface GraphListItem {
-  id: string;
-  title: string;
-  variant: string;
-  host_note_id: string | null;
-  folder_id: string | null;
-  updated_at: number;
-}
-
-export interface GraphFolderRecord {
-  id: string;
-  title: string;
-  parent_id: string | null;
-  sort_order: number;
-  created_at: number;
-}
+import type { GraphCanvasListItem, GraphFolderRecord } from '../../../shared/types/graph-types';
 
 declare const navSideAPI: {
-  graphList: () => Promise<GraphListItem[]>;
+  graphList: () => Promise<GraphCanvasListItem[]>;
   graphFolderList: () => Promise<GraphFolderRecord[]>;
   isDBReady: () => Promise<boolean>;
   onDBReady: (cb: () => void) => () => void;
-  onGraphListChanged: (cb: (list: GraphListItem[]) => void) => () => void;
-  onGraphFolderListChanged: (cb: (list: GraphFolderRecord[]) => void) => () => void;
+  onGraphListChanged: (cb: (list: GraphCanvasListItem[]) => void) => () => void;
 };
 
 export interface GraphSyncState {
-  graphList: GraphListItem[];
+  graphList: GraphCanvasListItem[];
   folderList: GraphFolderRecord[];
   refresh: () => void;
 }
 
 export function useGraphSync(): GraphSyncState {
-  const [graphList, setGraphList] = useState<GraphListItem[]>([]);
+  const [graphList, setGraphList] = useState<GraphCanvasListItem[]>([]);
   const [folderList, setFolderList] = useState<GraphFolderRecord[]>([]);
 
   const refresh = useCallback(() => {
@@ -55,12 +38,10 @@ export function useGraphSync(): GraphSyncState {
       if (ready) refresh();
     });
     const unsubDB = navSideAPI.onDBReady(() => refresh());
-    const unsubList = navSideAPI.onGraphListChanged((list) => setGraphList(list));
-    const unsubFolder = navSideAPI.onGraphFolderListChanged((list) => setFolderList(list));
+    const unsubList = navSideAPI.onGraphListChanged(() => refresh());
     return () => {
       unsubDB();
       unsubList();
-      unsubFolder();
     };
   }, [refresh]);
 

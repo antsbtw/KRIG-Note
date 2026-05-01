@@ -166,6 +166,29 @@ export function registerNoteIpcHandlers(ctx: PluginContext): void {
     }
   });
 
+  /**
+   * M2.1.6d:link-click 路由 — 在 right slot NoteView 上 loadNote.
+   *
+   * 契约:渲染端调用前必须已经通过 viewAPI.requestCompanion('demo-a')(框架契约)
+   * 确保 right slot 是 note view.本 handler 只负责派发 noteId,不操控 slot.
+   *
+   * 直发 right webContents,绕开 sendToOtherSlot 协议表的注册时序问题.
+   */
+  ipcMain.handle(IPC.NOTE_OPEN_IN_RIGHT_SLOT, (_event, noteId: string) => {
+    const { rightId } = ctx.getActiveViewWebContentsIds();
+    if (rightId == null) return;
+    const target = webContents.fromId(rightId);
+    if (!target) return;
+
+    // 等 webContents 加载完 + 留 200ms 给 React 组件 mount onNoteOpenInRightSlot listener
+    const dispatch = () => target.send(IPC.NOTE_OPEN_IN_RIGHT_SLOT, noteId);
+    if (target.isLoading()) {
+      target.once('did-finish-load', () => setTimeout(dispatch, 200));
+    } else {
+      setTimeout(dispatch, 50);
+    }
+  });
+
   // ── Folder CRUD ──
   ipcMain.handle(IPC.FOLDER_CREATE, async (_event, title: string, parentId?: string | null) => {
     if (!isDBReady()) return null;
