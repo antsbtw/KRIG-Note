@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { SVGLoader } from 'three/examples/jsm/loaders/SVGLoader.js';
-import { atomsToSvg, type Atom } from '../../../../lib/atom-serializers/svg';
+import { atomsToSvgWithLinks, type Atom, type LinkRect } from '../../../../lib/atom-serializers/svg';
 import { extractPlainText } from '../../../../lib/atom-serializers/extract';
 import { LruCache } from '../../../../lib/atom-serializers/lru';
 
@@ -64,8 +64,11 @@ export class TextRenderer {
    */
   async render(atoms: Atom[], options: { width?: number } = {}): Promise<THREE.Object3D> {
     let svgString: string;
+    let links: LinkRect[] = [];
     try {
-      svgString = await atomsToSvg(atoms, { width: options.width });
+      const out = await atomsToSvgWithLinks(atoms, { width: options.width });
+      svgString = out.svg;
+      links = out.links;
     } catch (e) {
       console.warn('[TextRenderer] atomsToSvg failed, falling back', e);
       svgString = this.fallbackSvg(atoms);
@@ -83,6 +86,25 @@ export class TextRenderer {
         mesh.userData.sharedAsset = true;
         group.add(mesh);
       }
+    }
+
+    // F-6: link hit-rect 透明 mesh — 给 InteractionController raycast 命中走链接路由.
+    // 不共享 geometry/material(每段 link 尺寸不同,且 userData.linkHref 是实例属性),
+    // disposeGroup 正常释放即可(没有 sharedAsset 标记).
+    for (const r of links) {
+      const geom = new THREE.PlaneGeometry(r.w, r.h);
+      const mat = new THREE.MeshBasicMaterial({
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
+      const mesh = new THREE.Mesh(geom, mat);
+      // PlaneGeometry 中心在 (0,0),平移到 link bbox 中心
+      mesh.position.set(r.x + r.w / 2, r.y + r.h / 2, 0.005);
+      mesh.userData.linkHref = r.href;
+      mesh.userData.isLinkHit = true;
+      group.add(mesh);
     }
 
     // SVG y 轴向下,Three.js y 轴向上 — 翻转

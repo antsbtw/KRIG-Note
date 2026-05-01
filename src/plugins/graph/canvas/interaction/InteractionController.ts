@@ -9,6 +9,7 @@ import { SubstanceRegistry } from '../../library/substances';
 import { findClosestMagnet, listMagnets, MAGNET_SNAP_RADIUS_PX } from './magnet-snap';
 import { renderLine, updateLineGeometry, generateLinePoints, setLineHighlight } from '../scene/LineRenderer';
 import { isTextNodeRef } from '../edit/atom-bridge';
+import { dispatchLinkHref } from '../../../note/lib/right-slot-routing';
 
 /** 文字节点(krig.text.label)只允许左右 resize;高度由内容自动撑 */
 const TEXT_NODE_RESIZE_HANDLES = new Set<Exclude<HandleKind, 'rotate'>>(['e', 'w']);
@@ -145,6 +146,10 @@ export class InteractionController {
 
   /** 待清理的 listener 取消器 */
   private unsubscribers: Array<() => void> = [];
+
+  /** F-6 link hit-test 共用 raycaster(避免每次 mousedown 新建对象) */
+  private raycaster = new THREE.Raycaster();
+  private ndc = new THREE.Vector2();
 
   /**
    * Undo/Redo 历史栈
@@ -390,6 +395,14 @@ export class InteractionController {
     const epIdx = this.hitTestLineEndpointHandle(world);
     if (epIdx !== null && this.lineEndpointHandles) {
       this.startRewire(this.lineEndpointHandles.instanceId, epIdx);
+      return;
+    }
+
+    // F-6 link hit-rect 命中(文字节点 SVG 渲染态的 link 段)→ 走 5 协议路由,
+    // 不进 select / drag.单击直接走链接,与 NoteView 编辑态行为一致.
+    const linkHref = this.raycastLinkHref(screen.x, screen.y);
+    if (linkHref) {
+      dispatchLinkHref(linkHref);
       return;
     }
 
@@ -699,6 +712,30 @@ export class InteractionController {
   // ─────────────────────────────────────────────────────────
   // hit-test / 拖动 / overlay
   // ─────────────────────────────────────────────────────────
+
+  /**
+   * F-6 link hit-test:屏幕坐标 → 命中的 link href(若有).
+   *
+   * 走 Three.js Raycaster 命中 scene 里所有 mesh,过滤 userData.isLinkHit.
+   * 命中多个时取最近(z 最大,因为 link mesh 的 z=0.005 在 hitArea 0 之上).
+   *
+   * 这个方法只关心 mesh 的 userData.linkHref,不知道节点 / instance 概念 —
+   * 与 hitTest(走 instance OBB)正交.
+   */
+  private raycastLinkHref(screenX: number, screenY: number): string | null {
+    const rect = this.container.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return null;
+    // 屏幕容器坐标 → NDC[-1, 1]
+    this.ndc.x = (screenX / rect.width) * 2 - 1;
+    this.ndc.y = -(screenY / rect.height) * 2 + 1;
+    this.raycaster.setFromCamera(this.ndc, this.sceneManager.camera);
+    const hits = this.raycaster.intersectObjects(this.sceneManager.scene.children, true);
+    for (const hit of hits) {
+      const href = hit.object.userData?.linkHref;
+      if (typeof href === 'string' && href) return href;
+    }
+    return null;
+  }
 
   /**
    * OBB hit-test:把 world 点逆变换到节点本地坐标(中心为原点),再做 AABB 测试。

@@ -18,7 +18,7 @@
  * - 嵌套 list child 缩进递归,自身不画 bullet(由子 list 的项画)
  */
 import type { Atom } from '../../types';
-import { renderTextBlock } from './textBlock';
+import { renderTextBlock, type LinkRect } from './textBlock';
 import { textToPath } from '../text-to-path';
 
 const INDENT_PER_LEVEL = 16;
@@ -33,6 +33,7 @@ export async function renderList(
   ordered: boolean,
   depth = 0,
   contentWidth = 200,
+  links?: LinkRect[],
 ): Promise<{ svg: string; height: number }> {
   if (!atom.content || atom.content.length === 0) return { svg: '', height: 0 };
 
@@ -52,7 +53,7 @@ export async function renderList(
     const childYStart = y;
 
     if (child.type === 'textBlock') {
-      const { svg, height } = await renderIndentedTextBlock(child, y, indent, innerWidth);
+      const { svg, height } = await renderIndentedTextBlock(child, y, indent, innerWidth, links);
       if (svg) parts.push(svg);
 
       // 在文本基线位置画 bullet / number(baselineY 与 textBlock 内 baseline 算法一致)
@@ -72,11 +73,11 @@ export async function renderList(
       index++;
     } else if (child.type === 'bulletList') {
       // 嵌套无序列表:缩进 +1 级,index 不增,可用宽度也收窄
-      const { svg, height } = await renderList(child, y, false, depth + 1, contentWidth);
+      const { svg, height } = await renderList(child, y, false, depth + 1, contentWidth, links);
       if (svg) parts.push(svg);
       y += height;
     } else if (child.type === 'orderedList') {
-      const { svg, height } = await renderList(child, y, true, depth + 1, contentWidth);
+      const { svg, height } = await renderList(child, y, true, depth + 1, contentWidth, links);
       if (svg) parts.push(svg);
       y += height;
     }
@@ -89,14 +90,25 @@ export async function renderList(
 /**
  * 缩进版 textBlock:renderTextBlock 的内容统一向右平移 indent.
  * width 已收窄(由父级算好),内层 textBlock 在自己的 contentWidth 内 wrap.
+ *
+ * link bbox 处理:textBlock 在自己坐标系收集 link,本函数把 indent 加到 x
+ * (与 SVG g transform 同步).
  */
 async function renderIndentedTextBlock(
   atom: Atom,
   yOffset: number,
   indent: number,
   contentWidth: number,
+  links?: LinkRect[],
 ): Promise<{ svg: string; height: number }> {
-  const { svg, height } = await renderTextBlock(atom, yOffset, contentWidth);
+  // 用本地累加器接 textBlock 的 link,再批量加 indent 偏移到上层
+  const localLinks: LinkRect[] | undefined = links ? [] : undefined;
+  const { svg, height } = await renderTextBlock(atom, yOffset, contentWidth, localLinks);
+  if (links && localLinks) {
+    for (const r of localLinks) {
+      links.push({ ...r, x: r.x + indent });
+    }
+  }
   if (!svg) return { svg: '', height };
   // 包一层 transform(SVGLoader 解析嵌套 g 没问题)
   return {

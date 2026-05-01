@@ -1,9 +1,11 @@
 import type { Atom } from '../types';
 export type { Atom } from '../types';
-import { renderTextBlock } from './blocks/textBlock';
+import { renderTextBlock, type LinkRect } from './blocks/textBlock';
 import { renderMathBlock } from './blocks/mathBlock';
 import { renderList } from './blocks/list';
 import { LruCache } from '../lru';
+
+export type { LinkRect } from './blocks/textBlock';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const DEFAULT_VIEWBOX_W = 200;
@@ -12,8 +14,8 @@ const FONT_SIZE = 14;
 /** 内容区左右各留白(textBlock x 起点 4 + 右边 4),对齐 textBlock 内 x = 4 起算 */
 const HORIZONTAL_PADDING = 8;
 
-/** L1 SvgCache（spec § 5.1）：atoms hash → SVG 字符串 */
-const SVG_CACHE = new LruCache<string, string>(1000);
+/** L1 SvgCache(spec § 5.1):atoms hash → { svg, links } */
+const SVG_CACHE = new LruCache<string, { svg: string; links: LinkRect[] }>(1000);
 
 /** 暴露给上层用于性能监控 / 调试 */
 export function getSvgCacheStats(): { size: number; hits: number; misses: number; hitRate: number } {
@@ -34,10 +36,18 @@ export interface AtomsToSvgOptions {
   width?: number;
 }
 
-export async function atomsToSvg(
+/**
+ * 主入口:atoms → { svg, links }
+ *
+ * links:渲染态 link mark 的 bbox 数组(F-6 给画板 hit-rect overlay 用).
+ * NoteView PM 编辑态不需要 links(已用 anchor tag),取 .svg 即可.
+ *
+ * 缓存的是 { svg, links } 整体 — 同 atoms 的 links 也应稳定.
+ */
+export async function atomsToSvgWithLinks(
   atoms: Atom[],
   options: AtomsToSvgOptions = {},
-): Promise<string> {
+): Promise<{ svg: string; links: LinkRect[] }> {
   const viewBoxW = options.width ?? DEFAULT_VIEWBOX_W;
   // 缓存 key 含 width(同 atoms 不同 width wrap 结果不同)
   const key = `w=${viewBoxW}|${JSON.stringify(atoms)}`;
@@ -48,25 +58,37 @@ export async function atomsToSvg(
   const contentWidth = Math.max(20, viewBoxW - HORIZONTAL_PADDING);
 
   const parts: string[] = [];
+  const links: LinkRect[] = [];
   let y = 0;
   for (const atom of atoms) {
-    const { svg, height } = await renderAtom(atom, y, contentWidth);
+    const { svg, height } = await renderAtom(atom, y, contentWidth, links);
     if (svg) parts.push(svg);
     y += height;
   }
-  const result = wrapSvg(parts.join('\n'), viewBoxW, Math.max(VIEWBOX_H, y));
+  const svg = wrapSvg(parts.join('\n'), viewBoxW, Math.max(VIEWBOX_H, y));
+  const result = { svg, links };
   SVG_CACHE.set(key, result);
   return result;
+}
+
+/** 兼容旧调用方:只取 svg 字符串 */
+export async function atomsToSvg(
+  atoms: Atom[],
+  options: AtomsToSvgOptions = {},
+): Promise<string> {
+  const { svg } = await atomsToSvgWithLinks(atoms, options);
+  return svg;
 }
 
 async function renderAtom(
   atom: Atom,
   yOffset: number,
   contentWidth: number,
+  links: LinkRect[],
 ): Promise<{ svg: string; height: number }> {
   switch (atom.type) {
     case 'textBlock':
-      return renderTextBlock(atom, yOffset, contentWidth);
+      return renderTextBlock(atom, yOffset, contentWidth, links);
     case 'mathBlock': {
       // NoteView mathBlock schema:content: 'text*',LaTeX 存在 PM 子 text 节点里
       // 兼容老 attrs.latex / attrs.tex 数据(若 content 为空)
@@ -78,9 +100,9 @@ async function renderAtom(
       return renderMathBlock(latex, FONT_SIZE, yOffset);
     }
     case 'bulletList':
-      return renderList(atom, yOffset, false, 0, contentWidth);
+      return renderList(atom, yOffset, false, 0, contentWidth, links);
     case 'orderedList':
-      return renderList(atom, yOffset, true, 0, contentWidth);
+      return renderList(atom, yOffset, true, 0, contentWidth, links);
     default:
       // 未识别的 block:渲染一行灰字占位
       return renderUnknownAtom(atom, yOffset, contentWidth);

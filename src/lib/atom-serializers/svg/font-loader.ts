@@ -62,6 +62,8 @@ export interface MarkSet {
   textColor?: string;
   /** highlight mark.attrs.color — 文字背景颜色(CSS 颜色字符串) */
   bgColor?: string;
+  /** link mark.attrs.href — 渲染时加下划线 + 链接色(若没显式 textColor) */
+  linkHref?: string;
 }
 
 /**
