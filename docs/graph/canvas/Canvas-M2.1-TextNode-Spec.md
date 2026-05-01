@@ -34,7 +34,10 @@
 >   原则 1 自建 schema,本 spec 修正)
 >
 > **非范围**:Sticky / Table 节点(留 M2.2);emoji / tofu 兜底(留 v1.x);多选
-> 批量改属性(留 M2.4 浮条阶段);**架构升级(Canvas/Note 共享语义层)留 M3**。
+> 批量改属性(留 M2.4 浮条阶段);**渲染态行内链接(视觉标识 + 可点击)
+> 留 M2.1.8(F-6,P0,作为 M2.1 功能补完;详见
+> [Freeform-Alignment-Backlog.md](./Freeform-Alignment-Backlog.md) F-6)**;
+> **架构升级(Canvas/Note 共享语义层)留 M3**。
 
 ---
 
