@@ -340,8 +340,27 @@ export class NodeRenderer {
       h: Math.max(1, size.h),
     };
 
-    // inner group 由两层组成:hitArea(底,透明)+ contentSlot(上,SVG mesh 异步填入)
+    // inner group 三层(从下到上):
+    //   - bg(可选,M2.2 Sticky):style_overrides.fill 实色背景
+    //   - hitArea:透明 hit-area(覆盖整个 size,捕获 glyph 间空隙点击)
+    //   - contentSlot:SVG mesh 异步填入
     const innerGroup = new THREE.Group();
+
+    // ── 背景层(M2.2 Sticky):style_overrides.fill 提供时画一层实色 plane ──
+    const bgFill = inst.style_overrides?.fill;
+    if (bgFill?.type === 'solid' && bgFill.color) {
+      const bgGeo = new THREE.PlaneGeometry(safeSize.w, safeSize.h);
+      const bgMat = new THREE.MeshBasicMaterial({
+        color: new THREE.Color(bgFill.color),
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      });
+      const bgMesh = new THREE.Mesh(bgGeo, bgMat);
+      // z = -0.01:在 hitArea(z=0)和文字(z=0.01)之下
+      bgMesh.position.set(safeSize.w / 2, safeSize.h / 2, -0.01);
+      bgMesh.userData.isTextBackground = true;
+      innerGroup.add(bgMesh);
+    }
 
     // ── 隐形 hit-area(覆盖整个 size,捕获 glyph 之间的空隙点击)──
     const hitGeo = new THREE.PlaneGeometry(safeSize.w, safeSize.h);
@@ -372,8 +391,10 @@ export class NodeRenderer {
 
     const pmJsonAtoms = textNodeAtomsToPmJson(inst.doc);
     if (pmJsonAtoms.length > 0) {
-      // 把节点宽度传给 SVG 序列化器,文字按 size.w 自动 wrap
-      void this.textRenderer.render(pmJsonAtoms, { width: safeSize.w }).then((svgGroup) => {
+      // M2.2 Sticky:有背景色 → 文字默认色切深色;Text 节点(无背景)用默认浅色
+      const hasBg = bgFill?.type === 'solid' && bgFill.color;
+      const defaultTextColor = hasBg ? '#222' : undefined;
+      void this.textRenderer.render(pmJsonAtoms, { width: safeSize.w, defaultTextColor }).then((svgGroup) => {
         if (this.textRenderTokens.get(inst.id) !== token) {
           this.textRenderer.dispose(svgGroup);
           return;

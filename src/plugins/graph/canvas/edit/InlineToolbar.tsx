@@ -190,12 +190,13 @@ export function InlineToolbar({ view }: InlineToolbarProps) {
         );
       })}
 
-      {/* 对齐:左 / 中 / 右(段级 attrs,改 textBlock.attrs.align)— icons 复用 NoteView */}
+      {/* 对齐:左 / 中 / 右(段级 attrs,改 textBlock.attrs.align)— icons 复用 NoteView.
+          多行选中时 align 应用到选区覆盖的所有 textBlock(走 setTextAlign(view, null, ...)). */}
       {(() => {
         const tb = findCurrentTextBlock(view);
         if (!tb) return null;
         const apply = (align: string) => {
-          setTextAlign(view, tb.pos, align);
+          setTextAlign(view, null, align);
           view.focus();
         };
         const alignBtn = (id: string, glyph: ReactNode, title: string) => (

@@ -343,14 +343,39 @@ export function indentBlocksAt(view: EditorView, positions: number[], delta: 1 |
 // ── Text Align ──
 
 /**
- * 设置指定位置 block 的对齐方式。
+ * 设置 block 对齐方式.
  *
- * 触发方式：HandleMenu Format
+ * 行为:
+ * - pos 传 number → 改该位置单个 block(HandleMenu Format 旧入口)
+ * - pos 传 null → 改当前选区覆盖的所有 textBlock(InlineToolbar 多行选中入口)
+ *
+ * 选区跨多 block 时遍历所有命中的 textBlock 一次性 setNodeMarkup;
+ * setNodeMarkup 改 attrs 不破坏 children,选区位置自动随 tr 映射保留.
  */
-export function setTextAlign(view: EditorView, pos: number, align: string): boolean {
-  const node = view.state.doc.nodeAt(pos);
-  if (!node) return false;
-  view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, align }));
+export function setTextAlign(view: EditorView, pos: number | null, align: string): boolean {
+  const tr = view.state.tr;
+
+  if (pos !== null) {
+    const node = view.state.doc.nodeAt(pos);
+    if (!node) return false;
+    tr.setNodeMarkup(pos, undefined, { ...node.attrs, align });
+    view.dispatch(tr);
+    return true;
+  }
+
+  // pos = null:扫选区内所有 textBlock,逐个改 align
+  const { from, to } = view.state.selection;
+  let changed = false;
+  view.state.doc.nodesBetween(from, to, (node, nodePos) => {
+    if (node.type.name === 'textBlock') {
+      tr.setNodeMarkup(nodePos, undefined, { ...node.attrs, align });
+      changed = true;
+      return false; // textBlock 内部 inline 不递归
+    }
+    return true;
+  });
+  if (!changed) return false;
+  view.dispatch(tr);
   return true;
 }
 

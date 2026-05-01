@@ -40,6 +40,8 @@ export interface EditTarget {
   /** popup 宽高(屏幕像素;对齐节点 mesh 实际投影尺寸,让编辑态与展示态视觉重合) */
   width: number;
   height: number;
+  /** Sticky 背景色(M2.2);CSS 颜色字符串;不传 = 透明(默认 Text 节点) */
+  backgroundColor?: string;
 }
 
 export interface EditOverlayCallbacks {
@@ -85,6 +87,14 @@ export class EditOverlay {
     popup.style.top = `${target.screenY}px`;
     popup.style.width = `${target.width}px`;
     popup.style.minHeight = `${target.height}px`;
+    // Sticky:popup 背景色与 mesh 背景一致,编辑态与展示态视觉无缝过渡.
+    // 走 CSS var 而不是直接 backgroundColor,避免 .krig-canvas-edit-popup
+    // 类样式特异性反超 inline(尤其是有 !important 时);文字色也跟着切到深色,
+    // 黄底上深字才能读.
+    if (target.backgroundColor) {
+      popup.style.setProperty('--popup-bg', target.backgroundColor);
+      popup.style.setProperty('--popup-fg', '#222');
+    }
     popup.addEventListener('mousedown', (e) => e.stopPropagation());
 
     // PM 挂载点

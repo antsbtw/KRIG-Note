@@ -34,6 +34,7 @@ export async function renderList(
   depth = 0,
   contentWidth = 200,
   links?: LinkRect[],
+  defaultTextColor?: string,
 ): Promise<{ svg: string; height: number }> {
   if (!atom.content || atom.content.length === 0) return { svg: '', height: 0 };
 
@@ -53,7 +54,7 @@ export async function renderList(
     const childYStart = y;
 
     if (child.type === 'textBlock') {
-      const { svg, height } = await renderIndentedTextBlock(child, y, indent, innerWidth, links);
+      const { svg, height } = await renderIndentedTextBlock(child, y, indent, innerWidth, links, defaultTextColor);
       if (svg) parts.push(svg);
 
       // 在文本基线位置画 bullet / number(baselineY 与 textBlock 内 baseline 算法一致)
@@ -73,11 +74,11 @@ export async function renderList(
       index++;
     } else if (child.type === 'bulletList') {
       // 嵌套无序列表:缩进 +1 级,index 不增,可用宽度也收窄
-      const { svg, height } = await renderList(child, y, false, depth + 1, contentWidth, links);
+      const { svg, height } = await renderList(child, y, false, depth + 1, contentWidth, links, defaultTextColor);
       if (svg) parts.push(svg);
       y += height;
     } else if (child.type === 'orderedList') {
-      const { svg, height } = await renderList(child, y, true, depth + 1, contentWidth, links);
+      const { svg, height } = await renderList(child, y, true, depth + 1, contentWidth, links, defaultTextColor);
       if (svg) parts.push(svg);
       y += height;
     }
@@ -100,10 +101,11 @@ async function renderIndentedTextBlock(
   indent: number,
   contentWidth: number,
   links?: LinkRect[],
+  defaultTextColor?: string,
 ): Promise<{ svg: string; height: number }> {
   // 用本地累加器接 textBlock 的 link,再批量加 indent 偏移到上层
   const localLinks: LinkRect[] | undefined = links ? [] : undefined;
-  const { svg, height } = await renderTextBlock(atom, yOffset, contentWidth, localLinks);
+  const { svg, height } = await renderTextBlock(atom, yOffset, contentWidth, localLinks, defaultTextColor);
   if (links && localLinks) {
     for (const r of localLinks) {
       links.push({ ...r, x: r.x + indent });

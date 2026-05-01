@@ -63,6 +63,21 @@ declare const viewAPI: {
 
 const SAVE_DEBOUNCE_MS = 1000;
 
+/**
+ * Toolbar active 高亮的语义 key 推导(M2.2):
+ * Sticky 和 Text 共用 ref='krig.text.label',只能从 presetInstance.style_overrides.fill
+ * 是否存在区分 — 有 fill 即 Sticky.
+ */
+function addModeKey(spec: AddModeSpec | null): 'text' | 'sticky' | 'table' | 'line' | 'shape' | null {
+  if (!spec) return null;
+  if (spec.ref === 'krig.text.label') {
+    return spec.presetInstance?.style_overrides?.fill ? 'sticky' : 'text';
+  }
+  if (spec.ref.startsWith('krig.table.')) return 'table';
+  if (spec.ref.startsWith('krig.line.')) return 'line';
+  return 'shape';
+}
+
 export function CanvasView() {
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneManagerRef = useRef<SceneManager | null>(null);
@@ -322,6 +337,10 @@ export function CanvasView() {
       handles.setTarget(null);
       ic.refreshSelectionOverlays();
 
+      // M2.2 Sticky:popup 背景色同步 mesh,实现编辑态展示态视觉无缝
+      const bgFill = inst.style_overrides?.fill;
+      const backgroundColor = (bgFill?.type === 'solid' && bgFill.color) ? bgFill.color : undefined;
+
       editOverlay.enter({
         id: inst.id,
         atoms: (inst.doc ?? []) as NoteAtom[],
@@ -329,6 +348,7 @@ export function CanvasView() {
         screenY: rect.top + topLeft.y,
         width: screenW,
         height: screenH,
+        backgroundColor,
       });
     };
 
@@ -463,6 +483,24 @@ export function CanvasView() {
       ref: 'krig.text.label',
     });
   }, []);
+
+  /**
+   * Toolbar Sticky 按钮接通(M2.2).
+   * Sticky = krig.text.label + 黄色背景 + 默认 160×160 — 单对象,完全复用文字节点
+   * 渲染 / 编辑 / 持久化管线,只在 Instance.style_overrides.fill 加底色.
+   */
+  const handleAddSticky = useCallback((_anchorRect: DOMRect) => {
+    interactionRef.current?.enterAddMode({
+      kind: 'shape',
+      ref: 'krig.text.label',
+      defaultSize: { w: 160, h: 160 },
+      presetInstance: {
+        style_overrides: {
+          fill: { type: 'solid', color: '#FFEB99' },
+        },
+      },
+    });
+  }, []);
   // Fit-to-content 仍可走快捷键(M2.0 起 toolbar 不显示按钮)
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const handleFit = useCallback(() => {
@@ -551,9 +589,11 @@ export function CanvasView() {
       <Toolbar
         title={graphTitle + (dirty ? ' •' : '')}
         addModeRef={addMode?.ref ?? null}
+        addModeKey={addModeKey(addMode)}
         multiSelected={selectedIds.length >= 2}
         onAdd={handleAdd}
         onAddText={handleAddText}
+        onAddSticky={handleAddSticky}
         onCombine={handleOpenCombine}
         onClose={handleClose}
       />

@@ -443,6 +443,8 @@ export class InteractionController {
     // 调试日志已删除(M1 验证期间用过,坐标对齐已确认)。
     // 留 clickScreen 参数保持 API 一致,M2 加 marquee select 可能再用
     const instance: Instance = {
+      // 先把 presetInstance 铺底(背景色 / 默认 props 等),核心字段在下面覆盖
+      ...(spec.presetInstance ?? {}),
       id,
       type: spec.kind,
       ref: spec.ref,
@@ -1565,6 +1567,12 @@ export interface AddModeSpec {
   kind: InstanceKind;
   ref: string;
   defaultSize?: { w: number; h: number };
+  /**
+   * 创建时附加到 instance 的预设字段(M2.2 Sticky 用).
+   * 例:Sticky 用 ref='krig.text.label' + presetInstance={ style_overrides: { fill: { type:'solid', color:'#FFEB99' } } }
+   * placeInstance 会浅合并到新 instance(不覆盖 id/type/ref/position/size).
+   */
+  presetInstance?: Partial<Instance>;
 }
 
 /** 解析新实例的 size:优先 defaultSize,其次按资源类型推断 */

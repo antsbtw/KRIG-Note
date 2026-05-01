@@ -22,6 +22,13 @@ export interface ToolbarProps {
   multiSelected?: boolean;
   /** 添加模式中:高亮当前激活的添加按钮 */
   addModeRef?: string | null;
+  /**
+   * 添加模式语义类别(M2.2):'text' / 'sticky' / 'table' / 'line' / 'shape'.
+   * 必要时由 CanvasView 显式提供 — 多个语义按钮可能共用同一个 ref(如 Sticky
+   * 和 Text 都用 'krig.text.label',只能靠 key 区分 active 高亮).不传则
+   * 退回 ref 前缀匹配(向后兼容).
+   */
+  addModeKey?: 'text' | 'sticky' | 'table' | 'line' | 'shape' | null;
 
   /** Shape 入口 — 单击弹 LibraryPicker(传 anchorRect 给 popover 定位) */
   onAdd: (anchorRect: DOMRect) => void;
@@ -49,8 +56,11 @@ export function Toolbar(props: ToolbarProps) {
    *   line → 'krig.line.*'(M2.5)
    *   shape → 其他全部(基础形状走通用 + 添加按钮)
    */
-  const isAddModeMatch = (category: string) =>
-    typeof props.addModeRef === 'string' && props.addModeRef.startsWith(`krig.${category}.`);
+  // M2.2:优先 addModeKey 精确匹配(text/sticky 共用 ref);回落到 ref 前缀
+  const isAddModeMatch = (category: 'text' | 'sticky' | 'table' | 'line') => {
+    if (props.addModeKey) return props.addModeKey === category;
+    return typeof props.addModeRef === 'string' && props.addModeRef.startsWith(`krig.${category}.`);
+  };
   const isShapeAddMode =
     inAddMode &&
     !isAddModeMatch('text') &&

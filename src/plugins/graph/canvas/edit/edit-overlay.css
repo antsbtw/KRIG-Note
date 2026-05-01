@@ -13,15 +13,16 @@
 
 .krig-canvas-edit-popup {
   /* 几何参数(left/top/width/height)由 EditOverlay.enter 内联设置,
-   * 实现"原地编辑":popup 与节点 mesh 屏幕投影完全重合,无视觉错位 */
+   * 实现"原地编辑":popup 与节点 mesh 屏幕投影完全重合,无视觉错位.
+   * 背景色用 CSS variable,EditOverlay 内联可改成 Sticky 黄色等 */
   position: fixed;
   padding: 8px 10px;
   box-sizing: border-box;
-  background: rgba(40, 44, 52, 0.97);
+  background-color: var(--popup-bg, rgba(40, 44, 52, 0.97));
   border: 1px solid #4a90e2;
   border-radius: 8px;
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.55);
-  color: #e0e0e0;
+  color: var(--popup-fg, #e0e0e0);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-size: 14px;
   line-height: 1.5;
@@ -47,6 +48,10 @@
   outline: none;
   white-space: pre-wrap;
   word-wrap: break-word;
+  /* note.css 全局 .ProseMirror 用 #e8eaed 浅灰文字 + caret;Sticky 黄底要切深色,
+   * 复用 popup 的 var(--popup-fg) — 默认值还是浅灰,Sticky 时 EditOverlay 设深色 */
+  color: var(--popup-fg, #e8eaed) !important;
+  caret-color: var(--popup-fg, #e8eaed) !important;
 }
 
 /* heading 在画板节点里也要小一点(NoteView 默认 h1=38px,popup 装不下) */
