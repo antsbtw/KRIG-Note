@@ -50,14 +50,16 @@ export class InteractionController {
     snapshots: Map<string, { x: number; y: number }>;
   } | null = null;
 
-  /** Pan 视口状态 */
-  private panning: {
-    /** mouse-down 时的容器内屏幕坐标 */
-    startScreen: { x: number; y: number };
-    /** mouse-down 时 SceneManager 的 viewCenter 快照(世界坐标) */
-    startCenter: { x: number; y: number };
-    /** mouse-down 时 zoom(用于把 screen delta 转世界 delta) */
-    startZoom: number;
+  /** Marquee 框选状态(M1.x.9,单指空白拖动) */
+  private marquee: {
+    /** mouse-down 时的世界坐标 */
+    startWorld: { x: number; y: number };
+    /** 当前世界坐标(随 mousemove 更新) */
+    currentWorld: { x: number; y: number };
+    /** 框选 overlay group(画半透明蓝色矩形) */
+    overlayGroup: THREE.Group;
+    /** 是否 additive(Shift/Cmd 按住时加到现有 selection,否则替换) */
+    additive: boolean;
   } | null = null;
 
   /** Resize 状态(8 个边/角 handle 之一) */
@@ -235,7 +237,7 @@ export class InteractionController {
     this.overlays.clear();
     this.selected.clear();
     this.dragging = null;
-    this.panning = null;
+    this.cancelMarquee();
     this.cancelDrawingLine();
     this.cancelRewire();
     this.clearMagnetHints();
@@ -351,9 +353,10 @@ export class InteractionController {
       this.refreshOverlays();
       this.startDrag(world);
     } else {
-      // 空白处:非 additive 清选区(setSelection 内已 notify),然后进入 pan
+      // 空白处:非 additive 清选区,进入框选(marquee select)
+      // pan 走 wheel 事件(macOS 双指拖动),不再占用单指 mousedown
       if (!additive) this.clearSelection();
-      this.startPan(screen);
+      this.startMarquee(world, additive);
     }
   }
 
@@ -445,22 +448,16 @@ export class InteractionController {
       return;
     }
 
-    if (this.panning) {
-      this.setCursor('grabbing');
+    if (this.marquee) {
+      this.setCursor('crosshair');
       const screen = this.toContainerCoords(e);
-      const dxScreen = screen.x - this.panning.startScreen.x;
-      const dyScreen = screen.y - this.panning.startScreen.y;
-      const dxWorld = dxScreen / this.panning.startZoom;
-      const dyWorld = dyScreen / this.panning.startZoom;
-      this.sceneManager.setView(
-        this.panning.startCenter.x - dxWorld,
-        this.panning.startCenter.y - dyWorld,
-        this.panning.startZoom,
-      );
+      const world = this.sceneManager.screenToWorld(screen.x, screen.y);
+      this.marquee.currentWorld = world;
+      rebuildMarqueeOverlay(this.marquee.overlayGroup, this.marquee.startWorld, world);
       return;
     }
 
-    // 既不在 drag 也不在 pan:hover hit-test 切 cursor(handle / grab / default)
+    // 既不在 drag 也不在 marquee:hover hit-test 切 cursor(handle / grab / default)
     // 添加模式由 enterAddMode/exitAddMode 设 crosshair,不在这里覆盖
     if (this.addMode) return;
     // 鼠标在容器外时 toContainerCoords 会给负值,此时不切;只在容器内
@@ -523,9 +520,8 @@ export class InteractionController {
       this.dragging = null;
       if (moved) this.onChange?.();
     }
-    if (this.panning) {
-      this.panning = null;
-      // pan 不影响数据,不触发 onChange
+    if (this.marquee) {
+      this.finishMarquee();
     }
     // mouseup 后恢复:hover 检测会在下一个 mousemove 立即纠正,这里先清成 default
     if (!this.addMode) this.setCursor('default');
@@ -548,23 +544,43 @@ export class InteractionController {
     const view = this.sceneManager.getView();
     if (view.zoom <= 0) return;
 
-    // deltaY > 0:向下滚 = 缩小(zoom 减小)
-    // deltaY < 0:向上滚 = 放大(zoom 增大)
-    const factor = Math.exp(-e.deltaY * WHEEL_ZOOM_SENSITIVITY);
-    const newZoom = view.zoom * factor;
+    // macOS 手势规约:
+    // - 双指 pinch  → wheel + ctrlKey=true  → zoom-to-cursor
+    // - 双指拖动    → wheel + ctrlKey=false → pan
+    // - 鼠标滚轮    → wheel + ctrlKey=false,但 deltaMode=DOM_DELTA_LINE
+    //   (双指拖动是 DOM_DELTA_PIXEL),用 deltaMode 兼容物理鼠标 zoom
+    const isPinchZoom = e.ctrlKey;
+    const isMouseWheel = e.deltaMode !== 0; // 0 = DOM_DELTA_PIXEL(trackpad)
 
-    // 限制 zoom 范围(防数值爆炸或归零)
-    const clampedZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, newZoom));
-    if (clampedZoom === view.zoom) return;
+    if (isPinchZoom || isMouseWheel) {
+      // ── Zoom-to-cursor ──
+      // pinch 单次 deltaY 很小(~10px),物理鼠标滚轮一格 deltaY 较大(~100+),
+      // 两者用不同灵敏度:pinch 5x 加倍,鼠标滚轮保持原值
+      const sensitivity = isPinchZoom
+        ? WHEEL_ZOOM_SENSITIVITY * 5
+        : WHEEL_ZOOM_SENSITIVITY;
+      const factor = Math.exp(-e.deltaY * sensitivity);
+      const newZoom = view.zoom * factor;
+      const clampedZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, newZoom));
+      if (clampedZoom === view.zoom) return;
 
-    // zoom-to-cursor:让鼠标下的世界点保持在原屏幕位置
-    // newCenter = cursorWorld - (cursorWorld - oldCenter) * (oldZoom / newZoom)
-    const screen = this.toContainerCoords(e);
-    const cursorWorld = this.sceneManager.screenToWorld(screen.x, screen.y);
-    const ratio = view.zoom / clampedZoom;
-    const newCenterX = cursorWorld.x - (cursorWorld.x - view.centerX) * ratio;
-    const newCenterY = cursorWorld.y - (cursorWorld.y - view.centerY) * ratio;
-    this.sceneManager.setView(newCenterX, newCenterY, clampedZoom);
+      const screen = this.toContainerCoords(e);
+      const cursorWorld = this.sceneManager.screenToWorld(screen.x, screen.y);
+      const ratio = view.zoom / clampedZoom;
+      const newCenterX = cursorWorld.x - (cursorWorld.x - view.centerX) * ratio;
+      const newCenterY = cursorWorld.y - (cursorWorld.y - view.centerY) * ratio;
+      this.sceneManager.setView(newCenterX, newCenterY, clampedZoom);
+    } else {
+      // ── Pan(双指拖动)──
+      // wheel deltaX/Y 是屏幕像素增量(trackpad 双指拖)→ 转世界坐标
+      const dxWorld = e.deltaX / view.zoom;
+      const dyWorld = e.deltaY / view.zoom;
+      this.sceneManager.setView(
+        view.centerX + dxWorld,
+        view.centerY + dyWorld,
+        view.zoom,
+      );
+    }
   }
 
   // ─────────────────────────────────────────────────────────
@@ -600,8 +616,10 @@ export class InteractionController {
       this.notifySelectionChanged();
       this.onChange?.();
     } else if (e.key === 'Escape') {
-      // 优先级:取消 rewire → 取消画线 → 取消添加模式 → 清选区
-      if (this.rewiring) {
+      // 优先级:取消 marquee → 取消 rewire → 取消画线 → 取消添加模式 → 清选区
+      if (this.marquee) {
+        this.cancelMarquee();
+      } else if (this.rewiring) {
         this.cancelRewire();
       } else if (this.drawingLine) {
         this.cancelDrawingLine();
@@ -686,15 +704,6 @@ export class InteractionController {
     }
     this.pushHistory();
     this.dragging = { startWorld, snapshots };
-  }
-
-  private startPan(startScreen: { x: number; y: number }): void {
-    const view = this.sceneManager.getView();
-    this.panning = {
-      startScreen,
-      startCenter: { x: view.centerX, y: view.centerY },
-      startZoom: view.zoom,
-    };
   }
 
   // ─────────────────────────────────────────────────────────
@@ -956,6 +965,64 @@ export class InteractionController {
       this.refreshOverlays();
     }
     if (this.undoStack.length > 0) this.undoStack.pop();
+  }
+
+  // ─────────────────────────────────────────────────────────
+  // Marquee 框选(M1.x.9)
+  // ─────────────────────────────────────────────────────────
+
+  private startMarquee(startWorld: { x: number; y: number }, additive: boolean): void {
+    const overlayGroup = new THREE.Group();
+    rebuildMarqueeOverlay(overlayGroup, startWorld, startWorld);
+    this.sceneManager.scene.add(overlayGroup);
+    this.marquee = {
+      startWorld,
+      currentWorld: startWorld,
+      overlayGroup,
+      additive,
+    };
+  }
+
+  /** mouseup:计算框选矩形内的 shape,加入 selected */
+  private finishMarquee(): void {
+    if (!this.marquee) return;
+    const { startWorld, currentWorld, additive, overlayGroup } = this.marquee;
+    this.marquee = null;
+    this.sceneManager.scene.remove(overlayGroup);
+    disposeMarqueeOverlay(overlayGroup);
+
+    // 框选矩形的 AABB(可能反向拖)
+    const minX = Math.min(startWorld.x, currentWorld.x);
+    const maxX = Math.max(startWorld.x, currentWorld.x);
+    const minY = Math.min(startWorld.y, currentWorld.y);
+    const maxY = Math.max(startWorld.y, currentWorld.y);
+
+    // 太小的框(单击空白)→ 当作"清选区"已经在 mousedown 处理;这里不动
+    if (maxX - minX < 2 && maxY - minY < 2) {
+      this.notifySelectionChanged();
+      return;
+    }
+
+    // 找所有 shape 中心落在框内的(line 用 bbox 中心;substance 同 shape)
+    if (!additive) this.selected.clear();
+    for (const id of this.nodeRenderer.ids()) {
+      const node = this.nodeRenderer.get(id);
+      if (!node) continue;
+      const cx = node.position.x + node.size.w / 2;
+      const cy = node.position.y + node.size.h / 2;
+      if (cx >= minX && cx <= maxX && cy >= minY && cy <= maxY) {
+        this.selected.add(id);
+      }
+    }
+    this.refreshOverlays();
+    this.notifySelectionChanged();
+  }
+
+  private cancelMarquee(): void {
+    if (!this.marquee) return;
+    this.sceneManager.scene.remove(this.marquee.overlayGroup);
+    disposeMarqueeOverlay(this.marquee.overlayGroup);
+    this.marquee = null;
   }
 
   /**
@@ -1626,4 +1693,72 @@ function makeEndpointHandleMesh(): THREE.Mesh {
     side: THREE.DoubleSide,
   });
   return new THREE.Mesh(geom, mat);
+}
+
+// ─────────────────────────────────────────────────────────
+// Marquee 框选 helpers(M1.x.9)
+// ─────────────────────────────────────────────────────────
+
+const MARQUEE_FILL_COLOR = 0x4A90E2;
+const MARQUEE_BORDER_COLOR = 0x4A90E2;
+const MARQUEE_Z = 0.03;
+
+/** 重建框选 overlay:1 个半透明 fill mesh + 1 个 LineLoop 边框 */
+function rebuildMarqueeOverlay(
+  group: THREE.Group,
+  start: { x: number; y: number },
+  end: { x: number; y: number },
+): void {
+  // 清旧
+  while (group.children.length > 0) {
+    const child = group.children[0];
+    group.remove(child);
+    if ('geometry' in child) (child as THREE.Mesh).geometry?.dispose();
+    const m = (child as THREE.Mesh).material;
+    if (Array.isArray(m)) for (const x of m) x.dispose();
+    else if (m) (m as THREE.Material).dispose();
+  }
+
+  const minX = Math.min(start.x, end.x);
+  const maxX = Math.max(start.x, end.x);
+  const minY = Math.min(start.y, end.y);
+  const maxY = Math.max(start.y, end.y);
+  const w = maxX - minX;
+  const h = maxY - minY;
+  if (w <= 0 || h <= 0) return;
+
+  // 半透明蓝色 fill
+  const fillGeom = new THREE.PlaneGeometry(w, h);
+  const fillMat = new THREE.MeshBasicMaterial({
+    color: MARQUEE_FILL_COLOR,
+    transparent: true,
+    opacity: 0.12,
+    side: THREE.DoubleSide,
+    depthTest: false,
+  });
+  const fill = new THREE.Mesh(fillGeom, fillMat);
+  fill.position.set(minX + w / 2, minY + h / 2, MARQUEE_Z);
+  group.add(fill);
+
+  // 边框(LineLoop)
+  const borderGeom = new THREE.BufferGeometry();
+  borderGeom.setAttribute('position', new THREE.Float32BufferAttribute([
+    minX, minY, MARQUEE_Z,
+    maxX, minY, MARQUEE_Z,
+    maxX, maxY, MARQUEE_Z,
+    minX, maxY, MARQUEE_Z,
+  ], 3));
+  const borderMat = new THREE.LineBasicMaterial({ color: MARQUEE_BORDER_COLOR });
+  const border = new THREE.LineLoop(borderGeom, borderMat);
+  border.renderOrder = 2;
+  group.add(border);
+}
+
+function disposeMarqueeOverlay(group: THREE.Group): void {
+  for (const child of group.children) {
+    if ('geometry' in child) (child as THREE.Mesh).geometry?.dispose();
+    const m = (child as THREE.Mesh).material;
+    if (Array.isArray(m)) for (const x of m) x.dispose();
+    else if (m) (m as THREE.Material).dispose();
+  }
 }
