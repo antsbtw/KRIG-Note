@@ -36,6 +36,8 @@ export class SceneManager {
   private resizeObserver: ResizeObserver;
   private rafHandle: number | null = null;
   private disposed = false;
+  /** view 变化(zoom / pan / resize)订阅,F-11 EditOverlay popup 同步用 */
+  private viewChangeListeners = new Set<() => void>();
 
   /** 屏幕中心对应的世界坐标点 */
   private viewCenter = { x: 0, y: 0 };
@@ -126,6 +128,14 @@ export class SceneManager {
     // up 用默认 (0,1,0)— frustum 内置 top<bottom 已经反转 Y
     this.camera.lookAt(this.viewCenter.x, this.viewCenter.y, 0);
     this.camera.updateProjectionMatrix();
+    // 通知订阅者(F-11):zoom / pan / resize 后 EditOverlay popup 等需同步
+    for (const cb of this.viewChangeListeners) cb();
+  }
+
+  /** 订阅 view 变化,返回取消订阅函数 */
+  onViewChange(cb: () => void): () => void {
+    this.viewChangeListeners.add(cb);
+    return () => { this.viewChangeListeners.delete(cb); };
   }
 
   /**

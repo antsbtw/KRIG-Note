@@ -53,6 +53,8 @@ export class EditOverlay {
   private active: EditTarget | null = null;
   private editor: GraphEditor | null = null;
   private backdrop: HTMLDivElement | null = null;
+  /** popup ref(给 reposition 用,zoom/pan 时同步 mesh 屏幕投影) */
+  private popup: HTMLDivElement | null = null;
   /** UI 浮层 React root(InlineToolbar + SlashMenu)— 挂在 popup 外的独立宿主 */
   private uiRoot: Root | null = null;
   private uiHost: HTMLDivElement | null = null;
@@ -65,6 +67,23 @@ export class EditOverlay {
 
   getActiveTarget(): EditTarget | null {
     return this.active;
+  }
+
+  /**
+   * F-11:zoom / pan 后由外部(CanvasView)重算 mesh 屏幕投影,调此方法同步
+   * popup 几何.popup 是 DOM(CSS 像素),不会自动跟相机变换,必须手动同步.
+   */
+  reposition(rect: { screenX: number; screenY: number; width: number; height: number }): void {
+    if (!this.popup || !this.active) return;
+    this.popup.style.left = `${rect.screenX}px`;
+    this.popup.style.top = `${rect.screenY}px`;
+    this.popup.style.width = `${rect.width}px`;
+    this.popup.style.minHeight = `${rect.height}px`;
+    // 同步 active.* 让 onExit 等读到最新位置
+    this.active.screenX = rect.screenX;
+    this.active.screenY = rect.screenY;
+    this.active.width = rect.width;
+    this.active.height = rect.height;
   }
 
   /** 打开浮层;已激活时先 commit 当前的再开新的 */
@@ -87,6 +106,7 @@ export class EditOverlay {
     popup.style.top = `${target.screenY}px`;
     popup.style.width = `${target.width}px`;
     popup.style.minHeight = `${target.height}px`;
+    this.popup = popup;
     // Sticky:popup 背景色与 mesh 背景一致,编辑态与展示态视觉无缝过渡.
     // 走 CSS var 而不是直接 backgroundColor,避免 .krig-canvas-edit-popup
     // 类样式特异性反超 inline(尤其是有 !important 时);文字色也跟着切到深色,
@@ -178,6 +198,7 @@ export class EditOverlay {
       this.backdrop.remove();
       this.backdrop = null;
     }
+    this.popup = null;
   }
 
   /** 销毁(canvas unmount 时调) */
