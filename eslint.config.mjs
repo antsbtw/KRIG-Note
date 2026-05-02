@@ -2,6 +2,39 @@
 import eslint from '@eslint/js';
 import tseslint from 'typescript-eslint';
 
+// 阶段 01 J5.2: 跨插件 import 禁令 — 逐插件生成 config object
+// 参考 ls src/plugins/ 的当前 9 个插件目录
+const PLUGIN_DIRS = [
+  'ai-note-bridge',
+  'browser-capability',
+  'demo',
+  'ebook',
+  'graph',
+  'note',
+  'thought',
+  'web',
+  'web-bridge',
+];
+
+const crossPluginImportConfigs = PLUGIN_DIRS.map((self) => ({
+  files: [`src/plugins/${self}/**`],
+  rules: {
+    'no-restricted-imports': ['error', {
+      patterns: [{
+        group: PLUGIN_DIRS.filter((other) => other !== self).flatMap((other) => [
+          `@plugins/${other}`,
+          `@plugins/${other}/*`,
+          `@plugins/${other}/**`,
+          `**/plugins/${other}`,
+          `**/plugins/${other}/*`,
+          `**/plugins/${other}/**`,
+        ]),
+        message: '跨插件 import 禁止 — 共享逻辑走 src/capabilities/ 或 src/shared/。见总纲 § 4.4',
+      }],
+    }],
+  },
+}));
+
 export default tseslint.config(
   {
     // 全局忽略：构建产物 / 依赖 / 本仓库特殊产物
@@ -49,4 +82,6 @@ export default tseslint.config(
       }],
     },
   },
+  // ── 阶段 01 J5.2: 跨插件 import 禁令(逐插件展开) ──
+  ...crossPluginImportConfigs,
 );
