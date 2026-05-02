@@ -173,7 +173,7 @@ const styles: Record<string, React.CSSProperties> = {
     height: '36px',
     background: '#1e1e1e',
     borderBottom: '1px solid #333',
-    WebkitAppRegion: 'drag' as unknown as string,
+    WebkitAppRegion: 'drag',
     userSelect: 'none',
   },
   tabs: {
@@ -193,7 +193,7 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#999',
     fontSize: '12px',
     cursor: 'pointer',
-    WebkitAppRegion: 'no-drag' as unknown as string,
+    WebkitAppRegion: 'no-drag',
     maxWidth: '220px',
   },
   tabActive: {
@@ -237,7 +237,7 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#999',
     fontSize: '18px',
     cursor: 'pointer',
-    WebkitAppRegion: 'no-drag' as unknown as string,
+    WebkitAppRegion: 'no-drag',
     flexShrink: 0,
   },
 };
