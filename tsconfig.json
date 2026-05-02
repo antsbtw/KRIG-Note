@@ -21,6 +21,6 @@
       "@plugins/*": ["src/plugins/*"]
     }
   },
-  "include": ["src/**/*"],
+  "include": ["src/**/*", "tools/**/*"],
   "exclude": ["node_modules", ".vite", "docs"]
 }
