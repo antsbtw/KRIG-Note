@@ -84,4 +84,16 @@ export default tseslint.config(
   },
   // ── 阶段 01 J5.2: 跨插件 import 禁令(逐插件展开) ──
   ...crossPluginImportConfigs,
+  // ── 阶段 01 J5.3: src/shared/** 禁止 import electron ──
+  {
+    files: ['src/shared/**'],
+    rules: {
+      'no-restricted-imports': ['error', {
+        paths: [{
+          name: 'electron',
+          message: 'shared 是跨进程契约层,禁止 import electron — 见总纲 § 6 数据模型四层',
+        }],
+      }],
+    },
+  },
 );
