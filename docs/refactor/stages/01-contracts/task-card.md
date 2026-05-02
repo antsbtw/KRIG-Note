@@ -5,8 +5,8 @@
 > **执行 Builder 会话**：（待填）
 
 ## 引用
-- 总纲：[docs/refactor/00-总纲.md](../00-总纲.md) v2.3 § 9 启动清单
-- 评估依据：[docs/evaluation/2026-05-02-L0-L1-evaluation.md](../../evaluation/2026-05-02-L0-L1-evaluation.md)、L2/L3/L4/L5 评估
+- 总纲：[docs/refactor/00-总纲.md](../../00-总纲.md) v2.3 § 9 启动清单
+- 评估依据：[docs/evaluation/2026-05-02-L0-L1-evaluation.md](../../../evaluation/2026-05-02-L0-L1-evaluation.md)、L2/L3/L4/L5 评估
 - 三角架构定义：总纲 § 7
 
 ## 本次范围
@@ -21,7 +21,7 @@
 
 ### J1：CLAUDE.md 追加"重构期硬规则"段落
 
-在 [CLAUDE.md](../../../CLAUDE.md) 文件末尾追加新章节 `## 重构期硬规则`，必须包含以下禁令清单（一字不漏）：
+在 [CLAUDE.md](../../../../CLAUDE.md) 文件末尾追加新章节 `## 重构期硬规则`，必须包含以下禁令清单（一字不漏）：
 
 - L5 插件代码（`src/plugins/**`）禁止 import：`openCompanion` / `ensureCompanion` / `closeRightSlot` / `openRightSlot`
 - L5 改变布局只能：`dispatch(IntentEvent)`
@@ -38,7 +38,7 @@
 
 ### J2：创建 `src/shared/intents.ts`
 
-创建文件 [src/shared/intents.ts](../../../src/shared/intents.ts)（新文件），导出 IntentEvent 类型骨架：
+创建文件 [src/shared/intents.ts](../../../../src/shared/intents.ts)（新文件），导出 IntentEvent 类型骨架：
 
 ```ts
 /**
@@ -77,7 +77,7 @@ export interface LayoutModeChangeRequestedIntent {
 
 ### J3：创建 `src/shared/ui-primitives.ts`
 
-创建文件 [src/shared/ui-primitives.ts](../../../src/shared/ui-primitives.ts)（新文件），导出五大类型契约：
+创建文件 [src/shared/ui-primitives.ts](../../../../src/shared/ui-primitives.ts)（新文件），导出五大类型契约：
 
 按总纲 § 5.4 数据契约草图实现：
 - `ViewDefinition`（含 viewId / install / 五大交互独有项）
@@ -90,7 +90,7 @@ export interface LayoutModeChangeRequestedIntent {
 
 ### J4：创建 `tools/lint/pure-utility-allowlist.ts`
 
-创建文件 [tools/lint/pure-utility-allowlist.ts](../../../tools/lint/pure-utility-allowlist.ts)（新文件 + 新目录 `tools/lint/`），导出纯工具白名单：
+创建文件 [tools/lint/pure-utility-allowlist.ts](../../../../tools/lint/pure-utility-allowlist.ts)（新文件 + 新目录 `tools/lint/`），导出纯工具白名单：
 
 ```ts
 /**
@@ -173,7 +173,7 @@ export type PureUtility = typeof PURE_UTILITY_ALLOWLIST[number];
 
 来自总纲 + memory 的相关注意点：
 
-- **R1**: 仓库可能用 ESLint flat config（`eslint.config.js`）也可能用 legacy（`.eslintrc.cjs`）——Builder 第一步要探查 [package.json](../../../package.json) 和仓库根目录确定，按现有结构修改，不擅自切换 config 风格
+- **R1**: 仓库可能用 ESLint flat config（`eslint.config.js`）也可能用 legacy（`.eslintrc.cjs`）——Builder 第一步要探查 [package.json](../../../../package.json) 和仓库根目录确定，按现有结构修改，不擅自切换 config 风格
 - **R2**: TypeScript 路径别名（`@shared/`、`@capabilities/` 等）是否已配置在 tsconfig.json 的 `paths` 字段——Builder 要确认现有 path 配置，新文件采用与现有 `src/shared/types/schema-*.ts` 一致的 import 写法
 - **R3**: `tools/lint/` 目录是新建——必须保证它在 tsconfig 的 `include` 范围内，否则类型检查会跳过该文件
 - **R4**: Builder **不读 memory**，但要知道存在 memory `feedback_merge_requires_explicit_ok`——本任务卡也遵守：commit 由 Builder 自己做，merge/push 不做（列命令给 Commander）

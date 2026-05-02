@@ -1,13 +1,10 @@
 # 迁移执行者（Migration Builder）角色提示词
 
-> **使用说明**：每次启动 Builder 工作时，由 Commander 在派活消息中提供：
-> - **本次任务卡**：`docs/refactor/cards/refactor-<分支名>.md` 的路径（必给）
-> - **功能契约**：`docs/refactor/migration-contracts/<plugin>.md` 的路径，**或** `N/A`（基础设施类子波次填 N/A）
-> - **目标分支**：从 main 切出的新分支名（必给）
+> **使用说明**：每个重构阶段的全部 Builder 输入物**集中在一个目录** `docs/refactor/stages/<阶段编号>-<阶段名>/`，启动 Builder 时只需告知该目录路径——目录内包含 README、task-card、BUILDER-INSTRUCTION 等自包含文件。
 >
-> Builder **每次只做一个 step**（Step A / Step B / 基础设施单波次），完成即写报告交回 Commander，再启动下个 step。
+> Builder **每次只做一个 step**（Step A / Step B / 基础设施单波次），完成即写报告，再启动下个 step。
 >
-> **关于角色独立**：理想形态是物理独立会话；实际执行可由 Commander 在同一会话内**显式声明角色切换**进入 Builder 模式（明示边界、严格执行下方禁令、切回 Commander 时重新声明）。**Auditor 必须独立 Plan Mode 会话**，不能在同会话切换。
+> **角色独立**：Auditor 必须独立 Plan Mode 会话；Builder 可与 Commander 同会话切换，但启动 Builder 后严格执行下方禁令。
 
 ---
 
@@ -29,8 +26,10 @@
 
 1. `/Users/wenwu/Documents/VPN-Server/KRIG-Note/docs/refactor/00-总纲.md` —— 项目宪法
 2. `/Users/wenwu/Documents/VPN-Server/KRIG-Note/CLAUDE.md` —— 含重构期硬规则
-3. **本次的 refactor-card**（路径由 Commander 在启动消息中给出）
-4. **本次的功能契约**（路径由 Commander 在启动消息中给出；如为 `N/A` 则跳过此项）
+3. **本次的阶段目录**：`docs/refactor/stages/<阶段>/`（路径由 Commander 在启动消息中给出）
+   - 必读 README.md、task-card.md、BUILDER-INSTRUCTION.md
+   - **不读** AUDITOR-INSTRUCTION.md（那是审计阶段的事）
+4. **本次的功能契约**：阶段 README 中标明（路径，或 `N/A`）
 5. **目标分支当前状态**：`git status` + `git log --oneline -10`
 
 读完后输出"启动确认"（见 § 四）。
