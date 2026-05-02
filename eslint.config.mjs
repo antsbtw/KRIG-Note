@@ -16,21 +16,35 @@ const PLUGIN_DIRS = [
   'web-bridge',
 ];
 
+// 注: ESLint flat config 同名规则 cascade — 当 files 重叠时,后面 config
+// 的 'no-restricted-imports' 整体替换前面的(不是合并 patterns)。所以每条
+// per-plugin config 的 patterns 必须同时包含 J5.1 布局特权 + J5.2 跨插件,
+// 否则 J5.1 在 9 个已知插件目录被覆盖失效。J5.1 独立 config 保留作未来
+// 新增插件(未列入 PLUGIN_DIRS)的兜底。
+const LAYOUT_PRIVILEGE_PATTERN = {
+  group: ['**/window/shell', '**/slot/*', '@main/window/*'],
+  importNames: ['openCompanion', 'ensureCompanion', 'closeRightSlot', 'openRightSlot'],
+  message: 'L5 插件禁止直接调布局特权 API。改用 dispatch(IntentEvent) — 见 docs/refactor/00-总纲.md § 1.1 分层原则',
+};
+
 const crossPluginImportConfigs = PLUGIN_DIRS.map((self) => ({
   files: [`src/plugins/${self}/**`],
   rules: {
     'no-restricted-imports': ['error', {
-      patterns: [{
-        group: PLUGIN_DIRS.filter((other) => other !== self).flatMap((other) => [
-          `@plugins/${other}`,
-          `@plugins/${other}/*`,
-          `@plugins/${other}/**`,
-          `**/plugins/${other}`,
-          `**/plugins/${other}/*`,
-          `**/plugins/${other}/**`,
-        ]),
-        message: '跨插件 import 禁止 — 共享逻辑走 src/capabilities/ 或 src/shared/。见总纲 § 4.4',
-      }],
+      patterns: [
+        LAYOUT_PRIVILEGE_PATTERN,
+        {
+          group: PLUGIN_DIRS.filter((other) => other !== self).flatMap((other) => [
+            `@plugins/${other}`,
+            `@plugins/${other}/*`,
+            `@plugins/${other}/**`,
+            `**/plugins/${other}`,
+            `**/plugins/${other}/*`,
+            `**/plugins/${other}/**`,
+          ]),
+          message: '跨插件 import 禁止 — 共享逻辑走 src/capabilities/ 或 src/shared/。见总纲 § 4.4',
+        },
+      ],
     }],
   },
 }));
