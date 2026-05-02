@@ -30,16 +30,32 @@ export type HandleKind =
   | 'rotate';
 
 /**
- * 文字节点(krig.text.label)只允许左右拉宽 + 旋转;
- * 高度由内容自动计算,不允许 N/S/4 角拖动改高度或同时改宽高.
+ * 文字节点 handle 配置:
+ * - Text(无 size_lock):4 handle (N/S/E/W) + rotate
+ *   拉宽 → wrap;拉高 → 高度变 fixed(空白接受 / 内容滚动)
+ * - Sticky(size_lock={w,h:true}):8 handle 全部 + rotate,任意拉伸固定大小
+ * - 普通 shape:8 handle + rotate
  */
-const TEXT_NODE_HANDLES = new Set<HandleKind>(['e', 'w', 'rotate']);
+const TEXT_DEFAULT_HANDLES = new Set<HandleKind>(['n', 's', 'e', 'w', 'rotate']);
 const ALL_HANDLES_SET = new Set<HandleKind>(
   ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w', 'rotate'],
 );
 
-function allowedHandlesFor(node: RenderedNode): Set<HandleKind> {
-  return isTextNodeRef(node.shapeRef) ? TEXT_NODE_HANDLES : ALL_HANDLES_SET;
+/**
+ * @param getInstance 反查 inst.size_lock 用 — 由外部注入(避免 HandlesOverlay
+ *   反向依赖 NodeRenderer 的全部接口)
+ */
+function allowedHandlesFor(
+  node: RenderedNode,
+  getInstance: ((id: string) => { size_lock?: { w?: boolean; h?: boolean } } | undefined) | null,
+): Set<HandleKind> {
+  if (!isTextNodeRef(node.shapeRef)) return ALL_HANDLES_SET;
+  // 文字节点:看 size_lock
+  const inst = getInstance?.(node.instanceId);
+  const hLock = !!inst?.size_lock?.h;
+  const wLock = !!inst?.size_lock?.w;
+  if (hLock && wLock) return ALL_HANDLES_SET;  // Sticky 全部 8 handle
+  return TEXT_DEFAULT_HANDLES;  // Text 4 handle
 }
 
 const HANDLE_RADIUS = 3.3;        // 圆 handle 半径(像素)
@@ -60,6 +76,9 @@ export class HandlesOverlay {
   private rafTick: number | null = null;
   private disposed = false;
 
+  /** 反查 instance(给 allowedHandlesFor 判断 size_lock 用);由外部注入 */
+  private getInstance: ((id: string) => { size_lock?: { w?: boolean; h?: boolean } } | undefined) | null = null;
+
   constructor(private sceneManager: SceneManager) {
     this.group = new THREE.Group();
     this.group.visible = false;
@@ -67,6 +86,11 @@ export class HandlesOverlay {
     sceneManager.scene.add(this.group);
     this.buildHandles();
     this.startSyncLoop();
+  }
+
+  /** 注入 getInstance 反查接口(由 CanvasView 设置) */
+  setInstanceLookup(fn: ((id: string) => { size_lock?: { w?: boolean; h?: boolean } } | undefined) | null): void {
+    this.getInstance = fn;
   }
 
   /** 显示某节点的 handles;传 null 隐藏 */
@@ -115,7 +139,7 @@ export class HandlesOverlay {
     const positions = handlePositions(halfW, halfH);
 
     const HIT_RADIUS = HANDLE_RADIUS + 4;  // 容忍区
-    const allowed = allowedHandlesFor(node);
+    const allowed = allowedHandlesFor(node, this.getInstance);
     let closest: { kind: HandleKind; dist: number } | null = null;
     for (const [kind, [hx, hy]] of Object.entries(positions) as [HandleKind, [number, number]][]) {
       if (!allowed.has(kind)) continue;
@@ -196,7 +220,7 @@ export class HandlesOverlay {
     const halfW = (node.size.w / 2) * view.zoom;
     const halfH = (node.size.h / 2) * view.zoom;
     const positions = handlePositions(halfW, halfH);
-    const allowed = allowedHandlesFor(node);
+    const allowed = allowedHandlesFor(node, this.getInstance);
     for (const [kind, [hx, hy]] of Object.entries(positions) as [HandleKind, [number, number]][]) {
       const handle = this.handles.get(kind);
       if (!handle) continue;

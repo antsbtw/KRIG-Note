@@ -456,6 +456,10 @@ export class NodeRenderer {
     rendered: RenderedNode,
     contentH: number,
   ): void {
+    // size_lock.h=true 时跳过自适应高度(用户已拖 N/S handle 或 Sticky 默认 lock)
+    const inst = this.instances.get(instanceId);
+    if (inst?.size_lock?.h) return;
+
     const padding = 8;
     const newH = Math.ceil(contentH + padding);
 

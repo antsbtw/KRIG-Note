@@ -221,6 +221,8 @@ export function CanvasView() {
     const sm = new SceneManager(containerRef.current);
     const nr = new NodeRenderer(sm);
     const handles = new HandlesOverlay(sm);
+    // 给 HandlesOverlay 反查 inst.size_lock 用(决定 Text 4 handle vs Sticky 8 handle)
+    handles.setInstanceLookup((id) => nr.getInstance(id));
 
     // 文字节点内容 async 渲染完成扩 size 后:
     // 1. HandlesOverlay 的 currentNode 引用刷新(让 8 个 handle / rotation 重新 layout)
@@ -348,6 +350,9 @@ export function CanvasView() {
         width: screenW,
         height: screenH,
         backgroundColor,
+        // h 锁定时(Sticky / 用户拖过 N/S)popup 用 height 固定 + overflow:auto;
+        // 否则 min-height,内容溢出自然撑高(Text 默认行为)
+        heightFixed: !!inst.size_lock?.h,
       });
     };
 
@@ -497,6 +502,8 @@ export function CanvasView() {
         style_overrides: {
           fill: { type: 'solid', color: '#FFEB99' },
         },
+        // Sticky 创建时锁定 size — 不自动撑高度,8 handle 任意拉伸
+        size_lock: { w: true, h: true },
       },
     });
   }, []);
