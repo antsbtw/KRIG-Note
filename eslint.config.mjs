@@ -36,4 +36,17 @@ export default tseslint.config(
       'no-empty': 'off',
     },
   },
+  // ── 阶段 01 J5.1: L5 插件禁止 import 布局特权 API ──
+  {
+    files: ['src/plugins/**'],
+    rules: {
+      'no-restricted-imports': ['error', {
+        patterns: [{
+          group: ['**/window/shell', '**/slot/*', '@main/window/*'],
+          importNames: ['openCompanion', 'ensureCompanion', 'closeRightSlot', 'openRightSlot'],
+          message: 'L5 插件禁止直接调布局特权 API。改用 dispatch(IntentEvent) — 见 docs/refactor/00-总纲.md § 1.1 分层原则',
+        }],
+      }],
+    },
+  },
 );
