@@ -18,6 +18,23 @@ export interface Bounds {
 export type WorkspaceId = string;
 export type ViewInstanceId = string;
 
+/**
+ * View 类型标识符——命名空间形如 `<plugin>.<view>`
+ * 例：'note.editor' / 'note.thought' / 'graph.canvas' / 'graph.family-tree'
+ *      / 'web.chatgpt' / 'web.claude' / 'ebook.pdf' / 'ebook.epub'
+ *
+ * 详见总纲 § 5.2 概念三元组（Plugin → View → Capability）。
+ */
+export type ViewType = string;
+
+/**
+ * License Tier — 视图/能力的授权层级
+ * 用于 ViewTypeRegistration.tier 控制哪些视图对哪些用户可见。
+ *
+ * v1 为最小定义，实际授权策略由各发行版决定（属产品决策层）。
+ */
+export type LicenseTier = 'free' | 'pro' | 'enterprise';
+
 /** 
  * Workspace 在任意时刻的运行态缓存
  * (移除了所有强业务字段如 activeNoteId)
