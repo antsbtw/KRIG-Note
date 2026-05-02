@@ -303,8 +303,9 @@ export function CanvasView() {
           if (node) handles.setTarget(node);
         }
 
-        // 3. 恢复 selection border(InteractionController.overlays 在编辑期间被隐藏)
-        ic.refreshSelectionOverlays();
+        // 3. 恢复 selection:进编辑时被 clearSelection 清掉了,这里重新选中
+        // (用户感知:退出编辑后该节点仍处于选中态 — 与编辑前一致)
+        ic.setSelection([target.id]);
       },
     });
     editOverlayRef.current = editOverlay;
@@ -330,12 +331,14 @@ export function CanvasView() {
       const screenW = sz.w * zoom;
       const screenH = sz.h * zoom;
 
-      // 进入编辑态:隐藏展示态 mesh + 选中边框 + handles
-      // (popup 接管节点视觉;退出编辑时 onExit 恢复)
+      // 进入编辑态:隐藏 mesh + handles + 清掉 selection 边框
+      // (popup 接管节点视觉;退出时 onExit 恢复 mesh + 重新设 selection)
+      // 必须清 selection 而不是只 refresh — selection LineLoop 在世界坐标里会
+      // 跟相机投影,zoom 时与 popup(屏幕坐标固定)分离形成"虚框分离"幻象
       const meshNode = nr.get(inst.id);
       if (meshNode) meshNode.group.visible = false;
       handles.setTarget(null);
-      ic.refreshSelectionOverlays();
+      ic.clearSelection();
 
       // M2.2 Sticky:popup 背景色同步 mesh,实现编辑态展示态视觉无缝
       const bgFill = inst.style_overrides?.fill;
