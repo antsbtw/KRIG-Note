@@ -643,6 +643,7 @@ export function CanvasView() {
         onCombine={handleOpenCombine}
       />
 
+
       {/* Combine to Substance 对话框 */}
       <CreateSubstanceDialog
         open={combineDialogOpen}
@@ -660,6 +661,8 @@ export function CanvasView() {
             contextMenu.ids,
             handleOpenCombine,
             () => interactionRef.current?.deleteSelected(),
+            handleInstanceGet,
+            (id, color) => handleInstanceUpdate(id, { style_overrides: { fill: { type: 'solid', color } } }),
           )}
           onClose={() => setContextMenu(null)}
         />
@@ -673,8 +676,32 @@ function buildContextMenuItems(
   ids: string[],
   onCombine: () => void,
   onDelete: () => void,
+  getInstance: (id: string) => Instance | undefined,
+  onColorChange: (id: string, color: string) => void,
 ): ContextMenuItem[] {
   const items: ContextMenuItem[] = [];
+
+  // F-9 Sticky 颜色:单选 Sticky 时显示 "Color ▸" 主项 + hover/click 弹右侧子菜单
+  if (ids.length === 1) {
+    const inst = getInstance(ids[0]);
+    if (inst && inst.ref === 'krig.text.label'
+        && inst.size_lock?.w && inst.size_lock?.h
+        && inst.style_overrides?.fill?.color) {
+      const currentColor = inst.style_overrides.fill.color.toLowerCase();
+      items.push({
+        id: 'sticky-color',
+        label: 'Color',
+        render: (close) => (
+          <StickyColorMenuItem
+            currentColor={currentColor}
+            onPick={(c) => { onColorChange(ids[0], c); close(); }}
+          />
+        ),
+      });
+      items.push({ id: 'sep-color', label: '', separator: true });
+    }
+  }
+
   if (ids.length >= 2) {
     items.push({
       id: 'combine',
@@ -691,6 +718,88 @@ function buildContextMenuItems(
     onClick: onDelete,
   });
   return items;
+}
+
+/** Sticky 7 色调色盘(对齐 Freeform).浅色 swatch 在 NodeRenderer 自动配深字 */
+const STICKY_COLORS = [
+  '#FFEB99', '#FFC8A2', '#FFA8A8', '#C8E6A0',
+  '#A5D8FF', '#D4BFFF', '#D0D0D0',
+] as const;
+
+/**
+ * "Color ▸" menu item — 鼠标 hover 弹右侧子菜单(7 色 swatch),点选立即关菜单 + 改色.
+ * 视觉对齐 NoteView 的"框定 ▸"模式;子菜单走 fixed 定位,不被父菜单 overflow 裁剪.
+ */
+function StickyColorMenuItem(props: { currentColor: string; onPick: (color: string) => void }) {
+  const itemRef = useRef<HTMLDivElement>(null);
+  const [submenuPos, setSubmenuPos] = useState<{ left: number; top: number } | null>(null);
+
+  const showSubmenu = () => {
+    const el = itemRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    setSubmenuPos({ left: rect.right + 4, top: rect.top });
+  };
+  const hideSubmenu = () => setSubmenuPos(null);
+
+  return (
+    <>
+      <div
+        ref={itemRef}
+        onMouseEnter={(e) => { e.currentTarget.style.background = '#3a3a3a'; showSubmenu(); }}
+        onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+        style={{
+          padding: '6px 12px',
+          borderRadius: 4,
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          fontSize: 14,
+          color: '#e8eaed',
+        }}
+      >
+        <span style={{ width: 24, textAlign: 'center', flexShrink: 0 }}>🎨</span>
+        <span style={{ flex: 1 }}>Color</span>
+        <span style={{ fontSize: 10, color: '#888', marginLeft: 4 }}>▸</span>
+      </div>
+
+      {submenuPos && (
+        <div
+          onMouseEnter={showSubmenu}
+          onMouseLeave={hideSubmenu}
+          style={{
+            position: 'fixed',
+            zIndex: 1001,
+            left: submenuPos.left,
+            top: submenuPos.top,
+            background: '#2a2a2a',
+            border: '1px solid #444',
+            borderRadius: 8,
+            padding: 8,
+            boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+            display: 'grid',
+            gridTemplateColumns: 'repeat(4, auto)',
+            gap: 6,
+          }}
+        >
+          {STICKY_COLORS.map((c) => (
+            <button
+              key={c}
+              type="button"
+              title={c}
+              onClick={() => props.onPick(c)}
+              style={{
+                width: 22, height: 22, borderRadius: '50%',
+                background: c, padding: 0, cursor: 'pointer',
+                border: c.toLowerCase() === props.currentColor ? '2px solid #4A90E2' : '2px solid transparent',
+              }}
+            />
+          ))}
+        </div>
+      )}
+    </>
+  );
 }
 
 const styles: Record<string, React.CSSProperties> = {
