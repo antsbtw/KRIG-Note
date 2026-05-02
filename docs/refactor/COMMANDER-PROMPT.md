@@ -187,12 +187,14 @@ docs/refactor/stages/01-contracts/
 1. ...
 ```
 
-> **§ 六补充 — 起草纪律（吸收阶段 00/00x/typecheck-baseline/01 四次教训）**
+> **§ 六补充 — 起草纪律（吸收阶段 00/00x/typecheck-baseline/01/02a 五次教训）**
 >
-> 1. **task-card § J6 必须显式给 PAYLOAD_BASELINE_SHA**——阶段 00/00x/typecheck-baseline/01 都因 J6 用 `main...HEAD` 三点 diff 与"Builder 引入 diff"语义模糊导致 Builder 自决记录在 G 段,Auditor 第三次重申。模板已上锁。
-> 2. **任何"字节级写死"的脚本/配置必须在 task-card 起草时实测一遍**——不能光靠纸上推演（阶段 01 第二次 BLOCKING 因未实测 ESLint 同名规则 cascade 行为）。
+> 1. **task-card § J6 必须显式给 PAYLOAD_BASELINE_SHA**——阶段 00/00x/typecheck-baseline/01 都因 J6 用 `main...HEAD` 三点 diff 与"Builder 引入 diff"语义模糊导致 Builder 自决记录在 G 段,Auditor 第三次重申。模板已上锁。**阶段 02a 实测有效,不再是建议而是既定规则**。
+> 2. **任何"字节级写死"的脚本/配置必须在 task-card 起草时实测一遍**——不能光靠纸上推演。**实测须涵盖 typecheck + lint 双向**（阶段 01 第二次 BLOCKING 因未实测 ESLint cascade;阶段 02a G1 软冲突因未实测 lint 而 task-card 模板含 `eslint-disable-next-line no-console` 但 ESLint config 未启用 `no-console` → 触发 unused-disable warning）。
 > 3. **任何"已就绪/自动生效"承诺必须实测验证**——不能因前序阶段 task-card 写"已答"就默认成立（阶段 01 第二次 BLOCKING 因 R3 承诺"自动在 typecheck 范围内"未实测）。
 > 4. **任何引用现状的禁令必须 grep 当前仓库**——如 `find src/plugins -name engine -o -name runtime -o -name lib`（阶段 01 第一次 BLOCKING 因未 grep 历史目录）。
+> 5. **task-card 字节级模板禁止含 ESLint disable 注释**（除非 ESLint config 已启用对应规则）——阶段 02a G1 教训:模板含 `// eslint-disable-next-line no-console` 但 config 未启用 `no-console` → 字节级照抄触发 unused-disable warning。**起草模板时检查每条 disable 注释对应的规则是否在 `eslint.config.mjs` 中启用**。
+> 6. **J7 类 lint 判据用"errors 不引入"语义而非"problems 字面数"**——阶段 02a G1 教训:J7b 写"778 problems 与基线一致"在字节级模板触发 +2 warnings 时形成自纪元矛盾。改为：`errors 数与基线一致(本次新增文件不引入新 errors)` + `warnings 容忍 ±N(N = 字节级模板已知副作用数)`。
 
 ## 七、文件位置约定
 
