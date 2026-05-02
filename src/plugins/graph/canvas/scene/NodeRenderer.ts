@@ -391,9 +391,10 @@ export class NodeRenderer {
 
     const pmJsonAtoms = textNodeAtomsToPmJson(inst.doc);
     if (pmJsonAtoms.length > 0) {
-      // M2.2 Sticky:有背景色 → 文字默认色切深色;Text 节点(无背景)用默认浅色
-      const hasBg = bgFill?.type === 'solid' && bgFill.color;
-      const defaultTextColor = hasBg ? '#222' : undefined;
+      // M2.2 Sticky:有 BG 色 → 按亮度选深 / 浅文字
+      // 无 BG(Text 节点)用默认 undefined → atom-serializer fallback #dddddd
+      const bgColor = (bgFill?.type === 'solid' && bgFill.color) ? bgFill.color : null;
+      const defaultTextColor = bgColor ? pickReadableTextColor(bgColor) : undefined;
       void this.textRenderer.render(pmJsonAtoms, { width: safeSize.w, defaultTextColor }).then((svgGroup) => {
         if (this.textRenderTokens.get(inst.id) !== token) {
           this.textRenderer.dispose(svgGroup);
@@ -749,6 +750,36 @@ function mergeLine(base?: LineStyle, override?: Partial<LineStyle>): LineStyle |
  * 静态 LRU 缓存共享管理(如 TextRenderer 的 SVG mesh),disposeGroup 不能
  * dispose,否则缓存里其他持有同引用的 mesh 会变空.
  */
+/**
+ * Sticky 黄底 / 红底 / 蓝底等不同色块上,文字色按亮度配对(WCAG 风格).
+ * 浅色背景用深字 #222,深色背景用浅字 #eee.
+ *
+ * 算法:CSS 颜色 → RGB → relative luminance(简化版,sRGB 通道平均加权).
+ * 阈值 0.5:>= 浅色 → 深字,< 深色 → 浅字.
+ */
+function pickReadableTextColor(bgCss: string): string {
+  // 简单解析 #RRGGBB / #RGB,其他形式(rgb(),named)→ fallback 深字
+  const rgb = parseHexColor(bgCss);
+  if (!rgb) return '#222';
+  // ITU-R BT.601 luma 加权 — 廉价但够 sticky 调色盘 7 色用
+  const luma = (0.299 * rgb.r + 0.587 * rgb.g + 0.114 * rgb.b) / 255;
+  return luma >= 0.5 ? '#222' : '#eee';
+}
+
+function parseHexColor(css: string): { r: number; g: number; b: number } | null {
+  const s = css.trim();
+  if (s.startsWith('#')) {
+    const h = s.slice(1);
+    if (h.length === 6) {
+      return { r: parseInt(h.slice(0, 2), 16), g: parseInt(h.slice(2, 4), 16), b: parseInt(h.slice(4, 6), 16) };
+    }
+    if (h.length === 3) {
+      return { r: parseInt(h[0] + h[0], 16), g: parseInt(h[1] + h[1], 16), b: parseInt(h[2] + h[2], 16) };
+    }
+  }
+  return null;
+}
+
 function disposeGroup(group: THREE.Object3D): void {
   group.traverse((obj) => {
     if (obj.userData?.sharedAsset) return;

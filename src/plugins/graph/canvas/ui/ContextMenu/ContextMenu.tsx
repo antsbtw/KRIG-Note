@@ -1,4 +1,4 @@
-import { useEffect, useRef, useLayoutEffect, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useLayoutEffect, useState, type CSSProperties, type ReactNode } from 'react';
 
 /**
  * Canvas ContextMenu — 右键 / 双指点击菜单
@@ -20,6 +20,12 @@ export interface ContextMenuItem {
   disabled?: boolean;
   separator?: boolean;
   onClick?: () => void;
+  /**
+   * 自定义渲染(代替默认 icon + label).例:Sticky 颜色调色盘 7 色 swatch.
+   * 自定义 render 时,onClick / disabled / 默认 hover 高亮 都不生效 — 由
+   * render 自己处理交互.render 内部用 onClose 关菜单(回调注入).
+   */
+  render?: (close: () => void) => ReactNode;
 }
 
 interface ContextMenuProps {
@@ -82,6 +88,10 @@ export function ContextMenu(props: ContextMenuProps) {
     >
       {props.items.map((item) => {
         if (item.separator) return <div key={item.id} style={styles.separator} />;
+        // 自定义 render(如颜色 swatch 行)— 跳过默认 hover/click 包装
+        if (item.render) {
+          return <div key={item.id}>{item.render(props.onClose)}</div>;
+        }
         const isDisabled = !!item.disabled;
         return (
           <div
