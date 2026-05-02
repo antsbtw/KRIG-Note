@@ -6,6 +6,8 @@
  * 框架不知道具体有哪些插件——只知道注册表里有什么。
  */
 
+import type { IntentEvent } from './intents';
+
 export interface PluginContext {
   /** 获取主窗口（用于 dialog 等场景） */
   getMainWindow: () => import('electron').BaseWindow | null;
@@ -31,4 +33,7 @@ export interface PluginContext {
     task: (reportProgress: (message: string, current?: number, total?: number) => void) => Promise<T>,
     options?: { keepOnDone?: boolean; doneMessage?: (result: T) => { success: boolean; message: string } },
   ) => Promise<T>;
+
+  /** 视图通过 dispatch(IntentEvent) 上抛意图,L3 IntentDispatcher 决定布局响应。总纲 § 1.1 / § 7 */
+  dispatch: (event: IntentEvent) => void;
 }

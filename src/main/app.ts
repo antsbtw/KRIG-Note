@@ -4,6 +4,8 @@ import { runWithProgress } from './window/progress';
 import { registerIpcHandlers } from './ipc/handlers';
 import { setupDividerController } from './slot/divider';
 import { workspaceManager } from './workspace/manager';
+import { intentDispatcher } from './workspace/intent-dispatcher';
+import type { IntentEvent } from '@shared/intents';
 import { menuRegistry } from './menu/registry';
 import { loadSession, saveSession, buildSession } from './storage/session-store';
 import { initSurrealDB, shutdownSurrealDB } from './storage/client';
@@ -36,6 +38,8 @@ import { register as registerGraphPlugin } from '../plugins/graph/main/register'
 // ── 插件注册 ──
 
 function registerPlugins(): void {
+  // 新通道:视图通过 dispatch(IntentEvent) 上抛意图(总纲 § 1.1 + § 7)
+  // 旧 openCompanion / ensureCompanion 保留供 L5 现有代码使用,直至各插件迁移
   const ctx = {
     getMainWindow,
     openCompanion: openRightSlot,
@@ -43,6 +47,7 @@ function registerPlugins(): void {
     getSlotBySenderId,
     getActiveViewWebContentsIds,
     runWithProgress,
+    dispatch: (event: IntentEvent) => intentDispatcher.dispatch(event),
   };
 
   // L5 插件各自注册 WorkMode / NavSide / Protocol / Menu
