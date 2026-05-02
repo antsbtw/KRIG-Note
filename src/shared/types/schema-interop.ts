@@ -4,7 +4,7 @@
  * 职能：不同进程（IPC）、不同模块（L3与L5）、以及外部系统之间的数据交换契约。
  */
 
-import type { ViewType, ViewInstanceId, Bounds } from './schema-visualization';
+import type { ViewType, ViewInstanceId, Bounds, LicenseTier } from './schema-visualization';
 
 // ── 1. 意图总线 (Intent Bus) ──
 
