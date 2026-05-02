@@ -172,6 +172,10 @@ docs/refactor/stages/01-contracts/
 - [ ] J2. <具体可 grep 的标识，例如 "plugins/graph/views/canvas/index.ts 中存在 export const canvasView">
 - [ ] J3. <具体可验证的事实>
 - [ ] J4. 契约 § B 所有防御代码 grep 仍存在（迁移过程未丢失）
+- [ ] **J6. 范围对账（强制使用双点 diff + 显式基线 SHA）**：
+      `git diff <PAYLOAD_BASELINE_SHA>..HEAD --stat` 含且仅含以下 N 个文件：[列表]
+      - **PAYLOAD_BASELINE_SHA = `<填具体 SHA>`**（Commander 起草时填——指 task-card 修订前的最后一个非 Builder commit；如果阶段经历多版 task-card 修订,填**最初派活基线**而非每次重启的最新 commit）
+      - **绝不允许**用 `main...HEAD` 三点 diff（因为分支头含 Commander 派活 commit）
 - [ ] J5. ...
 
 ## 已知风险（来自契约 § B + memory）
@@ -182,6 +186,13 @@ docs/refactor/stages/01-contracts/
 > Commander 起草时已知存在歧义、留待 Builder 启动时确认
 1. ...
 ```
+
+> **§ 六补充 — 起草纪律（吸收阶段 00/00x/typecheck-baseline/01 四次教训）**
+>
+> 1. **task-card § J6 必须显式给 PAYLOAD_BASELINE_SHA**——阶段 00/00x/typecheck-baseline/01 都因 J6 用 `main...HEAD` 三点 diff 与"Builder 引入 diff"语义模糊导致 Builder 自决记录在 G 段,Auditor 第三次重申。模板已上锁。
+> 2. **任何"字节级写死"的脚本/配置必须在 task-card 起草时实测一遍**——不能光靠纸上推演（阶段 01 第二次 BLOCKING 因未实测 ESLint 同名规则 cascade 行为）。
+> 3. **任何"已就绪/自动生效"承诺必须实测验证**——不能因前序阶段 task-card 写"已答"就默认成立（阶段 01 第二次 BLOCKING 因 R3 承诺"自动在 typecheck 范围内"未实测）。
+> 4. **任何引用现状的禁令必须 grep 当前仓库**——如 `find src/plugins -name engine -o -name runtime -o -name lib`（阶段 01 第一次 BLOCKING 因未 grep 历史目录）。
 
 ## 七、文件位置约定
 
