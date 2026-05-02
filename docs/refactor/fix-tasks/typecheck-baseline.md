@@ -25,7 +25,7 @@
 | 目标分支 | `fix/typecheck-baseline`（Builder 从 main 切出） |
 | 错误来源 | 4 处仓库历史 type 错误（`WebkitAppRegion` ×3 + `view.webContents` ×1） |
 | 完成判据 | 所有 4 处清零；不引入新 type error |
-| 严禁顺手做 | 重构期产出不动；schema-interop.ts 缺 ViewType / LicenseTier 不动（那归 [stages/00x-schema-completion](../stages/00x-schema-completion/README.md)） |
+| 严禁顺手做 | 重构期产出不动（schema-* 文件已由 [stages/00x-schema-completion](../stages/00x-schema-completion/README.md) 处理并 merge 到 main） |
 
 ## 引用
 
@@ -90,7 +90,7 @@ declare module 'react' {
 
 ## 完成判据
 
-- [ ] **F1**: `npx tsc --noEmit -p tsconfig.json 2>&1 | grep "error TS" | wc -l` 输出 0**或** 2（如果 stages/00x-schema-completion 还未 merge 则保留 2 处 schema 错误）
+- [ ] **F1**: `npx tsc --noEmit -p tsconfig.json 2>&1 | grep "error TS" | wc -l` 输出 **0**（从基线 4 处历史 type 债清零；00x-schema-completion 已 merge 到 main，本分支已 rebase 到 main 之后基线为 4 处）
 - [ ] **F2**: `npx tsc --noEmit -p tsconfig.json 2>&1 | grep "WebkitAppRegion"` 输出空
 - [ ] **F3**: `npx tsc --noEmit -p tsconfig.json 2>&1 | grep "handlers.ts.*webContents.*unknown"` 输出空
 - [ ] **F4**: `git diff main...HEAD --stat` 仅包含 `src/main/ipc/handlers.ts` + `src/renderer/shell/WorkspaceBar.tsx`（修法 A）；或追加一个 `src/renderer/types/css.d.ts`（修法 B）
@@ -99,7 +99,7 @@ declare module 'react' {
 
 ## 严禁顺手做
 
-- ❌ **不动 schema-interop.ts 的 ViewType / LicenseTier**——那归 [stages/00x-schema-completion](../stages/00x-schema-completion/README.md)
+- ❌ **不动 schema-* 任何文件**——schema 骨架已由 [stages/00x-schema-completion](../stages/00x-schema-completion/README.md) 处理完毕并 merge 到 main
 - ❌ **不修改任何业务逻辑**（仅类型层面）
 - ❌ **不重构** view / Electron 相关代码
 - ❌ **不删除** `view.webContents` 调用代码
