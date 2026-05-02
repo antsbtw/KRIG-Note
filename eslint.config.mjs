@@ -96,4 +96,30 @@ export default tseslint.config(
       }],
     },
   },
+  // ── 阶段 01 J5.4: 视图层禁止 import 非白名单 npm 包(warn 级,波次 3 升 error) ──
+  // 白名单单一真值见 tools/lint/pure-utility-allowlist.ts(.ts 文件无法在
+  // .mjs ESLint config 中直接 import,需 ts loader;故仅作注释引用,
+  // 实际拦截规则用下方正向黑名单实现)
+  {
+    files: ['src/plugins/**/views/**'],
+    rules: {
+      'no-restricted-imports': ['warn', {
+        patterns: [{
+          // 通用模式:禁止 import 任何不以 @shared/ @capabilities/ 或相对路径开头的包
+          // 排除白名单(从 tools/lint/pure-utility-allowlist.ts 同步:dayjs/lodash/clsx/...)
+          group: [
+            // 拦截非白名单 npm 包(简化实现:列出禁止的高风险包,白名单包不出现在 group 中)
+            'three', 'three/*',
+            'prosemirror-*',
+            'pdfjs-dist', 'pdfjs-dist/*',
+            'epubjs',
+            '@anthropic-ai/sdk',
+            'openai',
+            'elkjs',
+          ],
+          message: 'L5 视图层禁止直接 import 重型外部依赖,必须经 src/capabilities/ 封装 — 见总纲 § 1.3 抽象原则',
+        }],
+      }],
+    },
+  },
 );
