@@ -126,24 +126,166 @@ export type PureUtility = typeof PURE_UTILITY_ALLOWLIST[number];
 
 **约束**：仅常量 + 类型，无逻辑代码。
 
-### J5：配置 eslint `no-restricted-imports` 规则
+### J5：扩展现有 `eslint.config.mjs` 加入 5 条 KRIG 项目规则
 
-在仓库现有 ESLint 配置文件中（`.eslintrc.cjs` / `.eslintrc.js` / `eslint.config.js` 等，由 Builder 探查并选择正确文件）追加规则：
+> **基线确认**：阶段 00-eslint-bootstrap 已 merge 到 main（commit `20bf6414`）。当前仓库已有：
+> - `eslint.config.mjs`（flat config 风格，39 行，含 4 条 `'off'` 降噪）
+> - `npm run lint`（exit 1：仓库现有代码 lint 问题，允许）
+> - `npm run typecheck`（exit 0：type-clean）
+> - ESLint 10.3.0 + typescript-eslint 8.59.1 + @eslint/js 10.0.1
+>
+> 本 J5 在此基线上**修改 `eslint.config.mjs`**——不新建任何 config 文件、不切换 config 风格。
 
-| 规则 | 范围 | 严重度 |
-|------|------|--------|
-| 禁止 import 布局特权 API（`openCompanion` / `ensureCompanion` / `closeRightSlot` / `openRightSlot`） | `src/plugins/**` | error |
-| 禁止跨插件 import（`plugins/<X>` 不能 import `plugins/<Y>`） | `src/plugins/**` | error |
-| 禁止 import `electron` | `src/shared/**` | error |
-| 禁止 import 任何不在 `PURE_UTILITY_ALLOWLIST` 的 npm 包 | `src/plugins/**/views/**` | **warn**（波次 3 升 error） |
-| 禁建 `engine/` / `runtime/` / `lib/` 目录 | `src/plugins/<X>/` | error（用 `no-restricted-paths` 或自定义检查） |
+#### J5 拆分为 J5.1 ~ J5.5（每条规则独立判据）
 
-**实施细节**：
-- 跨插件禁令可通过 `no-restricted-imports` 的 `patterns` + glob 实现，或者用 `eslint-plugin-import` 的 `no-restricted-paths` 规则
-- 白名单的"非白名单 npm 包"判定：可用 `no-restricted-imports` 配合 `patterns` 排除已知白名单
-- 目录禁建可作为 GitHub Actions 检查或脚本校验，eslint 不擅长此场景——**Builder 如认为 eslint 无法表达该规则，可降级为 `tools/lint/check-plugin-dirs.sh` 脚本**，并在 README 注明
+修改 `eslint.config.mjs`：保留现有 4 条 `'off'` 降噪不动，**追加** 5 个 config object（每条规则一个 object，便于以后独立维护与 grep）。
 
-**新增/修改测试**：在某个示例文件中尝试违规 import（如临时添加 `// @ts-expect-error eslint test` 注释 + 违规 import），确认 eslint 报错预期。验证完成后**移除测试代码**。
+#### J5.1：禁止 import 布局特权 API
+
+```js
+{
+  files: ['src/plugins/**'],
+  rules: {
+    'no-restricted-imports': ['error', {
+      patterns: [{
+        group: ['**/window/shell', '**/slot/*', '@main/window/*'],
+        importNames: ['openCompanion', 'ensureCompanion', 'closeRightSlot', 'openRightSlot'],
+        message: 'L5 插件禁止直接调布局特权 API。改用 dispatch(IntentEvent) — 见 docs/refactor/00-总纲.md § 1.1 分层原则',
+      }],
+    }],
+  },
+},
+```
+
+#### J5.2：禁止跨插件 import
+
+跨插件 `plugins/<X>` 不能 import `plugins/<Y>`。**实施手段由 Builder 自决（NON-BLOCKING）**：
+- 优先：`no-restricted-imports` 的 `patterns` + glob（如 `src/plugins/note/**` 的 `patterns: ['**/plugins/!(note)/**']`）
+- 备选：每个插件目录单独配 `files` + `patterns` 多个 config object
+
+**约束**：实现必须能让"`plugins/note/**` 的代码 import `plugins/web/**`"被 ESLint 报 error。Builder 在 J5.5 测试中验证。
+
+#### J5.3：`src/shared/**` 禁止 import `electron`
+
+```js
+{
+  files: ['src/shared/**'],
+  rules: {
+    'no-restricted-imports': ['error', {
+      paths: [{
+        name: 'electron',
+        message: 'shared 是跨进程契约层,禁止 import electron — 见总纲 § 6 数据模型四层',
+      }],
+    }],
+  },
+},
+```
+
+#### J5.4：视图层禁止 import 非白名单 npm 包（warn 级，波次 3 升 error）
+
+```js
+{
+  files: ['src/plugins/**/views/**'],
+  rules: {
+    'no-restricted-imports': ['warn', {
+      patterns: [{
+        // 通用模式:禁止 import 任何不以 @shared/ @capabilities/ 或相对路径开头的包
+        // 排除白名单(从 tools/lint/pure-utility-allowlist.ts 同步:dayjs/lodash/clsx/...)
+        group: [
+          // 拦截非白名单 npm 包(简化实现:列出禁止的高风险包,白名单包不出现在 group 中)
+          'three', 'three/*',
+          'prosemirror-*',
+          'pdfjs-dist', 'pdfjs-dist/*',
+          'epubjs',
+          '@anthropic-ai/sdk',
+          'openai',
+          'elkjs',
+        ],
+        message: 'L5 视图层禁止直接 import 重型外部依赖,必须经 src/capabilities/ 封装 — 见总纲 § 1.3 抽象原则',
+      }],
+    }],
+  },
+},
+```
+
+> **简化策略说明**：完整"反向白名单"（"禁止任何不在 PURE_UTILITY_ALLOWLIST 的包"）需要写很复杂的 negative lookahead glob，ESLint `no-restricted-imports` 表达力受限。本次采用**正向黑名单**——列出已知重型外部依赖，未来发现新包时由独立 PR 添加。这与总纲 § 1.3 规则 A "外部依赖必须经 Capability 封装"语义等价，且可演进。
+>
+> Builder 须**直接 import** `tools/lint/pure-utility-allowlist.ts` 在 `eslint.config.mjs` 中（作为该决策的"白名单单一真值"引用，便于以后维护时同步）——但**不必**在 ESLint 规则中实际使用 PURE_UTILITY_ALLOWLIST 数组（受 ESLint 表达力限制）。引用形如 `import { PURE_UTILITY_ALLOWLIST } from './tools/lint/pure-utility-allowlist.ts';` 即可——若失败则改用注释 "白名单单一真值见 tools/lint/pure-utility-allowlist.ts"。
+
+#### J5.5：禁建 `engine/` / `runtime/` / `lib/` 目录
+
+ESLint 不擅长"目录是否存在"这类文件系统检查。**降级为脚本**：
+
+新建 `tools/lint/check-plugin-dirs.sh`：
+
+```bash
+#!/usr/bin/env bash
+# 验证 plugins/<X>/ 下不存在 engine/ runtime/ lib/ 目录
+# 失败时退出非 0,可接 npm run lint 或 CI
+
+set -euo pipefail
+
+VIOLATIONS=$(find src/plugins -mindepth 2 -maxdepth 2 -type d \( -name 'engine' -o -name 'runtime' -o -name 'lib' \) 2>/dev/null || true)
+
+if [[ -n "$VIOLATIONS" ]]; then
+  echo "❌ 发现违规目录(总纲 § 4.1 规定):"
+  echo "$VIOLATIONS"
+  echo ""
+  echo "  plugins/<X>/ 下禁建 engine/runtime/lib/——"
+  echo "  外部依赖必须封装到 src/capabilities/<x>/ 内"
+  echo "  详见 docs/refactor/00-总纲.md § 5.8"
+  exit 1
+fi
+
+echo "✓ 插件目录结构合规"
+```
+
+并在 `package.json` `scripts` 中**追加**一条 script（不修改现有 lint/typecheck）：
+
+```json
+{
+  "scripts": {
+    "lint:dirs": "bash tools/lint/check-plugin-dirs.sh"
+  }
+}
+```
+
+Builder 须 `chmod +x tools/lint/check-plugin-dirs.sh`。
+
+#### J5 验证测试（5 条规则同时）
+
+在临时违规目录/文件中触发 5 类违规，分别确认 ESLint / 脚本报错。**验证完移除全部测试代码**（不留示例）：
+
+```bash
+# 测试 1: J5.1 布局特权
+echo "import { openCompanion } from '@main/window/shell';" > src/plugins/note/test-j51.ts
+# 测试 2: J5.2 跨插件
+echo "import x from '@plugins/web/foo';" > src/plugins/note/test-j52.ts
+# 测试 3: J5.3 shared 禁 electron
+echo "import { app } from 'electron';" > src/shared/test-j53.ts
+# 测试 4: J5.4 视图层禁外部依赖
+mkdir -p src/plugins/note/views/test
+echo "import * as THREE from 'three';" > src/plugins/note/views/test/test-j54.ts
+# 测试 5: J5.5 目录禁建
+mkdir -p src/plugins/note/engine
+
+npm run lint > /tmp/lint-test.log 2>&1; LINT_EXIT=$?
+npm run lint:dirs > /tmp/dirs-test.log 2>&1; DIRS_EXIT=$?
+
+# 验证报错(预期 J5.1/2/3 是 error,J5.4 是 warn,J5.5 脚本 exit 1)
+grep "test-j51" /tmp/lint-test.log    # 预期含 error
+grep "test-j52" /tmp/lint-test.log    # 预期含 error
+grep "test-j53" /tmp/lint-test.log    # 预期含 error
+grep "test-j54" /tmp/lint-test.log    # 预期含 warning(注:可能要 grep "warning" 单独行)
+[[ $DIRS_EXIT -ne 0 ]] || echo "❌ J5.5 脚本应退出非 0"
+
+# 清理测试代码
+rm -f src/plugins/note/test-j51.ts src/plugins/note/test-j52.ts src/shared/test-j53.ts src/plugins/note/views/test/test-j54.ts /tmp/lint-test.log /tmp/dirs-test.log
+rmdir src/plugins/note/views/test src/plugins/note/views 2>/dev/null || true
+rmdir src/plugins/note/engine 2>/dev/null || true
+```
+
+验证完成后**测试代码与目录全部移除**，仓库回到无测试残留状态。
 
 ## 严禁顺手做
 
@@ -164,28 +306,40 @@ export type PureUtility = typeof PURE_UTILITY_ALLOWLIST[number];
 - [ ] **J2**: `src/shared/intents.ts` 存在，可被 `import type { IntentEvent } from '@shared/intents'`（或等价路径）；文件无 `import` 语句；无运行时代码
 - [ ] **J3**: `src/shared/ui-primitives.ts` 存在，导出至少 `ViewDefinition`、`Capability`、`ContextMenuItem`、`ToolbarItem`、`SlashItem`、`HandleItem`、`FloatingToolbarItem`、`KeyBinding`、`CommandHandler` 类型；文件无 `import` 语句；无运行时代码
 - [ ] **J4**: `tools/lint/pure-utility-allowlist.ts` 存在，`PURE_UTILITY_ALLOWLIST` 数组含至少 13 项
-- [ ] **J5a**: ESLint 配置已修改；故意写一个违规 import（如 `src/plugins/note/test-violation.ts` 中 import 一个非白名单 npm 包）跑 `npm run lint` 报错；验证后**该测试文件已删除**
-- [ ] **J5b**: 现有代码中已存在的违规（已知 web 插件 `import openai`、ebook 插件 `import pdfjs-dist` 等）跑 lint 输出 **warn**，不阻塞 CI
-- [ ] **J6**: `git diff main..HEAD` 无任何业务文件改动（除上述 J1~J5 涉及的新文件 + ESLint 配置 + CLAUDE.md）
-- [ ] **J7**: 所有新建的 `.ts` 文件都能通过项目 type-check（`npm run typecheck` 或等价命令）
+- [ ] **J5.1**: `eslint.config.mjs` 含布局特权 API 禁令 config object；测试文件 `src/plugins/note/test-j51.ts` 触发 `npm run lint` error；验证后测试文件已删除
+- [ ] **J5.2**: 跨插件 import 禁令生效（实施手段 Builder 自决）；测试文件 `src/plugins/note/test-j52.ts` 触发 error；验证后已删除
+- [ ] **J5.3**: `eslint.config.mjs` 含 shared 禁 electron 规则；测试文件 `src/shared/test-j53.ts` 触发 error；验证后已删除
+- [ ] **J5.4**: 视图层禁外部依赖规则生效（warn 级）；测试文件 `src/plugins/note/views/test/test-j54.ts` 触发 warning；验证后测试文件 + 测试目录已全部删除
+- [ ] **J5.5**: `tools/lint/check-plugin-dirs.sh` 存在 + 可执行（`chmod +x`）；`package.json scripts.lint:dirs` 已添加；测试目录 `src/plugins/note/engine/` 触发 `npm run lint:dirs` exit 非 0；验证后测试目录已删除
+- [ ] **J5b**: 现有代码中已存在的违规（如 web 插件 `import openai`、ebook 插件 `import pdfjs-dist` 等若存在）跑 `npm run lint` 输出 **warn**，**不阻塞**（lint exit 1 仍允许，与基线一致）
+- [ ] **J6**: `git diff <派活基线>..HEAD --stat`（**Builder 引入的 diff**，吸收 Auditor 阶段 00 建议条目 3）含且仅含以下文件：`CLAUDE.md` / `src/shared/intents.ts` / `src/shared/ui-primitives.ts` / `tools/lint/pure-utility-allowlist.ts` / `tools/lint/check-plugin-dirs.sh` / `eslint.config.mjs` / `package.json`
+- [ ] **J7a**: `npm run typecheck` exit 0（仓库 baseline 已 type-clean，本次新增 .ts 文件不应引入 type 错误）
+- [ ] **J7b**: `npm run lint` exit 1（允许；现有代码 lint 错误数与基线相同 ± 仅本次 J5 规则触发的现有违规数）
+- [ ] **J7c**: `npm run lint:dirs` exit 0（无 plugins/<X>/engine/runtime/lib 残留）
 
 ## 已知风险
 
 来自总纲 + memory 的相关注意点：
 
-- **R1**: 仓库可能用 ESLint flat config（`eslint.config.js`）也可能用 legacy（`.eslintrc.cjs`）——Builder 第一步要探查 [package.json](../../../../package.json) 和仓库根目录确定，按现有结构修改，不擅自切换 config 风格
+- **R1（已答）**: 仓库 ESLint config 风格已由阶段 00-eslint-bootstrap 装入为 `eslint.config.mjs`（flat config）。Builder **直接修改** `eslint.config.mjs` 即可，不需探查、不需切换风格
 - **R2**: TypeScript 路径别名（`@shared/`、`@capabilities/` 等）是否已配置在 tsconfig.json 的 `paths` 字段——Builder 要确认现有 path 配置，新文件采用与现有 `src/shared/types/schema-*.ts` 一致的 import 写法
-- **R3**: `tools/lint/` 目录是新建——必须保证它在 tsconfig 的 `include` 范围内，否则类型检查会跳过该文件
+- **R3（已答）**: 阶段 00 已扩展 `tsconfig.json` `include` 至 `["src/**/*", "tools/**/*"]`。本阶段新建的 `tools/lint/pure-utility-allowlist.ts` 自动在 typecheck 范围内
 - **R4**: Builder **不读 memory**，但要知道存在 memory `feedback_merge_requires_explicit_ok`——本任务卡也遵守：commit 由 Builder 自己做，merge/push 不做（列命令给 Commander）
+- **R5**: J5.4 用"正向黑名单"而非"反向白名单"实现，是 ESLint `no-restricted-imports` 表达力受限下的妥协（详见 J5.4 说明）。未来发现新重型外部依赖时由独立 PR 添加到 `eslint.config.mjs` 的禁令列表
+- **R6（吸收阶段 00 Auditor 建议条目 3）**: J6 完成判据使用 **Builder 引入的 diff**（自派活基线起的双点 diff `git diff <基线>..HEAD`），不是 `main...HEAD` 三点 diff。这避免"分支已含 Commander 派活 commit"造成的字面 vs 实质差异
+- **R7（基线锁定）**: 派活基线为 main 当前 HEAD（包含阶段 00、00x、typecheck-baseline 三个 merge）。Builder 启动后 `git rebase main` 已由 Commander 列出指令，rebase 后基线即为 main 头部
 
 ## 待 Builder 反问的预期问题
 
 > Commander 起草时已知存在歧义、留待 Builder 启动时确认
 
-1. **R1**：仓库当前 ESLint config 是 flat 还是 legacy？Builder 启动后探查并报告，由 Commander 决定是否调整 J5 实施方式
-2. **目录禁建（J5 第 5 条）**：如果 eslint 表达不了"目录是否存在"这种文件系统层面的检查，Builder 是否可以降级为脚本（`tools/lint/check-plugin-dirs.sh`）？—— **Commander 答**：可以。已在 J5 实施细节中明示
-3. **J5 测试**：Builder 添加临时违规文件验证 eslint 是否生效后，是否需要保留作为示例？—— **Commander 答**：不保留，验证完即删，避免污染仓库
-4. **CLAUDE.md 现有内容**：CLAUDE.md 已有"分支策略"和"提交规范"——新增"重构期硬规则"作为追加章节，不修改既有内容，对吗？—— **Commander 答**：对。仅在文件末尾追加新章节
+1. **R1 已答**：仓库 ESLint config 是 flat config（阶段 00 装入 `eslint.config.mjs`）。Builder 直接修改该文件
+2. **J5.5 目录禁建用脚本而非 ESLint** —— **Commander 答**：是。脚本为 `tools/lint/check-plugin-dirs.sh`，新增 `npm run lint:dirs` script。详见 J5.5
+3. **J5 测试代码保留还是删除** —— **Commander 答**：不保留，验证完即删（含测试目录），仓库不留示例
+4. **CLAUDE.md 是追加章节还是修改** —— **Commander 答**：仅在文件末尾追加 `## 重构期硬规则` 章节，不修改既有内容
+5. **J5.4 视图层禁外部依赖采用什么实现策略** —— **Commander 答**：正向黑名单（列出已知重型外部依赖）。理由见 J5.4 说明 + R5
+6. **`tools/lint/pure-utility-allowlist.ts` 是否要在 ESLint 中实际使用** —— **Commander 答**：仅作为"白名单单一真值"被 `eslint.config.mjs` import（或注释引用）。ESLint `no-restricted-imports` 表达力受限,实际拦截规则用 J5.4 黑名单实现
+7. **J6 用什么 diff 口径** —— **Commander 答**：`git diff <派活基线>..HEAD`（Builder 引入的 diff），不用 `main...HEAD` 三点 diff。详见 R6
 
 ## Builder 完成后
 
