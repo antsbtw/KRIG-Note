@@ -666,6 +666,7 @@ export function CanvasView() {
             handleInstanceGet,
             (id, color) => handleInstanceUpdate(id, { style_overrides: { fill: { type: 'solid', color } } }),
             (id, valign) => handleInstanceUpdate(id, { text_valign: valign }),
+            (id, patch) => handleInstanceUpdate(id, patch),
           )}
           onClose={() => setContextMenu(null)}
         />
@@ -682,8 +683,70 @@ function buildContextMenuItems(
   getInstance: (id: string) => Instance | undefined,
   onColorChange: (id: string, color: string) => void,
   onValignChange: (id: string, valign: 'top' | 'middle' | 'bottom') => void,
+  onShapeStyleChange: (id: string, patch: Partial<Instance>) => void,
 ): ContextMenuItem[] {
   const items: ContextMenuItem[] = [];
+
+  // F-5 普通 shape Fill / Stroke:单选 shape(非文字节点 + 非 substance)时显示
+  if (ids.length === 1) {
+    const inst = getInstance(ids[0]);
+    if (inst && inst.type === 'shape' && inst.ref !== 'krig.text.label') {
+      const isLine = inst.ref.startsWith('krig.line.');
+      // Fill 仅非 line shape 显示(line 没有填充)
+      if (!isLine) {
+        const currentFill = inst.style_overrides?.fill?.color ?? '#4A90E2';
+        items.push({
+          id: 'shape-fill',
+          label: 'Fill',
+          render: (close) => (
+            <ShapeFillMenuItem
+              currentColor={currentFill}
+              onPick={(c) => {
+                onShapeStyleChange(ids[0], {
+                  style_overrides: {
+                    ...inst.style_overrides,
+                    fill: { ...inst.style_overrides?.fill, type: 'solid', color: c },
+                  },
+                });
+                close();
+              }}
+            />
+          ),
+        });
+      }
+      // Stroke:line + 普通 shape 都有
+      const currentStrokeColor = inst.style_overrides?.line?.color ?? '#2E5C8A';
+      const currentStrokeWidth = inst.style_overrides?.line?.width ?? 1.5;
+      items.push({
+        id: 'shape-stroke',
+        label: 'Stroke',
+        render: (close) => (
+          <ShapeStrokeMenuItem
+            currentColor={currentStrokeColor}
+            currentWidth={currentStrokeWidth}
+            onColor={(c) => {
+              onShapeStyleChange(ids[0], {
+                style_overrides: {
+                  ...inst.style_overrides,
+                  line: { ...inst.style_overrides?.line, type: 'solid', color: c },
+                },
+              });
+            }}
+            onWidth={(w) => {
+              onShapeStyleChange(ids[0], {
+                style_overrides: {
+                  ...inst.style_overrides,
+                  line: { ...inst.style_overrides?.line, type: 'solid', width: Math.max(0.5, w) },
+                },
+              });
+            }}
+            onClose={close}
+          />
+        ),
+      });
+      items.push({ id: 'sep-shape', label: '', separator: true });
+    }
+  }
 
   // F-9 Sticky 颜色 + F-10 垂直对齐:单选文字节点时显示
   if (ids.length === 1) {
@@ -896,6 +959,144 @@ function VerticalAlignMenuItem(props: {
       )}
     </>
   );
+}
+
+/** F-5 通用 hover-子菜单容器:抽出 menu-item + 子 popover 视觉模板 */
+function HoverSubmenuItem(props: {
+  icon: string;
+  label: string;
+  children: (close: () => void) => React.ReactNode;
+}) {
+  const itemRef = useRef<HTMLDivElement>(null);
+  const [submenuPos, setSubmenuPos] = useState<{ left: number; top: number } | null>(null);
+  const showSubmenu = () => {
+    const el = itemRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    setSubmenuPos({ left: rect.right + 4, top: rect.top });
+  };
+  const hideSubmenu = () => setSubmenuPos(null);
+
+  return (
+    <>
+      <div
+        ref={itemRef}
+        onMouseEnter={(e) => { e.currentTarget.style.background = '#3a3a3a'; showSubmenu(); }}
+        onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+        style={{
+          padding: '6px 12px', borderRadius: 4, cursor: 'pointer',
+          display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, color: '#e8eaed',
+        }}
+      >
+        <span style={{ width: 24, textAlign: 'center', flexShrink: 0 }}>{props.icon}</span>
+        <span style={{ flex: 1 }}>{props.label}</span>
+        <span style={{ fontSize: 10, color: '#888', marginLeft: 4 }}>▸</span>
+      </div>
+      {submenuPos && (
+        <div
+          onMouseEnter={showSubmenu}
+          onMouseLeave={hideSubmenu}
+          style={{
+            position: 'fixed', zIndex: 1001,
+            left: submenuPos.left, top: submenuPos.top,
+            background: '#2a2a2a', border: '1px solid #444', borderRadius: 8,
+            padding: 10, boxShadow: '0 4px 12px rgba(0,0,0,0.5)', minWidth: 180,
+          }}
+        >
+          {props.children(hideSubmenu)}
+        </div>
+      )}
+    </>
+  );
+}
+
+/** F-5 Fill 子菜单 — 普通 shape 任意 hex 颜色(native color picker + 文本输入) */
+function ShapeFillMenuItem(props: { currentColor: string; onPick: (c: string) => void }) {
+  return (
+    <HoverSubmenuItem icon="●" label="Fill">
+      {() => (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <input
+              type="color"
+              value={normalizeHex6(props.currentColor)}
+              onChange={(e) => props.onPick(e.target.value)}
+              style={{ width: 32, height: 28, padding: 0, border: '1px solid #444', borderRadius: 4, background: 'transparent', cursor: 'pointer' }}
+            />
+            <input
+              type="text"
+              defaultValue={props.currentColor}
+              onBlur={(e) => props.onPick(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') props.onPick((e.target as HTMLInputElement).value); }}
+              style={{
+                flex: 1, padding: '4px 6px', fontSize: 12, fontFamily: 'monospace',
+                background: '#1a1a1a', border: '1px solid #444', borderRadius: 4, color: '#e8eaed',
+              }}
+            />
+          </div>
+        </div>
+      )}
+    </HoverSubmenuItem>
+  );
+}
+
+/** F-5 Stroke 子菜单 — 颜色 + 粗细 */
+function ShapeStrokeMenuItem(props: {
+  currentColor: string;
+  currentWidth: number;
+  onColor: (c: string) => void;
+  onWidth: (w: number) => void;
+  onClose: () => void;
+}) {
+  return (
+    <HoverSubmenuItem icon="/" label="Stroke">
+      {() => (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ width: 50, fontSize: 12, color: '#aaa' }}>Color</span>
+            <input
+              type="color"
+              value={normalizeHex6(props.currentColor)}
+              onChange={(e) => props.onColor(e.target.value)}
+              style={{ width: 32, height: 28, padding: 0, border: '1px solid #444', borderRadius: 4, background: 'transparent', cursor: 'pointer' }}
+            />
+            <input
+              type="text"
+              defaultValue={props.currentColor}
+              onBlur={(e) => props.onColor(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') props.onColor((e.target as HTMLInputElement).value); }}
+              style={{
+                flex: 1, padding: '4px 6px', fontSize: 12, fontFamily: 'monospace',
+                background: '#1a1a1a', border: '1px solid #444', borderRadius: 4, color: '#e8eaed',
+              }}
+            />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ width: 50, fontSize: 12, color: '#aaa' }}>Width</span>
+            <input
+              type="number"
+              min={0.5}
+              step={0.5}
+              defaultValue={props.currentWidth}
+              onBlur={(e) => props.onWidth(parseFloat(e.target.value) || 1)}
+              onKeyDown={(e) => { if (e.key === 'Enter') props.onWidth(parseFloat((e.target as HTMLInputElement).value) || 1); }}
+              style={{
+                flex: 1, padding: '4px 6px', fontSize: 12, fontFamily: 'monospace',
+                background: '#1a1a1a', border: '1px solid #444', borderRadius: 4, color: '#e8eaed',
+              }}
+            />
+            <span style={{ fontSize: 12, color: '#aaa' }}>pt</span>
+          </div>
+        </div>
+      )}
+    </HoverSubmenuItem>
+  );
+}
+
+/** color input 只接受 #RRGGBB,其他形式 fallback */
+function normalizeHex6(c: string): string {
+  if (/^#[0-9a-fA-F]{6}$/.test(c)) return c;
+  return '#4A90E2';
 }
 
 const styles: Record<string, React.CSSProperties> = {
