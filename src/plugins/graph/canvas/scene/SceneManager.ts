@@ -36,6 +36,10 @@ export class SceneManager {
   private resizeObserver: ResizeObserver;
   private rafHandle: number | null = null;
   private disposed = false;
+  /** view 变化(zoom / pan / resize)订阅 — DotGrid 等浮层同步用 */
+  private viewChangeListeners = new Set<() => void>();
+  /** F-1 点阵网格底 */
+  private dotGrid: import('./DotGrid').DotGrid | null = null;
 
   /** 屏幕中心对应的世界坐标点 */
   private viewCenter = { x: 0, y: 0 };
@@ -70,6 +74,12 @@ export class SceneManager {
 
     // 立刻处理一次 resize(初始尺寸)
     this.handleResize();
+
+    // F-1 点阵网格底(lazy import 避免循环依赖)
+    void import('./DotGrid').then(({ DotGrid }) => {
+      if (this.disposed) return;
+      this.dotGrid = new DotGrid(this);
+    });
 
     // 起 RAF
     this.startRAF();
@@ -126,6 +136,16 @@ export class SceneManager {
     // up 用默认 (0,1,0)— frustum 内置 top<bottom 已经反转 Y
     this.camera.lookAt(this.viewCenter.x, this.viewCenter.y, 0);
     this.camera.updateProjectionMatrix();
+    // 通知订阅者(DotGrid 跟随同步)
+    for (const cb of this.viewChangeListeners) {
+      try { cb(); } catch (e) { console.error('[SceneManager.onViewChange] listener error', e); }
+    }
+  }
+
+  /** 订阅 view 变化(zoom / pan / resize),返回取消订阅函数 */
+  onViewChange(cb: () => void): () => void {
+    this.viewChangeListeners.add(cb);
+    return () => { this.viewChangeListeners.delete(cb); };
   }
 
   /**
@@ -304,6 +324,9 @@ export class SceneManager {
     this.disposed = true;
     if (this.rafHandle !== null) cancelAnimationFrame(this.rafHandle);
     this.resizeObserver.disconnect();
+    this.viewChangeListeners.clear();
+    this.dotGrid?.dispose();
+    this.dotGrid = null;
     // 清理 scene 上的 geometry / material / textures
     this.scene.traverse((obj) => {
       const mesh = obj as THREE.Mesh;
