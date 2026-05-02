@@ -224,6 +224,68 @@ export class SceneManager {
   // RAF
   // ─────────────────────────────────────────────────────────
 
+  /**
+   * 把 Object3D 投影到屏幕,返回容器内 CSS 像素 AABB.
+   *
+   * 与 renderer.render 共享投影矩阵 — 用 Three.js 自己的 Vector3.project,
+   * 保证返回的 AABB 与 mesh 真实视觉位置一致.
+   *
+   * 用法:CanvasView 算 EditOverlay popup 位置 + 未来 HandlesOverlay 算
+   * handle 屏幕位置 + Toolbar 浮条跟随节点 等等.
+   *
+   * @param obj — 要投影的 Object3D(取它的世界 bbox)
+   * @param tempVisible — 若 obj.visible=false,临时显示来算 bbox 然后恢复
+   * @returns 容器内 CSS 像素 AABB({ minX, minY, maxX, maxY }),宽 = max-min
+   */
+  projectMeshToScreenAABB(
+    obj: THREE.Object3D,
+    tempVisible = true,
+  ): { minX: number; minY: number; maxX: number; maxY: number } {
+    const { clientWidth, clientHeight } = this.container;
+    if (clientWidth === 0 || clientHeight === 0) {
+      return { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+    }
+    let restoredVisible: boolean | null = null;
+    if (tempVisible && !obj.visible) {
+      restoredVisible = obj.visible;
+      obj.visible = true;
+    }
+    obj.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(obj);
+    if (restoredVisible !== null) obj.visible = restoredVisible;
+
+    const corners = [
+      new THREE.Vector3(box.min.x, box.min.y, 0),
+      new THREE.Vector3(box.max.x, box.min.y, 0),
+      new THREE.Vector3(box.min.x, box.max.y, 0),
+      new THREE.Vector3(box.max.x, box.max.y, 0),
+    ];
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const c of corners) {
+      c.project(this.camera);
+      // NDC[-1,1] → 容器内 CSS 像素;NDC y 朝上,屏幕 y 朝下
+      const sx = (c.x + 1) / 2 * clientWidth;
+      const sy = (1 - c.y) / 2 * clientHeight;
+      if (sx < minX) minX = sx;
+      if (sy < minY) minY = sy;
+      if (sx > maxX) maxX = sx;
+      if (sy > maxY) maxY = sy;
+    }
+    return { minX, minY, maxX, maxY };
+  }
+
+  /**
+   * 屏幕 CSS 像素 → NDC[-1,1]Vector2.Three.js Raycaster.setFromCamera 用.
+   * 抽出来给 InteractionController.hitTest / raycastLinkHref 共用.
+   */
+  screenToNDC(screenX: number, screenY: number, ndcOut: THREE.Vector2): boolean {
+    const { clientWidth, clientHeight } = this.container;
+    if (clientWidth <= 0 || clientHeight <= 0) return false;
+    ndcOut.x = (screenX / clientWidth) * 2 - 1;
+    ndcOut.y = -(screenY / clientHeight) * 2 + 1;
+    return true;
+  }
+
   private startRAF(): void {
     const tick = () => {
       if (this.disposed) return;
