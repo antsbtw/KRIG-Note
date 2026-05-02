@@ -309,27 +309,6 @@ export function CanvasView() {
     });
     editOverlayRef.current = editOverlay;
 
-    // F-11:zoom / pan / resize 时同步 EditOverlay popup 屏幕位置
-    // (popup 是 DOM,不会自动跟相机投影,必须手动重算)
-    const unsubViewChange = sm.onViewChange(() => {
-      const target = editOverlay.getActiveTarget();
-      if (!target) return;
-      const inst = nr.getInstance(target.id);
-      if (!inst || !inst.position || !inst.size) return;
-      const containerEl = containerRef.current;
-      if (!containerEl) return;
-      const rect = containerEl.getBoundingClientRect();
-      const topLeft = sm.worldToScreen(inst.position.x, inst.position.y);
-      const view = sm.getView();
-      const zoom = view.zoom > 0 ? view.zoom : 1;
-      editOverlay.reposition({
-        screenX: rect.left + topLeft.x,
-        screenY: rect.top + topLeft.y,
-        width: inst.size.w * zoom,
-        height: inst.size.h * zoom,
-      });
-    });
-
     /**
      * 打开某个文字节点的编辑浮层.
      *
@@ -397,7 +376,6 @@ export function CanvasView() {
       // unmount 前 flush pending save 到旧 graphId
       void flushSave(activeGraphIdRef.current);
       window.clearInterval(zoomTimer);
-      unsubViewChange();
       editOverlay.dispose();
       ic.dispose();
       handles.dispose();
