@@ -36,9 +36,9 @@
 
 ### 关注点 1：J2 文件内容字节级对账
 
-`eslint.config.js` 必须**字节级匹配** task-card § J2 给出的代码块。审计步骤：
+`eslint.config.mjs` 必须**字节级匹配** task-card § J2 给出的代码块。审计步骤：
 
-1. Read `eslint.config.js`
+1. Read `eslint.config.mjs`
 2. Read `docs/refactor/stages/00-eslint-bootstrap/task-card.md` § J2 代码块
 3. 逐字符对照（除尾行换行外）
 
@@ -49,7 +49,7 @@
 本阶段**只允许**动以下 5 个文件：
 - `package.json`（J0 + J1）
 - `package-lock.json`（npm install 副作用）
-- `eslint.config.js`（J2，新建）
+- `eslint.config.mjs`（J2，新建）
 - `tsconfig.json`（J3）
 - `.gitignore`（J4）
 
@@ -63,7 +63,7 @@
 
 ### 关注点 3：禁止"顺手"添加项目规则
 
-`eslint.config.js` 中**不能出现**任何针对 KRIG 业务的规则，特别是：
+`eslint.config.mjs` 中**不能出现**任何针对 KRIG 业务的规则，特别是：
 - `no-restricted-imports` 含 `openCompanion` / `closeRightSlot` 等关键词
 - `no-restricted-paths` 含 `plugins` / `engine` 等
 - 自定义 KRIG 规则

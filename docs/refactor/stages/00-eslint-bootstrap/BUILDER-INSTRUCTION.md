@@ -54,20 +54,20 @@
 ```
 J0:  feat(refactor/eslint-bootstrap): 装 ESLint 9.x + typescript-eslint
 J1:  feat(refactor/eslint-bootstrap): 加 lint / typecheck script
-J2:  feat(refactor/eslint-bootstrap): 加最小可运行 eslint.config.js
+J2:  feat(refactor/eslint-bootstrap): 加最小可运行 eslint.config.mjs
 J3:  fix(refactor/eslint-bootstrap): tsconfig include 扩至 tools/**
 J4:  fix(refactor/eslint-bootstrap): .gitignore 加根目录 tmp/
 J5:  test(refactor/eslint-bootstrap): 验证 lint / typecheck / install 全通过
 ```
 
 **关键约束**（来自 task-card "严禁顺手做"）：
-- 只动 task-card § J0~J5 明确列出的 5 个文件：`package.json` / `package-lock.json`（npm install 自动） / `eslint.config.js` / `tsconfig.json` / `.gitignore`
+- 只动 task-card § J0~J5 明确列出的 5 个文件：`package.json` / `package-lock.json`（npm install 自动） / `eslint.config.mjs` / `tsconfig.json` / `.gitignore`
 - 不修改任何 .ts/.tsx 业务代码
 - 不修复已有的 lint warning 或 type 错误
 - 不创建 `tools/lint/` 目录或下面任何文件
 - 不创建 `src/shared/intents.ts` 等阶段 01 文件
 - 不修改 CLAUDE.md
-- **不写项目业务规则**（不在 eslint.config.js 中加任何 "no-restricted-imports"、"no-restricted-paths" 等针对 KRIG 业务的规则）—— 阶段 01 才做
+- **不写项目业务规则**（不在 eslint.config.mjs 中加任何 "no-restricted-imports"、"no-restricted-paths" 等针对 KRIG 业务的规则）—— 阶段 01 才做
 
 ### 步骤 4：写 `tmp/builder-report.md`
 
@@ -95,11 +95,11 @@ builder-report 就绪：tmp/builder-report.md
 
 ### 提醒 2：J2 文件内容要字节级匹配 task-card
 
-`eslint.config.js` 内容**必须照抄 task-card § J2 代码块**——这是 Auditor 审计点 J2b 的对账标准。不允许"看起来更优雅地"重写。
+`eslint.config.mjs` 内容**必须照抄 task-card § J2 代码块**——这是 Auditor 审计点 J2b 的对账标准。不允许"看起来更优雅地"重写。
 
 ### 提醒 3：J5 验证退出码
 
-J5b（`npm run lint`）退出码 0 或 1 都行（lint 错误允许），但**不能 crash**——如果输出 "Configuration error" 或 "Invalid syntax in eslint.config.js" 等，说明 J2 配置写错了，必须排查修正。
+J5b（`npm run lint`）退出码 0 或 1 都行（lint 错误允许），但**不能 crash**——如果输出 "Configuration error" 或 "Invalid syntax in eslint.config.mjs" 等，说明 J2 配置写错了，必须排查修正。
 
 J5c（`npm run typecheck`）退出码必须 0。如果非 0，回到提醒 1（R1 BLOCKING）。
 

@@ -24,7 +24,7 @@
 
 1. **J0** 装 ESLint + 必要 plugin（devDependency 入 package.json）
 2. **J1** 加 `lint` / `typecheck` script 到 package.json
-3. **J2** 创建最小可运行 `eslint.config.js`（flat 风格）
+3. **J2** 创建最小可运行 `eslint.config.mjs`（flat 风格）
 4. **J3** 扩展 `tsconfig.json` `include` 至 `tools/**/*`
 5. **J4** 将根目录 `tmp/` 加入 `.gitignore`
 6. **J5** 验证：`npm install` 成功 + `npm run lint` 不报错运行 + `npm run typecheck` 不报错运行

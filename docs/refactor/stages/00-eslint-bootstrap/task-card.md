@@ -50,7 +50,9 @@ npm install --save-dev eslint typescript-eslint
 - `lint` 命令简单到 `eslint .`，无任何额外参数
 - `typecheck` 用 `-p tsconfig.json` 显式指定，便于将来兼容多 tsconfig
 
-### J2：创建最小可运行 `eslint.config.js`（flat 风格，仓库根目录）
+### J2：创建最小可运行 `eslint.config.mjs`（flat 风格，仓库根目录）
+
+> **B2 BLOCKING 解：文件名为 `.mjs` 后缀**（仓库 `package.json` 无 `"type": "module"`，Node 默认按 CommonJS 解析 `.js`，会让 ESM `import` 语法 SyntaxError）。`.mjs` 强制 ESM 解析，不影响仓库其他 `.js` 文件解析路径。ESLint 9 flat config 对 `.mjs` 是一等公民。
 
 文件内容（**完全照抄**——不允许 Builder 自行扩展）：
 
@@ -97,7 +99,7 @@ export default tseslint.config(
 ```
 
 **关键约束**：
-- **不允许** Builder 改文件名（必须是 `eslint.config.js`，flat config 默认入口）
+- **必须**用 `.mjs` 扩展名（`eslint.config.mjs`），**不允许**用 `.js`（仓库非 ESM）或 `.cjs`（语法不兼容）
 - **不允许** Builder 添加任何项目业务规则——规则禁令清单是阶段 01 的工作
 - **不允许** Builder 自行加 `files: [...]` 限定范围 —— 让默认全仓扫描
 - 上面 4 条 `'off'` 是为了让 J5 验证时 `npm run lint` 不在已有代码上炸出红墙——这不是项目规则，是降噪。阶段 01 时 Commander 起草的 5 条规则是**新增**到这个 config 里的
@@ -174,20 +176,21 @@ npm run typecheck                    # 应不报错运行(已存在的 ts 文件
 - [ ] **J1a**: `package.json` `scripts.lint` 等于 `"eslint ."`
 - [ ] **J1b**: `package.json` `scripts.typecheck` 等于 `"tsc --noEmit -p tsconfig.json"`
 - [ ] **J1c**: 原有 5 条 script（start/package/make/postinstall/build:fonts）保留不变
-- [ ] **J2a**: 仓库根目录存在 `eslint.config.js` 文件
+- [ ] **J2a**: 仓库根目录存在 `eslint.config.mjs` 文件（**注意 .mjs 扩展名**）
 - [ ] **J2b**: 文件内容**字节级匹配** task-card § J2 给出的代码块（除尾行换行外）
+- [ ] **J2c**: 不存在 `eslint.config.js` 或 `eslint.config.cjs`（避免 ESLint 找错入口）
 - [ ] **J3**: `tsconfig.json` `include` 字段为 `["src/**/*", "tools/**/*"]`
 - [ ] **J4**: `.gitignore` 中 `docs/tmp/` 行之后存在 `tmp/` 行
 - [ ] **J5a**: `npm install` 已运行成功（package-lock.json 已更新且无 npm 错误）
 - [ ] **J5b**: `npm run lint` 退出码为 0 或 1（**不能** crash），输出无 "Configuration error" 等致命提示
 - [ ] **J5c**: `npm run typecheck` 退出码为 0（仓库现有代码 typecheck 通过）
-- [ ] **J6**: `git diff main...HEAD` 仅含以下文件：`package.json` / `package-lock.json` / `eslint.config.js` / `tsconfig.json` / `.gitignore`，**绝无**任何 .ts/.tsx 业务代码改动
+- [ ] **J6**: `git diff main...HEAD` 仅含以下文件：`package.json` / `package-lock.json` / `eslint.config.mjs` / `tsconfig.json` / `.gitignore`，**绝无**任何 .ts/.tsx 业务代码改动
 - [ ] **J7**: 所有 commit 通过 CLAUDE.md 提交规范（feat/fix/refactor/docs scope 格式）
 
 ## 已知风险
 
 - **R1**：`npm run typecheck` 可能在仓库现有代码上炸 type 错误（本次 tsconfig 改动只是扩 include，本质不引入新错误）。如果炸了，是仓库**本来就有的** type 错误。Builder **不能修**——升级到 BLOCKING 让 Commander 决定（修 / 接受 / 临时降级 strict）
-- **R2**：`eslint.config.js` 用了 `import eslint from '@eslint/js'` ESM 语法。如果项目 `package.json` `type` 字段不是 `"module"`，可能需要文件名改为 `.mjs`——Builder 启动后第一步 grep 确认。如果实际现象与 task-card 写法冲突，写入 BLOCKING
+- **R2 已解**：仓库 `package.json` 无 `"type": "module"`（确认于阶段 00 第一次 Builder 启动 BLOCKING B2）。**故 task-card § J2 已修订为 `eslint.config.mjs`**，强制 ESM 解析，不影响其他 `.js` 文件。Builder 不需重新探查此项
 - **R3**：`typescript-eslint` 整合包要求 TS 主版本 ≥ 4.7。Builder 启动后第一步检查仓库 TS 版本，如果 < 4.7 写入 BLOCKING
 
 ## 待 Builder 反问的预期问题
@@ -195,9 +198,9 @@ npm run typecheck                    # 应不报错运行(已存在的 ts 文件
 > Commander 起草时已知存在歧义、留待 Builder 启动时确认（已在 R1~R3 答）
 
 1. **如果 `npm run typecheck` 在已有代码上失败怎么办？** —— 见 R1。Builder 不修，写 BLOCKING
-2. **如果项目不是 ESM 怎么办？** —— 见 R2。Builder 写 BLOCKING 不擅自决定文件名
+2. **如果项目不是 ESM 怎么办？** —— 见 R2，**已解**。task-card § J2 已修订为 `.mjs`
 3. **如果 TS 版本太低？** —— 见 R3
-4. **`eslint.config.js` 中的"4 条 off 降噪"会不会留在阶段 01 中？** —— **Commander 答**：不会。阶段 01 的 task-card 会明确把这 4 条 off 替换为有意义的项目规则。本阶段保留它们仅为让 J5b 不炸已有代码
+4. **`eslint.config.mjs` 中的"4 条 off 降噪"会不会留在阶段 01 中？** —— **Commander 答**：不会。阶段 01 的 task-card 会明确把这 4 条 off 替换为有意义的项目规则。本阶段保留它们仅为让 J5b 不炸已有代码
 
 ## Builder 完成后
 
