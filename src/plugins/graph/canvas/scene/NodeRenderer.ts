@@ -395,7 +395,17 @@ export class NodeRenderer {
       // 无 BG(Text 节点)用默认 undefined → atom-serializer fallback #dddddd
       const bgColor = (bgFill?.type === 'solid' && bgFill.color) ? bgFill.color : null;
       const defaultTextColor = bgColor ? pickReadableTextColor(bgColor) : undefined;
-      void this.textRenderer.render(pmJsonAtoms, { width: safeSize.w, defaultTextColor }).then((svgGroup) => {
+      // F-10 valign:仅 size_lock.h=true(节点高度固定)时生效;targetHeight 给
+      // serializer 算 valign 偏移
+      const hLocked = !!inst.size_lock?.h;
+      const valign = hLocked ? (inst.text_valign ?? 'top') : 'top';
+      const targetHeight = hLocked ? safeSize.h : undefined;
+      void this.textRenderer.render(pmJsonAtoms, {
+        width: safeSize.w,
+        defaultTextColor,
+        valign,
+        targetHeight,
+      }).then((svgGroup) => {
         if (this.textRenderTokens.get(inst.id) !== token) {
           this.textRenderer.dispose(svgGroup);
           return;

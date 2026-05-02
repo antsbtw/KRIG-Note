@@ -39,6 +39,17 @@ export interface AtomsToSvgOptions {
    * 不传 = '#dddddd'(深色背景适配).textStyle.color mark 始终覆盖此默认.
    */
   defaultTextColor?: string;
+  /**
+   * 节点目标高度(F-10):用于 valign 偏移计算.
+   * 不传 = 用 max(VIEWBOX_H, contentH);传了且 > contentH → 多余空间按 valign
+   * 在顶 / 中 / 底分配.
+   */
+  targetHeight?: number;
+  /**
+   * 文字垂直对齐(F-10):'top'(默认)/ 'middle' / 'bottom'.
+   * 仅当 targetHeight > contentH(节点高度大于内容)时生效.
+   */
+  valign?: 'top' | 'middle' | 'bottom';
 }
 
 /**
@@ -55,8 +66,10 @@ export async function atomsToSvgWithLinks(
 ): Promise<{ svg: string; links: LinkRect[] }> {
   const viewBoxW = options.width ?? DEFAULT_VIEWBOX_W;
   const defaultTextColor = options.defaultTextColor;
-  // 缓存 key 含 width 和默认色(同 atoms 不同 width / 主题色 → 不同 SVG)
-  const key = `w=${viewBoxW}|c=${defaultTextColor ?? ''}|${JSON.stringify(atoms)}`;
+  const targetHeight = options.targetHeight;
+  const valign = options.valign ?? 'top';
+  // 缓存 key 含 width / 主题色 / 目标高度 / valign(任一变化都得重渲)
+  const key = `w=${viewBoxW}|c=${defaultTextColor ?? ''}|th=${targetHeight ?? 'auto'}|va=${valign}|${JSON.stringify(atoms)}`;
   const cached = SVG_CACHE.get(key);
   if (cached !== undefined) return cached;
 
@@ -71,7 +84,25 @@ export async function atomsToSvgWithLinks(
     if (svg) parts.push(svg);
     y += height;
   }
-  const svg = wrapSvg(parts.join('\n'), viewBoxW, Math.max(VIEWBOX_H, y));
+  const contentH = y;
+  // viewBox 高度:targetHeight 优先(让 valign 有空间);否则 max(VIEWBOX_H, contentH)
+  const viewBoxH = targetHeight ?? Math.max(VIEWBOX_H, contentH);
+  // F-10 valign:有富余空间(viewBoxH > contentH)时,按 valign 在顶部留偏移
+  // 用 <g transform> 包裹所有内容(包括 link bbox 也得跟着偏移)
+  const slack = Math.max(0, viewBoxH - contentH);
+  let yOffset = 0;
+  if (slack > 0) {
+    if (valign === 'middle') yOffset = slack / 2;
+    else if (valign === 'bottom') yOffset = slack;
+  }
+  // link bbox 也按 yOffset 平移(与 SVG transform 同步)
+  if (yOffset !== 0) {
+    for (const r of links) r.y += yOffset;
+  }
+  const innerSvg = yOffset !== 0
+    ? `<g transform="translate(0, ${yOffset})">${parts.join('\n')}</g>`
+    : parts.join('\n');
+  const svg = wrapSvg(innerSvg, viewBoxW, viewBoxH);
   const result = { svg, links };
   SVG_CACHE.set(key, result);
   return result;

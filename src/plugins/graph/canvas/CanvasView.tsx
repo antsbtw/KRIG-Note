@@ -504,6 +504,8 @@ export function CanvasView() {
         },
         // Sticky 创建时锁定 size — 不自动撑高度,8 handle 任意拉伸
         size_lock: { w: true, h: true },
+        // F-10:Sticky 默认垂直居中(对齐 Freeform);Text 节点不预设(top)
+        text_valign: 'middle',
       },
     });
   }, []);
@@ -663,6 +665,7 @@ export function CanvasView() {
             () => interactionRef.current?.deleteSelected(),
             handleInstanceGet,
             (id, color) => handleInstanceUpdate(id, { style_overrides: { fill: { type: 'solid', color } } }),
+            (id, valign) => handleInstanceUpdate(id, { text_valign: valign }),
           )}
           onClose={() => setContextMenu(null)}
         />
@@ -678,27 +681,47 @@ function buildContextMenuItems(
   onDelete: () => void,
   getInstance: (id: string) => Instance | undefined,
   onColorChange: (id: string, color: string) => void,
+  onValignChange: (id: string, valign: 'top' | 'middle' | 'bottom') => void,
 ): ContextMenuItem[] {
   const items: ContextMenuItem[] = [];
 
-  // F-9 Sticky 颜色:单选 Sticky 时显示 "Color ▸" 主项 + hover/click 弹右侧子菜单
+  // F-9 Sticky 颜色 + F-10 垂直对齐:单选文字节点时显示
   if (ids.length === 1) {
     const inst = getInstance(ids[0]);
-    if (inst && inst.ref === 'krig.text.label'
-        && inst.size_lock?.w && inst.size_lock?.h
-        && inst.style_overrides?.fill?.color) {
-      const currentColor = inst.style_overrides.fill.color.toLowerCase();
-      items.push({
-        id: 'sticky-color',
-        label: 'Color',
-        render: (close) => (
-          <StickyColorMenuItem
-            currentColor={currentColor}
-            onPick={(c) => { onColorChange(ids[0], c); close(); }}
-          />
-        ),
-      });
-      items.push({ id: 'sep-color', label: '', separator: true });
+    if (inst && inst.ref === 'krig.text.label') {
+      // F-9 Color:有背景色才显(目前 Sticky 才有 fill;Text 节点无)
+      const stickyColor = inst.style_overrides?.fill?.color;
+      if (stickyColor && inst.size_lock?.w && inst.size_lock?.h) {
+        const currentColor = stickyColor.toLowerCase();
+        items.push({
+          id: 'sticky-color',
+          label: 'Color',
+          render: (close) => (
+            <StickyColorMenuItem
+              currentColor={currentColor}
+              onPick={(c) => { onColorChange(ids[0], c); close(); }}
+            />
+          ),
+        });
+      }
+      // F-10 Vertical Align:仅 size_lock.h=true(节点高度固定)时有意义
+      if (inst.size_lock?.h) {
+        const currentValign = inst.text_valign ?? 'top';
+        items.push({
+          id: 'text-valign',
+          label: 'Vertical Align',
+          render: (close) => (
+            <VerticalAlignMenuItem
+              current={currentValign}
+              onPick={(v) => { onValignChange(ids[0], v); close(); }}
+            />
+          ),
+        });
+      }
+      // 任一文字节点子菜单后加分隔线
+      if (stickyColor || inst.size_lock?.h) {
+        items.push({ id: 'sep-text', label: '', separator: true });
+      }
     }
   }
 
@@ -795,6 +818,79 @@ function StickyColorMenuItem(props: { currentColor: string; onPick: (color: stri
                 border: c.toLowerCase() === props.currentColor ? '2px solid #4A90E2' : '2px solid transparent',
               }}
             />
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+/**
+ * "Vertical Align ▸" menu item — F-10.同 StickyColorMenuItem 模式.
+ * 子菜单 3 项(Top / Middle / Bottom),当前项 #4A90E2 蓝高亮.
+ */
+function VerticalAlignMenuItem(props: {
+  current: 'top' | 'middle' | 'bottom';
+  onPick: (v: 'top' | 'middle' | 'bottom') => void;
+}) {
+  const itemRef = useRef<HTMLDivElement>(null);
+  const [submenuPos, setSubmenuPos] = useState<{ left: number; top: number } | null>(null);
+
+  const showSubmenu = () => {
+    const el = itemRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    setSubmenuPos({ left: rect.right + 4, top: rect.top });
+  };
+  const hideSubmenu = () => setSubmenuPos(null);
+
+  const items: Array<{ key: 'top' | 'middle' | 'bottom'; label: string; icon: string }> = [
+    { key: 'top', label: 'Top', icon: '⤒' },
+    { key: 'middle', label: 'Middle', icon: '⇅' },
+    { key: 'bottom', label: 'Bottom', icon: '⤓' },
+  ];
+
+  return (
+    <>
+      <div
+        ref={itemRef}
+        onMouseEnter={(e) => { e.currentTarget.style.background = '#3a3a3a'; showSubmenu(); }}
+        onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+        style={{
+          padding: '6px 12px', borderRadius: 4, cursor: 'pointer',
+          display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, color: '#e8eaed',
+        }}
+      >
+        <span style={{ width: 24, textAlign: 'center', flexShrink: 0 }}>↕</span>
+        <span style={{ flex: 1 }}>Vertical Align</span>
+        <span style={{ fontSize: 10, color: '#888', marginLeft: 4 }}>▸</span>
+      </div>
+      {submenuPos && (
+        <div
+          onMouseEnter={showSubmenu}
+          onMouseLeave={hideSubmenu}
+          style={{
+            position: 'fixed', zIndex: 1001,
+            left: submenuPos.left, top: submenuPos.top,
+            background: '#2a2a2a', border: '1px solid #444', borderRadius: 8,
+            padding: 4, boxShadow: '0 4px 12px rgba(0,0,0,0.5)', minWidth: 140,
+          }}
+        >
+          {items.map((it) => (
+            <div
+              key={it.key}
+              onClick={() => props.onPick(it.key)}
+              onMouseEnter={(e) => { e.currentTarget.style.background = '#3a3a3a'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+              style={{
+                padding: '6px 12px', borderRadius: 4, cursor: 'pointer',
+                display: 'flex', alignItems: 'center', gap: 8, fontSize: 14,
+                color: it.key === props.current ? '#4A90E2' : '#e8eaed',
+              }}
+            >
+              <span style={{ width: 20, textAlign: 'center' }}>{it.icon}</span>
+              <span>{it.label}</span>
+            </div>
           ))}
         </div>
       )}
