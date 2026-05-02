@@ -451,7 +451,7 @@ export function broadcastWorkspaceState(mainWindow: BaseWindow | null): void {
 
   for (const view of mainWindow.contentView.children) {
     if ('webContents' in view) {
-      view.webContents.send(IPC.WORKSPACE_STATE_CHANGED, state);
+      (view as any).webContents.send(IPC.WORKSPACE_STATE_CHANGED, state);
     }
   }
 }
