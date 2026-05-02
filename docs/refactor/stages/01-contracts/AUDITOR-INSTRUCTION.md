@@ -42,32 +42,54 @@
 - `src/shared/intents.ts` 和 `src/shared/ui-primitives.ts` 必须**只有 `export type`/`export interface`**，**不允许任何 `import` 语句**（除非是 type-only import 自身工具类型——但应避免）
 - 不允许任何运行时代码（变量赋值、函数实现、副作用调用）
 
-### 关注点 3：ESLint 5 条规则真的生效（J5.1~J5.5）
+### 关注点 3：ESLint 5 条规则真的生效（J5.1~J5.5）+ J5.5 白名单
 
 **Auditor 必须独立重跑验证测试**（不只信 Builder 报告）。在审计开始时：
 
 ```bash
 git checkout refactor/contracts
 
-# 创建临时违规文件触发 5 条规则
+# === Part 1: 创建临时违规触发 5 条规则 ===
 echo "import { openCompanion } from '@main/window/shell';" > src/plugins/note/audit-test-j51.ts
 echo "import x from '@plugins/web/foo';" > src/plugins/note/audit-test-j52.ts
 echo "import { app } from 'electron';" > src/shared/audit-test-j53.ts
 mkdir -p src/plugins/note/views/audit-test
 echo "import * as THREE from 'three';" > src/plugins/note/views/audit-test/audit-test-j54.ts
-mkdir -p src/plugins/note/audit-engine
+mkdir -p src/plugins/note/audit-engine     # 新增违规——预期被拦截
 
 # 跑 ESLint 与脚本
 npm run lint 2>&1 | grep "audit-test"   # 预期 j51/j52/j53 含 error,j54 含 warning
-npm run lint:dirs                        # 预期 exit 1 + 列 audit-engine
+npm run lint:dirs > /tmp/audit-dirs.log 2>&1; DIRS_EXIT=$?
+[[ $DIRS_EXIT -ne 0 ]] || echo "❌ J5.5 应对新增违规 exit 非 0"
+grep "src/plugins/note/audit-engine" /tmp/audit-dirs.log   # 预期含新增违规
+grep "src/plugins/note/lib" /tmp/audit-dirs.log && echo "❌ note/lib 白名单豁免失败" || echo "✓"
+grep "src/plugins/browser-capability/runtime" /tmp/audit-dirs.log && echo "❌ browser-capability/runtime 白名单豁免失败" || echo "✓"
 
-# 清理(Auditor 不留测试残留)
-rm -f src/plugins/note/audit-test-*.ts src/shared/audit-test-*.ts
+# === Part 2: 清理临时违规 ===
+rm -f src/plugins/note/audit-test-*.ts src/shared/audit-test-*.ts /tmp/audit-dirs.log
 rm -rf src/plugins/note/views/audit-test src/plugins/note/audit-engine
 rmdir src/plugins/note/views 2>/dev/null || true
+
+# === Part 3: 验证 baseline 状态白名单豁免有效 ===
+npm run lint:dirs > /tmp/audit-baseline.log 2>&1; BASE_EXIT=$?
+[[ $BASE_EXIT -eq 0 ]] || echo "❌ J5.5 baseline 应当通过(白名单豁免历史 2 条)"
+grep "白名单已豁免" /tmp/audit-baseline.log || echo "❌ 未输出白名单豁免摘要"
+rm -f /tmp/audit-baseline.log
 ```
 
 **5 条规则任意一条不触发对应级别 = ❌**
+**白名单豁免对历史 2 条不生效 = ❌**
+**baseline 状态 lint:dirs 非 0 = ❌**
+
+### 关注点 3.1：J5.5 脚本字节级对账（与阶段 00 J2b 同模式）
+
+`tools/lint/check-plugin-dirs.sh` 必须**字节级匹配** task-card § J5.5 给出的 bash 脚本。审计步骤：
+
+1. Read `tools/lint/check-plugin-dirs.sh`
+2. Read task-card.md § J5.5 bash 代码块
+3. 逐行对照（除尾行换行外）
+
+**特别确认**：ALLOWLIST 数组**仅含 2 条**：`"src/plugins/note/lib"` + `"src/plugins/browser-capability/runtime"`。任何额外条目 = ❌（Builder 不允许扩展白名单）。任何缺失 = ❌（脚本对历史 2 条阻塞，破坏 baseline）。
 
 ### 关注点 4：纯类型文件无运行时副作用（J2 / J3）
 - `src/shared/intents.ts` 和 `src/shared/ui-primitives.ts` 必须**只有 `export type`/`export interface`**

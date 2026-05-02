@@ -212,24 +212,57 @@ export type PureUtility = typeof PURE_UTILITY_ALLOWLIST[number];
 >
 > Builder 须**直接 import** `tools/lint/pure-utility-allowlist.ts` 在 `eslint.config.mjs` 中（作为该决策的"白名单单一真值"引用，便于以后维护时同步）——但**不必**在 ESLint 规则中实际使用 PURE_UTILITY_ALLOWLIST 数组（受 ESLint 表达力限制）。引用形如 `import { PURE_UTILITY_ALLOWLIST } from './tools/lint/pure-utility-allowlist.ts';` 即可——若失败则改用注释 "白名单单一真值见 tools/lint/pure-utility-allowlist.ts"。
 
-#### J5.5：禁建 `engine/` / `runtime/` / `lib/` 目录
+#### J5.5：禁建 `engine/` / `runtime/` / `lib/` 目录（含历史白名单）
 
 ESLint 不擅长"目录是否存在"这类文件系统检查。**降级为脚本**：
 
-新建 `tools/lint/check-plugin-dirs.sh`：
+> **历史 baseline 说明**：阶段 01 起草时仓库已存在 2 个违规目录（早于本阶段引入）：
+> - `src/plugins/note/lib/`（commit `769b2bff`）
+> - `src/plugins/browser-capability/runtime/`（commit `b1bb596a`）
+>
+> 按总纲 § 1.3 "过渡期处置"精神（已有违规先豁免、波次 3/4 各插件迁移时清），脚本对这 2 条**显式白名单豁免**。波次 3 Note 迁移时清第 1 条；波次 4 L0 收口或 web 迁移时清第 2 条。**未来新增**违规仍立即拦截。
+
+新建 `tools/lint/check-plugin-dirs.sh`（**字节级照抄**——不允许 Builder 自行扩展白名单）：
 
 ```bash
 #!/usr/bin/env bash
-# 验证 plugins/<X>/ 下不存在 engine/ runtime/ lib/ 目录
+# 验证 plugins/<X>/ 下不存在 engine/ runtime/ lib/ 目录(总纲 § 4.1 / § 5.8 规定)
 # 失败时退出非 0,可接 npm run lint 或 CI
 
 set -euo pipefail
 
-VIOLATIONS=$(find src/plugins -mindepth 2 -maxdepth 2 -type d \( -name 'engine' -o -name 'runtime' -o -name 'lib' \) 2>/dev/null || true)
+# 历史 baseline 白名单——本阶段起草时已存在的违规,等波次 3/4 各插件
+# 迁移时清。详见 task-card § J5.5。新增违规不允许进入此白名单——必须
+# 走独立 PR 评审。
+ALLOWLIST=(
+  "src/plugins/note/lib"
+  "src/plugins/browser-capability/runtime"
+)
+
+is_allowlisted() {
+  local dir="$1"
+  local entry
+  for entry in "${ALLOWLIST[@]}"; do
+    if [[ "$dir" == "$entry" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+ALL_HITS=$(find src/plugins -mindepth 2 -maxdepth 2 -type d \( -name 'engine' -o -name 'runtime' -o -name 'lib' \) 2>/dev/null || true)
+
+VIOLATIONS=""
+while IFS= read -r dir; do
+  [[ -z "$dir" ]] && continue
+  if ! is_allowlisted "$dir"; then
+    VIOLATIONS+="$dir"$'\n'
+  fi
+done <<< "$ALL_HITS"
 
 if [[ -n "$VIOLATIONS" ]]; then
   echo "❌ 发现违规目录(总纲 § 4.1 规定):"
-  echo "$VIOLATIONS"
+  printf '%s' "$VIOLATIONS"
   echo ""
   echo "  plugins/<X>/ 下禁建 engine/runtime/lib/——"
   echo "  外部依赖必须封装到 src/capabilities/<x>/ 内"
@@ -237,7 +270,7 @@ if [[ -n "$VIOLATIONS" ]]; then
   exit 1
 fi
 
-echo "✓ 插件目录结构合规"
+echo "✓ 插件目录结构合规(${#ALLOWLIST[@]} 条历史 baseline 白名单已豁免,详见脚本注释)"
 ```
 
 并在 `package.json` `scripts` 中**追加**一条 script（不修改现有 lint/typecheck）：
@@ -266,7 +299,7 @@ echo "import { app } from 'electron';" > src/shared/test-j53.ts
 # 测试 4: J5.4 视图层禁外部依赖
 mkdir -p src/plugins/note/views/test
 echo "import * as THREE from 'three';" > src/plugins/note/views/test/test-j54.ts
-# 测试 5: J5.5 目录禁建
+# 测试 5a: J5.5 目录禁建(新增违规——预期被拦截)
 mkdir -p src/plugins/note/engine
 
 npm run lint > /tmp/lint-test.log 2>&1; LINT_EXIT=$?
@@ -277,15 +310,26 @@ grep "test-j51" /tmp/lint-test.log    # 预期含 error
 grep "test-j52" /tmp/lint-test.log    # 预期含 error
 grep "test-j53" /tmp/lint-test.log    # 预期含 error
 grep "test-j54" /tmp/lint-test.log    # 预期含 warning(注:可能要 grep "warning" 单独行)
-[[ $DIRS_EXIT -ne 0 ]] || echo "❌ J5.5 脚本应退出非 0"
+[[ $DIRS_EXIT -ne 0 ]] || echo "❌ J5.5 脚本应对新增违规退出非 0"
+grep "src/plugins/note/engine" /tmp/dirs-test.log     # 预期含新增违规
+grep "src/plugins/note/lib" /tmp/dirs-test.log && \
+  echo "❌ J5.5 白名单豁免失败" || echo "✓ note/lib 白名单豁免有效"
+grep "src/plugins/browser-capability/runtime" /tmp/dirs-test.log && \
+  echo "❌ J5.5 白名单豁免失败" || echo "✓ browser-capability/runtime 白名单豁免有效"
 
-# 清理测试代码
+# 清理临时违规
 rm -f src/plugins/note/test-j51.ts src/plugins/note/test-j52.ts src/shared/test-j53.ts src/plugins/note/views/test/test-j54.ts /tmp/lint-test.log /tmp/dirs-test.log
 rmdir src/plugins/note/views/test src/plugins/note/views 2>/dev/null || true
 rmdir src/plugins/note/engine 2>/dev/null || true
+
+# 测试 5b: J5.5 baseline 状态(无新增违规——预期 exit 0,即白名单豁免后干净)
+npm run lint:dirs > /tmp/dirs-baseline.log 2>&1; DIRS_BASELINE_EXIT=$?
+[[ $DIRS_BASELINE_EXIT -eq 0 ]] || echo "❌ J5.5 baseline 应当通过(白名单豁免历史 2 条)"
+grep "白名单已豁免" /tmp/dirs-baseline.log || echo "❌ 未输出白名单豁免摘要"
+rm -f /tmp/dirs-baseline.log
 ```
 
-验证完成后**测试代码与目录全部移除**，仓库回到无测试残留状态。
+验证完成后**测试代码与目录全部移除**，仓库回到无测试残留状态（仅 2 条历史白名单目录保留，那是仓库现状）。
 
 ## 严禁顺手做
 
@@ -310,12 +354,15 @@ rmdir src/plugins/note/engine 2>/dev/null || true
 - [ ] **J5.2**: 跨插件 import 禁令生效（实施手段 Builder 自决）；测试文件 `src/plugins/note/test-j52.ts` 触发 error；验证后已删除
 - [ ] **J5.3**: `eslint.config.mjs` 含 shared 禁 electron 规则；测试文件 `src/shared/test-j53.ts` 触发 error；验证后已删除
 - [ ] **J5.4**: 视图层禁外部依赖规则生效（warn 级）；测试文件 `src/plugins/note/views/test/test-j54.ts` 触发 warning；验证后测试文件 + 测试目录已全部删除
-- [ ] **J5.5**: `tools/lint/check-plugin-dirs.sh` 存在 + 可执行（`chmod +x`）；`package.json scripts.lint:dirs` 已添加；测试目录 `src/plugins/note/engine/` 触发 `npm run lint:dirs` exit 非 0；验证后测试目录已删除
+- [ ] **J5.5a**: `tools/lint/check-plugin-dirs.sh` 存在 + 可执行（`chmod +x`），内容**字节级匹配** task-card § J5.5 给出的 bash 脚本（含白名单 2 条）
+- [ ] **J5.5b**: `package.json scripts.lint:dirs` 已添加为 `"bash tools/lint/check-plugin-dirs.sh"`
+- [ ] **J5.5c**: 测试目录 `src/plugins/note/engine/`（新增违规）触发 `npm run lint:dirs` exit 非 0 + 输出含该路径；验证后测试目录已删除
+- [ ] **J5.5d**: 白名单豁免有效：测试 5b 验证输出**不含** `src/plugins/note/lib` 与 `src/plugins/browser-capability/runtime`
 - [ ] **J5b**: 现有代码中已存在的违规（如 web 插件 `import openai`、ebook 插件 `import pdfjs-dist` 等若存在）跑 `npm run lint` 输出 **warn**，**不阻塞**（lint exit 1 仍允许，与基线一致）
 - [ ] **J6**: `git diff <派活基线>..HEAD --stat`（**Builder 引入的 diff**，吸收 Auditor 阶段 00 建议条目 3）含且仅含以下文件：`CLAUDE.md` / `src/shared/intents.ts` / `src/shared/ui-primitives.ts` / `tools/lint/pure-utility-allowlist.ts` / `tools/lint/check-plugin-dirs.sh` / `eslint.config.mjs` / `package.json`
 - [ ] **J7a**: `npm run typecheck` exit 0（仓库 baseline 已 type-clean，本次新增 .ts 文件不应引入 type 错误）
 - [ ] **J7b**: `npm run lint` exit 1（允许；现有代码 lint 错误数与基线相同 ± 仅本次 J5 规则触发的现有违规数）
-- [ ] **J7c**: `npm run lint:dirs` exit 0（无 plugins/<X>/engine/runtime/lib 残留）
+- [ ] **J7c**: 在 baseline 状态下（无测试残留）`npm run lint:dirs` exit 0（白名单豁免 2 条历史违规后输出无新增违规）
 
 ## 已知风险
 
@@ -328,6 +375,10 @@ rmdir src/plugins/note/engine 2>/dev/null || true
 - **R5**: J5.4 用"正向黑名单"而非"反向白名单"实现，是 ESLint `no-restricted-imports` 表达力受限下的妥协（详见 J5.4 说明）。未来发现新重型外部依赖时由独立 PR 添加到 `eslint.config.mjs` 的禁令列表
 - **R6（吸收阶段 00 Auditor 建议条目 3）**: J6 完成判据使用 **Builder 引入的 diff**（自派活基线起的双点 diff `git diff <基线>..HEAD`），不是 `main...HEAD` 三点 diff。这避免"分支已含 Commander 派活 commit"造成的字面 vs 实质差异
 - **R7（基线锁定）**: 派活基线为 main 当前 HEAD（包含阶段 00、00x、typecheck-baseline 三个 merge）。Builder 启动后 `git rebase main` 已由 Commander 列出指令，rebase 后基线即为 main 头部
+- **R8（J5.5 白名单债，追踪项）**: J5.5 脚本豁免 2 条历史 baseline 违规（`note/lib` + `browser-capability/runtime`）。这是**待清理债**，应在以下波次中清掉对应白名单条目：
+  - **波次 3.3 Note 迁移** 时清 `src/plugins/note/lib`（迁移其内容到合适位置）
+  - **波次 3.4 Web 迁移 / 波次 4 L0 收口** 时清 `src/plugins/browser-capability/runtime`
+  - 清理动作 = 删脚本 ALLOWLIST 数组中对应字符串 + 实际迁/删该目录
 
 ## 待 Builder 反问的预期问题
 
@@ -340,6 +391,8 @@ rmdir src/plugins/note/engine 2>/dev/null || true
 5. **J5.4 视图层禁外部依赖采用什么实现策略** —— **Commander 答**：正向黑名单（列出已知重型外部依赖）。理由见 J5.4 说明 + R5
 6. **`tools/lint/pure-utility-allowlist.ts` 是否要在 ESLint 中实际使用** —— **Commander 答**：仅作为"白名单单一真值"被 `eslint.config.mjs` import（或注释引用）。ESLint `no-restricted-imports` 表达力受限,实际拦截规则用 J5.4 黑名单实现
 7. **J6 用什么 diff 口径** —— **Commander 答**：`git diff <派活基线>..HEAD`（Builder 引入的 diff），不用 `main...HEAD` 三点 diff。详见 R6
+8. **J5.5 脚本是否需要支持白名单** —— **Commander 答**：是。仓库已存在 2 条历史 baseline 违规（`note/lib` + `browser-capability/runtime`），按总纲 § 1.3 过渡期处置精神显式豁免。脚本字节级写死 ALLOWLIST 数组（不外置文件，仅 2 条用硬编码足够）。Builder 字节级照抄即可，不允许扩展或修改白名单内容。详见 J5.5 + R8
+9. **白名单未来增长怎么办** —— **Commander 答**：本阶段不增长，仅本次 BLOCKING 暴露的 2 条。如未来发现新的不可立即清的违规需要豁免，走独立 PR 评审，不允许 Builder 自决
 
 ## Builder 完成后
 
