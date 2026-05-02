@@ -62,13 +62,20 @@ export class TextRenderer {
    *
    * width:画板节点 instance.size.w,SVG 内部按此 wrap;不传时用默认 200
    */
-  async render(atoms: Atom[], options: { width?: number; defaultTextColor?: string } = {}): Promise<THREE.Object3D> {
+  async render(atoms: Atom[], options: {
+    width?: number;
+    defaultTextColor?: string;
+    valign?: 'top' | 'middle' | 'bottom';
+    targetHeight?: number;
+  } = {}): Promise<THREE.Object3D> {
     let svgString: string;
     let links: LinkRect[] = [];
     try {
       const out = await atomsToSvgWithLinks(atoms, {
         width: options.width,
         defaultTextColor: options.defaultTextColor,
+        valign: options.valign,
+        targetHeight: options.targetHeight,
       });
       svgString = out.svg;
       links = out.links;

@@ -319,4 +319,14 @@ export interface Instance {
    * 拖 corner → 两者都 true.
    */
   size_lock?: { w?: boolean; h?: boolean };
+
+  /**
+   * 文字垂直对齐(F-10).仅 ref='krig.text.label' 用.
+   * 仅当 size_lock.h=true(节点高度固定)时生效 — 否则节点高度等于内容高度,
+   * 顶/中/底没区别.
+   * - 'top'(默认 / undefined):内容顶部对齐节点顶部
+   * - 'middle':内容垂直居中(Sticky 默认)
+   * - 'bottom':内容底部对齐节点底部
+   */
+  text_valign?: 'top' | 'middle' | 'bottom';
 }
