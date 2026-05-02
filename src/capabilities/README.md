@@ -2,12 +2,12 @@
 
 跨视图共享的能力单元。本目录是 KRIG 重构期第一公民目录(总纲 § 4.1 / § 5)。
 
-## 当前状态(阶段 02b-1-text-editing-skeleton)
+## 当前状态(阶段 02b-2a-text-editing-fields)
 
-**已有 1 个 capability(仅最小骨架)**:
-- `text-editing/`(commit `256ec984`)——`textEditingCapability` 实例化,仅 id 字段;实质内容由 02b-2 填入
+**已有 1 个 capability(字段占位待填)**:
+- `text-editing/`(02b-1 commit `256ec984` + 02b-2a commit `16ca2454`)——`textEditingCapability` 含 id + 4 个 `undefined` 占位字段(schema / converters / createInstance / commands);实质内容由 02b-2b/c/d 子阶段分批填入
 
-其他 capability(canvas-interaction / web-rendering / pdf-rendering 等)将在 02b-2 起按需进入此目录。
+其他 capability(canvas-interaction / web-rendering / pdf-rendering 等)将在 02b-3+ 按需进入此目录。
 
 ## 设计原则
 
