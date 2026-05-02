@@ -100,14 +100,17 @@ rm -f /tmp/audit-baseline.log
 对照 task-card.md J1 段列出的 10 条禁令，每条必须**字面**出现在 CLAUDE.md 新增"重构期硬规则"段落中。**任意一条遗漏或措辞偏离 = ❌**。
 
 ### 关注点 6：范围越界（C 段）
-本阶段是基础设施类子波次，**Builder 引入的 diff 必须严格仅含 7 个文件**：
+本阶段是基础设施类子波次，**Builder 引入的 diff 必须严格仅含 8 个文件**：
 - `CLAUDE.md`（追加章节）
 - `src/shared/intents.ts`（新建）
 - `src/shared/ui-primitives.ts`（新建）
+- `tsconfig.json`（J3-补：**仅删 `"rootDir": "src",` 一行**，其他字段保留）
 - `tools/lint/pure-utility-allowlist.ts`（新建）
 - `tools/lint/check-plugin-dirs.sh`（新建）
 - `eslint.config.mjs`（修改：追加 5 个 config object）
 - `package.json`（修改：scripts 追加 lint:dirs）
+
+**特别确认 tsconfig.json**：diff 应仅 `-  "rootDir": "src",` 一行。其他字段（include / outDir / paths / target / module / 等）全部保留。任何额外修改 = ❌
 
 **绝不允许**：
 - 任何 `src/main/**` / `src/renderer/**` / `src/plugins/**` / `src/capabilities/**` / `src/shared/types/schema-*.ts` 已存在文件的修改
@@ -123,7 +126,7 @@ rm -f /tmp/audit-baseline.log
 ```bash
 git diff <派活基线SHA>..refactor/contracts --stat
 ```
-基线 SHA 来自 Builder 报告头部的"Commander 派活基线"字段。Builder 引入的 diff 必须严格 7 个文件（关注点 6）。
+基线 SHA 来自 Builder 报告头部的"Commander 派活基线"字段。Builder 引入的 diff 必须严格 8 个文件（关注点 6）。
 
 ## 四、审计输出（写入 `tmp/auditor-report.md`）
 

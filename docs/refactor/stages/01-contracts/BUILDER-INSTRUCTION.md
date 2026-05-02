@@ -54,6 +54,7 @@
 J1:    feat(refactor/contracts): CLAUDE.md 加重构期硬规则段
 J2:    feat(refactor/contracts): shared/intents.ts IntentEvent 类型骨架
 J3:    feat(refactor/contracts): shared/ui-primitives.ts ViewDefinition + Capability 类型
+J3-补: fix(refactor/contracts): 删 tsconfig rootDir 解 include/rootDir 互斥
 J4:    feat(refactor/contracts): tools/lint/pure-utility-allowlist.ts 白名单
 J5.1:  feat(refactor/contracts): eslint 禁布局特权 API
 J5.2:  feat(refactor/contracts): eslint 禁跨插件 import
@@ -63,8 +64,10 @@ J5.5:  feat(refactor/contracts): tools/lint/check-plugin-dirs.sh + lint:dirs scr
 J5 验证: test(refactor/contracts): J5.1~J5.5 违规测试通过(测试代码已删)
 ```
 
+> **续做提示**：当前分支 `refactor/contracts` 已含 J1/J2/J3 三个 commit（来自第三次 Builder 启动）：`1b6cf66b` / `b923fdf4` / `9ea65adc`。本次 Builder 启动**从 J3-补 续做**，不重做 J1~J3。启动自检读 git log 时会看到这三个 commit 已存在,确认它们合规即可继续。
+
 **关键约束（来自 task-card "严禁顺手做"）**：
-- 只动 task-card 明确列出的 7 个文件
+- 只动 task-card 明确列出的 8 个文件（含 tsconfig.json，仅 J3-补 删 rootDir 一处）
 - 不修改任何业务代码（`src/main/**`、`src/renderer/**`、`src/plugins/**`、`src/capabilities/**`）
 - 不修改已存在的 `src/shared/types/schema-*.ts`
 - 不修改已存在的 `eslint.config.mjs` 中的 4 条 off 降噪（仅追加 5 个新 config object）

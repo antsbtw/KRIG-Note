@@ -88,6 +88,28 @@ export interface LayoutModeChangeRequestedIntent {
 
 **约束**：仅类型，无运行时代码。`import` 列表为空。允许内部交叉引用（如 `ViewDefinition.contextMenu` 引用 `ContextMenuItem`）。
 
+### J3-补：删 `tsconfig.json:15` 的 `"rootDir": "src",` 行
+
+> **背景**：阶段 01 第三次 Builder 启动 J4 试做时触发 BLOCKING——主 `tsconfig.json` 中 `rootDir: "src"` 与 `include: ["src/**/*", "tools/**/*"]` 互斥，TS 报错 `TS6059: 'rootDir' is expected to contain all source files`。这是阶段 00 J3 的工程债（仅扩 include 未同步处理 rootDir）。
+>
+> **副作用评估**：仓库唯一的 `tsc` 调用是 `tsc --noEmit -p tsconfig.json`（package.json:14），`rootDir` 仅影响 `outDir` 路径计算，**noEmit 模式下完全无关**。Vite 自管打包不依赖 tsc emit。删除安全。
+
+修改 `tsconfig.json` 删除以下一行（仅此一处改动，其他字段保留）：
+
+```diff
+   "outDir": ".vite/build",
+-  "rootDir": "src",
+   "baseUrl": ".",
+```
+
+**关键约束**：
+- **仅删** `"rootDir": "src",` 这一行
+- 不动 outDir / baseUrl / paths / target / module / 其他任何字段
+- 不动 include（保留 `["src/**/*", "tools/**/*"]`）
+- 不动 exclude
+
+完成后 Builder 立即跑 `npm run typecheck` 验证 exit 0（应当与 J3 完成态一致——因为还没创建 J4 文件）。
+
 ### J4：创建 `tools/lint/pure-utility-allowlist.ts`
 
 创建文件 [tools/lint/pure-utility-allowlist.ts](../../../../tools/lint/pure-utility-allowlist.ts)（新文件 + 新目录 `tools/lint/`），导出纯工具白名单：
@@ -349,6 +371,7 @@ rm -f /tmp/dirs-baseline.log
 - [ ] **J1**: CLAUDE.md 末尾存在 `## 重构期硬规则` 段落，包含 10 条禁令；段落最后引用总纲路径
 - [ ] **J2**: `src/shared/intents.ts` 存在，可被 `import type { IntentEvent } from '@shared/intents'`（或等价路径）；文件无 `import` 语句；无运行时代码
 - [ ] **J3**: `src/shared/ui-primitives.ts` 存在，导出至少 `ViewDefinition`、`Capability`、`ContextMenuItem`、`ToolbarItem`、`SlashItem`、`HandleItem`、`FloatingToolbarItem`、`KeyBinding`、`CommandHandler` 类型；文件无 `import` 语句；无运行时代码
+- [ ] **J3-补**: `tsconfig.json` `compilerOptions.rootDir` 字段已删除（其他字段保留）；`npm run typecheck` exit 0
 - [ ] **J4**: `tools/lint/pure-utility-allowlist.ts` 存在，`PURE_UTILITY_ALLOWLIST` 数组含至少 13 项
 - [ ] **J5.1**: `eslint.config.mjs` 含布局特权 API 禁令 config object；测试文件 `src/plugins/note/test-j51.ts` 触发 `npm run lint` error；验证后测试文件已删除
 - [ ] **J5.2**: 跨插件 import 禁令生效（实施手段 Builder 自决）；测试文件 `src/plugins/note/test-j52.ts` 触发 error；验证后已删除
@@ -359,7 +382,7 @@ rm -f /tmp/dirs-baseline.log
 - [ ] **J5.5c**: 测试目录 `src/plugins/note/engine/`（新增违规）触发 `npm run lint:dirs` exit 非 0 + 输出含该路径；验证后测试目录已删除
 - [ ] **J5.5d**: 白名单豁免有效：测试 5b 验证输出**不含** `src/plugins/note/lib` 与 `src/plugins/browser-capability/runtime`
 - [ ] **J5b**: 现有代码中已存在的违规（如 web 插件 `import openai`、ebook 插件 `import pdfjs-dist` 等若存在）跑 `npm run lint` 输出 **warn**，**不阻塞**（lint exit 1 仍允许，与基线一致）
-- [ ] **J6**: `git diff <派活基线>..HEAD --stat`（**Builder 引入的 diff**，吸收 Auditor 阶段 00 建议条目 3）含且仅含以下文件：`CLAUDE.md` / `src/shared/intents.ts` / `src/shared/ui-primitives.ts` / `tools/lint/pure-utility-allowlist.ts` / `tools/lint/check-plugin-dirs.sh` / `eslint.config.mjs` / `package.json`
+- [ ] **J6**: `git diff <派活基线>..HEAD --stat`（**Builder 引入的 diff**，吸收 Auditor 阶段 00 建议条目 3）含且仅含以下 8 个文件：`CLAUDE.md` / `src/shared/intents.ts` / `src/shared/ui-primitives.ts` / `tools/lint/pure-utility-allowlist.ts` / `tools/lint/check-plugin-dirs.sh` / `eslint.config.mjs` / `package.json` / `tsconfig.json`（J3-补 删 rootDir）
 - [ ] **J7a**: `npm run typecheck` exit 0（仓库 baseline 已 type-clean，本次新增 .ts 文件不应引入 type 错误）
 - [ ] **J7b**: `npm run lint` exit 1（允许；现有代码 lint 错误数与基线相同 ± 仅本次 J5 规则触发的现有违规数）
 - [ ] **J7c**: 在 baseline 状态下（无测试残留）`npm run lint:dirs` exit 0（白名单豁免 2 条历史违规后输出无新增违规）
@@ -370,7 +393,7 @@ rm -f /tmp/dirs-baseline.log
 
 - **R1（已答）**: 仓库 ESLint config 风格已由阶段 00-eslint-bootstrap 装入为 `eslint.config.mjs`（flat config）。Builder **直接修改** `eslint.config.mjs` 即可，不需探查、不需切换风格
 - **R2**: TypeScript 路径别名（`@shared/`、`@capabilities/` 等）是否已配置在 tsconfig.json 的 `paths` 字段——Builder 要确认现有 path 配置，新文件采用与现有 `src/shared/types/schema-*.ts` 一致的 import 写法
-- **R3（已答）**: 阶段 00 已扩展 `tsconfig.json` `include` 至 `["src/**/*", "tools/**/*"]`。本阶段新建的 `tools/lint/pure-utility-allowlist.ts` 自动在 typecheck 范围内
+- **R3（部分已答 + 工程债 J3-补）**: 阶段 00 已扩展 `tsconfig.json` `include` 至 `["src/**/*", "tools/**/*"]`，**但同时遗漏了 `rootDir: "src"` 与 include 的互斥**。阶段 01 第三次 Builder 启动 J4 时触发 TS6059。本 task-card v4 加 **J3-补**（删 `rootDir` 行）补救。Builder 必须先执行 J3-补 再做 J4，否则 J4 创建文件即让 typecheck 失败
 - **R4**: Builder **不读 memory**，但要知道存在 memory `feedback_merge_requires_explicit_ok`——本任务卡也遵守：commit 由 Builder 自己做，merge/push 不做（列命令给 Commander）
 - **R5**: J5.4 用"正向黑名单"而非"反向白名单"实现，是 ESLint `no-restricted-imports` 表达力受限下的妥协（详见 J5.4 说明）。未来发现新重型外部依赖时由独立 PR 添加到 `eslint.config.mjs` 的禁令列表
 - **R6（吸收阶段 00 Auditor 建议条目 3）**: J6 完成判据使用 **Builder 引入的 diff**（自派活基线起的双点 diff `git diff <基线>..HEAD`），不是 `main...HEAD` 三点 diff。这避免"分支已含 Commander 派活 commit"造成的字面 vs 实质差异
@@ -393,6 +416,7 @@ rm -f /tmp/dirs-baseline.log
 7. **J6 用什么 diff 口径** —— **Commander 答**：`git diff <派活基线>..HEAD`（Builder 引入的 diff），不用 `main...HEAD` 三点 diff。详见 R6
 8. **J5.5 脚本是否需要支持白名单** —— **Commander 答**：是。仓库已存在 2 条历史 baseline 违规（`note/lib` + `browser-capability/runtime`），按总纲 § 1.3 过渡期处置精神显式豁免。脚本字节级写死 ALLOWLIST 数组（不外置文件，仅 2 条用硬编码足够）。Builder 字节级照抄即可，不允许扩展或修改白名单内容。详见 J5.5 + R8
 9. **白名单未来增长怎么办** —— **Commander 答**：本阶段不增长，仅本次 BLOCKING 暴露的 2 条。如未来发现新的不可立即清的违规需要豁免，走独立 PR 评审，不允许 Builder 自决
+10. **删 `rootDir` 是否影响打包/CI** —— **Commander 答**：不影响。仓库唯一 `tsc` 调用是 `tsc --noEmit`（package.json:14），rootDir 仅影响 `outDir` 路径计算，noEmit 模式下完全无关。Vite 自管打包不依赖 tsc emit。Commander 已 grep 验证：仓库无任何其他 `tsc -p tsconfig.json`（非 noEmit）调用
 
 ## Builder 完成后
 
