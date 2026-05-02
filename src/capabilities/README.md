@@ -2,12 +2,12 @@
 
 跨视图共享的能力单元。本目录是 KRIG 重构期第一公民目录(总纲 § 4.1 / § 5)。
 
-## 当前状态(阶段 02a-platform-skeleton)
+## 当前状态(阶段 02b-1-text-editing-skeleton)
 
-**目录占位中**——尚无任何 capability 实质内容。
+**已有 1 个 capability(仅最小骨架)**:
+- `text-editing/`(commit `256ec984`)——`textEditingCapability` 实例化,仅 id 字段;实质内容由 02b-2 填入
 
-具体 capability(text-editing / web-rendering / canvas-interaction / pdf-rendering 等)
-将在阶段 02b 起按需封装外部依赖逐个进入此目录。详见总纲 § 5.9 KRIG 可识别的能力清单。
+其他 capability(canvas-interaction / web-rendering / pdf-rendering 等)将在 02b-2 起按需进入此目录。
 
 ## 设计原则
 
