@@ -42,6 +42,12 @@ export interface EditTarget {
   height: number;
   /** Sticky 背景色(M2.2);CSS 颜色字符串;不传 = 透明(默认 Text 节点) */
   backgroundColor?: string;
+  /**
+   * 高度模式:
+   * - false / undefined(默认):popup 用 min-height,内容多时自然撑高(M2.1 Text)
+   * - true:popup 用 height(固定),内容溢出时 overflow:auto 滚动(Sticky / 用户拖过 N/S)
+   */
+  heightFixed?: boolean;
 }
 
 export interface EditOverlayCallbacks {
@@ -86,7 +92,11 @@ export class EditOverlay {
     popup.style.left = `${target.screenX}px`;
     popup.style.top = `${target.screenY}px`;
     popup.style.width = `${target.width}px`;
-    popup.style.minHeight = `${target.height}px`;
+    if (target.heightFixed) {
+      popup.style.height = `${target.height}px`;
+    } else {
+      popup.style.minHeight = `${target.height}px`;
+    }
     // Sticky:popup 背景色与 mesh 背景一致,编辑态与展示态视觉无缝过渡.
     // 走 CSS var 而不是直接 backgroundColor,避免 .krig-canvas-edit-popup
     // 类样式特异性反超 inline(尤其是有 !important 时);文字色也跟着切到深色,

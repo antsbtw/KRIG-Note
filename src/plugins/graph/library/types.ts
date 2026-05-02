@@ -308,4 +308,15 @@ export interface Instance {
    * 详见 docs/graph/canvas/Canvas-M2.1-TextNode-Spec.md §1.
    */
   doc?: TextNodeAtoms;
+
+  /**
+   * 文字节点 size 锁(M2.x 引入).仅 ref='krig.text.label' 用.
+   * - undefined 或 false:维度未锁,adaptTextNodeSizeToContent 自动撑
+   * - true:维度被用户主动 resize 锁住,内容溢出时不再自动改 size
+   *
+   * Sticky 创建时默认 { w: true, h: true }(固定大小,内容超出截断);
+   * Text 创建时无 lock(M2.1 行为:高度自动撑);用户拖 N/S handle → h=true,
+   * 拖 corner → 两者都 true.
+   */
+  size_lock?: { w?: boolean; h?: boolean };
 }

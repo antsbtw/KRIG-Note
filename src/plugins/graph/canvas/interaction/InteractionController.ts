@@ -8,11 +8,7 @@ import { ShapeRegistry } from '../../library/shapes';
 import { SubstanceRegistry } from '../../library/substances';
 import { findClosestMagnet, listMagnets, MAGNET_SNAP_RADIUS_PX } from './magnet-snap';
 import { renderLine, updateLineGeometry, generateLinePoints, setLineHighlight } from '../scene/LineRenderer';
-import { isTextNodeRef } from '../edit/atom-bridge';
 import { dispatchLinkHref } from '../../../note/lib/right-slot-routing';
-
-/** 文字节点(krig.text.label)只允许左右 resize;高度由内容自动撑 */
-const TEXT_NODE_RESIZE_HANDLES = new Set<Exclude<HandleKind, 'rotate'>>(['e', 'w']);
 
 /**
  * InteractionController — 鼠标 / 键盘交互
@@ -583,6 +579,9 @@ export class InteractionController {
       return;
     }
     if (this.resizing) {
+      // 文字节点 resize 完成后设 size_lock:用户主动拖过的维度切到 fixed,
+      // adapt 不再自动改它(N/S → h 锁,E/W → w 锁,corner → 两者都锁)
+      this.applyResizeSizeLock(this.resizing.instanceId, this.resizing.handle);
       this.resizing = null;
       this.onChange?.();
     }
@@ -1257,9 +1256,8 @@ export class InteractionController {
     handle: Exclude<HandleKind, 'rotate'>,
     startWorld: { x: number; y: number },
   ): void {
-    // 文字节点防御:只允许左右 handle resize;HandlesOverlay 已 filter 不显示
-    // N/S/4 角 handle,这里是双保险(避免未来 hitTest 改动 / 键盘触发等绕过)
-    if (isTextNodeRef(node.shapeRef) && !TEXT_NODE_RESIZE_HANDLES.has(handle)) return;
+    // 文字节点:HandlesOverlay 已根据 size_lock 决定哪些 handle 可见(Text 4 个 / Sticky 8 个)
+    // 不再额外限制 — HandlesOverlay.hitTest 已过滤,这里就走通用流程
     this.pushHistory();
     this.resizing = {
       instanceId: node.instanceId,
@@ -1268,6 +1266,37 @@ export class InteractionController {
       startPos: { x: node.position.x, y: node.position.y },
       startSize: { w: node.size.w, h: node.size.h },
       startRotation: node.rotation ?? 0,
+    };
+  }
+
+  /**
+   * 文字节点 resize 完成后,根据 handle 类型设 size_lock —
+   * 用户主动拖过的维度切到 fixed,adapt 不再自动改.
+   *
+   * - n / s 仅 h 维度 → h:true
+   * - e / w 仅 w 维度 → w:true
+   * - 4 角 → w:true, h:true
+   *
+   * 普通 shape 不受影响(没用 size_lock).
+   */
+  private applyResizeSizeLock(
+    instanceId: string,
+    handle: Exclude<HandleKind, 'rotate'>,
+  ): void {
+    const inst = this.getInstance(instanceId);
+    if (!inst) return;
+    const node = this.nodeRenderer.get(instanceId);
+    if (!node) return;
+    // 只对文字节点设 lock(普通 shape 用 size_lock 没意义)
+    if (node.shapeRef !== 'krig.text.label') return;
+
+    const lockW = handle === 'e' || handle === 'w' || handle.length === 2;
+    const lockH = handle === 'n' || handle === 's' || handle.length === 2;
+    if (!lockW && !lockH) return;
+    inst.size_lock = {
+      ...(inst.size_lock ?? {}),
+      ...(lockW ? { w: true } : {}),
+      ...(lockH ? { h: true } : {}),
     };
   }
 
