@@ -120,10 +120,29 @@
 5. **避免装饰词**：不用"完美"、"很棒"、"应该没问题"——用具体事实代替
 6. **保留不确定性**：不知道就说不知道，不脑补
 
-## 六、refactor-card 模板（你起草的产物之一）
+## 六、阶段目录结构（你起草的产物之一）
+
+每个重构阶段一个独立目录 `docs/refactor/stages/<NN>-<阶段名>/`，包含：
+
+```
+docs/refactor/stages/01-contracts/
+├─ README.md                # 阶段总览：目标 / 范围 / 状态 / 流转
+├─ task-card.md             # Builder 任务卡（J1~Jn 完成判据 + 严禁顺手做 + 风险）
+├─ BUILDER-INSTRUCTION.md   # 给 Builder 的自包含派活指令
+└─ AUDITOR-INSTRUCTION.md   # 给 Auditor 的自包含审计指令
+```
+
+**Builder 启动时**：只需告知阶段目录路径——目录自包含一切。
+**Auditor 启动时**：同样只需告知阶段目录路径。
+
+阶段完成 + merge 到 main 后，整个目录作为历史档案永久保留。
+
+下一阶段由 Commander 在本阶段验收通过后，按相同结构起草 `02-...` `03-1-...` 等目录。
+
+### task-card 模板（阶段目录内的核心文件）
 
 ```markdown
-# 迁移任务卡：refactor/<分支名>
+# 任务卡：refactor/<分支名>（阶段 <NN>-<名>）
 
 > **状态**：草稿 / 执行中 / 已完成 / 已合并
 > **创建**：YYYY-MM-DD by Commander
@@ -168,9 +187,11 @@
 
 | 文件类型 | 路径 |
 |---------|------|
-| Builder 报告 | `tmp/builder-report.md`（每次覆盖，下一次 Builder 启动前用户负责清空或归档） |
-| Auditor 报告 | `tmp/auditor-report.md`（同上） |
-| refactor-card | `docs/refactor/cards/refactor-<分支名>.md`（永久保留，作为历史） |
+| Builder 启动自检 | `tmp/builder-startup.md`（每次覆盖） |
+| Builder 完成报告 | `tmp/builder-report.md`（每次覆盖） |
+| Builder BLOCKING 报告 | `tmp/builder-blockers.md`（仅遇阻时写，不会与 report 同时存在） |
+| Auditor 审计报告 | `tmp/auditor-report.md`（每次覆盖） |
+| 阶段目录 | `docs/refactor/stages/<NN>-<阶段名>/`（永久保留：README + task-card + BUILDER-INSTRUCTION + AUDITOR-INSTRUCTION） |
 | 本会话工作记录 | 不写文件，写入聊天即可 |
 
 > **不创建** `tmp/` 目录直到第一次需要写入；那时 Bash mkdir。
