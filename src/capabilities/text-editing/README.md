@@ -2,9 +2,14 @@
 
 富文本编辑能力(基于 ProseMirror)。详见总纲 § 5.9 能力清单 + § 5.4 数据契约。
 
-## 当前状态(阶段 02b-1-text-editing-skeleton)
+## 当前状态(阶段 02b-2a-text-editing-fields)
 
-**仅最小骨架**:`textEditingCapability` 已实例化但仅含 `id` 字段。其他字段(5 大菜单 / schema / converters / createInstance / commands)**待 02b-2 填入**——届时搬迁 ProseMirror 69 文件(note 66 + graph 3)的核心代码进入本目录。
+**字段占位待填**:`textEditingCapability` 含 5 个字段(id + 4 个 `undefined` 占位)。各字段填充时机:
+- `schema` / `converters` → 02b-2b 搬迁 converters/ + note/registry.ts 后填
+- `commands` → 02b-2c 搬迁 commands/ + plugins/ 后填
+- `createInstance` → 02b-2d 搬迁 NoteEditor.tsx 入口后填
+
+注:5 大菜单注册项(contextMenu / toolbar / slash / handle / floatingToolbar) + keybindings 暂不声明(这些是视图层职责,由消费 view 自行注册)。
 
 ## 设计原则(总纲引用)
 
