@@ -30,3 +30,18 @@ fix(scope): 修复描述
 refactor(scope): 重构描述
 docs(scope): 文档描述
 ```
+
+## 重构期硬规则
+
+- L5 插件代码（`src/plugins/**`）禁止 import：`openCompanion` / `ensureCompanion` / `closeRightSlot` / `openRightSlot`
+- L5 改变布局只能：`dispatch(IntentEvent)`
+- L3 `WorkspaceState` 禁止新增业务字段（`activeXxxId` / `expandedXxx`），新状态走 `pluginStates`
+- `src/shared/**` 禁止 import `'electron'`
+- 五大交互（ContextMenu / Toolbar / Slash / Handle / FloatingToolbar）必须通过对应 Registry 注册
+- ContextMenu / Toolbar / Slash / Handle / FloatingToolbar 五类交互禁止在组件内直接 `<Menu>` / `useState` 写菜单项
+- **Atom 永远不携带视图特定字段**（不加 `meta.view` / `meta.canvas` / 任何 view-meta）
+- 视图层（`src/plugins/**/views/**`）禁止直接 import 任何不在 `tools/lint/pure-utility-allowlist.ts` 的 npm 包
+- `plugins/<X>/` 下禁建 `engine/` / `runtime/` / `lib/` 目录
+- 跨插件禁止 import：`plugins/<X>/**` 不能 import `plugins/<Y>/**`
+
+违反以上任一条 = PR 拒绝合入。详见 [docs/refactor/00-总纲.md](docs/refactor/00-总纲.md)

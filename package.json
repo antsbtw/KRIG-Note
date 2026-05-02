@@ -11,6 +11,7 @@
     "postinstall": "bash scripts/patch-electron-dev.sh",
     "build:fonts": "node scripts/subset-fonts.mjs",
     "lint": "eslint .",
+    "lint:dirs": "bash tools/lint/check-plugin-dirs.sh",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
