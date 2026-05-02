@@ -331,8 +331,7 @@ export class InteractionController {
     e.preventDefault();
     if (this.addMode || this.drawingLine || this.rewiring || this.marquee) return;
     const screen = this.toContainerCoords(e);
-    const world = this.sceneManager.screenToWorld(screen.x, screen.y);
-    const hit = this.hitTest(world);
+    const hit = this.hitTest(screen.x, screen.y);
     if (!hit) return; // 空白处:暂不弹(v1)
 
     // 如果右键的节点不在 selected 中,先单选它(类比 macOS 文件管理器)
@@ -351,8 +350,7 @@ export class InteractionController {
     if (e.button !== 0) return;
     if (this.addMode) return;
     const screen = this.toContainerCoords(e);
-    const world = this.sceneManager.screenToWorld(screen.x, screen.y);
-    const hit = this.hitTest(world);
+    const hit = this.hitTest(screen.x, screen.y);
     if (hit) this.onNodeDoubleClick?.(hit);
   }
 
@@ -406,7 +404,7 @@ export class InteractionController {
       return;
     }
 
-    const hit = this.hitTest(world);
+    const hit = this.hitTest(screen.x, screen.y);
     const additive = e.shiftKey || e.metaKey;
     if (hit) {
       if (additive) {
@@ -549,8 +547,7 @@ export class InteractionController {
       this.setCursor(cursorForHandle(handleHit, this.handlesOverlay.getTarget()?.rotation ?? 0));
       return;
     }
-    const world = this.sceneManager.screenToWorld(screen.x, screen.y);
-    const hit = this.hitTest(world);
+    const hit = this.hitTest(screen.x, screen.y);
     this.setCursor(hit ? 'grab' : 'default');
 
     // hover 命中 line → 高亮(若是 line);切换或离开则还原
@@ -725,13 +722,7 @@ export class InteractionController {
    * 与 hitTest(走 instance OBB)正交.
    */
   private raycastLinkHref(screenX: number, screenY: number): string | null {
-    const rect = this.container.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0) return null;
-    // 屏幕容器坐标 → NDC[-1, 1]
-    this.ndc.x = (screenX / rect.width) * 2 - 1;
-    this.ndc.y = -(screenY / rect.height) * 2 + 1;
-    this.raycaster.setFromCamera(this.ndc, this.sceneManager.camera);
-    const hits = this.raycaster.intersectObjects(this.sceneManager.scene.children, true);
+    const hits = this.raycastAtScreen(screenX, screenY);
     for (const hit of hits) {
       const href = hit.object.userData?.linkHref;
       if (typeof href === 'string' && href) return href;
@@ -740,36 +731,82 @@ export class InteractionController {
   }
 
   /**
-   * OBB hit-test:把 world 点逆变换到节点本地坐标(中心为原点),再做 AABB 测试。
-   * 这样旋转后的节点也能精确命中,不会出现"鼠标在 shape 内但点不中"。
-   * 返回最上层(后渲染)被命中的 instance id,否则 null
+   * 屏幕坐标 → Three.js Raycaster 命中列表(共享投影矩阵).
+   * 抽出来给 hitTest / raycastLinkHref 等共用,避免重复 NDC 转换 + setFromCamera.
    */
-  private hitTest(world: { x: number; y: number }): string | null {
-    // 优先检测 line(走"距离曲线",阈值小,不易抢 shape 命中);
-    // 然后检测 shape(走 OBB AABB)
+  private raycastAtScreen(screenX: number, screenY: number): THREE.Intersection[] {
+    if (!this.sceneManager.screenToNDC(screenX, screenY, this.ndc)) return [];
+    this.raycaster.setFromCamera(this.ndc, this.sceneManager.camera);
+    return this.raycaster.intersectObjects(this.sceneManager.scene.children, true);
+  }
+
+  /**
+   * Hit-test:与渲染共享投影矩阵,保证用户视觉看到哪里就能命中哪里.
+   *
+   * 实现:
+   * - shape:Three.js Raycaster 命中 mesh,反查 outer.group.userData.instanceId
+   * - line:仍走"距离曲线 < 阈值"算法(LineBasicMaterial 没体积,raycaster
+   *   不可靠;line 用 world 距离判断,需要把 screen 转 world)
+   *
+   * 之前的 OBB AABB 算法用 SceneManager.screenToWorld 反算 world,与 Three.js
+   * 真实投影有微小偏差(零浮点误差累积 + viewport 计算差异),导致 zoom 后
+   * 用户视觉点击点 ≠ hit-test 落点 → 命中失败.改用 Raycaster 与渲染同源.
+   */
+  private hitTest(screenX: number, screenY: number): string | null {
+    // ── 1. shape via Raycaster ──
+    const hits = this.raycastAtScreen(screenX, screenY);
+
+    let bestShape: { id: string; area: number } | null = null;
+    for (const hit of hits) {
+      // 沿 parent 链找到 outer.group(带 userData.instanceId)
+      let obj: THREE.Object3D | null = hit.object;
+      let instanceId: string | null = null;
+      while (obj) {
+        const id = obj.userData?.instanceId;
+        if (typeof id === 'string') { instanceId = id; break; }
+        obj = obj.parent;
+      }
+      if (!instanceId) continue;
+      const node = this.nodeRenderer.get(instanceId);
+      if (!node) continue;
+      if (isLineKind(node)) continue;  // line 走单独算法
+      // 取最小 area 作为最上层(与原 OBB 算法一致 — 小节点优先,避免大背景遮挡选小元素)
+      const area = node.size.w * node.size.h;
+      if (!bestShape || area < bestShape.area) bestShape = { id: instanceId, area };
+    }
+
+    // ── 2. line via 距离阈值(需把 screen 转 world)──
+    const world = this.sceneManager.screenToWorld(screenX, screenY);
     const lineThreshold = LINE_HIT_THRESHOLD_PX / Math.max(this.sceneManager.getView().zoom, 0.01);
     let bestLine: { id: string; dist: number } | null = null;
-    let bestShape: { id: string; area: number } | null = null;
-
     for (const id of this.nodeRenderer.ids()) {
       const node = this.nodeRenderer.get(id);
-      if (!node) continue;
-
-      if (isLineKind(node)) {
-        // line:距离曲线采样点的最小距离 < 阈值才算命中
-        const inst = this.getInstance(id);
-        if (!inst) continue;
-        const ep = this.resolveLineWorldEndpoints(inst);
-        if (!ep) continue;
-        const pts = generateLinePoints(inst.ref, ep.start, ep.end);
-        const dist = distancePointToPolyline(world.x, world.y, pts);
-        if (dist <= lineThreshold && (!bestLine || dist < bestLine.dist)) {
-          bestLine = { id, dist };
-        }
-        continue;
+      if (!node || !isLineKind(node)) continue;
+      const inst = this.getInstance(id);
+      if (!inst) continue;
+      const ep = this.resolveLineWorldEndpoints(inst);
+      if (!ep) continue;
+      const pts = generateLinePoints(inst.ref, ep.start, ep.end);
+      const dist = distancePointToPolyline(world.x, world.y, pts);
+      if (dist <= lineThreshold && (!bestLine || dist < bestLine.dist)) {
+        bestLine = { id, dist };
       }
+    }
 
-      // shape:OBB AABB
+    // line 优先(精确点击 line 时让 line 抢前)
+    return bestLine?.id ?? bestShape?.id ?? null;
+  }
+
+  /**
+   * 旧 OBB hit-test(基于世界坐标 + AABB 反变换);用于 findShapesNearMouse 等
+   * 拿到的是世界坐标的场景(magnet 距离判断,Three.js raycaster 不便宜).
+   * 与 hitTest(屏幕坐标 + raycaster)有微小偏差 — 在 zoom 后视觉精度场景不要用这个.
+   */
+  private hitTestByWorldOBB(world: { x: number; y: number }): string | null {
+    let bestShape: { id: string; area: number } | null = null;
+    for (const id of this.nodeRenderer.ids()) {
+      const node = this.nodeRenderer.get(id);
+      if (!node || isLineKind(node)) continue;
       const { position, size } = node;
       if (size.w === 0 && size.h === 0) continue;
       const cx = position.x + size.w / 2;
@@ -788,9 +825,7 @@ export class InteractionController {
         if (!bestShape || area < bestShape.area) bestShape = { id, area };
       }
     }
-    // line 优先(line 在 shape 之上的视觉,且通常 line 距离阈值很小,
-    // 命中 line 时用户必然是在精确点 line)
-    return bestLine?.id ?? bestShape?.id ?? null;
+    return bestShape?.id ?? null;
   }
 
   private startDrag(startWorld: { x: number; y: number }): void {
@@ -1155,8 +1190,8 @@ export class InteractionController {
   private findShapesNearMouse(world: { x: number; y: number }): Set<string> {
     const radius = this.snapRadiusWorld();
     const ids = new Set<string>();
-    // 1. hit 命中 shape 本体
-    const hit = this.hitTest(world);
+    // 1. hit 命中 shape 本体(magnet hint 用 world 距离判断,OBB 算法即可)
+    const hit = this.hitTestByWorldOBB(world);
     if (hit) ids.add(hit);
     // 2. 距任意 magnet 在 radius 内的 shape
     for (const { node, instance } of this.allMagnetCandidates()) {

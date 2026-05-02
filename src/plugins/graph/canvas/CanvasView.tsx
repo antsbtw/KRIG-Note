@@ -303,8 +303,8 @@ export function CanvasView() {
           if (node) handles.setTarget(node);
         }
 
-        // 3. 恢复 selection border(InteractionController.overlays 在编辑期间被隐藏)
-        ic.refreshSelectionOverlays();
+        // 3. 恢复 selection(进编辑时被 clearSelection 清掉)
+        ic.setSelection([target.id]);
       },
     });
     editOverlayRef.current = editOverlay;
@@ -317,25 +317,24 @@ export function CanvasView() {
      * - popup 宽高 = mesh.size × view.zoom(世界单位 → 屏幕像素)
      */
     const openTextEditor = (inst: Instance): void => {
-      const sz = inst.size ?? { w: 200, h: 40 };
-      const pos = inst.position ?? { x: 0, y: 0 };
       const containerEl = containerRef.current;
       if (!containerEl) return;
       const rect = containerEl.getBoundingClientRect();
 
-      // mesh 左上角 → 屏幕坐标
-      const topLeft = sm.worldToScreen(pos.x, pos.y);
-      const view = sm.getView();
-      const zoom = view.zoom > 0 ? view.zoom : 1;
-      const screenW = sz.w * zoom;
-      const screenH = sz.h * zoom;
-
-      // 进入编辑态:隐藏展示态 mesh + 选中边框 + handles
-      // (popup 接管节点视觉;退出编辑时 onExit 恢复)
       const meshNode = nr.get(inst.id);
-      if (meshNode) meshNode.group.visible = false;
+      if (!meshNode) return;
+
+      // popup 位置必须等于 mesh 在屏幕上的真实视觉位置.
+      // 走 SceneManager.projectMeshToScreenAABB(Vector3.project + 共享投影矩阵),
+      // 与 renderer.render 用同一套相机变换,保证 zoom/pan 后用户视觉一致.
+      const aabb = sm.projectMeshToScreenAABB(meshNode.group);
+      const screenW = aabb.maxX - aabb.minX;
+      const screenH = aabb.maxY - aabb.minY;
+
+      // 进入编辑态:隐藏 mesh + handles + 清 selection
+      meshNode.group.visible = false;
       handles.setTarget(null);
-      ic.refreshSelectionOverlays();
+      ic.clearSelection();
 
       // M2.2 Sticky:popup 背景色同步 mesh,实现编辑态展示态视觉无缝
       const bgFill = inst.style_overrides?.fill;
@@ -344,8 +343,8 @@ export function CanvasView() {
       editOverlay.enter({
         id: inst.id,
         atoms: (inst.doc ?? []) as NoteAtom[],
-        screenX: rect.left + topLeft.x,
-        screenY: rect.top + topLeft.y,
+        screenX: rect.left + aabb.minX,
+        screenY: rect.top + aabb.minY,
         width: screenW,
         height: screenH,
         backgroundColor,
